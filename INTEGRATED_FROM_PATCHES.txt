@@ -1,0 +1,11 @@
+This full package was reconstructed by applying these archives in order:
+1. hair_system_phase1_vs_gui.zip
+2. hair_system_phase2_patch_only.zip
+3. hair_system_phase3_patch_only.zip
+4. hair_system_phase4_patch_only.zip
+5. hair_system_phase5_patch_only.zip
+6. hair_system_high_density_patch_only.zip
+7. hair_system_gpu_patch_only.zip
+8. hair_system_gpu_cluster_patch_only.zip
+9. hair_system_gpu_self_collision_grid_patch_only.zip
+10. hair_system_gpu_friction_overflow_patch_only.zip

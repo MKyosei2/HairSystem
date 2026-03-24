@@ -1,9 +1,3 @@
 ﻿  Main.cpp
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(108,33): error C2589: '(': スコープ解決演算子 (::) の右側にあるトークンは使えません。
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(108,33): error C2059: 構文エラー: ')'
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(307,32): error C2589: '(': スコープ解決演算子 (::) の右側にあるトークンは使えません。
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(307,32): error C2059: 構文エラー: ')'
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(307,19): error C2737: 'width': const オブジェクトを初期化する必要があります
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(308,33): error C2589: '(': スコープ解決演算子 (::) の右側にあるトークンは使えません。
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(308,33): error C2059: 構文エラー: ')'
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(308,19): error C2737: 'height': const オブジェクトを初期化する必要があります
+C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(127,5): warning C4324: '`anonymous-namespace'::SimConstants': アラインメント指定子のために構造体がパッドされました
+  solver_lab.vcxproj -> C:\Users\kyose\source\repos\HairSystem\bin\Debug\solver_lab.exe
