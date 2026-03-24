@@ -1,0 +1,9 @@
+﻿  Main.cpp
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(108,33): error C2589: '(': スコープ解決演算子 (::) の右側にあるトークンは使えません。
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(108,33): error C2059: 構文エラー: ')'
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(307,32): error C2589: '(': スコープ解決演算子 (::) の右側にあるトークンは使えません。
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(307,32): error C2059: 構文エラー: ')'
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(307,19): error C2737: 'width': const オブジェクトを初期化する必要があります
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(308,33): error C2589: '(': スコープ解決演算子 (::) の右側にあるトークンは使えません。
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(308,33): error C2059: 構文エラー: ')'
+C:\Users\kyose\Downloads\hair_system_phase1_vs_gui\hair_phase1_zip\solver_lab\src\Main.cpp(308,19): error C2737: 'height': const オブジェクトを初期化する必要があります
