@@ -46,6 +46,18 @@
     <IntDir>$(SolutionDir)bin\obj\$(ProjectName)\$(Configuration)\</IntDir>
     <TargetName>hair_core</TargetName>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommand>$(ComSpec)</LocalDebuggerCommand>
+    <LocalDebuggerCommandArguments>/c if exist &quot;$(SolutionDir)bin\$(Configuration)\solver_lab.exe&quot; (&quot;$(SolutionDir)bin\$(Configuration)\solver_lab.exe&quot;) else (echo hair_core.lib は実行ファイルではありません。 solver_lab を Build するか、solver_lab をスタートアップ プロジェクトに設定してください。 &amp; pause)</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>$(SolutionDir)bin\$(Configuration)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <LocalDebuggerCommand>$(ComSpec)</LocalDebuggerCommand>
+    <LocalDebuggerCommandArguments>/c if exist &quot;$(SolutionDir)bin\$(Configuration)\solver_lab.exe&quot; (&quot;$(SolutionDir)bin\$(Configuration)\solver_lab.exe&quot;) else (echo hair_core.lib は実行ファイルではありません。 solver_lab を Build するか、solver_lab をスタートアップ プロジェクトに設定してください。 &amp; pause)</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>$(SolutionDir)bin\$(Configuration)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>

@@ -16,8 +16,8 @@ if %errorlevel% neq 0 (
   exit /b 1
 )
 
-echo Done.
-if exist bin\Debug\solver_lab.exe (
-  echo Running solver_lab.exe ...
-  start "" bin\Debug\solver_lab.exe
-)
+call verify_environment.bat Debug
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Running solver_lab.exe ...
+start "" bin\Debug\solver_lab.exe

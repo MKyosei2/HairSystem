@@ -32,6 +32,8 @@
 #include <string>
 #include <vector>
 
+#include "hair/HairSimulation.h"
+
 #pragma comment(lib, "Comctl32.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -70,6 +72,15 @@ namespace
         IdMedium8k = 1004,
         IdColorBands = 1005,
         IdPulseWind = 1006,
+        IdPresetCurtain = 1007,
+        IdPresetSweepLeft = 1008,
+        IdPresetCenterPart = 1009,
+        IdSaveSnapshot = 1010,
+        IdLoadSnapshot = 1011,
+        IdExportGuides = 1012,
+        IdExportRenderLines = 1013,
+        IdExportTubes = 1014,
+        IdSaveCurveCache = 1015,
         IdSliderWind = 1101,
         IdSliderIterations = 1102,
         IdSliderDamping = 1103,
@@ -123,7 +134,11 @@ namespace
         float selfFriction = 0.0f;
         UINT selfCollisionPasses = 1;
         UINT gridBucketCapacity = kGridBucketCapacity;
-        float _padding0 = 0.0f;
+        float collisionFriction = 0.0f;
+        float shapeStiffness = 0.0f;
+        float rootRigidity = 0.0f;
+        float longRangeAttachment = 0.0f;
+        float dragCoefficient = 0.0f;
     };
 
     struct alignas(16) RenderConstants
@@ -152,6 +167,15 @@ namespace
         HWND medium8k = nullptr;
         HWND colorBands = nullptr;
         HWND pulseWind = nullptr;
+        HWND presetCurtain = nullptr;
+        HWND presetSweepLeft = nullptr;
+        HWND presetCenterPart = nullptr;
+        HWND saveSnapshot = nullptr;
+        HWND loadSnapshot = nullptr;
+        HWND exportGuides = nullptr;
+        HWND exportRenderLines = nullptr;
+        HWND exportTubes = nullptr;
+        HWND saveCurveCache = nullptr;
         HWND windLabel = nullptr;
         HWND iterationsLabel = nullptr;
         HWND dampingLabel = nullptr;
@@ -183,6 +207,7 @@ namespace
         ComPtr<ID3D11ComputeShader> bendShader;
         ComPtr<ID3D11ComputeShader> collisionShader;
         ComPtr<ID3D11ComputeShader> clusterShader;
+        ComPtr<ID3D11ComputeShader> shapeShader;
         ComPtr<ID3D11ComputeShader> clearGridShader;
         ComPtr<ID3D11ComputeShader> buildGridShader;
         ComPtr<ID3D11ComputeShader> selfCollisionShader;
@@ -193,6 +218,7 @@ namespace
         GpuStructuredBuffer positions[2];
         GpuStructuredBuffer previousPositions[2];
         GpuStructuredBuffer rootPositions;
+        GpuStructuredBuffer restPositions;
         GpuStructuredBuffer gridCellCounts;
         GpuStructuredBuffer gridCellParticles;
         GpuStructuredBuffer gridOverflowCounts;
@@ -202,23 +228,29 @@ namespace
         UINT strandCount = kDefaultStrands;
         UINT particlesPerStrand = kParticlesPerStrand;
         UINT lineVertexCount = 0;
-        UINT solverIterations = 4;
+        UINT solverIterations = 6;
         float damping = 0.025f;
         float gravity = 1500.0f;
         float windStrength = 260.0f;
         float windDirectionX = 1.0f;
         float windPulseFrequency = 1.45f;
-        float bendStiffness = 0.22f;
+        float bendStiffness = 0.30f;
         float scalpRepel = 1.0f;
-        float clusterStiffness = 0.18f;
-        float neighborRepulsion = 0.36f;
+        float clusterStiffness = 0.22f;
+        float neighborRepulsion = 0.40f;
         float neighborRadius = 9.0f;
         float rootNeighborRadius = 22.0f;
         UINT neighborSpan = 6;
-        float selfFriction = 0.18f;
-        UINT selfCollisionPasses = 2;
+        float selfFriction = 0.26f;
+        UINT selfCollisionPasses = 3;
+        float collisionFriction = 0.42f;
+        float shapeStiffness = 0.16f;
+        float rootRigidity = 0.72f;
+        float longRangeAttachment = 0.14f;
+        float dragCoefficient = 0.022f;
         UINT overflowCellCount = 0;
         UINT overflowParticleCount = 0;
+        hair::TestScenePreset scenePreset = hair::TestScenePreset::Curtain;
         UINT frameCounter = 0;
         float elapsedTime = 0.0f;
         float cameraZoom = 1.0f;
@@ -365,7 +397,14 @@ cbuffer SimCB : register(b0)
     float neighborRadius;
     float rootNeighborRadius;
     uint neighborSpan;
-    float2 pad0;
+    float selfFriction;
+    uint selfCollisionPasses;
+    uint gridBucketCapacity;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 StructuredBuffer<float4> inPositions : register(t0);
@@ -396,16 +435,27 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
+    float t = float(particleInStrand) / max(1.0f, float(particlesPerStrand - 1));
     float3 previous = inPreviousPositions[index].xyz;
-    float3 velocity = (current - previous) * (1.0f - damping);
+    float localDrag = saturate(damping + dragCoefficient * (0.35f + 0.65f * t) + rootRigidity * (1.0f - t) * (1.0f - t) * 0.06f);
+    float3 velocity = (current - previous) * (1.0f - localDrag);
+
     float windEnvelope = 1.0f;
     if (enableWindPulse != 0)
     {
         windEnvelope = 0.35f + 0.65f * (0.5f + 0.5f * sin(elapsedTime * windPulseFrequency + roots[strandIndex].x * 0.018f + particleInStrand * 0.31f));
     }
 
-    float depthPhase = sin(roots[strandIndex].z * 0.23f + elapsedTime * 0.8f) * 18.0f;
-    float3 acceleration = float3(windDirectionX * windStrength * windEnvelope, gravity, depthPhase);
+    float phase = roots[strandIndex].x * 0.021f + roots[strandIndex].z * 0.033f + t * 5.7f;
+    float gust0 = sin(elapsedTime * 1.25f + phase);
+    float gust1 = cos(elapsedTime * 0.83f + phase * 1.37f);
+    float gust2 = sin(elapsedTime * 2.05f + phase * 1.93f);
+    float3 windDir = normalize(float3(windDirectionX + gust0 * 0.16f, -0.055f + gust1 * 0.03f, gust2 * 0.22f));
+    float windAmp = windStrength * windEnvelope * (0.20f + 0.80f * t);
+
+    float3 acceleration = float3(0.0f, gravity, 0.0f) + windDir * windAmp;
+    acceleration.z += sin(elapsedTime * 0.9f + phase * 0.75f) * windStrength * 0.05f * (0.25f + 0.75f * t);
+
     float3 next = current + velocity + acceleration * (deltaTime * deltaTime);
 
     outPreviousPositions[index] = float4(current, 1.0f);
@@ -442,7 +492,14 @@ cbuffer SimCB : register(b0)
     float neighborRadius;
     float rootNeighborRadius;
     uint neighborSpan;
-    float2 pad0;
+    float selfFriction;
+    uint selfCollisionPasses;
+    uint gridBucketCapacity;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 StructuredBuffer<float4> roots : register(t0);
@@ -504,7 +561,14 @@ cbuffer SimCB : register(b0)
     float neighborRadius;
     float rootNeighborRadius;
     uint neighborSpan;
-    float2 pad0;
+    float selfFriction;
+    uint selfCollisionPasses;
+    uint gridBucketCapacity;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 RWStructuredBuffer<float4> positions : register(u0);
@@ -524,18 +588,23 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     for (uint particleIndex = 1; particleIndex + 1 < particlesPerStrand; ++particleIndex)
     {
         uint currentIndex = baseIndex + particleIndex;
+        float t = float(particleIndex) / max(1.0f, float(particlesPerStrand - 1));
+        float localRigidity = saturate(rootRigidity * (1.0f - t) * (1.0f - t));
+        float localBend = saturate(bendStiffness * lerp(1.25f, 0.55f, t) + localRigidity * 0.18f);
         float3 previous = positions[currentIndex - 1].xyz;
         float3 current = positions[currentIndex].xyz;
         float3 next = positions[currentIndex + 1].xyz;
         float3 target = (previous + next) * 0.5f;
-        positions[currentIndex] = float4(lerp(current, target, bendStiffness), 1.0f);
+        positions[currentIndex] = float4(lerp(current, target, localBend), 1.0f);
     }
 }
 )HLSL";
 
     
 
-    const char* kClusterShaderSource = R"HLSL(
+
+
+    const char* kShapeShaderSource = R"HLSL(
 cbuffer SimCB : register(b0)
 {
     uint strandCount;
@@ -564,7 +633,99 @@ cbuffer SimCB : register(b0)
     float neighborRadius;
     float rootNeighborRadius;
     uint neighborSpan;
-    float2 pad0;
+    float selfFriction;
+    uint selfCollisionPasses;
+    uint gridBucketCapacity;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
+};
+
+StructuredBuffer<float4> inPositions : register(t0);
+StructuredBuffer<float4> restPositions : register(t1);
+StructuredBuffer<float4> roots : register(t2);
+RWStructuredBuffer<float4> outPositions : register(u0);
+
+[numthreads(64, 1, 1)]
+void main(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint strandIndex = dispatchThreadId.x;
+    if (strandIndex >= strandCount)
+    {
+        return;
+    }
+
+    uint baseIndex = strandIndex * particlesPerStrand;
+    float3 root = roots[strandIndex].xyz;
+    float3 restRoot = restPositions[baseIndex].xyz;
+    outPositions[baseIndex] = float4(root, 1.0f);
+
+    [loop]
+    for (uint particleIndex = 1; particleIndex < particlesPerStrand; ++particleIndex)
+    {
+        uint index = baseIndex + particleIndex;
+        float t = float(particleIndex) / max(1.0f, float(particlesPerStrand - 1));
+        float nearRoot = (1.0f - t) * (1.0f - t);
+        float3 current = inPositions[index].xyz;
+        float3 restLocal = restPositions[index].xyz - restRoot;
+        float3 groomTarget = root + restLocal;
+
+        float groomHold = saturate(shapeStiffness * (0.30f + 0.70f * nearRoot));
+        float3 shaped = lerp(current, groomTarget, groomHold);
+
+        float restRadius = length(restLocal);
+        float3 offset = shaped - root;
+        float offsetLen = length(offset);
+        if (offsetLen > 1.0e-5f && restRadius > 1.0e-5f)
+        {
+            float3 radialTarget = root + (offset / offsetLen) * restRadius;
+            shaped = lerp(shaped, radialTarget, saturate(longRangeAttachment * (0.12f + 0.88f * t)));
+        }
+
+        float rootHold = saturate(rootRigidity * nearRoot);
+        shaped = lerp(shaped, groomTarget, rootHold * 0.22f);
+        outPositions[index] = float4(shaped, 1.0f);
+    }
+}
+)HLSL";    const char* kClusterShaderSource = R"HLSL(
+cbuffer SimCB : register(b0)
+{
+    uint strandCount;
+    uint particlesPerStrand;
+    uint solverIterations;
+    uint enableWindPulse;
+    float deltaTime;
+    float gravity;
+    float damping;
+    float segmentLength;
+    float windStrength;
+    float windDirectionX;
+    float windPulseFrequency;
+    float elapsedTime;
+    float floorY;
+    float scalpCenterX;
+    float scalpCenterY;
+    float scalpRadius;
+    float shoulderOffsetX;
+    float shoulderCenterY;
+    float shoulderRadius;
+    float bendStiffness;
+    float scalpRepel;
+    float clusterStiffness;
+    float neighborRepulsion;
+    float neighborRadius;
+    float rootNeighborRadius;
+    uint neighborSpan;
+    float selfFriction;
+    uint selfCollisionPasses;
+    uint gridBucketCapacity;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 StructuredBuffer<float4> inPositions : register(t0);
@@ -688,7 +849,11 @@ cbuffer SimCB : register(b0)
     float selfFriction;
     uint selfCollisionPasses;
     uint gridBucketCapacity;
-    float pad0;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 StructuredBuffer<float4> positions : register(t0);
@@ -803,7 +968,11 @@ cbuffer SimCB : register(b0)
     float selfFriction;
     uint selfCollisionPasses;
     uint gridBucketCapacity;
-    float pad0;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 StructuredBuffer<float4> inPositions : register(t0);
@@ -1009,20 +1178,55 @@ cbuffer SimCB : register(b0)
     float neighborRadius;
     float rootNeighborRadius;
     uint neighborSpan;
-    float2 pad0;
+    float selfFriction;
+    uint selfCollisionPasses;
+    uint gridBucketCapacity;
+    float collisionFriction;
+    float shapeStiffness;
+    float rootRigidity;
+    float longRangeAttachment;
+    float dragCoefficient;
 };
 
 StructuredBuffer<float4> roots : register(t0);
 RWStructuredBuffer<float4> positions : register(u0);
+RWStructuredBuffer<float4> previousPositions : register(u1);
 
-void PushOutSphere(inout float3 p, float3 center, float radius)
+void ApplyVelocityFriction(inout float3 previous, float3 position, float3 normal, float friction)
+{
+    float3 velocity = position - previous;
+    float vn = dot(velocity, normal);
+    float3 tangent = velocity - normal * vn;
+    tangent *= saturate(1.0f - friction);
+    float3 normalVelocity = (vn > 0.0f) ? (normal * vn * 0.12f) : float3(0.0f, 0.0f, 0.0f);
+    previous = position - (tangent + normalVelocity);
+}
+
+void PushOutSphere(inout float3 p, inout float3 previous, float3 center, float radius, float friction)
 {
     float3 delta = p - center;
     float len = length(delta);
     if (len < radius)
     {
-        float3 direction = (len > 1.0e-5f) ? delta / len : float3(0.0f, -1.0f, 0.0f);
-        p = center + direction * radius;
+        float3 normal = (len > 1.0e-5f) ? (delta / len) : float3(0.0f, -1.0f, 0.0f);
+        p = center + normal * radius;
+        ApplyVelocityFriction(previous, p, normal, friction);
+    }
+}
+
+void PushOutCapsule(inout float3 p, inout float3 previous, float3 a, float3 b, float radius, float friction)
+{
+    float3 ab = b - a;
+    float abLenSq = dot(ab, ab);
+    float t = (abLenSq > 1.0e-6f) ? saturate(dot(p - a, ab) / abLenSq) : 0.0f;
+    float3 closest = a + ab * t;
+    float3 delta = p - closest;
+    float len = length(delta);
+    if (len < radius)
+    {
+        float3 normal = (len > 1.0e-5f) ? (delta / len) : float3(0.0f, -1.0f, 0.0f);
+        p = closest + normal * radius;
+        ApplyVelocityFriction(previous, p, normal, friction);
     }
 }
 
@@ -1040,23 +1244,41 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint particleInStrand = index % particlesPerStrand;
     if (particleInStrand == 0)
     {
-        positions[index] = float4(roots[strandIndex].xyz, 1.0f);
+        float3 root = roots[strandIndex].xyz;
+        positions[index] = float4(root, 1.0f);
+        previousPositions[index] = float4(root, 1.0f);
         return;
     }
 
     float3 p = positions[index].xyz;
+    float3 prev = previousPositions[index].xyz;
 
     if (p.y > floorY)
     {
         p.y = floorY;
+        float3 v = p - prev;
+        prev = p - float3(v.x * (1.0f - collisionFriction), 0.0f, v.z * (1.0f - collisionFriction));
     }
 
     float3 headCenter = float3(scalpCenterX, scalpCenterY + scalpRadius * 0.22f, 0.0f);
-    PushOutSphere(p, headCenter, scalpRadius * scalpRepel);
-    PushOutSphere(p, float3(scalpCenterX - shoulderOffsetX, shoulderCenterY, 0.0f), shoulderRadius);
-    PushOutSphere(p, float3(scalpCenterX + shoulderOffsetX, shoulderCenterY, 0.0f), shoulderRadius);
+    PushOutSphere(p, prev, headCenter, scalpRadius * scalpRepel, collisionFriction * 0.35f);
+    PushOutSphere(p, prev, float3(scalpCenterX - shoulderOffsetX, shoulderCenterY, 0.0f), shoulderRadius, collisionFriction * 0.65f);
+    PushOutSphere(p, prev, float3(scalpCenterX + shoulderOffsetX, shoulderCenterY, 0.0f), shoulderRadius, collisionFriction * 0.65f);
+
+    float3 neckTop = float3(scalpCenterX, scalpCenterY + scalpRadius * 0.62f, -4.0f);
+    float3 neckBottom = float3(scalpCenterX, scalpCenterY + scalpRadius * 1.30f, -10.0f);
+    PushOutCapsule(p, prev, neckTop, neckBottom, scalpRadius * 0.18f, collisionFriction * 0.55f);
+
+    float3 backTop = float3(scalpCenterX, shoulderCenterY - 28.0f, -14.0f);
+    float3 backBottom = float3(scalpCenterX, floorY - 72.0f, -24.0f);
+    PushOutCapsule(p, prev, backTop, backBottom, scalpRadius * 0.28f, collisionFriction * 0.85f);
+
+    float3 upperBackTop = float3(scalpCenterX, scalpCenterY + scalpRadius * 1.02f, -10.0f);
+    float3 upperBackBottom = float3(scalpCenterX, shoulderCenterY + 18.0f, -18.0f);
+    PushOutCapsule(p, prev, upperBackTop, upperBackBottom, scalpRadius * 0.24f, collisionFriction * 0.75f);
 
     positions[index] = float4(p, 1.0f);
+    previousPositions[index] = float4(prev, 1.0f);
 }
 )HLSL";
 
@@ -1177,7 +1399,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
               << L" | Iter " << app.solverIterations
               << L" | Cluster " << app.clusterStiffness
               << L" | SelfColl " << app.neighborRepulsion
-              << L" | Friction " << app.selfFriction
+              << L" | ContactFric " << app.collisionFriction
+              << L" | Shape " << app.shapeStiffness
               << L" | Wheel=Zoom  MMB=Pan";
         SetWindowTextW(app.window, title.str().c_str());
 
@@ -1185,13 +1408,17 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         info.setf(std::ios::fixed);
         info.precision(3);
         info << L"GPU compute + GPU line rendering\r\n"
-             << L"Current preset: " << (app.strandCount >= kDenseStrands ? L"Dense 25k" : L"Medium 8k") << L"\r\n"
+             << L"Current density: " << (app.strandCount >= kDenseStrands ? L"Dense 25k" : L"Medium 8k") << L"\r\n"
+             << L"Style preset: " << (app.scenePreset == hair::TestScenePreset::SweepLeft ? L"Sweep Left" : (app.scenePreset == hair::TestScenePreset::CenterPart ? L"Center Part" : L"Curtain")) << L"\r\n"
              << L"Visible segments: " << (app.strandCount * (app.particlesPerStrand - 1)) << L"\r\n"
              << L"Pulse wind: " << (app.useWindPulse ? L"ON" : L"OFF") << L"\r\n"
              << L"Color bands: " << (app.useColorBands ? L"ON" : L"OFF") << L"\r\n"
-             << L"Bundle cluster: " << app.clusterStiffness << L" / Self collision: " << app.neighborRepulsion << L" / Friction: " << app.selfFriction << L"\r\n"
-             << L"Root radius: " << app.rootNeighborRadius << L" px / Neighbor span: +/-" << app.neighborSpan << L" / Passes: " << app.selfCollisionPasses << L"\r\n"
+             << L"Shape hold: " << app.shapeStiffness << L" / Root rigidity: " << app.rootRigidity << L" / Long range: " << app.longRangeAttachment << L"\r\n"
+             << L"Bundle cluster: " << app.clusterStiffness << L" / Self collision: " << app.neighborRepulsion << L" / Self friction: " << app.selfFriction << L"\r\n"
+             << L"Contact friction: " << app.collisionFriction << L" / Drag: " << app.dragCoefficient << L" / Passes: " << app.selfCollisionPasses << L"\r\n"
              << L"Grid self-collision: 48x48x16 cells, bucket 32, overflow cells " << app.overflowCellCount << L", overflow particles " << app.overflowParticleCount << L"\r\n"
+             << L"Body collision: head + shoulders + neck/back capsules\r\n"
+             << L"IO: snapshot / guide OBJ / render line OBJ / tube OBJ / curve cache\r\n"
              << L"Recommended build: Release | x64";
         SetWindowTextW(app.ui.infoLabel, info.str().c_str());
     }
@@ -1216,6 +1443,304 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         swprintf_s(label, L"Self Friction: %.3f", app.selfFriction);
         SetWindowTextW(app.ui.frictionLabel, label);
+    }
+
+    hair::SimulationConfig BuildSharedSimulationConfig(const AppState& app)
+    {
+        hair::SimulationConfig config;
+        config.strandCount = static_cast<int>(app.strandCount);
+        config.segmentCount = static_cast<int>(app.particlesPerStrand) - 1;
+        config.segmentLength = kSegmentLength;
+        config.rootSpacing = 2.2f;
+        config.gravity = app.gravity;
+        config.damping = app.damping;
+        config.solverIterations = static_cast<int>(app.solverIterations);
+        config.bendStiffness = app.bendStiffness;
+        config.clusterStiffness = app.clusterStiffness;
+        config.windStrength = app.windStrength;
+        config.windDirectionX = app.windDirectionX;
+        config.windPulseFrequency = app.windPulseFrequency;
+        config.floorY = 700.0f;
+        config.floorFriction = app.collisionFriction * 0.55f;
+        config.colliderFriction = app.collisionFriction;
+        config.selfCollisionRadius = app.rootNeighborRadius * 0.42f;
+        config.selfCollisionStiffness = app.neighborRepulsion * 0.55f;
+        config.selfCollisionNeighborSpan = static_cast<int>(app.neighborSpan);
+        config.renderRootWidth = 0.85f;
+        config.renderTipWidth = 0.09f;
+        config.scalpCenter = hair::Vec3(470.0f, 135.0f, 0.0f);
+        config.scalpRadius = 92.0f;
+        config.scenePreset = app.scenePreset;
+        return config;
+    }
+
+    void ApplySharedSimulationConfig(AppState& app, const hair::SimulationConfig& config)
+    {
+        app.strandCount = static_cast<UINT>(std::max(config.strandCount, 1));
+        app.particlesPerStrand = static_cast<UINT>(std::max(config.segmentCount + 1, 2));
+        app.gravity = config.gravity;
+        app.damping = config.damping;
+        app.solverIterations = static_cast<UINT>(std::max(config.solverIterations, 1));
+        app.bendStiffness = config.bendStiffness;
+        app.clusterStiffness = config.clusterStiffness;
+        app.windStrength = config.windStrength;
+        app.windDirectionX = config.windDirectionX;
+        app.windPulseFrequency = config.windPulseFrequency;
+        app.neighborRepulsion = std::max(app.neighborRepulsion, config.selfCollisionStiffness);
+        app.rootNeighborRadius = std::max(app.rootNeighborRadius, config.selfCollisionRadius * 2.2f);
+        app.neighborSpan = static_cast<UINT>(std::max(config.selfCollisionNeighborSpan, 1));
+        app.collisionFriction = config.colliderFriction;
+        app.selfFriction = std::max(app.selfFriction, config.floorFriction);
+        app.scenePreset = config.scenePreset;
+    }
+
+    std::wstring GetOutputFilePath(const wchar_t* fileName)
+    {
+        wchar_t modulePath[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, modulePath, static_cast<DWORD>(std::size(modulePath)));
+        wchar_t* lastSlash = wcsrchr(modulePath, L'\\');
+        if (lastSlash != nullptr)
+        {
+            *(lastSlash + 1) = L'\0';
+        }
+        std::wstring path = modulePath;
+        path += fileName;
+        return path;
+    }
+
+    std::string NarrowAsciiPath(const std::wstring& path)
+    {
+        std::string output(path.begin(), path.end());
+        if (!output.empty() && output.back() == '\0')
+        {
+            output.pop_back();
+        }
+        return output;
+    }
+
+    bool ReadbackStructuredFloat4Buffer(AppState& app, const GpuStructuredBuffer& source, UINT elementCount, std::vector<Float4>& outData)
+    {
+        if (!source.buffer)
+        {
+            return false;
+        }
+
+        D3D11_BUFFER_DESC sourceDesc = {};
+        source.buffer->GetDesc(&sourceDesc);
+        D3D11_BUFFER_DESC stagingDesc = sourceDesc;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags = 0;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        ComPtr<ID3D11Buffer> staging;
+        if (FAILED(app.device->CreateBuffer(&stagingDesc, nullptr, &staging)))
+        {
+            return false;
+        }
+
+        app.context->CopyResource(staging.Get(), source.buffer.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (FAILED(app.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
+        {
+            return false;
+        }
+
+        outData.resize(elementCount);
+        std::memcpy(outData.data(), mapped.pData, sizeof(Float4) * static_cast<size_t>(elementCount));
+        app.context->Unmap(staging.Get(), 0);
+        return true;
+    }
+
+    bool CreateLineVertexBuffer(AppState& app)
+    {
+        std::vector<LineVertex> lineVertices;
+        lineVertices.reserve(app.strandCount * (app.particlesPerStrand - 1) * 2);
+        for (UINT strand = 0; strand < app.strandCount; ++strand)
+        {
+            const UINT baseIndex = strand * app.particlesPerStrand;
+            const UINT group = (strand / 4u) % 6u;
+            for (UINT particle = 0; particle + 1 < app.particlesPerStrand; ++particle)
+            {
+                lineVertices.push_back({ baseIndex + particle, group });
+                lineVertices.push_back({ baseIndex + particle + 1u, group });
+            }
+        }
+
+        app.lineVertexBuffer.Reset();
+        app.lineVertexCount = static_cast<UINT>(lineVertices.size());
+        D3D11_BUFFER_DESC vbDesc = {};
+        vbDesc.ByteWidth = static_cast<UINT>(lineVertices.size() * sizeof(LineVertex));
+        vbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+        vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vbData = {};
+        vbData.pSysMem = lineVertices.data();
+        return SUCCEEDED(app.device->CreateBuffer(&vbDesc, &vbData, &app.lineVertexBuffer));
+    }
+
+    bool BuildSimulationResourcesFromCpu(AppState& app, const hair::HairSimulation& source)
+    {
+        ApplySharedSimulationConfig(app, source.GetConfig());
+        app.strandCount = static_cast<UINT>(source.GetStrandCount());
+        app.particlesPerStrand = static_cast<UINT>(source.GetParticlesPerStrand());
+        const UINT totalParticles = app.strandCount * app.particlesPerStrand;
+
+        std::vector<Float4> roots(app.strandCount);
+        std::vector<Float4> positions(totalParticles);
+        std::vector<Float4> previous(totalParticles);
+        std::vector<Float4> restPositions(totalParticles);
+        const hair::Vec3* srcRoots = source.GetFlatRoots();
+        const hair::Vec3* srcPositions = source.GetFlatPositions();
+        const hair::Vec3* srcPrevious = source.GetFlatPreviousPositions();
+        for (UINT index = 0; index < app.strandCount; ++index)
+        {
+            roots[index] = { srcRoots[index].x, srcRoots[index].y, srcRoots[index].z, 1.0f };
+        }
+        for (UINT index = 0; index < totalParticles; ++index)
+        {
+            positions[index] = { srcPositions[index].x, srcPositions[index].y, srcPositions[index].z, 1.0f };
+            previous[index] = { srcPrevious[index].x, srcPrevious[index].y, srcPrevious[index].z, 1.0f };
+            restPositions[index] = positions[index];
+        }
+
+        app.positions[0] = {};
+        app.positions[1] = {};
+        app.previousPositions[0] = {};
+        app.previousPositions[1] = {};
+        app.rootPositions = {};
+        app.restPositions = {};
+        app.gridCellCounts = {};
+        app.gridCellParticles = {};
+        app.gridOverflowCounts = {};
+        app.gridOverflowReadback.Reset();
+        app.overflowCellCount = 0;
+        app.overflowParticleCount = 0;
+        app.frameCounter = 0;
+        app.currentBufferIndex = 0;
+        app.elapsedTime = source.GetElapsedTimeSeconds();
+
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, positions.data(), true, app.positions[0])) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, positions.data(), true, app.positions[1])) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, previous.data(), true, app.previousPositions[0])) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, previous.data(), true, app.previousPositions[1])) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), app.strandCount, roots.data(), false, app.rootPositions)) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, restPositions.data(), false, app.restPositions)) return false;
+
+        std::vector<UINT> zeroCounts(kGridCellCount, 0u);
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(UINT), kGridCellCount, zeroCounts.data(), true, app.gridCellCounts)) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(UINT), kGridCellCount * kGridBucketCapacity, nullptr, true, app.gridCellParticles)) return false;
+        if (!CreateStructuredBuffer(app.device.Get(), sizeof(UINT), kGridCellCount, zeroCounts.data(), true, app.gridOverflowCounts)) return false;
+        if (!CreateStructuredReadbackBuffer(app.device.Get(), sizeof(UINT), kGridCellCount, app.gridOverflowReadback)) return false;
+        if (!CreateLineVertexBuffer(app)) return false;
+
+        UpdateWindowText(app);
+        return true;
+    }
+
+    bool CaptureGpuState(AppState& app, hair::HairSimulation& outSimulation)
+    {
+        const UINT totalParticles = app.strandCount * app.particlesPerStrand;
+        std::vector<Float4> roots;
+        std::vector<Float4> positions;
+        std::vector<Float4> previous;
+        if (!ReadbackStructuredFloat4Buffer(app, app.rootPositions, app.strandCount, roots)
+            || !ReadbackStructuredFloat4Buffer(app, app.positions[app.currentBufferIndex], totalParticles, positions)
+            || !ReadbackStructuredFloat4Buffer(app, app.previousPositions[app.currentBufferIndex], totalParticles, previous))
+        {
+            return false;
+        }
+
+        std::vector<hair::Vec3> rootVec(app.strandCount);
+        std::vector<hair::Vec3> posVec(totalParticles);
+        std::vector<hair::Vec3> prevVec(totalParticles);
+        for (UINT i = 0; i < app.strandCount; ++i)
+        {
+            rootVec[i] = hair::Vec3(roots[i].x, roots[i].y, roots[i].z);
+        }
+        for (UINT i = 0; i < totalParticles; ++i)
+        {
+            posVec[i] = hair::Vec3(positions[i].x, positions[i].y, positions[i].z);
+            prevVec[i] = hair::Vec3(previous[i].x, previous[i].y, previous[i].z);
+        }
+
+        return outSimulation.SetFlatState(BuildSharedSimulationConfig(app), posVec.data(), prevVec.data(), rootVec.data(), static_cast<int>(posVec.size()), static_cast<int>(app.particlesPerStrand));
+    }
+
+    bool SaveGpuSnapshot(AppState& app)
+    {
+        hair::HairSimulation snapshot;
+        if (!CaptureGpuState(app, snapshot)) return false;
+        const std::wstring path = GetOutputFilePath(L"hair_gpu_snapshot.hsnap");
+        const std::string pathUtf8 = NarrowAsciiPath(path);
+        return snapshot.SaveSnapshot(pathUtf8.c_str());
+    }
+
+    bool LoadGpuSnapshot(AppState& app)
+    {
+        hair::HairSimulation snapshot;
+        const std::wstring path = GetOutputFilePath(L"hair_gpu_snapshot.hsnap");
+        const std::string pathUtf8 = NarrowAsciiPath(path);
+        if (!snapshot.LoadSnapshot(pathUtf8.c_str()))
+        {
+            return false;
+        }
+        return BuildSimulationResourcesFromCpu(app, snapshot);
+    }
+
+    bool ExportGpuGuides(AppState& app)
+    {
+        hair::HairSimulation snapshot;
+        if (!CaptureGpuState(app, snapshot)) return false;
+        const std::wstring path = GetOutputFilePath(L"hair_gpu_guides.obj");
+        const std::string pathUtf8 = NarrowAsciiPath(path);
+        return snapshot.ExportGuideLinesObj(pathUtf8.c_str());
+    }
+
+    bool ExportGpuRenderLines(AppState& app)
+    {
+        hair::HairSimulation snapshot;
+        if (!CaptureGpuState(app, snapshot)) return false;
+        hair::RenderInterpolationSettings settings;
+        settings.childrenPerGuide = (app.strandCount >= kDenseStrands) ? 1 : 2;
+        settings.spread = 1.35f;
+        settings.clumpBlend = 0.68f;
+        settings.frizz = 0.05f;
+        settings.randomSeed = 7;
+        settings.includeGuideStrands = true;
+        const std::wstring path = GetOutputFilePath(L"hair_gpu_render_lines.obj");
+        const std::string pathUtf8 = NarrowAsciiPath(path);
+        return snapshot.ExportRenderLinesObj(pathUtf8.c_str(), settings);
+    }
+
+    bool ExportGpuTubes(AppState& app)
+    {
+        hair::HairSimulation snapshot;
+        if (!CaptureGpuState(app, snapshot)) return false;
+        hair::TubeMeshExportSettings settings;
+        settings.childrenPerGuide = (app.strandCount >= kDenseStrands) ? 1 : 2;
+        settings.radialSegments = 6;
+        settings.rootRadius = 0.75f;
+        settings.tipRadius = 0.08f;
+        settings.spread = 1.25f;
+        settings.frizz = 0.04f;
+        const std::wstring path = GetOutputFilePath(L"hair_gpu_tubes.obj");
+        const std::string pathUtf8 = NarrowAsciiPath(path);
+        return snapshot.ExportTubeMeshObj(pathUtf8.c_str(), settings);
+    }
+
+    bool SaveGpuCurveCache(AppState& app)
+    {
+        hair::HairSimulation snapshot;
+        if (!CaptureGpuState(app, snapshot)) return false;
+        hair::RenderInterpolationSettings settings;
+        settings.childrenPerGuide = (app.strandCount >= kDenseStrands) ? 1 : 2;
+        settings.spread = 1.35f;
+        settings.clumpBlend = 0.68f;
+        settings.frizz = 0.05f;
+        settings.randomSeed = 7;
+        settings.includeGuideStrands = true;
+        const std::wstring path = GetOutputFilePath(L"hair_gpu_curves.hcache");
+        const std::string pathUtf8 = NarrowAsciiPath(path);
+        return snapshot.SaveCurveCache(pathUtf8.c_str(), settings);
     }
 
     void CreateUi(AppState& app)
@@ -1257,6 +1782,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         app.ui.reset = createButton(L"Reset Current", IdReset);
         app.ui.dense25k = createButton(L"Dense 25k", IdDense25k);
         app.ui.medium8k = createButton(L"Medium 8k", IdMedium8k);
+        app.ui.presetCurtain = createButton(L"Preset: Curtain", IdPresetCurtain);
+        app.ui.presetSweepLeft = createButton(L"Preset: Sweep Left", IdPresetSweepLeft);
+        app.ui.presetCenterPart = createButton(L"Preset: Center Part", IdPresetCenterPart);
+        app.ui.saveSnapshot = createButton(L"Save Snapshot", IdSaveSnapshot);
+        app.ui.loadSnapshot = createButton(L"Load Snapshot", IdLoadSnapshot);
+        app.ui.exportGuides = createButton(L"Export Guides OBJ", IdExportGuides);
+        app.ui.exportRenderLines = createButton(L"Export Render Lines OBJ", IdExportRenderLines);
+        app.ui.exportTubes = createButton(L"Export Tubes OBJ", IdExportTubes);
+        app.ui.saveCurveCache = createButton(L"Save Curve Cache", IdSaveCurveCache);
         app.ui.colorBands = createButton(L"Color Bands", IdColorBands, BS_AUTOCHECKBOX);
         app.ui.pulseWind = createButton(L"Pulse Wind", IdPulseWind, BS_AUTOCHECKBOX);
 
@@ -1301,6 +1835,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         move(app.ui.reset, 28);
         move(app.ui.dense25k, 28);
         move(app.ui.medium8k, 28);
+        move(app.ui.presetCurtain, 28);
+        move(app.ui.presetSweepLeft, 28);
+        move(app.ui.presetCenterPart, 28);
+        move(app.ui.saveSnapshot, 28);
+        move(app.ui.loadSnapshot, 28);
+        move(app.ui.exportGuides, 28);
+        move(app.ui.exportRenderLines, 28);
+        move(app.ui.exportTubes, 28);
+        move(app.ui.saveCurveCache, 28);
         move(app.ui.colorBands, 24);
         move(app.ui.pulseWind, 24);
         y += 8;
@@ -1445,37 +1988,45 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
             return false;
         }
 
-ComPtr<ID3DBlob> clusterBlob;
-hr = CompileShader(kClusterShaderSource, "main", "cs_5_0", &clusterBlob, errors);
-if (FAILED(hr))
-{
-    ShowError(app.window, L"Cluster Shader Compile Failed", ToWide(errors));
-    return false;
-}
+        ComPtr<ID3DBlob> clusterBlob;
+        hr = CompileShader(kClusterShaderSource, "main", "cs_5_0", &clusterBlob, errors);
+        if (FAILED(hr))
+        {
+            ShowError(app.window, L"Cluster Shader Compile Failed", ToWide(errors));
+            return false;
+        }
 
-ComPtr<ID3DBlob> clearGridBlob;
-hr = CompileShader(kClearGridShaderSource, "main", "cs_5_0", &clearGridBlob, errors);
-if (FAILED(hr))
-{
-    ShowError(app.window, L"Clear Grid Shader Compile Failed", ToWide(errors));
-    return false;
-}
+        ComPtr<ID3DBlob> shapeBlob;
+        hr = CompileShader(kShapeShaderSource, "main", "cs_5_0", &shapeBlob, errors);
+        if (FAILED(hr))
+        {
+            ShowError(app.window, L"Shape Shader Compile Failed", ToWide(errors));
+            return false;
+        }
 
-ComPtr<ID3DBlob> buildGridBlob;
-hr = CompileShader(kBuildGridShaderSource, "main", "cs_5_0", &buildGridBlob, errors);
-if (FAILED(hr))
-{
-    ShowError(app.window, L"Build Grid Shader Compile Failed", ToWide(errors));
-    return false;
-}
+        ComPtr<ID3DBlob> clearGridBlob;
+        hr = CompileShader(kClearGridShaderSource, "main", "cs_5_0", &clearGridBlob, errors);
+        if (FAILED(hr))
+        {
+            ShowError(app.window, L"Clear Grid Shader Compile Failed", ToWide(errors));
+            return false;
+        }
 
-ComPtr<ID3DBlob> selfCollisionBlob;
-hr = CompileShader(kSelfCollisionShaderSource, "main", "cs_5_0", &selfCollisionBlob, errors);
-if (FAILED(hr))
-{
-    ShowError(app.window, L"Self Collision Shader Compile Failed", ToWide(errors));
-    return false;
-}
+        ComPtr<ID3DBlob> buildGridBlob;
+        hr = CompileShader(kBuildGridShaderSource, "main", "cs_5_0", &buildGridBlob, errors);
+        if (FAILED(hr))
+        {
+            ShowError(app.window, L"Build Grid Shader Compile Failed", ToWide(errors));
+            return false;
+        }
+
+        ComPtr<ID3DBlob> selfCollisionBlob;
+        hr = CompileShader(kSelfCollisionShaderSource, "main", "cs_5_0", &selfCollisionBlob, errors);
+        if (FAILED(hr))
+        {
+            ShowError(app.window, L"Self Collision Shader Compile Failed", ToWide(errors));
+            return false;
+        }
 
 if (FAILED(app.device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &app.vertexShader)))
 {
@@ -1502,6 +2053,10 @@ if (FAILED(app.device->CreateComputeShader(collisionBlob->GetBufferPointer(), co
     return false;
 }
 if (FAILED(app.device->CreateComputeShader(clusterBlob->GetBufferPointer(), clusterBlob->GetBufferSize(), nullptr, &app.clusterShader)))
+{
+    return false;
+}
+if (FAILED(app.device->CreateComputeShader(shapeBlob->GetBufferPointer(), shapeBlob->GetBufferSize(), nullptr, &app.shapeShader)))
 {
     return false;
 }
@@ -1555,17 +2110,19 @@ if (FAILED(app.device->CreateComputeShader(selfCollisionBlob->GetBufferPointer()
         return true;
     }
 
-    void BuildInitialHairData(AppState& app, std::vector<Float4>& roots, std::vector<Float4>& positions, std::vector<Float4>& previous, std::vector<LineVertex>& lineVertices)
+    void BuildInitialHairData(AppState& app, std::vector<Float4>& roots, std::vector<Float4>& positions, std::vector<Float4>& previous, std::vector<Float4>& restPositions, std::vector<LineVertex>& lineVertices)
     {
         roots.clear();
         positions.clear();
         previous.clear();
+        restPositions.clear();
         lineVertices.clear();
 
         roots.reserve(app.strandCount);
         const UINT totalParticles = app.strandCount * app.particlesPerStrand;
         positions.reserve(totalParticles);
         previous.reserve(totalParticles);
+        restPositions.reserve(totalParticles);
         lineVertices.reserve(app.strandCount * (app.particlesPerStrand - 1) * 2);
 
         constexpr float goldenAngle = 2.39996323f;
@@ -1584,14 +2141,33 @@ if (FAILED(app.device->CreateComputeShader(selfCollisionBlob->GetBufferPointer()
             const float rootZ = (Hash01(static_cast<int>(strand) * 31 + 11) - 0.5f) * 28.0f;
             roots.push_back({ rootX, rootY, rootZ, 1.0f });
 
-            for (UINT particle = 0; particle < app.particlesPerStrand; ++particle)
+            const float xNorm = std::clamp((rootX - scalpCenterX) / scalpRadiusX, -1.0f, 1.0f);
+            const float side = (xNorm >= 0.0f) ? 1.0f : -1.0f;
+            const float sweep = xNorm * 0.20f + side * std::pow(std::abs(xNorm), 0.65f) * 0.07f;
+            const float depthBias = -0.05f - 0.05f * (1.0f - std::abs(xNorm));
+            const float curlPhase = Hash01(static_cast<int>(strand) * 53 + 13) * 6.2831853f;
+
+            positions.push_back({ rootX, rootY, rootZ, 1.0f });
+            previous.push_back({ rootX, rootY, rootZ, 1.0f });
+            restPositions.push_back({ rootX, rootY, rootZ, 1.0f });
+
+            Float4 prevPoint = { rootX, rootY, rootZ, 1.0f };
+            for (UINT particle = 1; particle < app.particlesPerStrand; ++particle)
             {
-                const float phase = (Hash01(static_cast<int>(strand) * 53 + static_cast<int>(particle) * 7) - 0.5f) * 5.0f;
-                const float x = rootX + phase * (particle / static_cast<float>(app.particlesPerStrand));
-                const float y = rootY + app.particlesPerStrand * 0.5f + static_cast<float>(particle) * kSegmentLength;
-                const float z = rootZ;
-                positions.push_back({ x, y, z, 1.0f });
-                previous.push_back({ x, y, z, 1.0f });
+                const float along = static_cast<float>(particle) / static_cast<float>(std::max(1u, app.particlesPerStrand - 1u));
+                const float curl = std::sin(curlPhase + along * 4.2f) * (0.03f + 0.08f * along);
+                const float twist = std::cos(curlPhase * 0.7f + along * 3.1f) * 0.05f * along;
+                const float dirX = sweep + curl * (0.35f + 0.65f * std::abs(xNorm));
+                const float dirY = 0.995f - along * 0.09f;
+                const float dirZ = depthBias + twist + curl * 0.65f;
+                const float invLen = 1.0f / std::sqrt(std::max(1.0e-6f, dirX * dirX + dirY * dirY + dirZ * dirZ));
+                const float nextX = prevPoint.x + dirX * invLen * kSegmentLength;
+                const float nextY = prevPoint.y + dirY * invLen * kSegmentLength;
+                const float nextZ = prevPoint.z + dirZ * invLen * kSegmentLength;
+                prevPoint = { nextX, nextY, nextZ, 1.0f };
+                positions.push_back(prevPoint);
+                previous.push_back(prevPoint);
+                restPositions.push_back(prevPoint);
             }
 
             const UINT baseIndex = strand * app.particlesPerStrand;
@@ -1606,83 +2182,8 @@ if (FAILED(app.device->CreateComputeShader(selfCollisionBlob->GetBufferPointer()
 
     bool BuildSimulationResources(AppState& app)
     {
-        std::vector<Float4> roots;
-        std::vector<Float4> positions;
-        std::vector<Float4> previous;
-        std::vector<LineVertex> lineVertices;
-        BuildInitialHairData(app, roots, positions, previous, lineVertices);
-
-        app.positions[0] = {};
-        app.positions[1] = {};
-        app.previousPositions[0] = {};
-        app.previousPositions[1] = {};
-        app.rootPositions = {};
-        app.gridCellCounts = {};
-        app.gridCellParticles = {};
-        app.gridOverflowCounts = {};
-        app.gridOverflowReadback.Reset();
-        app.overflowCellCount = 0;
-        app.overflowParticleCount = 0;
-        app.frameCounter = 0;
-        app.lineVertexBuffer.Reset();
-        app.lineVertexCount = static_cast<UINT>(lineVertices.size());
-        app.currentBufferIndex = 0;
-        app.elapsedTime = 0.0f;
-
-        const UINT totalParticles = app.strandCount * app.particlesPerStrand;
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, positions.data(), true, app.positions[0]))
-        {
-            return false;
-        }
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, positions.data(), true, app.positions[1]))
-        {
-            return false;
-        }
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, previous.data(), true, app.previousPositions[0]))
-        {
-            return false;
-        }
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), totalParticles, previous.data(), true, app.previousPositions[1]))
-        {
-            return false;
-        }
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(Float4), app.strandCount, roots.data(), false, app.rootPositions))
-        {
-            return false;
-        }
-
-        std::vector<UINT> zeroCounts(kGridCellCount, 0u);
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(UINT), kGridCellCount, zeroCounts.data(), true, app.gridCellCounts))
-        {
-            return false;
-        }
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(UINT), kGridCellCount * kGridBucketCapacity, nullptr, true, app.gridCellParticles))
-        {
-            return false;
-        }
-        if (!CreateStructuredBuffer(app.device.Get(), sizeof(UINT), kGridCellCount, zeroCounts.data(), true, app.gridOverflowCounts))
-        {
-            return false;
-        }
-        if (!CreateStructuredReadbackBuffer(app.device.Get(), sizeof(UINT), kGridCellCount, app.gridOverflowReadback))
-        {
-            return false;
-        }
-
-        D3D11_BUFFER_DESC vbDesc = {};
-        vbDesc.ByteWidth = static_cast<UINT>(lineVertices.size() * sizeof(LineVertex));
-        vbDesc.Usage = D3D11_USAGE_IMMUTABLE;
-        vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-        D3D11_SUBRESOURCE_DATA vbData = {};
-        vbData.pSysMem = lineVertices.data();
-        if (FAILED(app.device->CreateBuffer(&vbDesc, &vbData, &app.lineVertexBuffer)))
-        {
-            return false;
-        }
-
-        UpdateWindowText(app);
-        return true;
+        hair::HairSimulation bootstrap(BuildSharedSimulationConfig(app));
+        return BuildSimulationResourcesFromCpu(app, bootstrap);
     }
 
     void ResizeRenderTarget(AppState& app, int width, int height)
@@ -1730,6 +2231,11 @@ if (FAILED(app.device->CreateComputeShader(selfCollisionBlob->GetBufferPointer()
         constants.selfFriction = app.selfFriction;
         constants.selfCollisionPasses = app.selfCollisionPasses;
         constants.gridBucketCapacity = kGridBucketCapacity;
+        constants.collisionFriction = app.collisionFriction;
+        constants.shapeStiffness = app.shapeStiffness;
+        constants.rootRigidity = app.rootRigidity;
+        constants.longRangeAttachment = app.longRangeAttachment;
+        constants.dragCoefficient = app.dragCoefficient;
         app.context->UpdateSubresource(app.simConstantBuffer.Get(), 0, nullptr, &constants, 0, 0);
     }
 
@@ -1795,11 +2301,11 @@ if (FAILED(app.device->CreateComputeShader(selfCollisionBlob->GetBufferPointer()
     void DispatchCollisions(AppState& app)
     {
         ID3D11ShaderResourceView* srvs[] = { app.rootPositions.srv.Get() };
-        ID3D11UnorderedAccessView* uavs[] = { app.positions[app.currentBufferIndex].uav.Get() };
+        ID3D11UnorderedAccessView* uavs[] = { app.positions[app.currentBufferIndex].uav.Get(), app.previousPositions[app.currentBufferIndex].uav.Get() };
         app.context->CSSetShader(app.collisionShader.Get(), nullptr, 0);
         app.context->CSSetConstantBuffers(0, 1, app.simConstantBuffer.GetAddressOf());
         app.context->CSSetShaderResources(0, 1, srvs);
-        app.context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+        app.context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
         const UINT totalParticles = app.strandCount * app.particlesPerStrand;
         app.context->Dispatch((totalParticles + 63u) / 64u, 1, 1);
         UnbindCompute(app);
@@ -1825,6 +2331,25 @@ if (FAILED(app.device->CreateComputeShader(selfCollisionBlob->GetBufferPointer()
     }
 
 
+
+    void DispatchShape(AppState& app)
+    {
+        const UINT scratch = 1u - app.currentBufferIndex;
+        ID3D11ShaderResourceView* srvs[] =
+        {
+            app.positions[app.currentBufferIndex].srv.Get(),
+            app.restPositions.srv.Get(),
+            app.rootPositions.srv.Get(),
+        };
+        ID3D11UnorderedAccessView* uavs[] = { app.positions[scratch].uav.Get() };
+        app.context->CSSetShader(app.shapeShader.Get(), nullptr, 0);
+        app.context->CSSetConstantBuffers(0, 1, app.simConstantBuffer.GetAddressOf());
+        app.context->CSSetShaderResources(0, 3, srvs);
+        app.context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+        app.context->Dispatch((app.strandCount + 63u) / 64u, 1, 1);
+        UnbindCompute(app);
+        app.context->CopyResource(app.positions[app.currentBufferIndex].buffer.Get(), app.positions[scratch].buffer.Get());
+    }
 
 void DispatchClearGrid(AppState& app)
 {
@@ -1916,18 +2441,26 @@ void DispatchSelfCollision(AppState& app)
         {
             DispatchDistance(app);
             DispatchBend(app);
+            DispatchShape(app);
             DispatchCollisions(app);
         }
         DispatchClusterRepulsion(app);
+        DispatchShape(app);
+        DispatchDistance(app);
+        DispatchCollisions(app);
         for (UINT pass = 0; pass < app.selfCollisionPasses; ++pass)
         {
             DispatchClearGrid(app);
             DispatchBuildGrid(app);
             DispatchSelfCollision(app);
             DispatchDistance(app);
+            DispatchShape(app);
             DispatchCollisions(app);
         }
         DispatchBend(app);
+        DispatchShape(app);
+        DispatchDistance(app);
+        DispatchCollisions(app);
         ++app.frameCounter;
         if ((app.frameCounter % 15u) == 0u)
         {
@@ -2004,6 +2537,18 @@ void DispatchSelfCollision(AppState& app)
     void ResetSimulation(AppState& app, UINT strandCount)
     {
         app.strandCount = strandCount;
+        const bool dense = (strandCount >= kDenseStrands);
+        app.solverIterations = dense ? 4u : 6u;
+        app.bendStiffness = dense ? 0.24f : 0.30f;
+        app.clusterStiffness = dense ? 0.16f : 0.22f;
+        app.neighborRepulsion = dense ? 0.32f : 0.40f;
+        app.selfCollisionPasses = dense ? 2u : 3u;
+        app.selfFriction = dense ? 0.20f : 0.26f;
+        app.collisionFriction = dense ? 0.36f : 0.46f;
+        app.shapeStiffness = dense ? 0.12f : 0.18f;
+        app.rootRigidity = dense ? 0.64f : 0.78f;
+        app.longRangeAttachment = dense ? 0.10f : 0.16f;
+        app.dragCoefficient = dense ? 0.018f : 0.026f;
         BuildSimulationResources(app);
         UpdateSliderLabels(app);
         UpdateWindowText(app);
@@ -2100,6 +2645,81 @@ void DispatchSelfCollision(AppState& app)
                 ResetSimulation(*app, kDefaultStrands);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
+            case IdPresetCurtain:
+                app->scenePreset = hair::TestScenePreset::Curtain;
+                ResetSimulation(*app, app->strandCount);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            case IdPresetSweepLeft:
+                app->scenePreset = hair::TestScenePreset::SweepLeft;
+                ResetSimulation(*app, app->strandCount);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            case IdPresetCenterPart:
+                app->scenePreset = hair::TestScenePreset::CenterPart;
+                ResetSimulation(*app, app->strandCount);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            case IdSaveSnapshot:
+            {
+                const bool ok = SaveGpuSnapshot(*app);
+                MessageBoxW(hwnd,
+                    ok ? L"Saved hair_gpu_snapshot.hsnap next to the executable." : L"Failed to save hair_gpu_snapshot.hsnap.",
+                    ok ? L"Snapshot Saved" : L"Snapshot Save Failed",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+                return 0;
+            }
+            case IdLoadSnapshot:
+            {
+                const bool ok = LoadGpuSnapshot(*app);
+                if (ok)
+                {
+                    UpdateSliderLabels(*app);
+                    SyncUiState(*app);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                MessageBoxW(hwnd,
+                    ok ? L"Loaded hair_gpu_snapshot.hsnap from the executable folder." : L"Failed to load hair_gpu_snapshot.hsnap.",
+                    ok ? L"Snapshot Loaded" : L"Snapshot Load Failed",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+                return 0;
+            }
+            case IdExportGuides:
+            {
+                const bool ok = ExportGpuGuides(*app);
+                MessageBoxW(hwnd,
+                    ok ? L"Exported hair_gpu_guides.obj next to the executable." : L"Failed to export hair_gpu_guides.obj.",
+                    ok ? L"Guide Exported" : L"Guide Export Failed",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+                return 0;
+            }
+            case IdExportRenderLines:
+            {
+                const bool ok = ExportGpuRenderLines(*app);
+                MessageBoxW(hwnd,
+                    ok ? L"Exported hair_gpu_render_lines.obj next to the executable." : L"Failed to export hair_gpu_render_lines.obj.",
+                    ok ? L"Render Lines Exported" : L"Render Lines Export Failed",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+                return 0;
+            }
+            case IdExportTubes:
+            {
+                const bool ok = ExportGpuTubes(*app);
+                MessageBoxW(hwnd,
+                    ok ? L"Exported hair_gpu_tubes.obj next to the executable." : L"Failed to export hair_gpu_tubes.obj.",
+                    ok ? L"Tube Exported" : L"Tube Export Failed",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+                return 0;
+            }
+            case IdSaveCurveCache:
+            {
+                const bool ok = SaveGpuCurveCache(*app);
+                MessageBoxW(hwnd,
+                    ok ? L"Saved hair_gpu_curves.hcache next to the executable." : L"Failed to save hair_gpu_curves.hcache.",
+                    ok ? L"Curve Cache Saved" : L"Curve Cache Save Failed",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+                return 0;
+            }
             case IdColorBands:
                 app->useColorBands = (SendMessageW(app->ui.colorBands, BM_GETCHECK, 0, 0) == BST_CHECKED);
                 SyncUiState(*app);
