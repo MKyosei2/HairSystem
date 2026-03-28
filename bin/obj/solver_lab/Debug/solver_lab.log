@@ -1,4 +1,0 @@
-﻿  Main.cpp
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(129,5): warning C4324: '`anonymous-namespace'::SimConstants': アラインメント指定子のために構造体がパッドされました
-C:\Users\kyose\source\repos\HairSystem\solver_lab\src\Main.cpp(2198,32): warning C4100: 'hwnd': 参照されないパラメーター
-  solver_lab.vcxproj -> C:\Users\kyose\source\repos\HairSystem\bin\Debug\solver_lab.exe

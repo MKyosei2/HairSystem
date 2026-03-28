@@ -1,0 +1,9 @@
+.vs/
+out/
+build/
+bin/
+obj/
+*.user
+*.VC.db
+*.sln.docstates
+*.vcxproj.user
