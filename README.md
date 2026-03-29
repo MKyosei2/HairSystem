@@ -127,3 +127,58 @@ cmake --build build --config Debug
 ## Visual Studio troubleshooting
 
 If you see `D8016: /ZI and /Gy- cannot be specified together`, use the included updated solution where projects explicitly set `DebugInformationFormat=ProgramDatabase (/Zi)`. That error prevents `hairgpu_core.lib` from being produced, which then causes `LNK1104` in the viewer.
+
+
+## Added fast-track research GUI
+
+The DX11 viewer now includes a right-side Win32 control panel so the project can be used as a small interactive hair-simulation tool instead of a keyboard-only sample.
+
+Implemented in this pass:
+
+- Play / Pause / Reset buttons
+- Preset selection (`Rapunzel Preview`, `Calm Studio`, `Windy Demo`, `Heavy Grounded`, `Game-ish LOD`)
+- Asset rebuild controls for guide count, followers per guide, and particles per strand
+- Render mode combo (`Ribbon`, `Tube Preview`)
+- Checkboxes for self collision, grid broadphase, scalp motion, collider debug, and scalp wireframe
+- Sliders for width, gravity, damping, wind, solver iterations, follow stiffness, self collision radius/stiffness, grid cell size, stretch compliance, and bend compliance
+- Save / Load settings to `.ini`
+- Export current frame strand positions to `.csv`
+- Runtime stats panel with FPS, frame time, sim time, and asset stats
+- DX11 debug line drawing for collider wireframes and scalp wireframe
+
+### GUI workflow
+
+1. Run the DX11 viewer.
+2. Use the right panel to pick a preset.
+3. Change guide/follower/particle counts and click `Apply Asset`.
+4. Tune solver values with the sliders.
+5. Enable collider or scalp debug drawing when checking motion and contact.
+6. Save a parameter setup with `Save Settings` or export the current strand positions with `Export CSV`.
+
+
+## Continued fast-track additions
+
+This pass adds a few more demo- and graduation-project-friendly features to the DX11 viewer:
+
+- `Step` button and keyboard single-step (`N`) for paused inspection
+- `Color Debug` combo (`Natural`, `Guide / Follower`, `Width Heatmap`)
+- `Show Grid Bounds` and `Show Floor Guide` debug overlays
+- `Export Perf CSV` to save accumulated frame and simulation timings
+- runtime stats now show current simulation-step cost and averages over collected samples
+
+### Extra shortcuts
+
+- `N`: single-step while paused
+- `C`: cycle color debug mode
+- `F`: toggle floor guide
+- `H`: toggle grid-bounds debug
+
+
+## New import + debug features
+- **Import Hair...** button in the DX11 viewer
+- Real **curves CSV** import path
+- **Alembic import hook** with SDK-required stub path
+- **Guide / follower skeleton overlay**
+- **Root markers** and **follow links** debug view
+
+See `docs/ALEMBIC_AND_GUIDE_DEBUG.md` and `docs/sample_assets/import_curves_template.csv`.

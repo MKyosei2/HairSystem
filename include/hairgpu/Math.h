@@ -80,6 +80,13 @@ namespace hairgpu
         return a * (1.0f - t) + b * t;
     }
 
+    template <typename T>
+    inline T Clamp(const T& value, const T& minValue, const T& maxValue)
+    {
+        return (value < minValue) ? minValue : ((value > maxValue) ? maxValue : value);
+    }
+
+
     Mat4 Identity();
     Mat4 PerspectiveFovRH(float fovYRadians, float aspectRatio, float nearZ, float farZ);
     Mat4 LookAtRH(const Vec3& eye, const Vec3& target, const Vec3& up);

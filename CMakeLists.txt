@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(HAIRGPU_BUILD_DX11_VIEWER "Build the Windows DX11 sample viewer" ON)
+option(HAIRGPU_WITH_ALEMBIC "Enable Alembic SDK integration points" OFF)
 
 add_subdirectory(src/hairgpu_core)
 

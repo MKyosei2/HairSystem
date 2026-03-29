@@ -69,7 +69,10 @@
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
 copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
 copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
-copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"</Command>
+copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
+copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
+copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"
+copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -98,7 +101,10 @@ copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"</Command>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
 copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
 copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
-copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"</Command>
+copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
+copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
+copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"
+copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -112,6 +118,9 @@ copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"</Command>
     <None Include="shaders\HairRibbon.hlsl" />
     <None Include="shaders\HairSim.hlsl" />
     <None Include="shaders\HairTube.hlsl" />
+    <None Include="shaders\DebugLine.hlsl" />
+    <None Include="shaders\ScalpMesh.hlsl" />
+    <None Include="shaders\HairCpuMesh.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\hairgpu_core\hairgpu_core.vcxproj">

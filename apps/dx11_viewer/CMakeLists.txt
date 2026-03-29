@@ -26,4 +26,16 @@ add_custom_command(TARGET hairgpu_dx11_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders/HairRibbon.hlsl
         $<TARGET_FILE_DIR:hairgpu_dx11_viewer>/HairRibbon.hlsl
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/HairTube.hlsl
+        $<TARGET_FILE_DIR:hairgpu_dx11_viewer>/HairTube.hlsl
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/DebugLine.hlsl
+        $<TARGET_FILE_DIR:hairgpu_dx11_viewer>/DebugLine.hlsl
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScalpMesh.hlsl
+        $<TARGET_FILE_DIR:hairgpu_dx11_viewer>/ScalpMesh.hlsl
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/HairCpuMesh.hlsl
+        $<TARGET_FILE_DIR:hairgpu_dx11_viewer>/HairCpuMesh.hlsl
 )

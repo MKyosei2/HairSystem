@@ -1,19 +1,29 @@
 #include "GpuHairViewer.h"
 
 #include <windowsx.h>
+#include <commctrl.h>
+#include <commdlg.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <cwctype>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
+#include <numeric>
+#include <limits>
 #include <sstream>
+#include <unordered_map>
 
+#include "hairgpu/AssetIO.h"
 #include "hairgpu/Math.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "comctl32.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -22,11 +32,174 @@ namespace hairgpu::viewer
     namespace
     {
         constexpr wchar_t kWindowClassName[] = L"HairGpuViewerWindow";
+        constexpr int kUiPanelWidth = 380;
+        constexpr int kUiMargin = 12;
 
-        float Clamp(float value, float minValue, float maxValue)
+        enum : int
         {
-            return std::max(minValue, std::min(value, maxValue));
+            IDC_BTN_PLAYPAUSE = 1001,
+            IDC_BTN_RESET,
+            IDC_BTN_STEP,
+            IDC_BTN_APPLY_ASSET,
+            IDC_BTN_IMPORT_ASSET,
+            IDC_BTN_SAVE_SETTINGS,
+            IDC_BTN_LOAD_SETTINGS,
+            IDC_BTN_EXPORT_CSV,
+            IDC_BTN_EXPORT_PERF_CSV,
+            IDC_COMBO_PRESET,
+            IDC_COMBO_RENDER_MODE,
+            IDC_COMBO_DEBUG_COLOR,
+            IDC_CHECK_SELF_COLLISION,
+            IDC_CHECK_GRID,
+            IDC_CHECK_SCALP_MOTION,
+            IDC_CHECK_SHOW_COLLIDERS,
+            IDC_CHECK_SHOW_SCALP,
+            IDC_CHECK_SHOW_SCALP_MESH,
+            IDC_CHECK_SHOW_GRID_BOUNDS,
+            IDC_CHECK_SHOW_FLOOR,
+            IDC_CHECK_SHOW_GUIDES,
+            IDC_CHECK_SHOW_FOLLOWERS,
+            IDC_CHECK_SHOW_ROOTS,
+            IDC_CHECK_SHOW_LINKS,
+            IDC_CHECK_SHOW_TEST_MESH,
+            IDC_EDIT_GUIDES,
+            IDC_EDIT_FOLLOWERS,
+            IDC_EDIT_PARTICLES,
+            IDC_TRACK_WIDTH,
+            IDC_TRACK_GRAVITY,
+            IDC_TRACK_DAMPING,
+            IDC_TRACK_WIND,
+            IDC_TRACK_ITERATIONS,
+            IDC_TRACK_FOLLOW,
+            IDC_TRACK_SELF_RADIUS,
+            IDC_TRACK_SELF_STIFFNESS,
+            IDC_TRACK_GRID_CELL,
+            IDC_TRACK_STRETCH,
+            IDC_TRACK_BEND,
+            IDC_LABEL_STATS,
+            IDC_LABEL_ASSET_STATS,
+            IDC_LABEL_WIDTH,
+            IDC_LABEL_GRAVITY,
+            IDC_LABEL_DAMPING,
+            IDC_LABEL_WIND,
+            IDC_LABEL_ITERATIONS,
+            IDC_LABEL_FOLLOW,
+            IDC_LABEL_SELF_RADIUS,
+            IDC_LABEL_SELF_STIFFNESS,
+            IDC_LABEL_GRID_CELL,
+            IDC_LABEL_STRETCH,
+            IDC_LABEL_BEND
+        };
+
+        int SliderFromFloat(float value, float minValue, float maxValue, int sliderMax = 1000)
+        {
+            const float t = (value - minValue) / std::max(maxValue - minValue, 1.0e-6f);
+            return static_cast<int>(Clamp(t, 0.0f, 1.0f) * static_cast<float>(sliderMax));
         }
+
+        float FloatFromSlider(int sliderValue, float minValue, float maxValue, int sliderMax = 1000)
+        {
+            const float t = Clamp(static_cast<float>(sliderValue) / static_cast<float>(std::max(sliderMax, 1)), 0.0f, 1.0f);
+            return minValue + (maxValue - minValue) * t;
+        }
+
+        std::wstring FormatFloat(float value, int precision = 3)
+        {
+            std::wstringstream ss;
+            ss << std::fixed << std::setprecision(precision) << value;
+            return ss.str();
+        }
+
+        std::wstring FormatScientific(float value)
+        {
+            std::wstringstream ss;
+            ss << std::scientific << std::setprecision(2) << value;
+            return ss.str();
+        }
+
+        void SetWindowTextFormat(HWND hwnd, const std::wstring& text)
+        {
+            if (hwnd)
+            {
+                SetWindowTextW(hwnd, text.c_str());
+            }
+        }
+        bool ParticleArrayLooksValid(const float* particleData, size_t particleCount, const hairgpu::HairAsset& asset)
+        {
+            if (particleData == nullptr || particleCount < asset.restPoints.size() || asset.restPoints.empty())
+            {
+                return false;
+            }
+
+            float minX = std::numeric_limits<float>::max();
+            float minY = std::numeric_limits<float>::max();
+            float minZ = std::numeric_limits<float>::max();
+            float maxX = -std::numeric_limits<float>::max();
+            float maxY = -std::numeric_limits<float>::max();
+            float maxZ = -std::numeric_limits<float>::max();
+            size_t finiteCount = 0;
+
+            const size_t stride = std::max<size_t>(particleCount / 256, 1ull);
+            for (size_t i = 0; i < particleCount; i += stride)
+            {
+                const float* p = particleData + i * 4;
+                if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
+                {
+                    continue;
+                }
+                ++finiteCount;
+                minX = std::min(minX, p[0]); minY = std::min(minY, p[1]); minZ = std::min(minZ, p[2]);
+                maxX = std::max(maxX, p[0]); maxY = std::max(maxY, p[1]); maxZ = std::max(maxZ, p[2]);
+            }
+
+            if (finiteCount == 0)
+            {
+                return false;
+            }
+
+            const float extentX = maxX - minX;
+            const float extentY = maxY - minY;
+            const float extentZ = maxZ - minZ;
+            if (!std::isfinite(extentX) || !std::isfinite(extentY) || !std::isfinite(extentZ))
+            {
+                return false;
+            }
+
+            return extentX < 20.0f && extentY < 20.0f && extentZ < 20.0f && minY > -20.0f && maxY < 20.0f;
+        }
+
+        bool ProjectWorldToNdc(const hairgpu::Vec3& world, const hairgpu::Vec3& eye, const hairgpu::Vec3& target, float aspectRatio, hairgpu::Vec3& outNdc)
+        {
+            constexpr float kFovY = 60.0f * 3.1415926535f / 180.0f;
+            constexpr float kNearZ = 0.01f;
+            constexpr float kFarZ = 20.0f;
+
+            const hairgpu::Vec3 worldUp(0.0f, 1.0f, 0.0f);
+            const hairgpu::Vec3 forward = hairgpu::Normalize(target - eye);
+            hairgpu::Vec3 right = hairgpu::Normalize(hairgpu::Cross(forward, worldUp));
+            if (hairgpu::Length(right) <= 1.0e-6f)
+            {
+                right = hairgpu::Vec3(1.0f, 0.0f, 0.0f);
+            }
+            const hairgpu::Vec3 up = hairgpu::Normalize(hairgpu::Cross(right, forward));
+            const hairgpu::Vec3 delta = world - eye;
+
+            const float vx = hairgpu::Dot(delta, right);
+            const float vy = hairgpu::Dot(delta, up);
+            const float vz = hairgpu::Dot(delta, forward);
+            if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz) || vz <= kNearZ)
+            {
+                return false;
+            }
+
+            const float tanHalfY = std::tan(kFovY * 0.5f);
+            const float tanHalfX = tanHalfY * std::max(aspectRatio, 0.001f);
+            outNdc.x = vx / (vz * tanHalfX);
+            outNdc.y = vy / (vz * tanHalfY);
+            outNdc.z = hairgpu::Clamp((vz - kNearZ) / (kFarZ - kNearZ), 0.0f, 1.0f);
+            return std::isfinite(outNdc.x) && std::isfinite(outNdc.y) && std::isfinite(outNdc.z);
+        }
+
 
         UINT DispatchGroups(UINT itemCount, UINT groupSize)
         {
@@ -51,11 +224,45 @@ namespace hairgpu::viewer
         {
             MessageBoxW(owner, message.c_str(), title, MB_OK | MB_ICONERROR);
         }
+
+        std::wstring Utf8ToWide(const std::string& text)
+        {
+            if (text.empty())
+            {
+                return {};
+            }
+            const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+            if (length <= 0)
+            {
+                return std::wstring(text.begin(), text.end());
+            }
+            std::wstring wide(static_cast<size_t>(length), L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), length);
+            if (!wide.empty() && wide.back() == L'\0')
+            {
+                wide.pop_back();
+            }
+            return wide;
+        }
+
+        std::wstring NormalizePathExtensionLower(const std::filesystem::path& path)
+        {
+            std::wstring ext = path.extension().wstring();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+            return ext;
+        }
     }
 
     bool GpuHairViewer::Initialize(HINSTANCE instance, int showCommand)
     {
-        m_asset = BuildSampleHybridHairAsset(320, 10, 16, 0.040f);
+        INITCOMMONCONTROLSEX icc = {};
+        icc.dwSize = sizeof(icc);
+        icc.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
+        InitCommonControlsEx(&icc);
+
+        m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.040f);
+        m_lastAssetSource = L"Sample Hybrid";
+        m_lastImportStatus = L"Sample asset active";
         m_simConfig.solverIterations = 6;
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 19.0f;
@@ -80,6 +287,8 @@ namespace hairgpu::viewer
         m_simConfig.selfCollisionCellSize = 0.085f;
         m_selfCollisionRadius = m_simConfig.selfCollisionRadius;
         m_selfCollisionStiffness = m_simConfig.selfCollisionStiffness;
+        m_renderMode = RenderMode::TubePreview;
+        m_showScalpMesh = true;
 
         m_colliders.spheres.push_back({ { 0.0f, 1.66f, 0.0f }, 0.215f });
         m_colliders.capsules.push_back({ { -0.19f, 1.36f, 0.02f }, 0.11f, { -0.42f, 1.15f, 0.04f }, 0.08f });
@@ -88,6 +297,13 @@ namespace hairgpu::viewer
 
         if (!CreateWindowAndDevice(instance, showCommand))
         {
+            return false;
+        }
+
+        if (!CreateUiControls())
+        {
+            ShowStartupDialog(m_hwnd, L"Hair GPU Viewer Startup Failure", L"CreateUiControls() failed.");
+            Shutdown();
             return false;
         }
 
@@ -121,6 +337,10 @@ namespace hairgpu::viewer
         ResetSimulation();
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
+        SyncControlsFromState();
+        LayoutUiControls();
+        UpdateStatsLabel();
+        RefreshAssetStatsText();
         UpdateWindowTitle();
         return true;
     }
@@ -146,9 +366,17 @@ namespace hairgpu::viewer
             QueryPerformanceCounter(&now);
             const float dt = static_cast<float>(now.QuadPart - m_lastTick.QuadPart) / static_cast<float>(m_qpcFrequency.QuadPart);
             m_lastTick = now;
+            m_lastFrameSeconds = dt;
+            const float instantFps = (dt > 1.0e-6f) ? (1.0f / dt) : 0.0f;
+            m_smoothedFps = (m_smoothedFps <= 0.0f) ? instantFps : (m_smoothedFps * 0.92f + instantFps * 0.08f);
+            m_statsUpdateAccumulator += dt;
 
+            m_lastSimulationStepMilliseconds = 0.0f;
             if (!m_paused)
             {
+                LARGE_INTEGER simBegin = {};
+                LARGE_INTEGER simEnd = {};
+                QueryPerformanceCounter(&simBegin);
                 m_accumulator += std::min(dt, 0.1f);
                 while (m_accumulator >= m_simConfig.fixedTimeStep)
                 {
@@ -156,10 +384,32 @@ namespace hairgpu::viewer
                     m_accumulator -= m_simConfig.fixedTimeStep;
                     m_elapsedSeconds += m_simConfig.fixedTimeStep;
                 }
+                QueryPerformanceCounter(&simEnd);
+                m_lastSimulationStepMilliseconds = static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
+            }
+
+            PerformanceSample sample = {};
+            sample.elapsedSeconds = m_elapsedSeconds;
+            sample.frameMilliseconds = dt * 1000.0f;
+            sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
+            sample.fps = instantFps;
+            sample.guideCount = m_asset.guideStrandCount;
+            sample.followerCount = m_asset.followerStrandCount;
+            sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+            sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
+            m_performanceSamples.push_back(sample);
+            if (m_performanceSamples.size() > 12000)
+            {
+                m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
             }
 
             UpdateCamera();
             Render();
+            if (m_statsUpdateAccumulator >= 0.2f)
+            {
+                UpdateStatsLabel();
+                m_statsUpdateAccumulator = 0.0f;
+            }
         }
 
         Shutdown();
@@ -190,7 +440,7 @@ namespace hairgpu::viewer
             0,
             kWindowClassName,
             L"Hair GPU Viewer",
-            WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
             CW_USEDEFAULT, CW_USEDEFAULT,
             rect.right - rect.left,
             rect.bottom - rect.top,
@@ -360,6 +610,51 @@ namespace hairgpu::viewer
             return false;
         }
 
+        std::vector<ScalpVertex> scalpVertices;
+        scalpVertices.reserve(m_asset.scalpMesh.positions.size());
+        for (size_t i = 0; i < m_asset.scalpMesh.positions.size(); ++i)
+        {
+            const GpuParticle& p = m_animatedScalpParticles[i];
+            const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
+            scalpVertices.push_back({ p.x, p.y, p.z, n.x, n.y, n.z });
+        }
+        if (!scalpVertices.empty())
+        {
+            D3D11_BUFFER_DESC scalpVbDesc = {};
+            scalpVbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            scalpVbDesc.ByteWidth = static_cast<UINT>(scalpVertices.size() * sizeof(ScalpVertex));
+            scalpVbDesc.Usage = D3D11_USAGE_DYNAMIC;
+            scalpVbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            D3D11_SUBRESOURCE_DATA scalpVbData = {};
+            scalpVbData.pSysMem = scalpVertices.data();
+            if (FAILED(m_device->CreateBuffer(&scalpVbDesc, &scalpVbData, &m_scalpVertexBuffer)))
+            {
+                return false;
+            }
+        }
+
+        std::vector<uint32_t> scalpIndices;
+        scalpIndices.reserve(m_asset.scalpMesh.triangles.size() * 3ull);
+        for (const TriangleIndices& tri : m_asset.scalpMesh.triangles)
+        {
+            scalpIndices.push_back(tri.a);
+            scalpIndices.push_back(tri.b);
+            scalpIndices.push_back(tri.c);
+        }
+        if (!scalpIndices.empty())
+        {
+            D3D11_BUFFER_DESC scalpIbDesc = {};
+            scalpIbDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+            scalpIbDesc.ByteWidth = static_cast<UINT>(scalpIndices.size() * sizeof(uint32_t));
+            scalpIbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+            D3D11_SUBRESOURCE_DATA scalpIbData = {};
+            scalpIbData.pSysMem = scalpIndices.data();
+            if (FAILED(m_device->CreateBuffer(&scalpIbDesc, &scalpIbData, &m_scalpIndexBuffer)))
+            {
+                return false;
+            }
+        }
+
         D3D11_BUFFER_DESC cbDesc = {};
         cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         cbDesc.ByteWidth = sizeof(SimConstants);
@@ -453,6 +748,45 @@ namespace hairgpu::viewer
             return false;
         }
 
+        if (!CompileShaderFromFile(L"DebugLine.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"DebugLine.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_debugLineVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_debugLinePS)))
+        {
+            return false;
+        }
+
+        if (!CompileShaderFromFile(L"ScalpMesh.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"ScalpMesh.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_scalpVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_scalpPS)))
+        {
+            return false;
+        }
+
+        if (!CompileShaderFromFile(L"HairCpuMesh.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairCpuMesh.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_hairMeshVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_hairMeshPS)))
+        {
+            return false;
+        }
+
         if (!CompileShaderFromFile(L"HairSim.hlsl", "RootBindCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_rootBindCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "IntegrateCS", "cs_5_0", &csBlob, errorText) ||
@@ -476,11 +810,62 @@ namespace hairgpu::viewer
             return false;
         }
 
+        ComPtr<ID3DBlob> hairVsBlob;
+        if (!CompileShaderFromFile(L"HairRibbon.hlsl", "VSMain", "vs_5_0", &hairVsBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
         const D3D11_INPUT_ELEMENT_DESC layout[] = {
             { "PARTICLE_INDEX", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(SegmentRenderVertex, particleIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
             { "STRAND_INDEX", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(SegmentRenderVertex, strandIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
         };
-        if (FAILED(m_device->CreateInputLayout(layout, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &m_inputLayout)))
+        if (FAILED(m_device->CreateInputLayout(layout, 2, hairVsBlob->GetBufferPointer(), hairVsBlob->GetBufferSize(), &m_inputLayout)))
+        {
+            return false;
+        }
+
+        ComPtr<ID3DBlob> debugVsBlob;
+        if (!CompileShaderFromFile(L"DebugLine.hlsl", "VSMain", "vs_5_0", &debugVsBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        const D3D11_INPUT_ELEMENT_DESC debugLayout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DebugLineVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(DebugLineVertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        if (FAILED(m_device->CreateInputLayout(debugLayout, 2, debugVsBlob->GetBufferPointer(), debugVsBlob->GetBufferSize(), &m_debugInputLayout)))
+        {
+            return false;
+        }
+
+        ComPtr<ID3DBlob> scalpVsBlob;
+        if (!CompileShaderFromFile(L"ScalpMesh.hlsl", "VSMain", "vs_5_0", &scalpVsBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        const D3D11_INPUT_ELEMENT_DESC scalpLayout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, nx), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        if (FAILED(m_device->CreateInputLayout(scalpLayout, 2, scalpVsBlob->GetBufferPointer(), scalpVsBlob->GetBufferSize(), &m_scalpInputLayout)))
+        {
+            return false;
+        }
+
+        ComPtr<ID3DBlob> hairMeshVsBlob;
+        if (!CompileShaderFromFile(L"HairCpuMesh.hlsl", "VSMain", "vs_5_0", &hairMeshVsBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        const D3D11_INPUT_ELEMENT_DESC hairMeshLayout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(HairMeshVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(HairMeshVertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        if (FAILED(m_device->CreateInputLayout(hairMeshLayout, 2, hairMeshVsBlob->GetBufferPointer(), hairMeshVsBlob->GetBufferSize(), &m_hairMeshInputLayout)))
         {
             return false;
         }
@@ -509,7 +894,39 @@ namespace hairgpu::viewer
         m_context->UpdateSubresource(m_gridCellCountsBuffer.buffer.Get(), 0, nullptr, zeroCellCounts.data(), 0, 0);
         m_context->UpdateSubresource(m_gridCellIndicesBuffer.buffer.Get(), 0, nullptr, zeroCellIndices.data(), 0, 0);
         UpdateAnimatedScalp(0.0f);
+        m_accumulator = 0.0f;
         m_elapsedSeconds = 0.0f;
+        m_lastSimulationStepMilliseconds = 0.0f;
+        m_performanceSamples.clear();
+        SyncControlsFromState();
+        UpdateStatsLabel();
+    }
+
+    void GpuHairViewer::StepSingleFrame()
+    {
+        LARGE_INTEGER simBegin = {};
+        LARGE_INTEGER simEnd = {};
+        QueryPerformanceCounter(&simBegin);
+        StepSimulation(m_simConfig.fixedTimeStep);
+        QueryPerformanceCounter(&simEnd);
+        m_elapsedSeconds += m_simConfig.fixedTimeStep;
+        m_lastSimulationStepMilliseconds = static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
+
+        PerformanceSample sample = {};
+        sample.elapsedSeconds = m_elapsedSeconds;
+        sample.frameMilliseconds = m_simConfig.fixedTimeStep * 1000.0f;
+        sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
+        sample.fps = (m_simConfig.fixedTimeStep > 1.0e-6f) ? (1.0f / m_simConfig.fixedTimeStep) : 0.0f;
+        sample.guideCount = m_asset.guideStrandCount;
+        sample.followerCount = m_asset.followerStrandCount;
+        sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+        sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
+        m_performanceSamples.push_back(sample);
+        if (m_performanceSamples.size() > 12000)
+        {
+            m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
+        }
+        UpdateStatsLabel();
     }
 
     Vec3 GpuHairViewer::ApplySampleScalpSkinning(const Vec3& restPosition, const SkinWeight4& weights, float elapsedSeconds) const
@@ -766,9 +1183,13 @@ namespace hairgpu::viewer
             return;
         }
 
+        const RECT renderRect = GetRenderViewportRect();
+        const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
+        const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
+
         RenderConstants rc = {};
         const Mat4 view = LookAtRH(m_cameraPosition, m_cameraTarget, Vec3(0.0f, 1.0f, 0.0f));
-        const Mat4 projection = PerspectiveFovRH(60.0f * 3.1415926535f / 180.0f, static_cast<float>(m_width) / static_cast<float>(m_height), 0.01f, 20.0f);
+        const Mat4 projection = PerspectiveFovRH(60.0f * 3.1415926535f / 180.0f, renderWidth / renderHeight, 0.01f, 20.0f);
         const Mat4 viewProjection = Multiply(view, projection);
         for (int i = 0; i < 16; ++i)
         {
@@ -777,25 +1198,25 @@ namespace hairgpu::viewer
         rc.cameraPosition[0] = m_cameraPosition.x;
         rc.cameraPosition[1] = m_cameraPosition.y;
         rc.cameraPosition[2] = m_cameraPosition.z;
+        rc.cameraPosition[3] = 1.0f;
+        rc.lightDirection[0] = -0.45f;
+        rc.lightDirection[1] = 0.90f;
+        rc.lightDirection[2] = 0.20f;
+        rc.lightDirection[3] = 0.0f;
         rc.widthScale = m_widthScale;
+        rc.debugColorMode = static_cast<uint32_t>(m_debugColorMode);
+        rc.guideStrandCount = m_asset.guideStrandCount;
         m_context->UpdateSubresource(m_renderConstants.Get(), 0, nullptr, &rc, 0, 0);
 
-        const float clearColor[4] = { 0.14f, 0.18f, 0.24f, 1.0f };
+        const float clearColor[4] = { 0.10f, 0.12f, 0.16f, 1.0f };
         m_context->ClearRenderTargetView(m_rtv.Get(), clearColor);
         m_context->ClearDepthStencilView(m_dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
 
-        const UINT stride = sizeof(SegmentRenderVertex);
-        const UINT offset = 0;
-        ID3D11Buffer* vb = m_segmentVertexBuffer.Get();
-        ID3D11Buffer* renderCb = m_renderConstants.Get();
-        ID3D11ShaderResourceView* renderSrvs[] = {
-            m_positions[m_currentBufferIndex].srv.Get(),
-            m_pointWidths.srv.Get()
-        };
-
         D3D11_VIEWPORT vp = {};
-        vp.Width = static_cast<float>(m_width);
-        vp.Height = static_cast<float>(m_height);
+        vp.TopLeftX = static_cast<float>(renderRect.left);
+        vp.TopLeftY = static_cast<float>(renderRect.top);
+        vp.Width = renderWidth;
+        vp.Height = renderHeight;
         vp.MinDepth = 0.0f;
         vp.MaxDepth = 1.0f;
         m_context->RSSetViewports(1, &vp);
@@ -804,32 +1225,61 @@ namespace hairgpu::viewer
         m_context->OMSetDepthStencilState(m_depthState.Get(), 0);
         const float blendFactor[4] = { 0, 0, 0, 0 };
         m_context->OMSetBlendState(m_blendState.Get(), blendFactor, 0xFFFFFFFF);
-        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-        m_context->IASetInputLayout(m_inputLayout.Get());
-        m_context->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-        if (m_renderMode == RenderMode::TubePreview)
-        {
-            m_context->VSSetShader(m_tubeVS.Get(), nullptr, 0);
-            m_context->GSSetShader(m_tubeGS.Get(), nullptr, 0);
-            m_context->PSSetShader(m_tubePS.Get(), nullptr, 0);
-        }
-        else
-        {
-            m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
-            m_context->GSSetShader(m_ribbonGS.Get(), nullptr, 0);
-            m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
-        }
-        m_context->VSSetConstantBuffers(0, 1, &renderCb);
-        m_context->GSSetConstantBuffers(0, 1, &renderCb);
-        m_context->PSSetConstantBuffers(0, 1, &renderCb);
-        m_context->VSSetShaderResources(0, 2, renderSrvs);
-        m_context->GSSetShaderResources(0, 2, renderSrvs);
-        m_context->Draw(static_cast<UINT>(m_renderData.segmentVertices.size()), 0);
 
-        ID3D11ShaderResourceView* nullSrvs[2] = {};
-        m_context->VSSetShaderResources(0, 2, nullSrvs);
-        m_context->GSSetShaderResources(0, 2, nullSrvs);
-        m_context->GSSetShader(nullptr, nullptr, 0);
+        ID3D11Buffer* renderCb = m_renderConstants.Get();
+        UINT offset = 0;
+
+        const bool haveParticleReadback = ReadBackCurrentParticlePositions(m_debugReadbackParticles) && ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset);
+        if (!haveParticleReadback)
+        {
+            m_debugReadbackParticles = m_initialParticles;
+        }
+        BuildHairMeshVertices(m_debugReadbackParticles, renderWidth / renderHeight);
+
+        if (!m_hairMeshVertices.empty() && EnsureHairMeshVertexCapacity(m_hairMeshVertices.size()))
+        {
+            D3D11_MAPPED_SUBRESOURCE mappedHair = {};
+            if (SUCCEEDED(m_context->Map(m_hairMeshVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedHair)))
+            {
+                std::memcpy(mappedHair.pData, m_hairMeshVertices.data(), m_hairMeshVertices.size() * sizeof(HairMeshVertex));
+                m_context->Unmap(m_hairMeshVertexBuffer.Get(), 0);
+
+                const UINT hairStride = sizeof(HairMeshVertex);
+                ID3D11Buffer* hairVB = m_hairMeshVertexBuffer.Get();
+                m_context->IASetInputLayout(m_hairMeshInputLayout.Get());
+                m_context->IASetVertexBuffers(0, 1, &hairVB, &hairStride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                m_context->VSSetShader(m_hairMeshVS.Get(), nullptr, 0);
+                m_context->GSSetShader(nullptr, nullptr, 0);
+                m_context->PSSetShader(m_hairMeshPS.Get(), nullptr, 0);
+                m_context->VSSetConstantBuffers(0, 1, &renderCb);
+                m_context->PSSetConstantBuffers(0, 1, &renderCb);
+                m_context->Draw(static_cast<UINT>(m_hairMeshVertices.size()), 0);
+            }
+        }
+
+        BuildDebugLineVertices(renderWidth / renderHeight);
+        if (!m_debugLineVertices.empty() && EnsureDebugVertexCapacity(m_debugLineVertices.size()))
+        {
+            D3D11_MAPPED_SUBRESOURCE mapped = {};
+            if (SUCCEEDED(m_context->Map(m_debugLineVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+            {
+                std::memcpy(mapped.pData, m_debugLineVertices.data(), m_debugLineVertices.size() * sizeof(DebugLineVertex));
+                m_context->Unmap(m_debugLineVertexBuffer.Get(), 0);
+
+                const UINT debugStride = sizeof(DebugLineVertex);
+                ID3D11Buffer* debugBuffer = m_debugLineVertexBuffer.Get();
+                m_context->IASetInputLayout(m_debugInputLayout.Get());
+                m_context->IASetVertexBuffers(0, 1, &debugBuffer, &debugStride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->VSSetShader(m_debugLineVS.Get(), nullptr, 0);
+                m_context->GSSetShader(nullptr, nullptr, 0);
+                m_context->PSSetShader(m_debugLinePS.Get(), nullptr, 0);
+                m_context->VSSetConstantBuffers(0, 1, &renderCb);
+                m_context->PSSetConstantBuffers(0, 1, &renderCb);
+                m_context->Draw(static_cast<UINT>(m_debugLineVertices.size()), 0);
+            }
+        }
 
         m_swapChain->Present(1, 0);
         UpdateWindowTitle();
@@ -865,12 +1315,15 @@ namespace hairgpu::viewer
         depthDesc.SampleDesc.Count = 1;
         m_device->CreateTexture2D(&depthDesc, nullptr, &m_depthTexture);
         m_device->CreateDepthStencilView(m_depthTexture.Get(), nullptr, &m_dsv);
+        LayoutUiControls();
     }
 
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Base Viewer  |  guides=" << m_asset.guideStrandCount
+        ss << L"Hair GPU Base Viewer  |  preset=" << m_activePresetName
+           << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
+           << L"  guides=" << m_asset.guideStrandCount
            << L"  followers=" << m_asset.followerStrandCount
            << L"  totalStrands=" << m_asset.strands.size()
            << L"  particles=" << m_asset.restPoints.size()
@@ -977,6 +1430,1303 @@ namespace hairgpu::viewer
         return result;
     }
 
+
+    RECT GpuHairViewer::GetRenderViewportRect() const
+    {
+        RECT rect = { 0, 0, static_cast<LONG>(std::max<UINT>(m_width > static_cast<UINT>(kUiPanelWidth) ? m_width - kUiPanelWidth : m_width, 1u)),
+                      static_cast<LONG>(std::max<UINT>(m_height, 1u)) };
+        return rect;
+    }
+
+    bool GpuHairViewer::CreateUiControls()
+    {
+        HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        auto createControl = [&](DWORD exStyle, const wchar_t* klass, const wchar_t* text, DWORD style, int id) -> HWND
+        {
+            HWND hwnd = CreateWindowExW(exStyle, klass, text, style | WS_CHILD | WS_VISIBLE,
+                0, 0, 10, 10, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
+            if (hwnd && font)
+            {
+                SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            }
+            return hwnd;
+        };
+
+        m_uiPanel = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
+        if (!m_uiPanel)
+        {
+            return false;
+        }
+
+        createControl(0, L"STATIC", L"Preset", SS_LEFT, 0);
+        m_comboPreset = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_PRESET);
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Rapunzel Preview"));
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Calm Studio"));
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windy Demo"));
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Heavy Grounded"));
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Game-ish LOD"));
+
+        m_btnPlayPause = createControl(0, L"BUTTON", L"Pause", BS_PUSHBUTTON, IDC_BTN_PLAYPAUSE);
+        m_btnReset = createControl(0, L"BUTTON", L"Reset", BS_PUSHBUTTON, IDC_BTN_RESET);
+        m_btnStep = createControl(0, L"BUTTON", L"Step", BS_PUSHBUTTON, IDC_BTN_STEP);
+        m_btnApplyAsset = createControl(0, L"BUTTON", L"Apply Asset", BS_PUSHBUTTON, IDC_BTN_APPLY_ASSET);
+        m_btnImportAsset = createControl(0, L"BUTTON", L"Import Hair...", BS_PUSHBUTTON, IDC_BTN_IMPORT_ASSET);
+        m_btnSaveSettings = createControl(0, L"BUTTON", L"Save Settings", BS_PUSHBUTTON, IDC_BTN_SAVE_SETTINGS);
+        m_btnLoadSettings = createControl(0, L"BUTTON", L"Load Settings", BS_PUSHBUTTON, IDC_BTN_LOAD_SETTINGS);
+        m_btnExportCsv = createControl(0, L"BUTTON", L"Export Frame CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_CSV);
+        m_btnExportPerfCsv = createControl(0, L"BUTTON", L"Export Perf CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_PERF_CSV);
+
+        createControl(0, L"STATIC", L"Guides", SS_LEFT, 0);
+        m_editGuides = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_GUIDES);
+        createControl(0, L"STATIC", L"Followers / guide", SS_LEFT, 0);
+        m_editFollowers = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_FOLLOWERS);
+        createControl(0, L"STATIC", L"Particles / strand", SS_LEFT, 0);
+        m_editParticles = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_PARTICLES);
+
+        createControl(0, L"STATIC", L"Render", SS_LEFT, 0);
+        m_comboRenderMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_RENDER_MODE);
+        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Ribbon"));
+        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Tube Preview"));
+
+        createControl(0, L"STATIC", L"Color Debug", SS_LEFT, 0);
+        m_comboDebugColor = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_DEBUG_COLOR);
+        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Natural"));
+        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Guide / Follower"));
+        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Width Heatmap"));
+
+        m_checkSelfCollision = createControl(0, L"BUTTON", L"Self Collision", BS_AUTOCHECKBOX, IDC_CHECK_SELF_COLLISION);
+        m_checkGrid = createControl(0, L"BUTTON", L"Grid Broadphase", BS_AUTOCHECKBOX, IDC_CHECK_GRID);
+        m_checkScalpMotion = createControl(0, L"BUTTON", L"Scalp Motion", BS_AUTOCHECKBOX, IDC_CHECK_SCALP_MOTION);
+        m_checkShowColliders = createControl(0, L"BUTTON", L"Show Colliders", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_COLLIDERS);
+        m_checkShowScalpMesh = createControl(0, L"BUTTON", L"Show Scalp Mesh", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_SCALP_MESH);
+        m_checkShowScalp = createControl(0, L"BUTTON", L"Show Scalp Wireframe", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_SCALP);
+        m_checkShowGridBounds = createControl(0, L"BUTTON", L"Show Grid Bounds", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_GRID_BOUNDS);
+        m_checkShowFloor = createControl(0, L"BUTTON", L"Show Floor Guide", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_FLOOR);
+        m_checkShowGuides = createControl(0, L"BUTTON", L"Show Guide Skeletons", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_GUIDES);
+        m_checkShowFollowers = createControl(0, L"BUTTON", L"Show Follower Skeletons", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_FOLLOWERS);
+        m_checkShowRoots = createControl(0, L"BUTTON", L"Show Root Markers", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_ROOTS);
+        m_checkShowLinks = createControl(0, L"BUTTON", L"Show Follow Links", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_LINKS);
+        m_checkShowTestMesh = createControl(0, L"BUTTON", L"Show Test Hair Mesh", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_TEST_MESH);
+
+        auto createSlider = [&](int id) -> HWND
+        {
+            HWND hwnd = createControl(0, TRACKBAR_CLASSW, L"", TBS_AUTOTICKS | TBS_HORZ, id);
+            SendMessageW(hwnd, TBM_SETRANGEMIN, FALSE, 0);
+            SendMessageW(hwnd, TBM_SETRANGEMAX, TRUE, 1000);
+            return hwnd;
+        };
+
+        m_labelWidth = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WIDTH);
+        m_trackWidth = createSlider(IDC_TRACK_WIDTH);
+        m_labelGravity = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_GRAVITY);
+        m_trackGravity = createSlider(IDC_TRACK_GRAVITY);
+        m_labelDamping = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_DAMPING);
+        m_trackDamping = createSlider(IDC_TRACK_DAMPING);
+        m_labelWind = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WIND);
+        m_trackWind = createSlider(IDC_TRACK_WIND);
+        m_labelIterations = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ITERATIONS);
+        m_trackIterations = createSlider(IDC_TRACK_ITERATIONS);
+        m_labelFollow = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_FOLLOW);
+        m_trackFollow = createSlider(IDC_TRACK_FOLLOW);
+        m_labelSelfRadius = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SELF_RADIUS);
+        m_trackSelfRadius = createSlider(IDC_TRACK_SELF_RADIUS);
+        m_labelSelfStiffness = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SELF_STIFFNESS);
+        m_trackSelfStiffness = createSlider(IDC_TRACK_SELF_STIFFNESS);
+        m_labelGridCellSize = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_GRID_CELL);
+        m_trackGridCellSize = createSlider(IDC_TRACK_GRID_CELL);
+        m_labelStretchCompliance = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STRETCH);
+        m_trackStretchCompliance = createSlider(IDC_TRACK_STRETCH);
+        m_labelBendCompliance = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_BEND);
+        m_trackBendCompliance = createSlider(IDC_TRACK_BEND);
+
+        m_labelStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STATS);
+        m_labelAssetStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ASSET_STATS);
+
+        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_trackWidth && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
+    }
+
+    void GpuHairViewer::LayoutUiControls()
+    {
+        if (!m_hwnd || !m_uiPanel)
+        {
+            return;
+        }
+
+        RECT client = {};
+        GetClientRect(m_hwnd, &client);
+        const int panelX = (std::max)(static_cast<int>(client.right) - kUiPanelWidth, 0);
+        const int panelHeight = (std::max)(static_cast<int>(client.bottom), 1);
+        MoveWindow(m_uiPanel, panelX, 0, kUiPanelWidth, panelHeight, TRUE);
+
+        const int fullWidth = kUiPanelWidth - kUiMargin * 2;
+        const int threeButtonWidth = (fullWidth - 16) / 3;
+        const int halfButtonWidth = (fullWidth - 8) / 2;
+        const int editWidth = 76;
+        const int x = panelX + kUiMargin;
+        int y = kUiMargin;
+        const int labelHeight = 18;
+        const int controlHeight = 24;
+        const int sliderHeight = 28;
+        const int gap = 6;
+
+        auto next = [&](int h) { int old = y; y += h; return old; };
+        auto place = [&](HWND hwnd, int px, int py, int w, int h)
+        {
+            if (hwnd) { MoveWindow(hwnd, px, py, w, h, TRUE); }
+        };
+
+        std::vector<HWND> unlabeledStatics;
+        for (HWND child = GetWindow(m_hwnd, GW_CHILD); child != nullptr; child = GetWindow(child, GW_HWNDNEXT))
+        {
+            if (child == m_uiPanel || child == m_btnPlayPause || child == m_btnReset || child == m_btnStep || child == m_btnApplyAsset ||
+                child == m_btnImportAsset || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_comboPreset ||
+                child == m_comboRenderMode || child == m_comboDebugColor || child == m_checkSelfCollision || child == m_checkGrid || child == m_checkScalpMotion ||
+                child == m_checkShowColliders || child == m_checkShowScalpMesh || child == m_checkShowScalp || child == m_checkShowGridBounds || child == m_checkShowFloor ||
+                child == m_checkShowGuides || child == m_checkShowFollowers || child == m_checkShowRoots || child == m_checkShowLinks ||
+                child == m_editGuides || child == m_editFollowers || child == m_editParticles || child == m_trackWidth || child == m_trackGravity ||
+                child == m_trackDamping || child == m_trackWind || child == m_trackIterations || child == m_trackFollow || child == m_trackSelfRadius ||
+                child == m_trackSelfStiffness || child == m_trackGridCellSize || child == m_trackStretchCompliance || child == m_trackBendCompliance ||
+                child == m_labelStats || child == m_labelAssetStats || child == m_labelWidth || child == m_labelGravity || child == m_labelDamping ||
+                child == m_labelWind || child == m_labelIterations || child == m_labelFollow || child == m_labelSelfRadius || child == m_labelSelfStiffness ||
+                child == m_labelGridCellSize || child == m_labelStretchCompliance || child == m_labelBendCompliance)
+            {
+                continue;
+            }
+            wchar_t klass[32] = {};
+            GetClassNameW(child, klass, 32);
+            if (wcscmp(klass, L"Static") == 0)
+            {
+                unlabeledStatics.push_back(child);
+            }
+        }
+
+        size_t staticIndex = 0;
+        auto placeAnonymousStatic = [&](int px, int py, int w, int h)
+        {
+            if (staticIndex < unlabeledStatics.size())
+            {
+                MoveWindow(unlabeledStatics[staticIndex++], px, py, w, h, TRUE);
+            }
+        };
+
+        placeAnonymousStatic(x, next(labelHeight), fullWidth, labelHeight);               // Preset
+        place(m_comboPreset, x, next(controlHeight), fullWidth, 220);
+
+        const int rowButtonsY = next(controlHeight + gap);
+        place(m_btnPlayPause, x, rowButtonsY, threeButtonWidth, controlHeight);
+        place(m_btnReset, x + threeButtonWidth + 8, rowButtonsY, threeButtonWidth, controlHeight);
+        place(m_btnStep, x + (threeButtonWidth + 8) * 2, rowButtonsY, threeButtonWidth, controlHeight);
+
+        const int assetRowY = next(controlHeight + gap);
+        placeAnonymousStatic(x, assetRowY, 50, labelHeight);                               // Guides
+        place(m_editGuides, x + 52, assetRowY - 2, editWidth, controlHeight);
+        placeAnonymousStatic(x + 136, assetRowY, 100, labelHeight);                        // Followers / guide
+        place(m_editFollowers, x + 238, assetRowY - 2, editWidth, controlHeight);
+        placeAnonymousStatic(x, next(controlHeight + gap), 110, labelHeight);              // Particles / strand
+        place(m_editParticles, x + 114, y - controlHeight - gap - 2, editWidth, controlHeight);
+        const int importButtonsX = x + 204;
+        const int importButtonsWidth = fullWidth - 204;
+        const int importButtonHalf = (importButtonsWidth - 8) / 2;
+        place(m_btnApplyAsset, importButtonsX, y - controlHeight - gap - 2, importButtonHalf, controlHeight);
+        place(m_btnImportAsset, importButtonsX + importButtonHalf + 8, y - controlHeight - gap - 2, importButtonsWidth - importButtonHalf - 8, controlHeight);
+
+        placeAnonymousStatic(x, next(labelHeight), fullWidth, labelHeight);                // Render
+        place(m_comboRenderMode, x, next(controlHeight), fullWidth, 220);
+        placeAnonymousStatic(x, next(labelHeight), fullWidth, labelHeight);                // Color Debug
+        place(m_comboDebugColor, x, next(controlHeight), fullWidth, 220);
+
+        place(m_checkSelfCollision, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkGrid, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_checkScalpMotion, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkShowColliders, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_checkShowScalpMesh, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkShowScalp, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_checkShowGridBounds, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkShowFloor, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_checkShowGuides, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkShowFollowers, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_checkShowRoots, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkShowLinks, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_checkShowTestMesh, x, next(controlHeight), fullWidth, controlHeight);
+        y += 4;
+
+        auto placeLabelSlider = [&](HWND label, HWND slider)
+        {
+            place(label, x, next(labelHeight), fullWidth, labelHeight);
+            place(slider, x, next(sliderHeight), fullWidth, sliderHeight);
+        };
+        placeLabelSlider(m_labelWidth, m_trackWidth);
+        placeLabelSlider(m_labelGravity, m_trackGravity);
+        placeLabelSlider(m_labelDamping, m_trackDamping);
+        placeLabelSlider(m_labelWind, m_trackWind);
+        placeLabelSlider(m_labelIterations, m_trackIterations);
+        placeLabelSlider(m_labelFollow, m_trackFollow);
+        placeLabelSlider(m_labelSelfRadius, m_trackSelfRadius);
+        placeLabelSlider(m_labelSelfStiffness, m_trackSelfStiffness);
+        placeLabelSlider(m_labelGridCellSize, m_trackGridCellSize);
+        placeLabelSlider(m_labelStretchCompliance, m_trackStretchCompliance);
+        placeLabelSlider(m_labelBendCompliance, m_trackBendCompliance);
+
+        const int saveRowY = next(controlHeight + gap);
+        place(m_btnSaveSettings, x, saveRowY, halfButtonWidth, controlHeight);
+        place(m_btnLoadSettings, x + halfButtonWidth + 8, saveRowY, halfButtonWidth, controlHeight);
+        place(m_btnExportCsv, x, next(controlHeight + gap), halfButtonWidth, controlHeight);
+        place(m_btnExportPerfCsv, x + halfButtonWidth + 8, y - controlHeight - gap, halfButtonWidth, controlHeight);
+
+        place(m_labelAssetStats, x, next(72), fullWidth, 68);
+        place(m_labelStats, x, next(132), fullWidth, 124);
+    }
+
+    void GpuHairViewer::RefreshAssetStatsText()
+    {
+        std::wstringstream ss;
+        ss << L"Asset\n"
+           << L"Source: " << m_lastAssetSource << L"\n"
+           << L"Guides: " << m_asset.guideStrandCount
+           << L"  Followers: " << m_asset.followerStrandCount << L"\n"
+           << L"Total strands: " << m_asset.strands.size() << L"\n"
+           << L"Particles/strand: " << m_asset.particlesPerStrand << L"\n"
+           << L"Total particles: " << m_asset.restPoints.size() << L"\n"
+           << L"Segments: " << m_renderData.segmentCount << L"\n"
+           << L"Import: " << m_lastImportStatus << L"\n"
+           << L"Test mesh: " << (m_showTestMesh ? L"on" : L"off");
+        SetWindowTextFormat(m_labelAssetStats, ss.str());
+    }
+
+    void GpuHairViewer::SyncControlsFromState()
+    {
+        SetDlgItemInt(m_hwnd, IDC_EDIT_GUIDES, m_builderGuideCount, FALSE);
+        SetDlgItemInt(m_hwnd, IDC_EDIT_FOLLOWERS, m_builderFollowersPerGuide, FALSE);
+        SetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, m_builderParticlesPerStrand, FALSE);
+
+        SendMessageW(m_comboPreset, CB_SETCURSEL,
+            (m_activePresetName == L"Calm Studio") ? 1 :
+            (m_activePresetName == L"Windy Demo") ? 2 :
+            (m_activePresetName == L"Heavy Grounded") ? 3 :
+            (m_activePresetName == L"Game-ish LOD") ? 4 : 0, 0);
+        SendMessageW(m_comboRenderMode, CB_SETCURSEL, m_renderMode == RenderMode::TubePreview ? 1 : 0, 0);
+        SendMessageW(m_comboDebugColor, CB_SETCURSEL, static_cast<WPARAM>(m_debugColorMode), 0);
+
+        SendMessageW(m_checkSelfCollision, BM_SETCHECK, m_enableSelfCollision ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkGrid, BM_SETCHECK, m_enableGridSelfCollision ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkScalpMotion, BM_SETCHECK, m_enableScalpMotion ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowColliders, BM_SETCHECK, m_showColliderDebug ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowScalpMesh, BM_SETCHECK, m_showScalpMesh ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowScalp, BM_SETCHECK, m_showScalpWireframe ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowGridBounds, BM_SETCHECK, m_showGridBounds ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowFloor, BM_SETCHECK, m_showFloorGuide ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowGuides, BM_SETCHECK, m_showGuideSkeleton ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowFollowers, BM_SETCHECK, m_showFollowerSkeleton ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowRoots, BM_SETCHECK, m_showRootMarkers ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowLinks, BM_SETCHECK, m_showFollowLinks ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkShowTestMesh, BM_SETCHECK, m_showTestMesh ? BST_CHECKED : BST_UNCHECKED, 0);
+
+        SendMessageW(m_trackWidth, TBM_SETPOS, TRUE, SliderFromFloat(m_widthScale, 0.2f, 8.0f));
+        SendMessageW(m_trackGravity, TBM_SETPOS, TRUE, SliderFromFloat(m_simConfig.gravity, 0.0f, 30.0f));
+        SendMessageW(m_trackDamping, TBM_SETPOS, TRUE, SliderFromFloat(m_simConfig.globalDamping, 0.0f, 0.15f));
+        SendMessageW(m_trackWind, TBM_SETPOS, TRUE, SliderFromFloat(m_simConfig.windStrength, 0.0f, 4.0f));
+        SendMessageW(m_trackIterations, TBM_SETPOS, TRUE, SliderFromFloat(static_cast<float>(m_simConfig.solverIterations), 1.0f, 16.0f));
+        SendMessageW(m_trackFollow, TBM_SETPOS, TRUE, SliderFromFloat(m_simConfig.followStiffness, 0.0f, 1.0f));
+        SendMessageW(m_trackSelfRadius, TBM_SETPOS, TRUE, SliderFromFloat(m_selfCollisionRadius, 0.004f, 0.040f));
+        SendMessageW(m_trackSelfStiffness, TBM_SETPOS, TRUE, SliderFromFloat(m_selfCollisionStiffness, 0.0f, 1.0f));
+        SendMessageW(m_trackGridCellSize, TBM_SETPOS, TRUE, SliderFromFloat(m_simConfig.selfCollisionCellSize, 0.03f, 0.20f));
+        const float stretchT = (std::log10(std::max(m_simConfig.stretchCompliance, 1.0e-9f)) + 9.0f) / 5.0f;
+        const float bendT = (std::log10(std::max(m_simConfig.bendCompliance, 1.0e-8f)) + 8.0f) / 5.0f;
+        SendMessageW(m_trackStretchCompliance, TBM_SETPOS, TRUE, SliderFromFloat(stretchT, 0.0f, 1.0f));
+        SendMessageW(m_trackBendCompliance, TBM_SETPOS, TRUE, SliderFromFloat(bendT, 0.0f, 1.0f));
+
+        SetWindowTextFormat(m_labelWidth, L"Width Scale: " + FormatFloat(m_widthScale, 2));
+        SetWindowTextFormat(m_labelGravity, L"Gravity: " + FormatFloat(m_simConfig.gravity, 2));
+        SetWindowTextFormat(m_labelDamping, L"Damping: " + FormatFloat(m_simConfig.globalDamping, 3));
+        SetWindowTextFormat(m_labelWind, L"Wind Strength: " + FormatFloat(m_simConfig.windStrength, 2));
+        SetWindowTextFormat(m_labelIterations, L"Solver Iterations: " + std::to_wstring(m_simConfig.solverIterations));
+        SetWindowTextFormat(m_labelFollow, L"Follow Stiffness: " + FormatFloat(m_simConfig.followStiffness, 3));
+        SetWindowTextFormat(m_labelSelfRadius, L"Self Radius: " + FormatFloat(m_selfCollisionRadius, 4));
+        SetWindowTextFormat(m_labelSelfStiffness, L"Self Stiffness: " + FormatFloat(m_selfCollisionStiffness, 3));
+        SetWindowTextFormat(m_labelGridCellSize, L"Grid Cell Size: " + FormatFloat(m_simConfig.selfCollisionCellSize, 3));
+        SetWindowTextFormat(m_labelStretchCompliance, L"Stretch Compliance: " + FormatScientific(m_simConfig.stretchCompliance));
+        SetWindowTextFormat(m_labelBendCompliance, L"Bend Compliance: " + FormatScientific(m_simConfig.bendCompliance));
+        SetWindowTextFormat(m_btnPlayPause, m_paused ? L"Play" : L"Pause");
+        RefreshAssetStatsText();
+    }
+
+    void GpuHairViewer::SyncStateFromControls()
+    {
+        m_enableSelfCollision = (SendMessageW(m_checkSelfCollision, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_enableGridSelfCollision = (SendMessageW(m_checkGrid, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_enableScalpMotion = (SendMessageW(m_checkScalpMotion, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showColliderDebug = (SendMessageW(m_checkShowColliders, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showScalpMesh = (SendMessageW(m_checkShowScalpMesh, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showScalpWireframe = (SendMessageW(m_checkShowScalp, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showGridBounds = (SendMessageW(m_checkShowGridBounds, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showFloorGuide = (SendMessageW(m_checkShowFloor, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showGuideSkeleton = (SendMessageW(m_checkShowGuides, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showFollowerSkeleton = (SendMessageW(m_checkShowFollowers, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showRootMarkers = (SendMessageW(m_checkShowRoots, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showFollowLinks = (SendMessageW(m_checkShowLinks, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_showTestMesh = (SendMessageW(m_checkShowTestMesh, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_renderMode = (SendMessageW(m_comboRenderMode, CB_GETCURSEL, 0, 0) == 1) ? RenderMode::TubePreview : RenderMode::Ribbon;
+        m_debugColorMode = static_cast<DebugColorMode>(std::max<LRESULT>(0, SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0)));
+
+        m_widthScale = FloatFromSlider(static_cast<int>(SendMessageW(m_trackWidth, TBM_GETPOS, 0, 0)), 0.2f, 8.0f);
+        m_simConfig.gravity = FloatFromSlider(static_cast<int>(SendMessageW(m_trackGravity, TBM_GETPOS, 0, 0)), 0.0f, 30.0f);
+        m_simConfig.globalDamping = FloatFromSlider(static_cast<int>(SendMessageW(m_trackDamping, TBM_GETPOS, 0, 0)), 0.0f, 0.15f);
+        m_simConfig.windStrength = FloatFromSlider(static_cast<int>(SendMessageW(m_trackWind, TBM_GETPOS, 0, 0)), 0.0f, 4.0f);
+        m_simConfig.solverIterations = static_cast<uint32_t>(std::round(FloatFromSlider(static_cast<int>(SendMessageW(m_trackIterations, TBM_GETPOS, 0, 0)), 1.0f, 16.0f)));
+        m_simConfig.followStiffness = FloatFromSlider(static_cast<int>(SendMessageW(m_trackFollow, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_selfCollisionRadius = FloatFromSlider(static_cast<int>(SendMessageW(m_trackSelfRadius, TBM_GETPOS, 0, 0)), 0.004f, 0.040f);
+        m_selfCollisionStiffness = FloatFromSlider(static_cast<int>(SendMessageW(m_trackSelfStiffness, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_simConfig.selfCollisionCellSize = FloatFromSlider(static_cast<int>(SendMessageW(m_trackGridCellSize, TBM_GETPOS, 0, 0)), 0.03f, 0.20f);
+        const float stretchT = FloatFromSlider(static_cast<int>(SendMessageW(m_trackStretchCompliance, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        const float bendT = FloatFromSlider(static_cast<int>(SendMessageW(m_trackBendCompliance, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_simConfig.stretchCompliance = std::pow(10.0f, -9.0f + stretchT * 5.0f);
+        m_simConfig.bendCompliance = std::pow(10.0f, -8.0f + bendT * 5.0f);
+
+        BOOL ok = FALSE;
+        UINT value = GetDlgItemInt(m_hwnd, IDC_EDIT_GUIDES, &ok, FALSE);
+        if (ok) { m_builderGuideCount = std::max<UINT>(32u, std::min<UINT>(value, 2000u)); }
+        value = GetDlgItemInt(m_hwnd, IDC_EDIT_FOLLOWERS, &ok, FALSE);
+        if (ok) { m_builderFollowersPerGuide = std::min<UINT>(value, 64u); }
+        value = GetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, &ok, FALSE);
+        if (ok) { m_builderParticlesPerStrand = std::max<UINT>(4u, std::min<UINT>(value, 64u)); }
+
+        SyncControlsFromState();
+    }
+
+    void GpuHairViewer::ApplyPreset(int presetIndex)
+    {
+        m_renderMode = RenderMode::TubePreview;
+        m_showScalpMesh = true;
+        switch (presetIndex)
+        {
+        default:
+        case 0:
+            m_activePresetName = L"Rapunzel Preview";
+            m_builderGuideCount = 320;
+            m_builderFollowersPerGuide = 10;
+            m_builderParticlesPerStrand = 16;
+            m_widthScale = 3.2f;
+            m_simConfig.gravity = 19.0f;
+            m_simConfig.globalDamping = 0.035f;
+            m_simConfig.windStrength = 0.42f;
+            m_simConfig.solverIterations = 6;
+            m_simConfig.followStiffness = 0.94f;
+            m_selfCollisionRadius = 0.012f;
+            m_selfCollisionStiffness = 0.35f;
+            m_simConfig.selfCollisionCellSize = 0.085f;
+            m_simConfig.stretchCompliance = 2.0e-7f;
+            m_simConfig.bendCompliance = 1.5e-5f;
+            break;
+        case 1:
+            m_activePresetName = L"Calm Studio";
+            m_builderGuideCount = 280;
+            m_builderFollowersPerGuide = 8;
+            m_builderParticlesPerStrand = 16;
+            m_widthScale = 3.0f;
+            m_simConfig.gravity = 18.0f;
+            m_simConfig.globalDamping = 0.060f;
+            m_simConfig.windStrength = 0.08f;
+            m_simConfig.solverIterations = 8;
+            m_simConfig.followStiffness = 0.96f;
+            m_selfCollisionRadius = 0.012f;
+            m_selfCollisionStiffness = 0.38f;
+            m_simConfig.selfCollisionCellSize = 0.085f;
+            m_simConfig.stretchCompliance = 1.0e-7f;
+            m_simConfig.bendCompliance = 1.0e-5f;
+            break;
+        case 2:
+            m_activePresetName = L"Windy Demo";
+            m_builderGuideCount = 320;
+            m_builderFollowersPerGuide = 10;
+            m_builderParticlesPerStrand = 16;
+            m_widthScale = 3.4f;
+            m_simConfig.gravity = 18.5f;
+            m_simConfig.globalDamping = 0.030f;
+            m_simConfig.windStrength = 1.30f;
+            m_simConfig.solverIterations = 7;
+            m_simConfig.followStiffness = 0.90f;
+            m_selfCollisionRadius = 0.011f;
+            m_selfCollisionStiffness = 0.32f;
+            m_simConfig.selfCollisionCellSize = 0.080f;
+            m_simConfig.stretchCompliance = 2.5e-7f;
+            m_simConfig.bendCompliance = 1.8e-5f;
+            break;
+        case 3:
+            m_activePresetName = L"Heavy Grounded";
+            m_builderGuideCount = 360;
+            m_builderFollowersPerGuide = 12;
+            m_builderParticlesPerStrand = 18;
+            m_widthScale = 2.8f;
+            m_simConfig.gravity = 22.0f;
+            m_simConfig.globalDamping = 0.072f;
+            m_simConfig.windStrength = 0.10f;
+            m_simConfig.solverIterations = 10;
+            m_simConfig.followStiffness = 0.97f;
+            m_selfCollisionRadius = 0.015f;
+            m_selfCollisionStiffness = 0.52f;
+            m_simConfig.selfCollisionCellSize = 0.095f;
+            m_simConfig.stretchCompliance = 8.0e-8f;
+            m_simConfig.bendCompliance = 6.0e-6f;
+            break;
+        case 4:
+            m_activePresetName = L"Game-ish LOD";
+            m_builderGuideCount = 160;
+            m_builderFollowersPerGuide = 4;
+            m_builderParticlesPerStrand = 12;
+            m_widthScale = 2.2f;
+            m_simConfig.gravity = 18.0f;
+            m_simConfig.globalDamping = 0.050f;
+            m_simConfig.windStrength = 0.25f;
+            m_simConfig.solverIterations = 4;
+            m_simConfig.followStiffness = 0.90f;
+            m_selfCollisionRadius = 0.010f;
+            m_selfCollisionStiffness = 0.28f;
+            m_simConfig.selfCollisionCellSize = 0.090f;
+            m_simConfig.stretchCompliance = 3.5e-7f;
+            m_simConfig.bendCompliance = 2.5e-5f;
+            break;
+        }
+        m_enableSelfCollision = true;
+        m_enableGridSelfCollision = true;
+        m_enableScalpMotion = true;
+        SyncControlsFromState();
+        RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+    }
+
+    bool GpuHairViewer::RebuildAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand)
+    {
+        m_builderGuideCount = guideCount;
+        m_builderFollowersPerGuide = followersPerGuide;
+        m_builderParticlesPerStrand = particlesPerStrand;
+        m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, particlesPerStrand, m_simConfig.segmentLength);
+        m_lastAssetSource = L"Sample Hybrid";
+        m_lastImportStatus = L"Procedural sample asset rebuilt";
+        if (!CreateSimulationResources())
+        {
+            MessageBoxW(m_hwnd, L"Failed to rebuild simulation resources after changing the asset.", L"Rebuild Failed", MB_OK | MB_ICONERROR);
+            return false;
+        }
+        RefreshAssetStatsText();
+        ResetSimulation();
+        SyncControlsFromState();
+        return true;
+    }
+
+    void GpuHairViewer::UpdateStatsLabel()
+    {
+        const float avgFrameMs = !m_performanceSamples.empty()
+            ? std::accumulate(m_performanceSamples.begin(), m_performanceSamples.end(), 0.0f,
+                [](float acc, const PerformanceSample& s) { return acc + s.frameMilliseconds; }) / static_cast<float>(m_performanceSamples.size())
+            : 0.0f;
+        const float avgSimMs = !m_performanceSamples.empty()
+            ? std::accumulate(m_performanceSamples.begin(), m_performanceSamples.end(), 0.0f,
+                [](float acc, const PerformanceSample& s) { return acc + s.simulationMilliseconds; }) / static_cast<float>(m_performanceSamples.size())
+            : 0.0f;
+
+        std::wstringstream ss;
+        ss << L"Runtime\n"
+           << L"Preset: " << m_activePresetName << L"\n"
+           << L"FPS: " << std::fixed << std::setprecision(1) << m_smoothedFps
+           << L"  Frame: " << std::setprecision(2) << (m_lastFrameSeconds * 1000.0f) << L" ms\n"
+           << L"Sim Step: " << std::setprecision(2) << m_lastSimulationStepMilliseconds << L" ms"
+           << L"  AvgSim: " << avgSimMs << L" ms\n"
+           << L"Avg Frame: " << avgFrameMs << L" ms\n"
+           << L"Sim Time: " << std::setprecision(2) << m_elapsedSeconds << L" s\n"
+           << L"Mode: " << (m_renderMode == RenderMode::TubePreview ? L"Tube" : L"Ribbon")
+           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : L"Natural")) << L"\n"
+           << L"Debug: G=" << (m_showGuideSkeleton ? L"On" : L"Off")
+           << L" F=" << (m_showFollowerSkeleton ? L"On" : L"Off")
+           << L" Roots=" << (m_showRootMarkers ? L"On" : L"Off")
+           << L" Links=" << (m_showFollowLinks ? L"On" : L"Off") << L"\n"
+           << L"Self Collision: " << (m_enableSelfCollision ? (m_enableGridSelfCollision ? L"Grid" : L"Legacy") : L"Off")
+           << L"  Samples: " << m_performanceSamples.size()
+           << (m_paused ? L"\n[PAUSED]" : L"");
+        SetWindowTextFormat(m_labelStats, ss.str());
+    }
+
+    bool GpuHairViewer::SaveSettingsToFile(const std::wstring& filePath) const
+    {
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+        out << "preset=" << std::string(m_activePresetName.begin(), m_activePresetName.end()) << "\n";
+        out << "guides=" << m_builderGuideCount << "\n";
+        out << "followersPerGuide=" << m_builderFollowersPerGuide << "\n";
+        out << "particlesPerStrand=" << m_builderParticlesPerStrand << "\n";
+        out << "widthScale=" << m_widthScale << "\n";
+        out << "gravity=" << m_simConfig.gravity << "\n";
+        out << "damping=" << m_simConfig.globalDamping << "\n";
+        out << "windStrength=" << m_simConfig.windStrength << "\n";
+        out << "solverIterations=" << m_simConfig.solverIterations << "\n";
+        out << "followStiffness=" << m_simConfig.followStiffness << "\n";
+        out << "selfCollisionRadius=" << m_selfCollisionRadius << "\n";
+        out << "selfCollisionStiffness=" << m_selfCollisionStiffness << "\n";
+        out << "gridCellSize=" << m_simConfig.selfCollisionCellSize << "\n";
+        out << "stretchCompliance=" << m_simConfig.stretchCompliance << "\n";
+        out << "bendCompliance=" << m_simConfig.bendCompliance << "\n";
+        out << "enableSelfCollision=" << (m_enableSelfCollision ? 1 : 0) << "\n";
+        out << "enableGridSelfCollision=" << (m_enableGridSelfCollision ? 1 : 0) << "\n";
+        out << "enableScalpMotion=" << (m_enableScalpMotion ? 1 : 0) << "\n";
+        out << "showColliderDebug=" << (m_showColliderDebug ? 1 : 0) << "\n";
+        out << "showScalpMesh=" << (m_showScalpMesh ? 1 : 0) << "\n";
+        out << "showScalpWireframe=" << (m_showScalpWireframe ? 1 : 0) << "\n";
+        out << "showGridBounds=" << (m_showGridBounds ? 1 : 0) << "\n";
+        out << "showFloorGuide=" << (m_showFloorGuide ? 1 : 0) << "\n";
+        out << "showGuideSkeleton=" << (m_showGuideSkeleton ? 1 : 0) << "\n";
+        out << "showFollowerSkeleton=" << (m_showFollowerSkeleton ? 1 : 0) << "\n";
+        out << "showRootMarkers=" << (m_showRootMarkers ? 1 : 0) << "\n";
+        out << "showFollowLinks=" << (m_showFollowLinks ? 1 : 0) << "\n";
+        out << "renderMode=" << (m_renderMode == RenderMode::TubePreview ? 1 : 0) << "\n";
+        out << "debugColorMode=" << static_cast<uint32_t>(m_debugColorMode) << "\n";
+        return true;
+    }
+
+    bool GpuHairViewer::LoadSettingsFromFile(const std::wstring& filePath)
+    {
+        std::ifstream in{ std::filesystem::path(filePath) };
+        if (!in)
+        {
+            return false;
+        }
+
+        std::unordered_map<std::string, std::string> values;
+        std::string line;
+        while (std::getline(in, line))
+        {
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos)
+            {
+                continue;
+            }
+            values[line.substr(0, eq)] = line.substr(eq + 1);
+        }
+
+        auto getFloat = [&](const char* key, float current)
+        {
+            auto it = values.find(key);
+            return (it != values.end()) ? std::stof(it->second) : current;
+        };
+        auto getUInt = [&](const char* key, uint32_t current)
+        {
+            auto it = values.find(key);
+            return (it != values.end()) ? static_cast<uint32_t>(std::stoul(it->second)) : current;
+        };
+        auto getBool = [&](const char* key, bool current)
+        {
+            auto it = values.find(key);
+            return (it != values.end()) ? (std::stoi(it->second) != 0) : current;
+        };
+
+        if (auto it = values.find("preset"); it != values.end())
+        {
+            m_activePresetName.assign(it->second.begin(), it->second.end());
+        }
+        m_builderGuideCount = getUInt("guides", m_builderGuideCount);
+        m_builderFollowersPerGuide = getUInt("followersPerGuide", m_builderFollowersPerGuide);
+        m_builderParticlesPerStrand = getUInt("particlesPerStrand", m_builderParticlesPerStrand);
+        m_widthScale = getFloat("widthScale", m_widthScale);
+        m_simConfig.gravity = getFloat("gravity", m_simConfig.gravity);
+        m_simConfig.globalDamping = getFloat("damping", m_simConfig.globalDamping);
+        m_simConfig.windStrength = getFloat("windStrength", m_simConfig.windStrength);
+        m_simConfig.solverIterations = getUInt("solverIterations", m_simConfig.solverIterations);
+        m_simConfig.followStiffness = getFloat("followStiffness", m_simConfig.followStiffness);
+        m_selfCollisionRadius = getFloat("selfCollisionRadius", m_selfCollisionRadius);
+        m_selfCollisionStiffness = getFloat("selfCollisionStiffness", m_selfCollisionStiffness);
+        m_simConfig.selfCollisionCellSize = getFloat("gridCellSize", m_simConfig.selfCollisionCellSize);
+        m_simConfig.stretchCompliance = getFloat("stretchCompliance", m_simConfig.stretchCompliance);
+        m_simConfig.bendCompliance = getFloat("bendCompliance", m_simConfig.bendCompliance);
+        m_enableSelfCollision = getBool("enableSelfCollision", m_enableSelfCollision);
+        m_enableGridSelfCollision = getBool("enableGridSelfCollision", m_enableGridSelfCollision);
+        m_enableScalpMotion = getBool("enableScalpMotion", m_enableScalpMotion);
+        m_showColliderDebug = getBool("showColliderDebug", m_showColliderDebug);
+        m_showScalpMesh = getBool("showScalpMesh", m_showScalpMesh);
+        m_showScalpWireframe = getBool("showScalpWireframe", m_showScalpWireframe);
+        m_showGridBounds = getBool("showGridBounds", m_showGridBounds);
+        m_showFloorGuide = getBool("showFloorGuide", m_showFloorGuide);
+        m_showGuideSkeleton = getBool("showGuideSkeleton", m_showGuideSkeleton);
+        m_showFollowerSkeleton = getBool("showFollowerSkeleton", m_showFollowerSkeleton);
+        m_showRootMarkers = getBool("showRootMarkers", m_showRootMarkers);
+        m_showFollowLinks = getBool("showFollowLinks", m_showFollowLinks);
+        m_renderMode = getBool("renderMode", m_renderMode == RenderMode::TubePreview) ? RenderMode::TubePreview : RenderMode::Ribbon;
+        m_debugColorMode = static_cast<DebugColorMode>(std::min<uint32_t>(getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)), 2u));
+
+        SyncControlsFromState();
+        return RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+    }
+
+    bool GpuHairViewer::ExportCurrentFrameCsv(const std::wstring& filePath)
+    {
+        std::vector<GpuParticle> particles;
+        if (!ReadBackCurrentParticlePositions(particles))
+        {
+            return false;
+        }
+
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+
+        out << "strandIndex,pointIndex,x,y,z,width,isGuide,parentGuide,followWeight,clumpWeight,noiseWeight\n";
+        for (size_t strandIndex = 0; strandIndex < m_asset.strands.size(); ++strandIndex)
+        {
+            const StrandRange& strand = m_asset.strands[strandIndex];
+            const bool isGuide = strandIndex < m_asset.guideStrandCount;
+            const FollowData follow = (strandIndex < m_asset.followData.size()) ? m_asset.followData[strandIndex] : FollowData{};
+            for (uint32_t i = 0; i < strand.pointCount; ++i)
+            {
+                const uint32_t particleIndex = strand.pointOffset + i;
+                const GpuParticle& p = particles[particleIndex];
+                const float width = (particleIndex < m_asset.pointWidths.size()) ? m_asset.pointWidths[particleIndex] : 0.0f;
+                out << strandIndex << "," << i << "," << p.x << "," << p.y << "," << p.z << "," << width << ","
+                    << (isGuide ? 1 : 0) << "," << follow.parentGuide << "," << follow.followWeight << "," << follow.clumpWeight << "," << follow.noiseWeight << "\n";
+            }
+        }
+
+        return true;
+    }
+
+    bool GpuHairViewer::ExportPerformanceCsv(const std::wstring& filePath) const
+    {
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount\n";
+        for (size_t i = 0; i < m_performanceSamples.size(); ++i)
+        {
+            const PerformanceSample& s = m_performanceSamples[i];
+            out << i << ","
+                << s.elapsedSeconds << ","
+                << s.frameMilliseconds << ","
+                << s.simulationMilliseconds << ","
+                << s.fps << ","
+                << s.guideCount << ","
+                << s.followerCount << ","
+                << s.totalStrandCount << ","
+                << s.totalParticleCount << "\n";
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles)
+    {
+        if (!m_positions[m_currentBufferIndex].buffer)
+        {
+            return false;
+        }
+
+        D3D11_BUFFER_DESC desc = {};
+        m_positions[m_currentBufferIndex].buffer->GetDesc(&desc);
+        D3D11_BUFFER_DESC stagingDesc = desc;
+        stagingDesc.BindFlags = 0;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags = 0;
+        stagingDesc.StructureByteStride = 0;
+
+        ComPtr<ID3D11Buffer> staging;
+        if (FAILED(m_device->CreateBuffer(&stagingDesc, nullptr, &staging)))
+        {
+            return false;
+        }
+
+        m_context->CopyResource(staging.Get(), m_positions[m_currentBufferIndex].buffer.Get());
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (FAILED(m_context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
+        {
+            return false;
+        }
+
+        outParticles.resize(m_asset.restPoints.size());
+        std::memcpy(outParticles.data(), mapped.pData, outParticles.size() * sizeof(GpuParticle));
+        m_context->Unmap(staging.Get(), 0);
+        return true;
+    }
+
+    bool GpuHairViewer::LoadHairAssetFromPath(const std::wstring& filePath)
+    {
+        const std::filesystem::path path(filePath);
+        const std::wstring ext = NormalizePathExtensionLower(path);
+
+        hairgpu::HairAsset importedAsset;
+        std::string errorText;
+        bool loaded = false;
+        if (ext == L".csv")
+        {
+            loaded = hairgpu::LoadHairAssetFromCurvesCsv(path, importedAsset, errorText);
+        }
+        else if (ext == L".abc")
+        {
+            loaded = hairgpu::LoadHairAssetFromAlembic(path, importedAsset, errorText);
+        }
+        else
+        {
+            errorText = "Unsupported hair asset file type. Use .csv now, or .abc with an Alembic-enabled build.";
+        }
+
+        if (!loaded)
+        {
+            m_lastImportStatus = Utf8ToWide(errorText);
+            RefreshAssetStatsText();
+            return false;
+        }
+
+        m_asset = std::move(importedAsset);
+        m_builderGuideCount = m_asset.guideStrandCount;
+        m_builderFollowersPerGuide = (m_asset.guideStrandCount > 0) ? (m_asset.followerStrandCount / m_asset.guideStrandCount) : 0u;
+        m_builderParticlesPerStrand = m_asset.particlesPerStrand;
+        m_activePresetName = L"Imported Asset";
+        m_lastAssetSource = path.filename().wstring();
+        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : L"Alembic imported";
+
+        if (!CreateSimulationResources())
+        {
+            m_lastImportStatus = L"Import succeeded, but GPU resources failed to rebuild";
+            RefreshAssetStatsText();
+            return false;
+        }
+
+        RefreshAssetStatsText();
+        ResetSimulation();
+        SyncControlsFromState();
+        return true;
+    }
+
+
+    void GpuHairViewer::BuildHairMeshVertices(const std::vector<GpuParticle>& particles, float aspectRatio)
+    {
+        m_hairMeshVertices.clear();
+        if (particles.size() < m_asset.restPoints.size() || m_asset.strands.empty())
+        {
+            return;
+        }
+
+        auto particleAt = [&](uint32_t particleIndex) -> Vec3
+        {
+            const GpuParticle& p = particles[particleIndex];
+            return Vec3(p.x, p.y, p.z);
+        };
+
+        auto projectPoint = [&](const Vec3& p, float& x, float& y, float& z, float& w) -> bool
+        {
+            Vec3 ndc;
+            if (!ProjectWorldToNdc(p, m_cameraPosition, m_cameraTarget, aspectRatio, ndc))
+            {
+                return false;
+            }
+            x = ndc.x;
+            y = ndc.y;
+            z = ndc.z;
+            w = 1.0f;
+            return true;
+        };
+
+        auto computeColor = [&](uint32_t strandIndex, float widthN) -> Vec3
+        {
+            if (m_debugColorMode == DebugColorMode::GuideFollower)
+            {
+                return (strandIndex < m_asset.guideStrandCount) ? Vec3(0.18f, 0.95f, 0.85f) : Vec3(0.98f, 0.52f, 0.18f);
+            }
+            if (m_debugColorMode == DebugColorMode::WidthHeatmap)
+            {
+                const float t = Clamp(widthN, 0.0f, 1.0f);
+                return Vec3(Lerp(0.12f, 1.00f, t), Lerp(0.35f, 0.20f, t), Lerp(1.00f, 0.10f, t));
+            }
+            const Vec3 rootColor(1.00f, 0.88f, 0.38f);
+            const Vec3 tipColor(0.78f, 0.58f, 0.18f);
+            return Lerp(tipColor, rootColor, 0.35f + 0.65f * Clamp(widthN, 0.0f, 1.0f));
+        };
+
+        const Vec3 lightDir = Normalize(Vec3(-0.45f, 0.90f, 0.20f));
+        auto shadeColor = [&](const Vec3& worldPos, const Vec3& normal, const Vec3& baseColor, float alpha) -> HairMeshVertex
+        {
+            float cx = 0.0f, cy = 0.0f, cz = 0.0f, cw = 1.0f;
+            projectPoint(worldPos, cx, cy, cz, cw);
+            const Vec3 n = Normalize(normal);
+            const Vec3 l = Normalize(lightDir * -1.0f);
+            const Vec3 v = Normalize(m_cameraPosition - worldPos);
+            const float diffuse = Clamp(Dot(n, l), 0.0f, 1.0f);
+            const Vec3 h = Normalize(l + v);
+            const float spec = std::pow(Clamp(Dot(n, h), 0.0f, 1.0f), 20.0f) * 0.18f;
+            const float rim = std::pow(1.0f - Clamp(Dot(n, v), 0.0f, 1.0f), 2.2f) * 0.08f;
+            const float lighting = 0.24f + 0.76f * diffuse;
+            const Vec3 shaded = baseColor * lighting + Vec3(spec + rim, spec + rim, spec + rim);
+            return { cx, cy, cz, cw, shaded.x, shaded.y, shaded.z, alpha };
+        };
+
+        auto appendTri = [&](const Vec3& p0, const Vec3& n0, const Vec3& c0,
+                             const Vec3& p1, const Vec3& n1, const Vec3& c1,
+                             const Vec3& p2, const Vec3& n2, const Vec3& c2,
+                             float alpha)
+        {
+            float x, y, z, w;
+            if (!projectPoint(p0, x, y, z, w) || !projectPoint(p1, x, y, z, w) || !projectPoint(p2, x, y, z, w))
+            {
+                return;
+            }
+            m_hairMeshVertices.push_back(shadeColor(p0, n0, c0, alpha));
+            m_hairMeshVertices.push_back(shadeColor(p1, n1, c1, alpha));
+            m_hairMeshVertices.push_back(shadeColor(p2, n2, c2, alpha));
+        };
+
+        auto appendQuad = [&](const Vec3& a, const Vec3& na, const Vec3& ca,
+                              const Vec3& b, const Vec3& nb, const Vec3& cb,
+                              const Vec3& c, const Vec3& nc, const Vec3& cc,
+                              const Vec3& d, const Vec3& nd, const Vec3& cd,
+                              float alpha)
+        {
+            appendTri(a, na, ca, b, nb, cb, c, nc, cc, alpha);
+            appendTri(c, nc, cc, b, nb, cb, d, nd, cd, alpha);
+        };
+
+        // Project and append scalp mesh first so the head is always visible behind the hair.
+        if (m_showScalpMesh && !m_asset.scalpMesh.positions.empty() && !m_asset.scalpMesh.triangles.empty())
+        {
+            const size_t scalpCount = std::min(m_animatedScalpParticles.size(), m_asset.scalpMesh.normals.size());
+            for (const TriangleIndices& tri : m_asset.scalpMesh.triangles)
+            {
+                if (tri.a >= scalpCount || tri.b >= scalpCount || tri.c >= scalpCount)
+                {
+                    continue;
+                }
+                const GpuParticle& pa = m_animatedScalpParticles[tri.a];
+                const GpuParticle& pb = m_animatedScalpParticles[tri.b];
+                const GpuParticle& pc = m_animatedScalpParticles[tri.c];
+                const Vec3 a(pa.x, pa.y, pa.z);
+                const Vec3 b(pb.x, pb.y, pb.z);
+                const Vec3 c(pc.x, pc.y, pc.z);
+                const Vec3 na = m_asset.scalpMesh.normals[tri.a];
+                const Vec3 nb = m_asset.scalpMesh.normals[tri.b];
+                const Vec3 nc = m_asset.scalpMesh.normals[tri.c];
+                const Vec3 scalpColor(0.76f, 0.62f, 0.52f);
+                appendTri(a, na, scalpColor, b, nb, scalpColor, c, nc, scalpColor, 1.0f);
+            }
+        }
+
+
+        if (m_showTestMesh)
+        {
+            auto appendTubeBetween = [&](const Vec3& p0, const Vec3& p1, float r0, float r1, const Vec3& color0, const Vec3& color1, int sides)
+            {
+                const Vec3 tangent = Normalize(p1 - p0);
+                if (Length(tangent) <= 1.0e-5f)
+                {
+                    return;
+                }
+                Vec3 ref = (std::fabs(tangent.y) < 0.9f) ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
+                Vec3 side = Normalize(Cross(ref, tangent));
+                if (Length(side) <= 1.0e-5f)
+                {
+                    side = Normalize(Cross(Vec3(0.0f, 0.0f, 1.0f), tangent));
+                }
+                Vec3 binormal = Normalize(Cross(tangent, side));
+                for (int sideIndex = 0; sideIndex < sides; ++sideIndex)
+                {
+                    const float a0 = static_cast<float>(sideIndex) * 6.28318530718f / static_cast<float>(sides);
+                    const float a1 = static_cast<float>(sideIndex + 1) * 6.28318530718f / static_cast<float>(sides);
+                    const Vec3 radial0 = Normalize(side * std::cos(a0) + binormal * std::sin(a0));
+                    const Vec3 radial1 = Normalize(side * std::cos(a1) + binormal * std::sin(a1));
+                    const Vec3 v00 = p0 + radial0 * r0;
+                    const Vec3 v01 = p0 + radial1 * r0;
+                    const Vec3 v10 = p1 + radial0 * r1;
+                    const Vec3 v11 = p1 + radial1 * r1;
+                    appendQuad(v00, radial0, color0,
+                               v01, radial1, color0,
+                               v10, radial0, color1,
+                               v11, radial1, color1,
+                               1.0f);
+                }
+            };
+
+            const std::array<Vec3, 10> testPoints = {
+                Vec3(-0.06f, 1.88f, 0.10f),
+                Vec3(-0.03f, 1.66f, 0.14f),
+                Vec3( 0.00f, 1.42f, 0.18f),
+                Vec3( 0.03f, 1.18f, 0.22f),
+                Vec3( 0.05f, 0.95f, 0.24f),
+                Vec3( 0.06f, 0.68f, 0.26f),
+                Vec3( 0.06f, 0.38f, 0.26f),
+                Vec3( 0.05f, 0.08f, 0.24f),
+                Vec3( 0.03f,-0.20f, 0.21f),
+                Vec3( 0.00f,-0.46f, 0.18f)
+            };
+            const Vec3 testColorRoot(1.00f, 0.20f, 0.20f);
+            const Vec3 testColorTip(1.00f, 0.82f, 0.18f);
+            for (size_t i = 0; i + 1 < testPoints.size(); ++i)
+            {
+                const float t0 = static_cast<float>(i) / static_cast<float>(testPoints.size() - 1);
+                const float t1 = static_cast<float>(i + 1) / static_cast<float>(testPoints.size() - 1);
+                const Vec3 c0 = Lerp(testColorRoot, testColorTip, t0);
+                const Vec3 c1 = Lerp(testColorRoot, testColorTip, t1);
+                const float r0 = 0.030f - 0.014f * t0;
+                const float r1 = 0.030f - 0.014f * t1;
+                appendTubeBetween(testPoints[i], testPoints[i + 1], r0, r1, c0, c1, 8);
+            }
+
+            // Add a short bright marker cylinder near the face so a guaranteed 3D object is visible
+            // even when the simulated strands are off-screen or readback is invalid.
+            appendTubeBetween(Vec3(0.18f, 1.35f, 0.10f), Vec3(0.18f, 1.05f, 0.10f), 0.040f, 0.040f,
+                              Vec3(0.15f, 0.75f, 1.00f), Vec3(0.15f, 0.95f, 0.65f), 10);
+        }
+
+        constexpr int kTubeSides = 6;
+        const float widthScale = std::max(m_widthScale, 0.2f);
+        for (uint32_t strandIndex = 0; strandIndex < static_cast<uint32_t>(m_asset.strands.size()); ++strandIndex)
+        {
+            const StrandRange& strand = m_asset.strands[strandIndex];
+            if (strand.pointCount < 2u)
+            {
+                continue;
+            }
+
+            for (uint32_t i = 0; i + 1u < strand.pointCount; ++i)
+            {
+                const uint32_t idx0 = strand.pointOffset + i;
+                const uint32_t idx1 = strand.pointOffset + i + 1u;
+                const Vec3 p0 = particleAt(idx0);
+                const Vec3 p1 = particleAt(idx1);
+                const Vec3 tangent = Normalize(p1 - p0);
+                if (Length(tangent) <= 1.0e-5f)
+                {
+                    continue;
+                }
+
+                Vec3 ref = (std::fabs(tangent.y) < 0.9f) ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
+                Vec3 side = Normalize(Cross(ref, tangent));
+                if (Length(side) <= 1.0e-5f)
+                {
+                    side = Normalize(Cross(Vec3(0.0f, 0.0f, 1.0f), tangent));
+                }
+                Vec3 binormal = Normalize(Cross(tangent, side));
+
+                const float width0 = (idx0 < m_asset.pointWidths.size()) ? m_asset.pointWidths[idx0] : 0.0035f;
+                const float width1 = (idx1 < m_asset.pointWidths.size()) ? m_asset.pointWidths[idx1] : 0.0030f;
+                const float r0 = std::max(width0 * widthScale * 0.55f, 0.0040f);
+                const float r1 = std::max(width1 * widthScale * 0.55f, 0.0032f);
+                const float widthN0 = Clamp((width0 * widthScale - 0.0010f) / 0.0120f, 0.0f, 1.0f);
+                const float widthN1 = Clamp((width1 * widthScale - 0.0010f) / 0.0120f, 0.0f, 1.0f);
+                const Vec3 color0 = computeColor(strandIndex, widthN0);
+                const Vec3 color1 = computeColor(strandIndex, widthN1);
+
+                for (int sideIndex = 0; sideIndex < kTubeSides; ++sideIndex)
+                {
+                    const float a0 = static_cast<float>(sideIndex) * 6.28318530718f / static_cast<float>(kTubeSides);
+                    const float a1 = static_cast<float>(sideIndex + 1) * 6.28318530718f / static_cast<float>(kTubeSides);
+                    const Vec3 radial0 = Normalize(side * std::cos(a0) + binormal * std::sin(a0));
+                    const Vec3 radial1 = Normalize(side * std::cos(a1) + binormal * std::sin(a1));
+                    const Vec3 v00 = p0 + radial0 * r0;
+                    const Vec3 v01 = p0 + radial1 * r0;
+                    const Vec3 v10 = p1 + radial0 * r1;
+                    const Vec3 v11 = p1 + radial1 * r1;
+                    appendQuad(v00, radial0, color0,
+                               v01, radial1, color0,
+                               v10, radial0, color1,
+                               v11, radial1, color1,
+                               0.98f);
+                }
+            }
+        }
+    }
+
+    bool GpuHairViewer::EnsureHairMeshVertexCapacity(size_t vertexCount)
+    {
+        if (vertexCount == 0)
+        {
+            return true;
+        }
+        if (vertexCount <= m_hairMeshVertexCapacity && m_hairMeshVertexBuffer)
+        {
+            return true;
+        }
+
+        const size_t newCapacity = std::max<size_t>(vertexCount, m_hairMeshVertexCapacity > 0 ? m_hairMeshVertexCapacity * 2ull : 4096ull);
+        if (newCapacity > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(HairMeshVertex)))
+        {
+            return false;
+        }
+
+        D3D11_BUFFER_DESC desc = {};
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        desc.ByteWidth = static_cast<UINT>(newCapacity * sizeof(HairMeshVertex));
+        desc.Usage = D3D11_USAGE_DYNAMIC;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(m_device->CreateBuffer(&desc, nullptr, &m_hairMeshVertexBuffer)))
+        {
+            return false;
+        }
+
+        m_hairMeshVertexCapacity = newCapacity;
+        return true;
+    }
+
+    bool GpuHairViewer::EnsureDebugVertexCapacity(size_t vertexCount)
+    {
+        if (vertexCount == 0)
+        {
+            return true;
+        }
+        if (m_debugLineVertexBuffer && m_debugLineVertexCapacity >= vertexCount)
+        {
+            return true;
+        }
+
+        m_debugLineVertexBuffer.Reset();
+        m_debugLineVertexCapacity = std::max(vertexCount, static_cast<size_t>(4096));
+
+        D3D11_BUFFER_DESC desc = {};
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        desc.ByteWidth = static_cast<UINT>(m_debugLineVertexCapacity * sizeof(DebugLineVertex));
+        desc.Usage = D3D11_USAGE_DYNAMIC;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        return SUCCEEDED(m_device->CreateBuffer(&desc, nullptr, &m_debugLineVertexBuffer));
+    }
+
+    void GpuHairViewer::BuildDebugLineVertices(float aspectRatio)
+    {
+        m_debugLineVertices.clear();
+
+        auto addLine = [&](const Vec3& a, const Vec3& b, float r, float g, float bl, float alpha = 1.0f)
+        {
+            Vec3 na;
+            Vec3 nb;
+            if (!ProjectWorldToNdc(a, m_cameraPosition, m_cameraTarget, aspectRatio, na) || !ProjectWorldToNdc(b, m_cameraPosition, m_cameraTarget, aspectRatio, nb))
+            {
+                return;
+            }
+            m_debugLineVertices.push_back({ na.x, na.y, na.z, r, g, bl, alpha });
+            m_debugLineVertices.push_back({ nb.x, nb.y, nb.z, r, g, bl, alpha });
+        };
+
+        if (m_showFloorGuide)
+        {
+            const float floorY = m_simConfig.floorY;
+            const float halfExtent = 1.4f;
+            const float step = 0.2f;
+            for (float x = -halfExtent; x <= halfExtent + 0.001f; x += step)
+            {
+                addLine(Vec3(x, floorY, -halfExtent), Vec3(x, floorY, halfExtent), 0.32f, 0.58f, 0.38f, 0.40f);
+            }
+            for (float z = -halfExtent; z <= halfExtent + 0.001f; z += step)
+            {
+                addLine(Vec3(-halfExtent, floorY, z), Vec3(halfExtent, floorY, z), 0.32f, 0.58f, 0.38f, 0.40f);
+            }
+        }
+
+        if (m_showGridBounds)
+        {
+            const Vec3 origin = m_simConfig.selfCollisionGridOrigin;
+            const Vec3 extents(
+                static_cast<float>(m_simConfig.selfCollisionGridDimX) * m_simConfig.selfCollisionCellSize,
+                static_cast<float>(m_simConfig.selfCollisionGridDimY) * m_simConfig.selfCollisionCellSize,
+                static_cast<float>(m_simConfig.selfCollisionGridDimZ) * m_simConfig.selfCollisionCellSize);
+            const Vec3 p000 = origin;
+            const Vec3 p100 = origin + Vec3(extents.x, 0.0f, 0.0f);
+            const Vec3 p010 = origin + Vec3(0.0f, extents.y, 0.0f);
+            const Vec3 p110 = origin + Vec3(extents.x, extents.y, 0.0f);
+            const Vec3 p001 = origin + Vec3(0.0f, 0.0f, extents.z);
+            const Vec3 p101 = origin + Vec3(extents.x, 0.0f, extents.z);
+            const Vec3 p011 = origin + Vec3(0.0f, extents.y, extents.z);
+            const Vec3 p111 = origin + extents;
+            const float r = 0.15f, g = 0.95f, b = 0.65f, a = 0.75f;
+            addLine(p000, p100, r, g, b, a); addLine(p000, p010, r, g, b, a); addLine(p000, p001, r, g, b, a);
+            addLine(p111, p101, r, g, b, a); addLine(p111, p110, r, g, b, a); addLine(p111, p011, r, g, b, a);
+            addLine(p100, p110, r, g, b, a); addLine(p100, p101, r, g, b, a);
+            addLine(p010, p110, r, g, b, a); addLine(p010, p011, r, g, b, a);
+            addLine(p001, p101, r, g, b, a); addLine(p001, p011, r, g, b, a);
+        }
+
+        if (m_showScalpWireframe)
+        {
+            for (const TriangleGpuData& tri : m_scalpTriangles)
+            {
+                if (tri.a >= m_animatedScalpParticles.size() || tri.b >= m_animatedScalpParticles.size() || tri.c >= m_animatedScalpParticles.size())
+                {
+                    continue;
+                }
+                const Vec3 a(m_animatedScalpParticles[tri.a].x, m_animatedScalpParticles[tri.a].y, m_animatedScalpParticles[tri.a].z);
+                const Vec3 b(m_animatedScalpParticles[tri.b].x, m_animatedScalpParticles[tri.b].y, m_animatedScalpParticles[tri.b].z);
+                const Vec3 c(m_animatedScalpParticles[tri.c].x, m_animatedScalpParticles[tri.c].y, m_animatedScalpParticles[tri.c].z);
+                addLine(a, b, 0.25f, 0.85f, 1.0f, 0.55f);
+                addLine(b, c, 0.25f, 0.85f, 1.0f, 0.55f);
+                addLine(c, a, 0.25f, 0.85f, 1.0f, 0.55f);
+            }
+        }
+
+        if (m_showColliderDebug)
+        {
+            constexpr int segments = 24;
+            for (const SphereCollider& sphere : m_colliders.spheres)
+            {
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    for (int i = 0; i < segments; ++i)
+                    {
+                        const float a0 = (static_cast<float>(i) / segments) * 6.28318530718f;
+                        const float a1 = (static_cast<float>(i + 1) / segments) * 6.28318530718f;
+                        Vec3 p0 = sphere.center;
+                        Vec3 p1 = sphere.center;
+                        if (axis == 0)
+                        {
+                            p0.y += std::cos(a0) * sphere.radius; p0.z += std::sin(a0) * sphere.radius;
+                            p1.y += std::cos(a1) * sphere.radius; p1.z += std::sin(a1) * sphere.radius;
+                        }
+                        else if (axis == 1)
+                        {
+                            p0.x += std::cos(a0) * sphere.radius; p0.z += std::sin(a0) * sphere.radius;
+                            p1.x += std::cos(a1) * sphere.radius; p1.z += std::sin(a1) * sphere.radius;
+                        }
+                        else
+                        {
+                            p0.x += std::cos(a0) * sphere.radius; p0.y += std::sin(a0) * sphere.radius;
+                            p1.x += std::cos(a1) * sphere.radius; p1.y += std::sin(a1) * sphere.radius;
+                        }
+                        addLine(p0, p1, 1.0f, 0.55f, 0.15f, 0.8f);
+                    }
+                }
+            }
+
+            for (const CapsuleCollider& capsule : m_colliders.capsules)
+            {
+                const Vec3 axis = Normalize(capsule.pointB - capsule.pointA);
+                Vec3 temp = (std::fabs(axis.y) < 0.95f) ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
+                const Vec3 tangent = Normalize(Cross(axis, temp));
+                const Vec3 bitangent = Normalize(Cross(axis, tangent));
+                constexpr int segments = 24;
+                for (int i = 0; i < segments; ++i)
+                {
+                    const float a0 = (static_cast<float>(i) / segments) * 6.28318530718f;
+                    const float a1 = (static_cast<float>(i + 1) / segments) * 6.28318530718f;
+                    const Vec3 ring0 = tangent * std::cos(a0) + bitangent * std::sin(a0);
+                    const Vec3 ring1 = tangent * std::cos(a1) + bitangent * std::sin(a1);
+                    const Vec3 a0p = capsule.pointA + ring0 * capsule.radiusA;
+                    const Vec3 a1p = capsule.pointA + ring1 * capsule.radiusA;
+                    const Vec3 b0p = capsule.pointB + ring0 * capsule.radiusB;
+                    const Vec3 b1p = capsule.pointB + ring1 * capsule.radiusB;
+                    addLine(a0p, a1p, 0.85f, 0.35f, 0.90f, 0.75f);
+                    addLine(b0p, b1p, 0.85f, 0.35f, 0.90f, 0.75f);
+                    if ((i % 6) == 0)
+                    {
+                        addLine(a0p, b0p, 0.85f, 0.35f, 0.90f, 0.75f);
+                    }
+                }
+            }
+        }
+
+        const bool needStrandDebug = m_showGuideSkeleton || m_showFollowerSkeleton || m_showRootMarkers || m_showFollowLinks;
+        if (!needStrandDebug)
+        {
+            return;
+        }
+
+        if (m_debugReadbackParticles.size() < m_asset.restPoints.size() || !ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset))
+        {
+            if (!ReadBackCurrentParticlePositions(m_debugReadbackParticles) || !ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset))
+            {
+                m_debugReadbackParticles = m_initialParticles;
+                if (!ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset))
+                {
+                    return;
+                }
+            }
+        }
+
+        const auto particleAt = [&](uint32_t particleIndex) -> Vec3
+        {
+            const GpuParticle& p = m_debugReadbackParticles[particleIndex];
+            return { p.x, p.y, p.z };
+        };
+
+        const uint32_t guideCount = m_asset.guideStrandCount;
+        const uint32_t followerCount = m_asset.followerStrandCount;
+        const uint32_t totalCount = static_cast<uint32_t>(m_asset.strands.size());
+        const uint32_t followerStride = std::max<uint32_t>(1u, followerCount / 96u + ((followerCount > 96u) ? 1u : 0u));
+
+        auto addRootMarker = [&](const Vec3& root, bool isGuide)
+        {
+            const float s = isGuide ? 0.018f : 0.012f;
+            const float r = isGuide ? 0.10f : 0.98f;
+            const float g = isGuide ? 0.92f : 0.52f;
+            const float b = isGuide ? 1.00f : 0.18f;
+            addLine(root - Vec3(s, 0.0f, 0.0f), root + Vec3(s, 0.0f, 0.0f), r, g, b, 0.95f);
+            addLine(root - Vec3(0.0f, s, 0.0f), root + Vec3(0.0f, s, 0.0f), r, g, b, 0.95f);
+            addLine(root - Vec3(0.0f, 0.0f, s), root + Vec3(0.0f, 0.0f, s), r, g, b, 0.95f);
+        };
+
+        auto addStrandSkeleton = [&](uint32_t strandIndex, float r, float g, float b, float alpha)
+        {
+            if (strandIndex >= totalCount)
+            {
+                return;
+            }
+            const StrandRange& strand = m_asset.strands[strandIndex];
+            for (uint32_t i = 1; i < strand.pointCount; ++i)
+            {
+                const uint32_t aIndex = strand.pointOffset + i - 1u;
+                const uint32_t bIndex = strand.pointOffset + i;
+                addLine(particleAt(aIndex), particleAt(bIndex), r, g, b, alpha);
+            }
+        };
+
+        if (m_showGuideSkeleton || m_showRootMarkers)
+        {
+            for (uint32_t strandIndex = 0; strandIndex < guideCount; ++strandIndex)
+            {
+                const StrandRange& strand = m_asset.strands[strandIndex];
+                const Vec3 root = particleAt(strand.pointOffset);
+                if (m_showGuideSkeleton)
+                {
+                    addStrandSkeleton(strandIndex, 0.12f, 0.95f, 0.92f, 0.85f);
+                }
+                if (m_showRootMarkers)
+                {
+                    addRootMarker(root, true);
+                }
+            }
+        }
+
+        if (m_showFollowerSkeleton || m_showRootMarkers || m_showFollowLinks)
+        {
+            for (uint32_t followerLocalIndex = 0; followerLocalIndex < followerCount; ++followerLocalIndex)
+            {
+                if (followerLocalIndex % followerStride != 0u)
+                {
+                    continue;
+                }
+                const uint32_t strandIndex = guideCount + followerLocalIndex;
+                if (strandIndex >= totalCount)
+                {
+                    continue;
+                }
+                const StrandRange& strand = m_asset.strands[strandIndex];
+                const Vec3 root = particleAt(strand.pointOffset);
+                if (m_showFollowerSkeleton)
+                {
+                    addStrandSkeleton(strandIndex, 1.00f, 0.52f, 0.18f, 0.42f);
+                }
+                if (m_showRootMarkers)
+                {
+                    addRootMarker(root, false);
+                }
+                if (m_showFollowLinks && strandIndex < m_asset.followData.size())
+                {
+                    const int32_t parentGuide = m_asset.followData[strandIndex].parentGuide;
+                    if (parentGuide >= 0 && static_cast<uint32_t>(parentGuide) < guideCount)
+                    {
+                        const Vec3 guideRoot = particleAt(m_asset.strands[static_cast<uint32_t>(parentGuide)].pointOffset);
+                        addLine(root, guideRoot, 0.86f, 0.30f, 1.00f, 0.32f);
+                    }
+                }
+            }
+        }
+    }
+
     LRESULT CALLBACK GpuHairViewer::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
         GpuHairViewer* app = reinterpret_cast<GpuHairViewer*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -1005,11 +2755,17 @@ namespace hairgpu::viewer
             Resize(LOWORD(lParam), HIWORD(lParam));
             return 0;
         case WM_LBUTTONDOWN:
-            m_dragging = true;
-            m_lastMouse.x = GET_X_LPARAM(lParam);
-            m_lastMouse.y = GET_Y_LPARAM(lParam);
-            SetCapture(m_hwnd);
+        {
+            const RECT renderRect = GetRenderViewportRect();
+            const POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (PtInRect(&renderRect, p))
+            {
+                m_dragging = true;
+                m_lastMouse = p;
+                SetCapture(m_hwnd);
+            }
             return 0;
+        }
         case WM_LBUTTONUP:
             m_dragging = false;
             ReleaseCapture();
@@ -1027,60 +2783,279 @@ namespace hairgpu::viewer
             return 0;
         case WM_MOUSEWHEEL:
         {
-            const float wheel = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
-            m_cameraDistance = Clamp(m_cameraDistance - wheel * 0.15f, 0.6f, 8.0f);
+            POINT screenPoint = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            ScreenToClient(hwnd, &screenPoint);
+            const RECT renderRect = GetRenderViewportRect();
+            if (PtInRect(&renderRect, screenPoint))
+            {
+                const float wheel = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
+                m_cameraDistance = Clamp(m_cameraDistance - wheel * 0.15f, 0.6f, 8.0f);
+            }
             return 0;
+        }
+        case WM_HSCROLL:
+            SyncStateFromControls();
+            return 0;
+        case WM_COMMAND:
+        {
+            const int id = LOWORD(wParam);
+            const int code = HIWORD(wParam);
+            switch (id)
+            {
+            case IDC_BTN_PLAYPAUSE:
+                m_paused = !m_paused;
+                SyncControlsFromState();
+                return 0;
+            case IDC_BTN_RESET:
+                ResetSimulation();
+                return 0;
+            case IDC_BTN_STEP:
+                StepSingleFrame();
+                return 0;
+            case IDC_BTN_APPLY_ASSET:
+                SyncStateFromControls();
+                RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+                return 0;
+            case IDC_BTN_IMPORT_ASSET:
+            {
+                wchar_t fileName[MAX_PATH] = L"";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"Hair Assets (*.csv;*.abc)\0*.csv;*.abc\0Curves CSV (*.csv)\0*.csv\0Alembic (*.abc)\0*.abc\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                if (GetOpenFileNameW(&ofn))
+                {
+                    if (!LoadHairAssetFromPath(fileName))
+                    {
+                        const std::wstring message = L"Import failed.\r\n\r\n" + m_lastImportStatus;
+                        MessageBoxW(hwnd, message.c_str(), L"Hair Import", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_BTN_SAVE_SETTINGS:
+            {
+                wchar_t fileName[MAX_PATH] = L"hair_viewer_settings.ini";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"INI Files\0*.ini\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                if (GetSaveFileNameW(&ofn))
+                {
+                    if (!SaveSettingsToFile(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to save settings.", L"Save Failed", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_BTN_LOAD_SETTINGS:
+            {
+                wchar_t fileName[MAX_PATH] = L"";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"INI Files\0*.ini\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                if (GetOpenFileNameW(&ofn))
+                {
+                    if (!LoadSettingsFromFile(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to load settings.", L"Load Failed", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_BTN_EXPORT_CSV:
+            {
+                wchar_t fileName[MAX_PATH] = L"hair_frame.csv";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"CSV Files\0*.csv\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                if (GetSaveFileNameW(&ofn))
+                {
+                    if (!ExportCurrentFrameCsv(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to export current strand positions.", L"Export Failed", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_BTN_EXPORT_PERF_CSV:
+            {
+                wchar_t fileName[MAX_PATH] = L"hair_performance.csv";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"CSV Files\0*.csv\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                if (GetSaveFileNameW(&ofn))
+                {
+                    if (!ExportPerformanceCsv(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to export performance history.", L"Export Failed", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_COMBO_PRESET:
+                if (code == CBN_SELCHANGE)
+                {
+                    const int preset = static_cast<int>(SendMessageW(m_comboPreset, CB_GETCURSEL, 0, 0));
+                    ApplyPreset(preset);
+                }
+                return 0;
+            case IDC_COMBO_RENDER_MODE:
+            case IDC_COMBO_DEBUG_COLOR:
+                if (code == CBN_SELCHANGE)
+                {
+                    SyncStateFromControls();
+                }
+                return 0;
+            case IDC_CHECK_SELF_COLLISION:
+            case IDC_CHECK_GRID:
+            case IDC_CHECK_SCALP_MOTION:
+            case IDC_CHECK_SHOW_COLLIDERS:
+            case IDC_CHECK_SHOW_SCALP_MESH:
+            case IDC_CHECK_SHOW_SCALP:
+            case IDC_CHECK_SHOW_GRID_BOUNDS:
+            case IDC_CHECK_SHOW_FLOOR:
+            case IDC_CHECK_SHOW_GUIDES:
+            case IDC_CHECK_SHOW_FOLLOWERS:
+            case IDC_CHECK_SHOW_ROOTS:
+            case IDC_CHECK_SHOW_LINKS:
+            case IDC_CHECK_SHOW_TEST_MESH:
+                if (code == BN_CLICKED)
+                {
+                    SyncStateFromControls();
+                }
+                return 0;
+            default:
+                break;
+            }
+            break;
         }
         case WM_KEYDOWN:
             switch (wParam)
             {
             case VK_SPACE:
                 m_paused = !m_paused;
+                SyncControlsFromState();
                 return 0;
             case 'R':
                 ResetSimulation();
                 return 0;
+            case 'N':
+                if (m_paused)
+                {
+                    StepSingleFrame();
+                }
+                return 0;
+            case 'C':
+                m_debugColorMode = static_cast<DebugColorMode>((static_cast<uint32_t>(m_debugColorMode) + 1u) % 3u);
+                SyncControlsFromState();
+                return 0;
+            case 'F':
+                m_showFloorGuide = !m_showFloorGuide;
+                SyncControlsFromState();
+                return 0;
+            case 'H':
+                m_showGridBounds = !m_showGridBounds;
+                SyncControlsFromState();
+                return 0;
+            case 'Y':
+                m_showTestMesh = !m_showTestMesh;
+                SyncControlsFromState();
+                return 0;
             case '1':
-                m_widthScale = Clamp(m_widthScale * 0.85f, 0.2f, 3.0f);
+                m_widthScale = Clamp(m_widthScale * 0.85f, 0.2f, 8.0f);
+                SyncControlsFromState();
                 return 0;
             case '2':
-                m_widthScale = Clamp(m_widthScale * 1.15f, 0.2f, 3.0f);
+                m_widthScale = Clamp(m_widthScale * 1.15f, 0.2f, 8.0f);
+                SyncControlsFromState();
                 return 0;
             case '3':
                 m_enableSelfCollision = !m_enableSelfCollision;
+                SyncControlsFromState();
                 return 0;
             case '4':
                 m_enableScalpMotion = !m_enableScalpMotion;
+                SyncControlsFromState();
                 return 0;
             case '5':
                 m_selfCollisionRadius = Clamp(m_selfCollisionRadius * 0.90f, 0.004f, 0.040f);
+                SyncControlsFromState();
                 return 0;
             case '6':
                 m_selfCollisionRadius = Clamp(m_selfCollisionRadius * 1.10f, 0.004f, 0.040f);
+                SyncControlsFromState();
                 return 0;
             case '7':
                 m_simConfig.stretchCompliance *= 0.5f;
+                SyncControlsFromState();
                 return 0;
             case '8':
                 m_simConfig.stretchCompliance *= 2.0f;
+                SyncControlsFromState();
                 return 0;
             case '9':
                 m_simConfig.bendCompliance *= 0.5f;
+                SyncControlsFromState();
                 return 0;
             case '0':
                 m_simConfig.bendCompliance *= 2.0f;
+                SyncControlsFromState();
                 return 0;
             case 'G':
                 m_enableGridSelfCollision = !m_enableGridSelfCollision;
+                SyncControlsFromState();
+                return 0;
+            case 'M':
+                m_showScalpMesh = !m_showScalpMesh;
+                SyncControlsFromState();
+                return 0;
+            case 'J':
+                m_showGuideSkeleton = !m_showGuideSkeleton;
+                SyncControlsFromState();
+                return 0;
+            case 'K':
+                m_showFollowerSkeleton = !m_showFollowerSkeleton;
+                SyncControlsFromState();
+                return 0;
+            case 'L':
+                m_showFollowLinks = !m_showFollowLinks;
+                SyncControlsFromState();
+                return 0;
+            case 'U':
+                m_showRootMarkers = !m_showRootMarkers;
+                SyncControlsFromState();
                 return 0;
             case 'T':
                 m_renderMode = (m_renderMode == RenderMode::Ribbon) ? RenderMode::TubePreview : RenderMode::Ribbon;
+                SyncControlsFromState();
                 return 0;
             case VK_OEM_MINUS:
                 m_simConfig.selfCollisionCellSize = Clamp(m_simConfig.selfCollisionCellSize * 0.92f, 0.03f, 0.20f);
+                SyncControlsFromState();
                 return 0;
             case VK_OEM_PLUS:
                 m_simConfig.selfCollisionCellSize = Clamp(m_simConfig.selfCollisionCellSize * 1.08f, 0.03f, 0.20f);
+                SyncControlsFromState();
                 return 0;
             default:
                 break;
