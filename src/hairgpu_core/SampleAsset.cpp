@@ -20,12 +20,41 @@ namespace hairgpu
             return Fract(std::sin(static_cast<float>(value) * 12.9898f + 78.233f) * 43758.5453f);
         }
 
+        float SmoothStep01(float t)
+        {
+            t = Clamp(t, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        }
+
         Vec3 ComputeRootDirection(const Vec3& root, const Vec3& scalpCenter)
         {
-            // Bias strongly downward for long Rapunzel-like hair while keeping a slight outward launch.
-            Vec3 outward = Normalize(Vec3(root.x - scalpCenter.x, 0.18f, root.z - scalpCenter.z));
-            Vec3 downward(0.0f, -1.0f, 0.0f);
-            return Normalize(Lerp(downward, outward, 0.08f));
+            const Vec3 outward = Normalize(Vec3(root.x - scalpCenter.x, 0.0f, root.z - scalpCenter.z));
+            const Vec3 downward(0.0f, -1.0f, 0.0f);
+            return Normalize(Lerp(downward, outward, 0.18f));
+        }
+
+        Vec3 ComputeWigSurfaceDirection(const Vec3& root, const Vec3& scalpCenter)
+        {
+            Vec3 normal = Normalize(root - scalpCenter);
+            if (Length(normal) <= 1.0e-6f)
+            {
+                normal = Vec3(0.0f, 1.0f, 0.0f);
+            }
+
+            const Vec3 downward(0.0f, -1.0f, 0.0f);
+            Vec3 tangent = downward - normal * Dot(downward, normal);
+            if (Length(tangent) <= 1.0e-6f)
+            {
+                tangent = Vec3(normal.z, 0.0f, -normal.x);
+            }
+            tangent = Normalize(tangent);
+
+            Vec3 outward = Normalize(Vec3(root.x - scalpCenter.x, 0.0f, root.z - scalpCenter.z));
+            if (Length(outward) <= 1.0e-6f)
+            {
+                outward = Vec3(1.0f, 0.0f, 0.0f);
+            }
+            return Normalize(Lerp(tangent, outward, 0.15f));
         }
 
         Vec3 ComputeGuideOffsetFrameX(const RootBinding& binding, uint32_t seed)
@@ -53,7 +82,8 @@ namespace hairgpu
             uint32_t randomSeed,
             const Vec3& rootOffset,
             float sideWaveAmplitude,
-            float noiseScale)
+            float noiseScale,
+            const Vec3& scalpCenter)
         {
             StrandRange range;
             range.pointOffset = static_cast<uint32_t>(asset.restPoints.size());
@@ -67,22 +97,45 @@ namespace hairgpu
 
             const Vec3 sideX = Normalize(ComputeGuideOffsetFrameX(binding, randomSeed));
             const Vec3 sideZ = ComputeGuideOffsetFrameZ(sideX);
+            const Vec3 shellDirection = ComputeWigSurfaceDirection(root, scalpCenter);
+            const Vec3 hangDirection = Normalize(Lerp(initialDirection, Vec3(0.0f, -1.0f, 0.0f), 0.82f));
+            Vec3 current = root + rootOffset * 0.25f;
+            const float shellRadius = std::max(Length(root - scalpCenter), 0.001f);
 
             for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
             {
                 const float t = static_cast<float>(pointIndex) / static_cast<float>(pointCount - 1);
-                const float strandNoise = Hash01(randomSeed * 37u + pointIndex * 13u);
-                const float swayA = std::sin(t * 3.4f + strandNoise * kTau);
-                const float swayB = std::cos(t * 2.3f + Hash01(randomSeed * 17u + pointIndex * 5u) * kTau);
-                const float sideScale = sideWaveAmplitude * (0.08f + 0.55f * t);
-                Vec3 p = root + initialDirection * (segmentLength * static_cast<float>(pointIndex));
-                p += rootOffset * (0.15f + 0.85f * t);
-                p += sideX * (swayA * sideScale * noiseScale);
-                p += sideZ * (swayB * sideScale * 0.35f * noiseScale);
-                // Pre-sag the rest pose so the preview starts closer to heavy long hair.
-                p.y -= t * t * (segmentLength * 1.05f);
+                if (pointIndex > 0u)
+                {
+                    const float shellBlend = 1.0f - SmoothStep01((t - 0.02f) / 0.30f);
+                    const Vec3 stepDirection = Normalize(Lerp(hangDirection, shellDirection, shellBlend));
+                    current += stepDirection * segmentLength;
 
-                asset.restPoints.push_back(p);
+                    if (shellBlend > 0.0f)
+                    {
+                        Vec3 radial = Normalize(current - scalpCenter);
+                        if (Length(radial) <= 1.0e-6f)
+                        {
+                            radial = Normalize(root - scalpCenter);
+                        }
+                        const float shellOffset = 0.014f + 0.008f * (1.0f - shellBlend);
+                        const Vec3 shellTarget = scalpCenter + radial * (shellRadius + shellOffset);
+                        current = Lerp(current, shellTarget, 0.72f * shellBlend);
+                    }
+
+                    const float strandNoise = Hash01(randomSeed * 37u + pointIndex * 13u);
+                    const float swayA = std::sin(t * 3.4f + strandNoise * kTau);
+                    const float swayB = std::cos(t * 2.3f + Hash01(randomSeed * 17u + pointIndex * 5u) * kTau);
+                    const float sideScale = sideWaveAmplitude * (0.04f + 0.18f * (1.0f - shellBlend) + 0.38f * t);
+                    current += sideX * (swayA * sideScale * noiseScale);
+                    current += sideZ * (swayB * sideScale * 0.22f * noiseScale);
+                    current += rootOffset * (0.10f + 0.55f * t);
+
+                    const float hang = std::max(t - 0.28f, 0.0f);
+                    current.y -= hang * hang * (segmentLength * 0.55f);
+                }
+
+                asset.restPoints.push_back(current);
                 asset.pointWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
             }
         }
@@ -269,7 +322,8 @@ namespace hairgpu
                 guideIndex + 1u,
                 Vec3(0.0f, 0.0f, 0.0f),
                 0.0105f,
-                1.0f);
+                1.0f,
+                scalpCenter);
 
             const Vec3 sideX = Normalize(ComputeGuideOffsetFrameX(binding, guideIndex + 101u));
             const Vec3 sideZ = ComputeGuideOffsetFrameZ(sideX);
@@ -308,7 +362,8 @@ namespace hairgpu
                     seed,
                     rootOffset,
                     0.006f,
-                    0.75f);
+                    0.75f,
+                    scalpCenter);
             }
         }
 

@@ -1,0 +1,8 @@
+/mnt/data/work/hair_impl_release/build_linux_test/CMakeFiles/edit_cache.dir
+/mnt/data/work/hair_impl_release/build_linux_test/CMakeFiles/rebuild_cache.dir
+/mnt/data/work/hair_impl_release/build_linux_test/src/hairgpu_core/CMakeFiles/hairgpu_core.dir
+/mnt/data/work/hair_impl_release/build_linux_test/src/hairgpu_core/CMakeFiles/edit_cache.dir
+/mnt/data/work/hair_impl_release/build_linux_test/src/hairgpu_core/CMakeFiles/rebuild_cache.dir
+/mnt/data/work/hair_impl_release/build_linux_test/apps/hairgpu_cli/CMakeFiles/hairgpu_cli.dir
+/mnt/data/work/hair_impl_release/build_linux_test/apps/hairgpu_cli/CMakeFiles/edit_cache.dir
+/mnt/data/work/hair_impl_release/build_linux_test/apps/hairgpu_cli/CMakeFiles/rebuild_cache.dir
