@@ -13,6 +13,7 @@ struct VSInput
 {
     float3 position : POSITION;
     float3 normal : NORMAL;
+    float3 color : COLOR0;
 };
 
 struct VSOutput
@@ -20,6 +21,7 @@ struct VSOutput
     float4 position : SV_Position;
     float3 worldPosition : TEXCOORD0;
     float3 worldNormal : NORMAL0;
+    float3 color : COLOR0;
 };
 
 VSOutput VSMain(VSInput input)
@@ -28,6 +30,7 @@ VSOutput VSMain(VSInput input)
     output.position = mul(float4(input.position, 1.0f), ViewProjection);
     output.worldPosition = input.position;
     output.worldNormal = normalize(input.normal);
+    output.color = input.color;
     return output;
 }
 
@@ -42,7 +45,7 @@ float4 PSMain(VSOutput input) : SV_Target
     const float fresnel = pow(1.0f - saturate(dot(N, V)), 3.0f);
     const float specular = pow(saturate(dot(N, H)), 20.0f) * 0.18f;
 
-    const float3 baseColor = float3(0.76f, 0.62f, 0.52f);
+    const float3 baseColor = input.color;
     const float3 rimColor = float3(0.90f, 0.82f, 0.78f);
     const float3 shaded = baseColor * (0.22f + 0.78f * diffuse) + rimColor * (fresnel * 0.08f) + specular.xxx;
     return float4(shaded, 1.0f);

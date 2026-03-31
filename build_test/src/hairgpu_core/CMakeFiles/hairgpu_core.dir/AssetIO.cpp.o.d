@@ -1,6 +1,6 @@
 src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.o: \
- /mnt/data/work/repo/src/hairgpu_core/AssetIO.cpp \
- /usr/include/stdc-predef.h /mnt/data/work/repo/include/hairgpu/AssetIO.h \
+ /mnt/data/workmask/src/hairgpu_core/AssetIO.cpp \
+ /usr/include/stdc-predef.h /mnt/data/workmask/include/hairgpu/AssetIO.h \
  /usr/include/c++/14/filesystem \
  /usr/include/c++/14/bits/requires_hosted.h \
  /usr/include/x86_64-linux-gnu/c++/14/bits/c++config.h \
@@ -185,13 +185,13 @@ src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.o: \
  /usr/include/c++/14/bits/unique_ptr.h \
  /usr/include/c++/14/ext/aligned_buffer.h \
  /usr/include/c++/14/bits/fs_dir.h /usr/include/c++/14/bits/fs_ops.h \
- /mnt/data/work/repo/include/hairgpu/Types.h /usr/include/c++/14/array \
+ /mnt/data/workmask/include/hairgpu/Types.h /usr/include/c++/14/array \
  /usr/include/c++/14/compare /usr/include/c++/14/vector \
  /usr/include/c++/14/bits/stl_uninitialized.h \
  /usr/include/c++/14/bits/stl_vector.h \
  /usr/include/c++/14/bits/stl_bvector.h \
  /usr/include/c++/14/bits/vector.tcc \
- /mnt/data/work/repo/include/hairgpu/Math.h /usr/include/c++/14/cmath \
+ /mnt/data/workmask/include/hairgpu/Math.h /usr/include/c++/14/cmath \
  /usr/include/math.h /usr/include/x86_64-linux-gnu/bits/math-vector.h \
  /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \
  /usr/include/x86_64-linux-gnu/bits/flt-eval-method.h \

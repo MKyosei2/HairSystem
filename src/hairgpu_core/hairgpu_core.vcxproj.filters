@@ -15,11 +15,13 @@
     <ClCompile Include="HairMath.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="RenderData.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="SampleAsset.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="Wig.cpp"><Filter>Source Files</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\hairgpu\AssetIO.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Math.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\RenderData.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Types.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\..\include\hairgpu\Wig.h"><Filter>Header Files</Filter></ClInclude>
   </ItemGroup>
 </Project>

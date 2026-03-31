@@ -57,10 +57,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /mnt/data/work/repo
+CMAKE_SOURCE_DIR = /mnt/data/workmask
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /mnt/data/work/repo/build_test
+CMAKE_BINARY_DIR = /mnt/data/workmask/build_test
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -87,9 +87,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/work/repo/build_test/CMakeFiles /mnt/data/work/repo/build_test//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/workmask/build_test/CMakeFiles /mnt/data/workmask/build_test//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/work/repo/build_test/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/workmask/build_test/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -129,19 +129,6 @@ hairgpu_core/fast:
 	$(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build
 .PHONY : hairgpu_core/fast
 
-#=============================================================================
-# Target rules for targets named hairgpu_cli
-
-# Build rule for target.
-hairgpu_cli: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 hairgpu_cli
-.PHONY : hairgpu_cli
-
-# fast build rule for target.
-hairgpu_cli/fast:
-	$(MAKE) $(MAKESILENT) -f apps/hairgpu_cli/CMakeFiles/hairgpu_cli.dir/build.make apps/hairgpu_cli/CMakeFiles/hairgpu_cli.dir/build
-.PHONY : hairgpu_cli/fast
-
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -150,7 +137,6 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... hairgpu_cli"
 	@echo "... hairgpu_core"
 .PHONY : help
 

@@ -86,12 +86,14 @@
     <ClCompile Include="HairMath.cpp" />
     <ClCompile Include="RenderData.cpp" />
     <ClCompile Include="SampleAsset.cpp" />
+    <ClCompile Include="Wig.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\hairgpu\AssetIO.h" />
     <ClInclude Include="..\..\include\hairgpu\Math.h" />
     <ClInclude Include="..\..\include\hairgpu\RenderData.h" />
     <ClInclude Include="..\..\include\hairgpu\Types.h" />
+    <ClInclude Include="..\..\include\hairgpu\Wig.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

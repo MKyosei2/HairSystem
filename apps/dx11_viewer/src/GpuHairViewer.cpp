@@ -19,6 +19,7 @@
 
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/Math.h"
+#include "hairgpu/Wig.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -35,6 +36,189 @@ namespace hairgpu::viewer
         constexpr int kUiPanelWidth = 380;
         constexpr int kUiMargin = 12;
 
+        struct PreviewMaskImage
+        {
+            uint32_t width = 0;
+            uint32_t height = 0;
+            uint32_t channels = 0;
+            std::vector<unsigned char> samples;
+            bool valid() const { return width > 0 && height > 0 && channels > 0 && samples.size() == static_cast<size_t>(width) * height * channels; }
+        };
+
+        bool EndsWithInsensitiveW(const std::wstring& s, const wchar_t* ext)
+        {
+            std::wstring a = s; std::wstring b = ext;
+            std::transform(a.begin(), a.end(), a.begin(), ::towlower);
+            std::transform(b.begin(), b.end(), b.begin(), ::towlower);
+            return a.size() >= b.size() && a.substr(a.size() - b.size()) == b;
+        }
+
+        bool ReadPortableAnyMapToken(std::istream& input, std::string& out)
+        {
+            out.clear();
+            while (input)
+            {
+                int c = input.peek();
+                if (c == '#') { std::string skip; std::getline(input, skip); continue; }
+                if (c != EOF && std::isspace(static_cast<unsigned char>(c))) { input.get(); continue; }
+                break;
+            }
+            while (input)
+            {
+                int c = input.peek();
+                if (c == EOF || std::isspace(static_cast<unsigned char>(c)) || c == '#') break;
+                out.push_back(static_cast<char>(input.get()));
+            }
+            return !out.empty();
+        }
+
+        bool LoadCsvPreviewMask(const std::filesystem::path& path, uint32_t expectedChannels, PreviewMaskImage& outImage)
+        {
+            std::ifstream in(path); if (!in) return false;
+            std::vector<std::vector<float>> rows; std::string line; size_t cols = 0;
+            while (std::getline(in, line))
+            {
+                if (line.empty()) continue; std::stringstream ss(line); std::string item; std::vector<float> vals;
+                while (std::getline(ss, item, ',')) { if (!item.empty()) vals.push_back(std::stof(item)); }
+                if (!vals.empty()) { cols = std::max(cols, vals.size()); rows.push_back(std::move(vals)); }
+            }
+            if (rows.empty() || cols == 0 || (cols % expectedChannels) != 0) return false;
+            outImage.height = static_cast<uint32_t>(rows.size()); outImage.width = static_cast<uint32_t>(cols / expectedChannels); outImage.channels = expectedChannels;
+            outImage.samples.assign(static_cast<size_t>(outImage.width) * outImage.height * outImage.channels, 0);
+            for (uint32_t y=0;y<outImage.height;++y)
+                for (uint32_t x=0;x<outImage.width;++x)
+                    for (uint32_t c=0;c<outImage.channels;++c)
+                    {
+                        float v = (x*expectedChannels + c < rows[y].size()) ? rows[y][x*expectedChannels+c] : 0.0f;
+                        v = std::clamp(v, 0.0f, 1.0f);
+                        outImage.samples[(static_cast<size_t>(y)*outImage.width + x)*outImage.channels + c] = static_cast<unsigned char>(v * 255.0f + 0.5f);
+                    }
+            return outImage.valid();
+        }
+
+        bool LoadPnmPreviewMask(const std::filesystem::path& path, uint32_t expectedChannels, PreviewMaskImage& outImage)
+        {
+            std::ifstream in(path, std::ios::binary); if (!in) return false; std::string tok; if (!ReadPortableAnyMapToken(in, tok)) return false;
+            const bool gray = tok == "P5" || tok == "P2"; const bool color = tok == "P6" || tok == "P3"; const bool binary = tok == "P5" || tok == "P6";
+            if ((!gray && !color) || (gray ? 1u : 3u) != expectedChannels) return false;
+            std::string w,h,m; if(!ReadPortableAnyMapToken(in,w)||!ReadPortableAnyMapToken(in,h)||!ReadPortableAnyMapToken(in,m)) return false;
+            outImage.width=std::stoul(w); outImage.height=std::stoul(h); outImage.channels=expectedChannels; outImage.samples.assign(static_cast<size_t>(outImage.width)*outImage.height*outImage.channels,0);
+            int maxv = std::stoi(m); if (maxv<=0) return false;
+            if (binary)
+            {
+                in.get();
+                in.read(reinterpret_cast<char*>(outImage.samples.data()), static_cast<std::streamsize>(outImage.samples.size()));
+                if (!in) return false;
+                if (maxv != 255) for (auto& s : outImage.samples) s = static_cast<unsigned char>((int(s) * 255) / maxv);
+            }
+            else
+            {
+                for (auto& s : outImage.samples) { std::string v; if(!ReadPortableAnyMapToken(in,v)) return false; s = static_cast<unsigned char>((std::stoi(v) * 255) / maxv); }
+            }
+            return outImage.valid();
+        }
+
+        bool LoadBmpPreviewMask(const std::filesystem::path& path, uint32_t expectedChannels, PreviewMaskImage& outImage)
+        {
+            std::ifstream in(path, std::ios::binary); if (!in) return false; std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), {}); if (bytes.size() < 54 || bytes[0] != 'B' || bytes[1] != 'M') return false;
+            auto r32=[&](size_t o){return uint32_t(bytes[o]) | (uint32_t(bytes[o+1])<<8) | (uint32_t(bytes[o+2])<<16) | (uint32_t(bytes[o+3])<<24);};
+            auto r16=[&](size_t o){return uint16_t(bytes[o]) | (uint16_t(bytes[o+1])<<8);};
+            uint32_t off=r32(10), dib=r32(14), w=r32(18), h=r32(22); uint16_t bpp=r16(28); uint32_t comp=r32(30); if (dib < 40 || comp != 0 || (bpp != 24 && bpp != 32)) return false;
+            outImage.width=w; outImage.height=h; outImage.channels=expectedChannels; outImage.samples.assign(static_cast<size_t>(w)*h*expectedChannels,0); size_t stride=((size_t(w)*(bpp/8))+3)&~size_t(3); if (off + stride*size_t(h) > bytes.size()) return false;
+            for(uint32_t y=0;y<h;++y){ const unsigned char* row=bytes.data()+off+stride*(h-1-y); for(uint32_t x=0;x<w;++x){ const unsigned char* px=row + x*(bpp/8); if(expectedChannels==1){ outImage.samples[y*w + x]=static_cast<unsigned char>((uint32_t(px[0])+px[1]+px[2])/3); } else { size_t i=(size_t(y)*w+x)*3; outImage.samples[i+0]=px[2]; outImage.samples[i+1]=px[1]; outImage.samples[i+2]=px[0]; } } }
+            return outImage.valid();
+        }
+
+        bool LoadPreviewMaskAny(const std::wstring& path, uint32_t expectedChannels, PreviewMaskImage& outImage)
+        {
+            const std::filesystem::path p(path);
+            if (!std::filesystem::exists(p)) return false;
+            if (EndsWithInsensitiveW(path, L".csv")) return LoadCsvPreviewMask(p, expectedChannels, outImage);
+            if (EndsWithInsensitiveW(path, L".pgm") || EndsWithInsensitiveW(path, L".ppm")) return LoadPnmPreviewMask(p, expectedChannels, outImage);
+            if (EndsWithInsensitiveW(path, L".bmp")) return LoadBmpPreviewMask(p, expectedChannels, outImage);
+            return false;
+        }
+
+        std::wstring ResolveViewerDefaultMaskPath(const wchar_t* baseName)
+        {
+            wchar_t modulePath[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+            std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+            std::vector<std::filesystem::path> roots = { std::filesystem::current_path(), exeDir, exeDir.parent_path(), exeDir.parent_path().parent_path(), exeDir.parent_path().parent_path().parent_path() };
+            const wchar_t* exts[] = { L".bmp", L".pgm", L".ppm", L".csv" };
+            for (const auto& root : roots)
+            {
+                for (const wchar_t* ext : exts)
+                {
+                    std::filesystem::path p = root / L"docs" / L"sample_assets" / (std::wstring(baseName) + ext);
+                    if (std::filesystem::exists(p)) return p.wstring();
+                    p = root / L"sample_assets" / (std::wstring(baseName) + ext);
+                    if (std::filesystem::exists(p)) return p.wstring();
+                }
+            }
+            return L"";
+        }
+
+        HBITMAP CreatePreviewBitmapFromMask(const PreviewMaskImage& image, bool grayscale)
+        {
+            const int dstW = 96, dstH = 72;
+            BITMAPINFO bmi = {}; bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); bmi.bmiHeader.biWidth = dstW; bmi.bmiHeader.biHeight = -dstH; bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32; bmi.bmiHeader.biCompression = BI_RGB;
+            void* bits = nullptr; HDC hdc = GetDC(nullptr); HBITMAP bmp = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0); ReleaseDC(nullptr, hdc); if (!bmp || !bits) return bmp;
+            auto* out = reinterpret_cast<unsigned int*>(bits);
+            for (int y=0;y<dstH;++y) for (int x=0;x<dstW;++x)
+            {
+                uint32_t sx = std::min<uint32_t>(image.width - 1, static_cast<uint32_t>((float(x) / std::max(1, dstW-1)) * (image.width - 1)));
+                uint32_t sy = std::min<uint32_t>(image.height - 1, static_cast<uint32_t>((float(y) / std::max(1, dstH-1)) * (image.height - 1)));
+                unsigned char r=26,g=26,b=26;
+                if (image.valid())
+                {
+                    if (grayscale || image.channels == 1) { unsigned char v = image.samples[sy*image.width + sx]; r=g=b=v; }
+                    else { size_t i=(static_cast<size_t>(sy)*image.width+sx)*image.channels; r=image.samples[i+0]; g=image.samples[i+1]; b=image.samples[i+2]; }
+                }
+                out[y*dstW+x] = 0xFF000000u | (unsigned(r) << 16) | (unsigned(g) << 8) | unsigned(b);
+            }
+            return bmp;
+        }
+
+        float SamplePreviewMaskScalar(const PreviewMaskImage& image, float u, float v, uint32_t channel)
+        {
+            if (image.width == 0 || image.height == 0 || image.channels == 0 || image.samples.empty())
+            {
+                return 0.0f;
+            }
+            const uint32_t x = std::min<uint32_t>(static_cast<uint32_t>(hairgpu::Clamp(u, 0.0f, 1.0f) * static_cast<float>(std::max<int>(static_cast<int>(image.width) - 1, 0))), image.width - 1);
+            const uint32_t y = std::min<uint32_t>(static_cast<uint32_t>(hairgpu::Clamp(v, 0.0f, 1.0f) * static_cast<float>(std::max<int>(static_cast<int>(image.height) - 1, 0))), image.height - 1);
+            const uint32_t c = std::min<uint32_t>(channel, image.channels - 1);
+            return static_cast<float>(image.samples[(y * image.width + x) * image.channels + c]) / 255.0f;
+        }
+
+        hairgpu::Vec3 ComputeScalpPreviewUv(const hairgpu::Vec3& p)
+        {
+            hairgpu::Vec3 q = p - hairgpu::Vec3(0.0f, 1.60f, 0.0f);
+            const float len = std::max(hairgpu::Length(q), 1.0e-5f);
+            q = q / len;
+            const float u = 0.5f + std::atan2(q.z, q.x) / (2.0f * 3.1415926535f);
+            const float v = hairgpu::Clamp(0.5f - q.y * 0.5f, 0.0f, 1.0f);
+            return hairgpu::Vec3(u, v, 0.0f);
+        }
+
+        float ProceduralPartingPreview(float u, float v)
+        {
+            const float center = 0.58f;
+            const float dist = std::fabs(u - center);
+            const float line = hairgpu::Clamp(1.0f - dist / 0.06f, 0.0f, 1.0f);
+            const float crown = hairgpu::Clamp(1.0f - std::fabs(v - 0.28f) / 0.20f, 0.0f, 1.0f);
+            return line * (0.45f + 0.55f * crown);
+        }
+
+        hairgpu::Vec3 ProceduralRegionPreview(float u, float v)
+        {
+            const float crown = hairgpu::Clamp(1.0f - std::sqrt((u - 0.54f)*(u - 0.54f) + (v - 0.24f)*(v - 0.24f)) / 0.34f, 0.0f, 1.0f);
+            const float temple = hairgpu::Clamp(1.0f - std::min(std::sqrt((u - 0.18f)*(u - 0.18f) + (v - 0.40f)*(v - 0.40f)), std::sqrt((u - 0.86f)*(u - 0.86f) + (v - 0.42f)*(v - 0.42f))) / 0.26f, 0.0f, 1.0f);
+            const float nape = hairgpu::Clamp(1.0f - std::sqrt((u - 0.54f)*(u - 0.54f) + (v - 0.80f)*(v - 0.80f)) / 0.32f, 0.0f, 1.0f);
+            return hairgpu::Vec3(crown, temple, nape);
+        }
+
         enum : int
         {
             IDC_BTN_PLAYPAUSE = 1001,
@@ -46,6 +230,12 @@ namespace hairgpu::viewer
             IDC_BTN_LOAD_SETTINGS,
             IDC_BTN_EXPORT_CSV,
             IDC_BTN_EXPORT_PERF_CSV,
+            IDC_BTN_BROWSE_PARTING_MASK,
+            IDC_BTN_BROWSE_REGION_MASK,
+            IDC_COMBO_MASK_SOURCE,
+            IDC_COMBO_MASK_OVERLAY,
+            IDC_PREVIEW_PARTING_MASK,
+            IDC_PREVIEW_REGION_MASK,
             IDC_COMBO_PRESET,
             IDC_COMBO_RENDER_MODE,
             IDC_COMBO_DEBUG_COLOR,
@@ -85,6 +275,9 @@ namespace hairgpu::viewer
             IDC_LABEL_ITERATIONS,
             IDC_LABEL_FOLLOW,
             IDC_LABEL_SELF_RADIUS,
+            IDC_LABEL_MASK_SOURCE,
+            IDC_LABEL_PARTING_MASK_NAME,
+            IDC_LABEL_REGION_MASK_NAME,
             IDC_LABEL_SELF_STIFFNESS,
             IDC_LABEL_GRID_CELL,
             IDC_LABEL_STRETCH,
@@ -261,15 +454,25 @@ namespace hairgpu::viewer
         InitCommonControlsEx(&icc);
 
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.040f);
+        {
+            WigStyleSettings wig;
+            wig.strength = 1.0f;
+            wig.capRegion = 0.42f;
+            wig.shellOffset = 0.0055f;
+            wig.flowBlend = 0.90f;
+            wig.outwardBlend = 0.12f;
+            wig.restoreOriginalTowardsTip = 0.54f;
+            StyleAssetToScalpWig(m_asset, wig);
+        }
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Sample asset active";
-        m_simConfig.solverIterations = 6;
+        m_simConfig.solverIterations = 5;
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 19.0f;
         m_simConfig.globalDamping = 0.035f;
         m_simConfig.segmentLength = 0.040f;
         m_simConfig.bendStiffness = 0.14f;
-        m_simConfig.followStiffness = 0.94f;
+        m_simConfig.followStiffness = 0.965f;
         m_simConfig.windStrength = 0.42f;
         m_simConfig.windDirection = { 0.90f, 0.0f, 0.25f };
         m_simConfig.floorY = -1.05f;
@@ -277,7 +480,7 @@ namespace hairgpu::viewer
         m_simConfig.selfCollisionStiffness = 0.35f;
         m_simConfig.stretchCompliance = 2.0e-7f;
         m_simConfig.bendCompliance = 1.5e-5f;
-        m_simConfig.rootStiffness = 0.18f;
+        m_simConfig.rootStiffness = 0.28f;
         m_simConfig.velocityShockPropagation = 0.72f;
         m_simConfig.selfCollisionGridDimX = 18;
         m_simConfig.selfCollisionGridDimY = 18;
@@ -287,8 +490,17 @@ namespace hairgpu::viewer
         m_simConfig.selfCollisionCellSize = 0.085f;
         m_selfCollisionRadius = m_simConfig.selfCollisionRadius;
         m_selfCollisionStiffness = m_simConfig.selfCollisionStiffness;
-        m_renderMode = RenderMode::TubePreview;
-        m_showScalpMesh = true;
+        m_renderMode = RenderMode::BrickInstanced;
+        m_showScalpMesh = false;
+        m_showScalpWireframe = false;
+        m_showGridBounds = false;
+        m_showGuideSkeleton = false;
+        m_showFollowerSkeleton = false;
+        m_showRootMarkers = false;
+        m_showFollowLinks = false;
+        m_showFloorGuide = false;
+        m_showColliderDebug = false;
+        m_showTestMesh = false;
 
         m_colliders.spheres.push_back({ { 0.0f, 1.66f, 0.0f }, 0.215f });
         m_colliders.capsules.push_back({ { -0.19f, 1.36f, 0.02f }, 0.11f, { -0.42f, 1.15f, 0.04f }, 0.08f });
@@ -616,7 +828,7 @@ namespace hairgpu::viewer
         {
             const GpuParticle& p = m_animatedScalpParticles[i];
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
-            scalpVertices.push_back({ p.x, p.y, p.z, n.x, n.y, n.z });
+            scalpVertices.push_back({ p.x, p.y, p.z, n.x, n.y, n.z, 0.76f, 0.62f, 0.52f });
         }
         if (!scalpVertices.empty())
         {
@@ -707,6 +919,7 @@ namespace hairgpu::viewer
         {
             return false;
         }
+        UpdateScalpOverlayVertexBuffer();
         return true;
     }
 
@@ -744,6 +957,34 @@ namespace hairgpu::viewer
         if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_tubeVS)) ||
             FAILED(m_device->CreateGeometryShader(gsBlob->GetBufferPointer(), gsBlob->GetBufferSize(), nullptr, &m_tubeGS)) ||
             FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_tubePS)))
+        {
+            return false;
+        }
+
+        if (!CompileShaderFromFile(L"HairVoxel.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairVoxel.hlsl", "GSMain", "gs_5_0", &gsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairVoxel.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_voxelVS)) ||
+            FAILED(m_device->CreateGeometryShader(gsBlob->GetBufferPointer(), gsBlob->GetBufferSize(), nullptr, &m_voxelGS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_voxelPS)))
+        {
+            return false;
+        }
+
+        if (!CompileShaderFromFile(L"HairBrickInstanced.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairBrickInstanced.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_brickVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_brickPS)))
         {
             return false;
         }
@@ -849,8 +1090,9 @@ namespace hairgpu::viewer
         const D3D11_INPUT_ELEMENT_DESC scalpLayout[] = {
             { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0 },
             { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, nx), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0 },
         };
-        if (FAILED(m_device->CreateInputLayout(scalpLayout, 2, scalpVsBlob->GetBufferPointer(), scalpVsBlob->GetBufferSize(), &m_scalpInputLayout)))
+        if (FAILED(m_device->CreateInputLayout(scalpLayout, 3, scalpVsBlob->GetBufferPointer(), scalpVsBlob->GetBufferSize(), &m_scalpInputLayout)))
         {
             return false;
         }
@@ -1229,35 +1471,101 @@ namespace hairgpu::viewer
         ID3D11Buffer* renderCb = m_renderConstants.Get();
         UINT offset = 0;
 
-        const bool haveParticleReadback = ReadBackCurrentParticlePositions(m_debugReadbackParticles) && ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset);
-        if (!haveParticleReadback)
+        const UINT hairStride = sizeof(SegmentRenderVertex);
+        ID3D11Buffer* hairVB = m_segmentVertexBuffer.Get();
+        ID3D11ShaderResourceView* hairSrvs[] = {
+            m_positions[m_currentBufferIndex].srv.Get(),
+            m_pointWidths.srv.Get()
+        };
+
+        if (m_renderMode == RenderMode::BrickInstanced && m_brickVertexBuffer && m_brickInstanceBuffer && m_brickIndexBuffer && m_renderData.segmentCount > 0)
         {
-            m_debugReadbackParticles = m_initialParticles;
+            UINT strides[2] = { sizeof(BrickVertex), sizeof(BrickInstance) };
+            UINT offsets[2] = { 0, 0 };
+            ID3D11Buffer* brickBuffers[2] = { m_brickVertexBuffer.Get(), m_brickInstanceBuffer.Get() };
+            m_context->IASetInputLayout(m_brickInputLayout.Get());
+            m_context->IASetVertexBuffers(0, 2, brickBuffers, strides, offsets);
+            m_context->IASetIndexBuffer(m_brickIndexBuffer.Get(), DXGI_FORMAT_R16_UINT, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_context->VSSetConstantBuffers(0, 1, &renderCb);
+            m_context->PSSetConstantBuffers(0, 1, &renderCb);
+            m_context->VSSetShaderResources(0, 2, hairSrvs);
+            m_context->VSSetShader(m_brickVS.Get(), nullptr, 0);
+            m_context->GSSetShader(nullptr, nullptr, 0);
+            m_context->PSSetShader(m_brickPS.Get(), nullptr, 0);
+            m_context->DrawIndexedInstanced(m_brickIndexCount, m_renderData.segmentCount, 0, 0, 0);
+            ID3D11ShaderResourceView* nullHairSrvs[2] = {};
+            m_context->VSSetShaderResources(0, 2, nullHairSrvs);
         }
-        BuildHairMeshVertices(m_debugReadbackParticles, renderWidth / renderHeight);
-
-        if (!m_hairMeshVertices.empty() && EnsureHairMeshVertexCapacity(m_hairMeshVertices.size()))
+        else if (hairVB && m_renderData.segmentVertices.size() >= 2)
         {
-            D3D11_MAPPED_SUBRESOURCE mappedHair = {};
-            if (SUCCEEDED(m_context->Map(m_hairMeshVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedHair)))
-            {
-                std::memcpy(mappedHair.pData, m_hairMeshVertices.data(), m_hairMeshVertices.size() * sizeof(HairMeshVertex));
-                m_context->Unmap(m_hairMeshVertexBuffer.Get(), 0);
+            m_context->IASetInputLayout(m_inputLayout.Get());
+            m_context->IASetVertexBuffers(0, 1, &hairVB, &hairStride, &offset);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->VSSetConstantBuffers(0, 1, &renderCb);
+            m_context->GSSetConstantBuffers(0, 1, &renderCb);
+            m_context->PSSetConstantBuffers(0, 1, &renderCb);
+            m_context->VSSetShaderResources(0, 2, hairSrvs);
+            m_context->GSSetShaderResources(0, 2, hairSrvs);
 
-                const UINT hairStride = sizeof(HairMeshVertex);
-                ID3D11Buffer* hairVB = m_hairMeshVertexBuffer.Get();
-                m_context->IASetInputLayout(m_hairMeshInputLayout.Get());
-                m_context->IASetVertexBuffers(0, 1, &hairVB, &hairStride, &offset);
-                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                m_context->VSSetShader(m_hairMeshVS.Get(), nullptr, 0);
-                m_context->GSSetShader(nullptr, nullptr, 0);
-                m_context->PSSetShader(m_hairMeshPS.Get(), nullptr, 0);
-                m_context->VSSetConstantBuffers(0, 1, &renderCb);
-                m_context->PSSetConstantBuffers(0, 1, &renderCb);
-                m_context->Draw(static_cast<UINT>(m_hairMeshVertices.size()), 0);
+            switch (m_renderMode)
+            {
+            case RenderMode::Ribbon:
+                m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
+                m_context->GSSetShader(m_ribbonGS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
+                break;
+            case RenderMode::VoxelPreview:
+                m_context->VSSetShader(m_voxelVS.Get(), nullptr, 0);
+                m_context->GSSetShader(m_voxelGS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_voxelPS.Get(), nullptr, 0);
+                break;
+            case RenderMode::TubePreview:
+            default:
+                m_context->VSSetShader(m_tubeVS.Get(), nullptr, 0);
+                m_context->GSSetShader(m_tubeGS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_tubePS.Get(), nullptr, 0);
+                break;
+            }
+
+            m_context->Draw(static_cast<UINT>(m_renderData.segmentVertices.size()), 0);
+
+            ID3D11ShaderResourceView* nullHairSrvs[2] = {};
+            m_context->VSSetShaderResources(0, 2, nullHairSrvs);
+            m_context->GSSetShaderResources(0, 2, nullHairSrvs);
+        }
+
+        if (m_showTestMesh)
+        {
+            const bool haveParticleReadback = ReadBackCurrentParticlePositions(m_debugReadbackParticles) && ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset);
+            if (!haveParticleReadback)
+            {
+                m_debugReadbackParticles = m_initialParticles;
+            }
+            BuildHairMeshVertices(m_debugReadbackParticles, renderWidth / renderHeight);
+
+            if (!m_hairMeshVertices.empty() && EnsureHairMeshVertexCapacity(m_hairMeshVertices.size()))
+            {
+                D3D11_MAPPED_SUBRESOURCE mappedHair = {};
+                if (SUCCEEDED(m_context->Map(m_hairMeshVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedHair)))
+                {
+                    std::memcpy(mappedHair.pData, m_hairMeshVertices.data(), m_hairMeshVertices.size() * sizeof(HairMeshVertex));
+                    m_context->Unmap(m_hairMeshVertexBuffer.Get(), 0);
+
+                    const UINT cpuHairStride = sizeof(HairMeshVertex);
+                    ID3D11Buffer* cpuHairVB = m_hairMeshVertexBuffer.Get();
+                    m_context->IASetInputLayout(m_hairMeshInputLayout.Get());
+                    m_context->IASetVertexBuffers(0, 1, &cpuHairVB, &cpuHairStride, &offset);
+                    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    m_context->VSSetShader(m_hairMeshVS.Get(), nullptr, 0);
+                    m_context->GSSetShader(nullptr, nullptr, 0);
+                    m_context->PSSetShader(m_hairMeshPS.Get(), nullptr, 0);
+                    m_context->VSSetConstantBuffers(0, 1, &renderCb);
+                    m_context->PSSetConstantBuffers(0, 1, &renderCb);
+                    m_context->Draw(static_cast<UINT>(m_hairMeshVertices.size()), 0);
+                }
             }
         }
-
         BuildDebugLineVertices(renderWidth / renderHeight);
         if (!m_debugLineVertices.empty() && EnsureDebugVertexCapacity(m_debugLineVertices.size()))
         {
@@ -1327,7 +1635,7 @@ namespace hairgpu::viewer
            << L"  followers=" << m_asset.followerStrandCount
            << L"  totalStrands=" << m_asset.strands.size()
            << L"  particles=" << m_asset.restPoints.size()
-           << L"  render=" << (m_renderMode == RenderMode::TubePreview ? L"tube" : L"ribbon")
+           << L"  render=" << (m_renderMode == RenderMode::Ribbon ? L"ribbon" : (m_renderMode == RenderMode::TubePreview ? L"tube" : (m_renderMode == RenderMode::VoxelPreview ? L"voxel" : L"brick")))
            << L"  widthScale=" << m_widthScale
            << L"  stretchCompliance=" << m_simConfig.stretchCompliance
            << L"  selfCollision=" << (m_enableSelfCollision ? (m_enableGridSelfCollision ? L"grid" : L"legacy") : L"off")
@@ -1469,12 +1777,30 @@ namespace hairgpu::viewer
         m_btnPlayPause = createControl(0, L"BUTTON", L"Pause", BS_PUSHBUTTON, IDC_BTN_PLAYPAUSE);
         m_btnReset = createControl(0, L"BUTTON", L"Reset", BS_PUSHBUTTON, IDC_BTN_RESET);
         m_btnStep = createControl(0, L"BUTTON", L"Step", BS_PUSHBUTTON, IDC_BTN_STEP);
-        m_btnApplyAsset = createControl(0, L"BUTTON", L"Apply Asset", BS_PUSHBUTTON, IDC_BTN_APPLY_ASSET);
+        m_btnApplyAsset = createControl(0, L"BUTTON", L"Rebuild Hair", BS_PUSHBUTTON, IDC_BTN_APPLY_ASSET);
         m_btnImportAsset = createControl(0, L"BUTTON", L"Import Hair...", BS_PUSHBUTTON, IDC_BTN_IMPORT_ASSET);
         m_btnSaveSettings = createControl(0, L"BUTTON", L"Save Settings", BS_PUSHBUTTON, IDC_BTN_SAVE_SETTINGS);
         m_btnLoadSettings = createControl(0, L"BUTTON", L"Load Settings", BS_PUSHBUTTON, IDC_BTN_LOAD_SETTINGS);
         m_btnExportCsv = createControl(0, L"BUTTON", L"Export Frame CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_CSV);
         m_btnExportPerfCsv = createControl(0, L"BUTTON", L"Export Perf CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_PERF_CSV);
+        m_btnBrowsePartingMask = createControl(0, L"BUTTON", L"Browse Parting Mask...", BS_PUSHBUTTON, IDC_BTN_BROWSE_PARTING_MASK);
+        m_btnBrowseRegionMask = createControl(0, L"BUTTON", L"Browse Region Mask...", BS_PUSHBUTTON, IDC_BTN_BROWSE_REGION_MASK);
+        m_labelMaskSource = createControl(0, L"STATIC", L"Mask Source", SS_LEFT, IDC_LABEL_MASK_SOURCE);
+        m_comboMaskSource = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_MASK_SOURCE);
+        SendMessageW(m_comboMaskSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto"));
+        SendMessageW(m_comboMaskSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"External Files"));
+        SendMessageW(m_comboMaskSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Procedural"));
+        SendMessageW(m_comboMaskSource, CB_SETCURSEL, 0, 0);
+        m_labelMaskOverlay = createControl(0, L"STATIC", L"Scalp Overlay", SS_LEFT, IDC_LABEL_SELF_RADIUS + 100);
+        m_comboMaskOverlay = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_MASK_OVERLAY);
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"None"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Parting"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Region"));
+        SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, 0, 0);
+        m_labelPartingMask = createControl(0, L"STATIC", L"Parting preview", SS_LEFT, IDC_LABEL_PARTING_MASK_NAME);
+        m_previewPartingMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_PARTING_MASK);
+        m_labelRegionMask = createControl(0, L"STATIC", L"Region preview", SS_LEFT, IDC_LABEL_REGION_MASK_NAME);
+        m_previewRegionMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_REGION_MASK);
 
         createControl(0, L"STATIC", L"Guides", SS_LEFT, 0);
         m_editGuides = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_GUIDES);
@@ -1487,12 +1813,16 @@ namespace hairgpu::viewer
         m_comboRenderMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_RENDER_MODE);
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Ribbon"));
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Tube Preview"));
+        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Voxel Blocks"));
+        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Instanced Brick Chain"));
+        SendMessageW(m_comboRenderMode, CB_SETCURSEL, 3, 0);
 
         createControl(0, L"STATIC", L"Color Debug", SS_LEFT, 0);
         m_comboDebugColor = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_DEBUG_COLOR);
         SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Natural"));
         SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Guide / Follower"));
         SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Width Heatmap"));
+        SendMessageW(m_comboDebugColor, CB_SETCURSEL, 0, 0);
 
         m_checkSelfCollision = createControl(0, L"BUTTON", L"Self Collision", BS_AUTOCHECKBOX, IDC_CHECK_SELF_COLLISION);
         m_checkGrid = createControl(0, L"BUTTON", L"Grid Broadphase", BS_AUTOCHECKBOX, IDC_CHECK_GRID);
@@ -1542,7 +1872,7 @@ namespace hairgpu::viewer
         m_labelStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STATS);
         m_labelAssetStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ASSET_STATS);
 
-        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_trackWidth && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
+        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_trackWidth && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
     }
 
     void GpuHairViewer::LayoutUiControls()
@@ -1579,7 +1909,7 @@ namespace hairgpu::viewer
         for (HWND child = GetWindow(m_hwnd, GW_CHILD); child != nullptr; child = GetWindow(child, GW_HWNDNEXT))
         {
             if (child == m_uiPanel || child == m_btnPlayPause || child == m_btnReset || child == m_btnStep || child == m_btnApplyAsset ||
-                child == m_btnImportAsset || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_comboPreset ||
+                child == m_btnImportAsset || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_btnBrowsePartingMask || child == m_btnBrowseRegionMask || child == m_comboPreset || child == m_comboMaskSource || child == m_comboMaskOverlay || child == m_labelMaskSource || child == m_labelMaskOverlay || child == m_labelPartingMask || child == m_labelRegionMask || child == m_previewPartingMask || child == m_previewRegionMask ||
                 child == m_comboRenderMode || child == m_comboDebugColor || child == m_checkSelfCollision || child == m_checkGrid || child == m_checkScalpMotion ||
                 child == m_checkShowColliders || child == m_checkShowScalpMesh || child == m_checkShowScalp || child == m_checkShowGridBounds || child == m_checkShowFloor ||
                 child == m_checkShowGuides || child == m_checkShowFollowers || child == m_checkShowRoots || child == m_checkShowLinks ||
@@ -1629,6 +1959,18 @@ namespace hairgpu::viewer
         const int importButtonHalf = (importButtonsWidth - 8) / 2;
         place(m_btnApplyAsset, importButtonsX, y - controlHeight - gap - 2, importButtonHalf, controlHeight);
         place(m_btnImportAsset, importButtonsX + importButtonHalf + 8, y - controlHeight - gap - 2, importButtonsWidth - importButtonHalf - 8, controlHeight);
+        place(m_btnBrowsePartingMask, x, next(controlHeight + gap), halfButtonWidth, controlHeight);
+        place(m_btnBrowseRegionMask, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_labelMaskSource, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_comboMaskSource, x, next(controlHeight), fullWidth, 180);
+        place(m_labelMaskOverlay, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_comboMaskOverlay, x, next(controlHeight), fullWidth, 140);
+        const int previewLabelY = next(labelHeight + 2);
+        place(m_labelPartingMask, x, previewLabelY, halfButtonWidth, labelHeight);
+        place(m_labelRegionMask, x + halfButtonWidth + 8, previewLabelY, halfButtonWidth, labelHeight);
+        const int previewY = next(78);
+        place(m_previewPartingMask, x, previewY, halfButtonWidth, 72);
+        place(m_previewRegionMask, x + halfButtonWidth + 8, previewY, halfButtonWidth, 72);
 
         placeAnonymousStatic(x, next(labelHeight), fullWidth, labelHeight);                // Render
         place(m_comboRenderMode, x, next(controlHeight), fullWidth, 220);
@@ -1689,7 +2031,7 @@ namespace hairgpu::viewer
            << L"Total particles: " << m_asset.restPoints.size() << L"\n"
            << L"Segments: " << m_renderData.segmentCount << L"\n"
            << L"Import: " << m_lastImportStatus << L"\n"
-           << L"Test mesh: " << (m_showTestMesh ? L"on" : L"off");
+           << L"Test mesh: " << (m_showTestMesh ? L"on" : L"off") << L"\nEdit boxes auto-rebuild";
         SetWindowTextFormat(m_labelAssetStats, ss.str());
     }
 
@@ -1704,8 +2046,10 @@ namespace hairgpu::viewer
             (m_activePresetName == L"Windy Demo") ? 2 :
             (m_activePresetName == L"Heavy Grounded") ? 3 :
             (m_activePresetName == L"Game-ish LOD") ? 4 : 0, 0);
-        SendMessageW(m_comboRenderMode, CB_SETCURSEL, m_renderMode == RenderMode::TubePreview ? 1 : 0, 0);
+        SendMessageW(m_comboRenderMode, CB_SETCURSEL, m_renderMode == RenderMode::Ribbon ? 0 : (m_renderMode == RenderMode::TubePreview ? 1 : (m_renderMode == RenderMode::VoxelPreview ? 2 : 3)), 0);
         SendMessageW(m_comboDebugColor, CB_SETCURSEL, static_cast<WPARAM>(m_debugColorMode), 0);
+        SendMessageW(m_comboMaskSource, CB_SETCURSEL, static_cast<WPARAM>(m_maskSourceMode), 0);
+        SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, static_cast<WPARAM>(m_maskOverlayMode), 0);
 
         SendMessageW(m_checkSelfCollision, BM_SETCHECK, m_enableSelfCollision ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(m_checkGrid, BM_SETCHECK, m_enableGridSelfCollision ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1757,6 +2101,7 @@ namespace hairgpu::viewer
         m_enableScalpMotion = (SendMessageW(m_checkScalpMotion, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_showColliderDebug = (SendMessageW(m_checkShowColliders, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_showScalpMesh = (SendMessageW(m_checkShowScalpMesh, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_maskOverlayMode = static_cast<MaskOverlayMode>(SendMessageW(m_comboMaskOverlay, CB_GETCURSEL, 0, 0));
         m_showScalpWireframe = (SendMessageW(m_checkShowScalp, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_showGridBounds = (SendMessageW(m_checkShowGridBounds, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_showFloorGuide = (SendMessageW(m_checkShowFloor, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -1765,7 +2110,10 @@ namespace hairgpu::viewer
         m_showRootMarkers = (SendMessageW(m_checkShowRoots, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_showFollowLinks = (SendMessageW(m_checkShowLinks, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_showTestMesh = (SendMessageW(m_checkShowTestMesh, BM_GETCHECK, 0, 0) == BST_CHECKED);
-        m_renderMode = (SendMessageW(m_comboRenderMode, CB_GETCURSEL, 0, 0) == 1) ? RenderMode::TubePreview : RenderMode::Ribbon;
+        {
+            const LRESULT renderSel = SendMessageW(m_comboRenderMode, CB_GETCURSEL, 0, 0);
+            m_renderMode = (renderSel == 1) ? RenderMode::TubePreview : ((renderSel == 2) ? RenderMode::VoxelPreview : ((renderSel == 3) ? RenderMode::BrickInstanced : RenderMode::Ribbon));
+        }
         m_debugColorMode = static_cast<DebugColorMode>(std::max<LRESULT>(0, SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0)));
 
         m_widthScale = FloatFromSlider(static_cast<int>(SendMessageW(m_trackWidth, TBM_GETPOS, 0, 0)), 0.2f, 8.0f);
@@ -1795,8 +2143,15 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
     {
-        m_renderMode = RenderMode::TubePreview;
-        m_showScalpMesh = true;
+        m_renderMode = RenderMode::BrickInstanced;
+        m_showScalpMesh = false;
+        m_showGuideSkeleton = false;
+        m_showFollowerSkeleton = false;
+        m_showRootMarkers = false;
+        m_showFollowLinks = false;
+        m_showFloorGuide = false;
+        m_showColliderDebug = false;
+        m_showTestMesh = false;
         switch (presetIndex)
         {
         default:
@@ -1898,7 +2253,18 @@ namespace hairgpu::viewer
         m_builderGuideCount = guideCount;
         m_builderFollowersPerGuide = followersPerGuide;
         m_builderParticlesPerStrand = particlesPerStrand;
+        ApplySampleMaskOverrides();
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, particlesPerStrand, m_simConfig.segmentLength);
+        {
+            WigStyleSettings wig;
+            wig.strength = 1.0f;
+            wig.capRegion = 0.42f;
+            wig.shellOffset = 0.0055f;
+            wig.flowBlend = 0.90f;
+            wig.outwardBlend = 0.12f;
+            wig.restoreOriginalTowardsTip = 0.54f;
+            StyleAssetToScalpWig(m_asset, wig);
+        }
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Procedural sample asset rebuilt";
         if (!CreateSimulationResources())
@@ -1932,7 +2298,8 @@ namespace hairgpu::viewer
            << L"  AvgSim: " << avgSimMs << L" ms\n"
            << L"Avg Frame: " << avgFrameMs << L" ms\n"
            << L"Sim Time: " << std::setprecision(2) << m_elapsedSeconds << L" s\n"
-           << L"Mode: " << (m_renderMode == RenderMode::TubePreview ? L"Tube" : L"Ribbon")
+           << L"Mode: " << (m_renderMode == RenderMode::Ribbon ? L"Ribbon" : (m_renderMode == RenderMode::TubePreview ? L"Tube" : (m_renderMode == RenderMode::VoxelPreview ? L"Voxel" : L"Brick Chain")))
+           << L"  |  Rebuild: guides/followers/particles auto-apply"
            << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : L"Natural")) << L"\n"
            << L"Debug: G=" << (m_showGuideSkeleton ? L"On" : L"Off")
            << L" F=" << (m_showFollowerSkeleton ? L"On" : L"Off")
@@ -1978,8 +2345,12 @@ namespace hairgpu::viewer
         out << "showFollowerSkeleton=" << (m_showFollowerSkeleton ? 1 : 0) << "\n";
         out << "showRootMarkers=" << (m_showRootMarkers ? 1 : 0) << "\n";
         out << "showFollowLinks=" << (m_showFollowLinks ? 1 : 0) << "\n";
-        out << "renderMode=" << (m_renderMode == RenderMode::TubePreview ? 1 : 0) << "\n";
+        out << "renderMode=" << (m_renderMode == RenderMode::Ribbon ? 0 : (m_renderMode == RenderMode::TubePreview ? 1 : (m_renderMode == RenderMode::VoxelPreview ? 2 : 3))) << "\n";
         out << "debugColorMode=" << static_cast<uint32_t>(m_debugColorMode) << "\n";
+        out << "maskSourceMode=" << static_cast<uint32_t>(m_maskSourceMode) << "\n";
+        out << "maskOverlayMode=" << static_cast<uint32_t>(m_maskOverlayMode) << "\n";
+        out << "partingMaskPath=" << std::string(m_partingMaskPath.begin(), m_partingMaskPath.end()) << "\n";
+        out << "regionMaskPath=" << std::string(m_regionMaskPath.begin(), m_regionMaskPath.end()) << "\n";
         return true;
     }
 
@@ -2049,11 +2420,173 @@ namespace hairgpu::viewer
         m_showFollowerSkeleton = getBool("showFollowerSkeleton", m_showFollowerSkeleton);
         m_showRootMarkers = getBool("showRootMarkers", m_showRootMarkers);
         m_showFollowLinks = getBool("showFollowLinks", m_showFollowLinks);
-        m_renderMode = getBool("renderMode", m_renderMode == RenderMode::TubePreview) ? RenderMode::TubePreview : RenderMode::Ribbon;
+        { const int renderModeValue = static_cast<int>(getUInt("renderMode", static_cast<unsigned>(m_renderMode == RenderMode::Ribbon ? 0 : (m_renderMode == RenderMode::TubePreview ? 1 : (m_renderMode == RenderMode::VoxelPreview ? 2 : 3)))));
+          m_renderMode = (renderModeValue == 1) ? RenderMode::TubePreview : ((renderModeValue == 2) ? RenderMode::VoxelPreview : ((renderModeValue == 3) ? RenderMode::BrickInstanced : RenderMode::Ribbon)); }
         m_debugColorMode = static_cast<DebugColorMode>(std::min<uint32_t>(getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)), 2u));
+        if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath.assign(it->second.begin(), it->second.end());
+        if (auto it = values.find("regionMaskPath"); it != values.end()) m_regionMaskPath.assign(it->second.begin(), it->second.end());
+        m_maskSourceMode = static_cast<MaskSourceMode>(std::min<uint32_t>(getUInt("maskSourceMode", static_cast<uint32_t>(m_maskSourceMode)), 2u));
+        m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 2u));
 
         SyncControlsFromState();
+        RefreshMaskPreviewControls();
         return RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+    }
+
+    bool GpuHairViewer::BrowseAndSetMaskPath(bool partingMask)
+    {
+        wchar_t fileName[MAX_PATH] = L"";
+        OPENFILENAMEW ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = m_hwnd;
+        ofn.lpstrFilter = L"Mask Files (*.bmp;*.pgm;*.ppm;*.csv) *.bmp;*.pgm;*.ppm;*.csv Bitmap (*.bmp) *.bmp Portable Graymap (*.pgm) *.pgm Portable Pixmap (*.ppm) *.ppm CSV (*.csv) *.csv All Files *.* ";
+        ofn.lpstrFile = fileName;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+        if (!GetOpenFileNameW(&ofn))
+        {
+            return false;
+        }
+        if (partingMask)
+        {
+            m_partingMaskPath = fileName;
+        }
+        else
+        {
+            m_regionMaskPath = fileName;
+        }
+        RefreshAssetStatsText();
+        RefreshMaskPreviewControls();
+        return true;
+    }
+
+    void GpuHairViewer::ApplySampleMaskOverrides()
+    {
+        std::string parting(m_partingMaskPath.begin(), m_partingMaskPath.end());
+        std::string region(m_regionMaskPath.begin(), m_regionMaskPath.end());
+        hairgpu::SetSampleMaskOverridePaths(parting.empty() ? nullptr : parting.c_str(), region.empty() ? nullptr : region.c_str());
+        hairgpu::SetSampleMaskSourceMode(static_cast<hairgpu::SampleMaskSourceMode>(m_maskSourceMode));
+    }
+
+    void GpuHairViewer::ReleaseMaskPreviewBitmaps()
+    {
+        if (m_partingPreviewBitmap) { DeleteObject(m_partingPreviewBitmap); m_partingPreviewBitmap = nullptr; }
+        if (m_regionPreviewBitmap) { DeleteObject(m_regionPreviewBitmap); m_regionPreviewBitmap = nullptr; }
+    }
+
+    void GpuHairViewer::RefreshMaskPreviewControls()
+    {
+        ReleaseMaskPreviewBitmaps();
+        std::wstring partingLabel = L"Parting preview: ";
+        std::wstring regionLabel = L"Region preview: ";
+        if (m_maskSourceMode == MaskSourceMode::Procedural)
+        {
+            partingLabel += L"procedural";
+            regionLabel += L"procedural";
+        }
+        else
+        {
+            partingLabel += m_partingMaskPath.empty() ? (m_maskSourceMode == MaskSourceMode::Auto ? L"auto" : L"none") : std::filesystem::path(m_partingMaskPath).filename().wstring();
+            regionLabel += m_regionMaskPath.empty() ? (m_maskSourceMode == MaskSourceMode::Auto ? L"auto" : L"none") : std::filesystem::path(m_regionMaskPath).filename().wstring();
+        }
+        if (m_labelPartingMask) SetWindowTextW(m_labelPartingMask, partingLabel.c_str());
+        if (m_labelRegionMask) SetWindowTextW(m_labelRegionMask, regionLabel.c_str());
+
+        if (m_maskSourceMode != MaskSourceMode::Procedural)
+        {
+            PreviewMaskImage partImg, regionImg;
+            std::wstring effectiveParting = m_partingMaskPath;
+            std::wstring effectiveRegion = m_regionMaskPath;
+            if (m_maskSourceMode == MaskSourceMode::Auto)
+            {
+                if (effectiveParting.empty()) effectiveParting = ResolveViewerDefaultMaskPath(L"scalp_parting_mask");
+                if (effectiveRegion.empty()) effectiveRegion = ResolveViewerDefaultMaskPath(L"scalp_region_mask");
+            }
+            if (!effectiveParting.empty() && LoadPreviewMaskAny(effectiveParting, 1u, partImg))
+            {
+                m_partingPreviewBitmap = CreatePreviewBitmapFromMask(partImg, true);
+                if (m_partingMaskPath.empty()) partingLabel = L"Parting preview: auto file";
+            }
+            if (!effectiveRegion.empty() && LoadPreviewMaskAny(effectiveRegion, 3u, regionImg))
+            {
+                m_regionPreviewBitmap = CreatePreviewBitmapFromMask(regionImg, false);
+                if (m_regionMaskPath.empty()) regionLabel = L"Region preview: auto file";
+            }
+        }
+        SendMessageW(m_previewPartingMask, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(m_partingPreviewBitmap));
+        SendMessageW(m_previewRegionMask, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(m_regionPreviewBitmap));
+        UpdateScalpOverlayVertexBuffer();
+    }
+
+    void GpuHairViewer::ShowMaskPreviewPopup(bool partingMask)
+    {
+        HBITMAP bitmap = partingMask ? m_partingPreviewBitmap : m_regionPreviewBitmap;
+        if (!bitmap)
+        {
+            MessageBoxW(m_hwnd, L"No preview bitmap is available for this mask.", L"Mask Preview", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        const wchar_t* title = partingMask ? L"Parting Mask Preview" : L"Region Mask Preview";
+        HWND popup = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", title, WS_OVERLAPPEDWINDOW | WS_VISIBLE | SS_BITMAP | SS_CENTERIMAGE,
+            CW_USEDEFAULT, CW_USEDEFAULT, 420, 420, m_hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (popup)
+        {
+            SendMessageW(popup, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(bitmap));
+            ShowWindow(popup, SW_SHOW);
+            UpdateWindow(popup);
+        }
+    }
+
+    void GpuHairViewer::UpdateScalpOverlayVertexBuffer()
+    {
+        if (!m_scalpVertexBuffer || m_asset.scalpMesh.positions.empty())
+        {
+            return;
+        }
+
+        PreviewMaskImage partImg;
+        PreviewMaskImage regionImg;
+        std::wstring effectiveParting = m_partingMaskPath;
+        std::wstring effectiveRegion = m_regionMaskPath;
+        if (m_maskSourceMode == MaskSourceMode::Auto)
+        {
+            if (effectiveParting.empty()) effectiveParting = ResolveViewerDefaultMaskPath(L"scalp_parting_mask");
+            if (effectiveRegion.empty()) effectiveRegion = ResolveViewerDefaultMaskPath(L"scalp_region_mask");
+        }
+        if (!effectiveParting.empty()) LoadPreviewMaskAny(effectiveParting, 1u, partImg);
+        if (!effectiveRegion.empty()) LoadPreviewMaskAny(effectiveRegion, 3u, regionImg);
+
+        std::vector<ScalpVertex> scalpVertices;
+        scalpVertices.reserve(m_asset.scalpMesh.positions.size());
+        for (size_t i = 0; i < m_asset.scalpMesh.positions.size(); ++i)
+        {
+            const Vec3 p = m_asset.scalpMesh.positions[i];
+            const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
+            float r = 0.76f, g = 0.62f, b = 0.52f;
+            const Vec3 uvw = ComputeScalpPreviewUv(p);
+            if (m_maskOverlayMode == MaskOverlayMode::Parting)
+            {
+                const float maskValue = (partImg.width > 0) ? SamplePreviewMaskScalar(partImg, uvw.x, uvw.y, 0) : ProceduralPartingPreview(uvw.x, uvw.y);
+                r = 0.28f + 0.72f * maskValue;
+                g = 0.20f + 0.38f * (1.0f - maskValue);
+                b = 0.55f * (1.0f - maskValue);
+            }
+            else if (m_maskOverlayMode == MaskOverlayMode::Region)
+            {
+                Vec3 region = (regionImg.width > 0) ? Vec3(SamplePreviewMaskScalar(regionImg, uvw.x, uvw.y, 0), SamplePreviewMaskScalar(regionImg, uvw.x, uvw.y, 1), SamplePreviewMaskScalar(regionImg, uvw.x, uvw.y, 2)) : ProceduralRegionPreview(uvw.x, uvw.y);
+                r = 0.20f + 0.80f * region.x;
+                g = 0.20f + 0.80f * region.y;
+                b = 0.20f + 0.80f * region.z;
+            }
+            scalpVertices.push_back({ p.x, p.y, p.z, n.x, n.y, n.z, r, g, b });
+        }
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (SUCCEEDED(m_context->Map(m_scalpVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        {
+            std::memcpy(mapped.pData, scalpVertices.data(), scalpVertices.size() * sizeof(ScalpVertex));
+            m_context->Unmap(m_scalpVertexBuffer.Get(), 0);
+        }
     }
 
     bool GpuHairViewer::ExportCurrentFrameCsv(const std::wstring& filePath)
@@ -2179,6 +2712,16 @@ namespace hairgpu::viewer
         }
 
         m_asset = std::move(importedAsset);
+        {
+            WigStyleSettings wig;
+            wig.strength = 0.72f;
+            wig.capRegion = 0.36f;
+            wig.shellOffset = 0.0035f;
+            wig.flowBlend = 0.86f;
+            wig.outwardBlend = 0.10f;
+            wig.restoreOriginalTowardsTip = 0.72f;
+            StyleAssetToScalpWig(m_asset, wig);
+        }
         m_builderGuideCount = m_asset.guideStrandCount;
         m_builderFollowersPerGuide = (m_asset.guideStrandCount > 0) ? (m_asset.followerStrandCount / m_asset.guideStrandCount) : 0u;
         m_builderParticlesPerStrand = m_asset.particlesPerStrand;
@@ -2912,18 +3455,57 @@ namespace hairgpu::viewer
                 }
                 return 0;
             }
+            case IDC_BTN_BROWSE_PARTING_MASK:
+                if (BrowseAndSetMaskPath(true))
+                {
+                    RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+                }
+                return 0;
+            case IDC_BTN_BROWSE_REGION_MASK:
+                if (BrowseAndSetMaskPath(false))
+                {
+                    RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+                }
+                return 0;
+            case IDC_PREVIEW_PARTING_MASK:
+                if (code == STN_CLICKED) { ShowMaskPreviewPopup(true); }
+                return 0;
+            case IDC_PREVIEW_REGION_MASK:
+                if (code == STN_CLICKED) { ShowMaskPreviewPopup(false); }
+                return 0;
             case IDC_COMBO_PRESET:
                 if (code == CBN_SELCHANGE)
                 {
                     const int preset = static_cast<int>(SendMessageW(m_comboPreset, CB_GETCURSEL, 0, 0));
                     ApplyPreset(preset);
+                    RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
                 }
                 return 0;
             case IDC_COMBO_RENDER_MODE:
             case IDC_COMBO_DEBUG_COLOR:
+            case IDC_COMBO_MASK_SOURCE:
+            case IDC_COMBO_MASK_OVERLAY:
                 if (code == CBN_SELCHANGE)
                 {
                     SyncStateFromControls();
+                    RefreshMaskPreviewControls();
+                    if (LOWORD(wParam) == IDC_COMBO_MASK_SOURCE)
+                    {
+                        RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+                    }
+                    else if (LOWORD(wParam) == IDC_COMBO_MASK_OVERLAY)
+                    {
+                        UpdateScalpOverlayVertexBuffer();
+                    }
+                }
+                return 0;
+            case IDC_EDIT_GUIDES:
+            case IDC_EDIT_FOLLOWERS:
+            case IDC_EDIT_PARTICLES:
+                if (code == EN_CHANGE)
+                {
+                    SyncStateFromControls();
+                    RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
                 }
                 return 0;
             case IDC_CHECK_SELF_COLLISION:
@@ -3046,7 +3628,7 @@ namespace hairgpu::viewer
                 SyncControlsFromState();
                 return 0;
             case 'T':
-                m_renderMode = (m_renderMode == RenderMode::Ribbon) ? RenderMode::TubePreview : RenderMode::Ribbon;
+                m_renderMode = (m_renderMode == RenderMode::Ribbon) ? RenderMode::TubePreview : ((m_renderMode == RenderMode::TubePreview) ? RenderMode::VoxelPreview : ((m_renderMode == RenderMode::VoxelPreview) ? RenderMode::BrickInstanced : RenderMode::Ribbon));
                 SyncControlsFromState();
                 return 0;
             case VK_OEM_MINUS:

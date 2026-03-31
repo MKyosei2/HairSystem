@@ -1,6 +1,6 @@
 src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.o: \
- /mnt/data/work/repo/src/hairgpu_core/HairMath.cpp \
- /usr/include/stdc-predef.h /mnt/data/work/repo/include/hairgpu/Math.h \
+ /mnt/data/workmask/src/hairgpu_core/HairMath.cpp \
+ /usr/include/stdc-predef.h /mnt/data/workmask/include/hairgpu/Math.h \
  /usr/include/c++/14/cmath /usr/include/c++/14/bits/requires_hosted.h \
  /usr/include/x86_64-linux-gnu/c++/14/bits/c++config.h \
  /usr/include/x86_64-linux-gnu/c++/14/bits/os_defines.h \

@@ -66,12 +66,25 @@ namespace hairgpu::viewer
         {
             float x, y, z;
             float nx, ny, nz;
+            float r, g, b;
         };
 
         struct HairMeshVertex
         {
             float x, y, z, w;
             float r, g, b, a;
+        };
+
+        struct BrickVertex
+        {
+            float px, py, pz;
+            float nx, ny, nz;
+        };
+
+        struct BrickInstance
+        {
+            uint32_t particleIndex = 0;
+            uint32_t strandIndex = 0;
         };
 
         struct PerformanceSample
@@ -137,6 +150,8 @@ namespace hairgpu::viewer
         {
             Ribbon = 0,
             TubePreview = 1,
+            VoxelPreview = 2,
+            BrickInstanced = 3,
         };
 
         enum class DebugColorMode : uint32_t
@@ -144,6 +159,13 @@ namespace hairgpu::viewer
             Natural = 0,
             GuideFollower = 1,
             WidthHeatmap = 2,
+        };
+
+        enum class MaskOverlayMode : uint32_t
+        {
+            None = 0,
+            Parting = 1,
+            Region = 2,
         };
 
         struct alignas(16) RenderConstants
@@ -195,6 +217,12 @@ namespace hairgpu::viewer
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
         bool ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles);
         bool LoadHairAssetFromPath(const std::wstring& filePath);
+        bool BrowseAndSetMaskPath(bool partingMask);
+        void ApplySampleMaskOverrides();
+        void RefreshMaskPreviewControls();
+        void ReleaseMaskPreviewBitmaps();
+        void ShowMaskPreviewPopup(bool partingMask);
+        void UpdateScalpOverlayVertexBuffer();
         RECT GetRenderViewportRect() const;
         hairgpu::Vec3 ApplySampleScalpSkinning(const hairgpu::Vec3& restPosition, const hairgpu::SkinWeight4& weights, float elapsedSeconds) const;
 
@@ -212,16 +240,16 @@ namespace hairgpu::viewer
         bool m_dragging = false;
         bool m_enableSelfCollision = true;
         bool m_enableScalpMotion = true;
-        bool m_showColliderDebug = true;
+        bool m_showColliderDebug = false;
         bool m_showScalpWireframe = false;
         bool m_showScalpMesh = true;
         bool m_showGridBounds = false;
-        bool m_showFloorGuide = true;
-        bool m_showGuideSkeleton = true;
+        bool m_showFloorGuide = false;
+        bool m_showGuideSkeleton = false;
         bool m_showFollowerSkeleton = false;
-        bool m_showRootMarkers = true;
+        bool m_showRootMarkers = false;
         bool m_showFollowLinks = false;
-        bool m_showTestMesh = true;
+        bool m_showTestMesh = false;
         POINT m_lastMouse = {};
 
         float m_cameraYaw = 0.1f;
@@ -242,6 +270,17 @@ namespace hairgpu::viewer
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
+        enum class MaskSourceMode : uint32_t
+        {
+            Auto = 0,
+            ExternalFiles = 1,
+            Procedural = 2,
+        };
+
+        std::wstring m_partingMaskPath;
+        std::wstring m_regionMaskPath;
+        MaskSourceMode m_maskSourceMode = MaskSourceMode::Auto;
+        MaskOverlayMode m_maskOverlayMode = MaskOverlayMode::None;
 
         float m_smoothedFps = 0.0f;
         float m_lastFrameSeconds = 0.0f;
@@ -278,6 +317,11 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_tubeVS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_tubeGS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_tubePS;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_voxelVS;
+        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_voxelGS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_voxelPS;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_brickVS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_brickPS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_debugLineVS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_debugLinePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_scalpVS;
@@ -294,6 +338,7 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_selfCollisionCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_inputLayout;
+        Microsoft::WRL::ComPtr<ID3D11InputLayout> m_brickInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_scalpInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_hairMeshInputLayout;
@@ -311,6 +356,10 @@ namespace hairgpu::viewer
         StructuredBuffer m_gridCellCountsBuffer;
         StructuredBuffer m_gridCellIndicesBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_segmentVertexBuffer;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_brickVertexBuffer;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_brickIndexBuffer;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_brickInstanceBuffer;
+        uint32_t m_brickIndexCount = 0;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_hairMeshVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_debugLineVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
@@ -323,7 +372,7 @@ namespace hairgpu::viewer
         size_t m_hairMeshVertexCapacity = 0;
         size_t m_debugLineVertexCapacity = 0;
 
-        RenderMode m_renderMode = RenderMode::TubePreview;
+        RenderMode m_renderMode = RenderMode::BrickInstanced;
         DebugColorMode m_debugColorMode = DebugColorMode::Natural;
 
         LARGE_INTEGER m_qpcFrequency = {};
@@ -342,6 +391,12 @@ namespace hairgpu::viewer
         HWND m_btnLoadSettings = nullptr;
         HWND m_btnExportCsv = nullptr;
         HWND m_btnExportPerfCsv = nullptr;
+        HWND m_btnBrowsePartingMask = nullptr;
+        HWND m_btnBrowseRegionMask = nullptr;
+        HWND m_comboMaskSource = nullptr;
+        HWND m_comboMaskOverlay = nullptr;
+        HWND m_previewPartingMask = nullptr;
+        HWND m_previewRegionMask = nullptr;
         HWND m_comboPreset = nullptr;
         HWND m_comboRenderMode = nullptr;
         HWND m_comboDebugColor = nullptr;
@@ -374,6 +429,12 @@ namespace hairgpu::viewer
         HWND m_trackBendCompliance = nullptr;
         HWND m_labelStats = nullptr;
         HWND m_labelAssetStats = nullptr;
+        HWND m_labelPartingMask = nullptr;
+        HWND m_labelRegionMask = nullptr;
+        HWND m_labelMaskSource = nullptr;
+        HWND m_labelMaskOverlay = nullptr;
+        HBITMAP m_partingPreviewBitmap = nullptr;
+        HBITMAP m_regionPreviewBitmap = nullptr;
         HWND m_labelWidth = nullptr;
         HWND m_labelGravity = nullptr;
         HWND m_labelDamping = nullptr;

@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I/mnt/data/work/repo/include
+CXX_INCLUDES = -I/mnt/data/workmask/include
 
 CXX_FLAGS = -std=c++17
 

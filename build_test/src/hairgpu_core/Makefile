@@ -57,10 +57,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /mnt/data/work/repo
+CMAKE_SOURCE_DIR = /mnt/data/workmask
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /mnt/data/work/repo/build_test
+CMAKE_BINARY_DIR = /mnt/data/workmask/build_test
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -87,14 +87,14 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	cd /mnt/data/work/repo/build_test && $(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/work/repo/build_test/CMakeFiles /mnt/data/work/repo/build_test/src/hairgpu_core//CMakeFiles/progress.marks
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/work/repo/build_test/CMakeFiles 0
+	cd /mnt/data/workmask/build_test && $(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/workmask/build_test/CMakeFiles /mnt/data/workmask/build_test/src/hairgpu_core//CMakeFiles/progress.marks
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/data/workmask/build_test/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
 clean:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/clean
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/clean
 .PHONY : clean
 
 # The main clean target
@@ -103,22 +103,22 @@ clean/fast: clean
 
 # Prepare targets for installation.
 preinstall: all
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/preinstall
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/preinstall
 .PHONY : preinstall
 
 # Prepare targets for installation.
 preinstall/fast:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/preinstall
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/preinstall
 .PHONY : preinstall/fast
 
 # clear depends
 depend:
-	cd /mnt/data/work/repo/build_test && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
+	cd /mnt/data/workmask/build_test && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
 
 # Convenience name for target.
 src/hairgpu_core/CMakeFiles/hairgpu_core.dir/rule:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/CMakeFiles/hairgpu_core.dir/rule
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 src/hairgpu_core/CMakeFiles/hairgpu_core.dir/rule
 .PHONY : src/hairgpu_core/CMakeFiles/hairgpu_core.dir/rule
 
 # Convenience name for target.
@@ -127,39 +127,15 @@ hairgpu_core: src/hairgpu_core/CMakeFiles/hairgpu_core.dir/rule
 
 # fast build rule for target.
 hairgpu_core/fast:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build
 .PHONY : hairgpu_core/fast
-
-Adaptive.o: Adaptive.cpp.o
-.PHONY : Adaptive.o
-
-# target to build an object file
-Adaptive.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Adaptive.cpp.o
-.PHONY : Adaptive.cpp.o
-
-Adaptive.i: Adaptive.cpp.i
-.PHONY : Adaptive.i
-
-# target to preprocess a source file
-Adaptive.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Adaptive.cpp.i
-.PHONY : Adaptive.cpp.i
-
-Adaptive.s: Adaptive.cpp.s
-.PHONY : Adaptive.s
-
-# target to generate assembly for a file
-Adaptive.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Adaptive.cpp.s
-.PHONY : Adaptive.cpp.s
 
 AssetIO.o: AssetIO.cpp.o
 .PHONY : AssetIO.o
 
 # target to build an object file
 AssetIO.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.o
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.o
 .PHONY : AssetIO.cpp.o
 
 AssetIO.i: AssetIO.cpp.i
@@ -167,7 +143,7 @@ AssetIO.i: AssetIO.cpp.i
 
 # target to preprocess a source file
 AssetIO.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.i
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.i
 .PHONY : AssetIO.cpp.i
 
 AssetIO.s: AssetIO.cpp.s
@@ -175,87 +151,15 @@ AssetIO.s: AssetIO.cpp.s
 
 # target to generate assembly for a file
 AssetIO.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.s
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/AssetIO.cpp.s
 .PHONY : AssetIO.cpp.s
-
-Binding.o: Binding.cpp.o
-.PHONY : Binding.o
-
-# target to build an object file
-Binding.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Binding.cpp.o
-.PHONY : Binding.cpp.o
-
-Binding.i: Binding.cpp.i
-.PHONY : Binding.i
-
-# target to preprocess a source file
-Binding.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Binding.cpp.i
-.PHONY : Binding.cpp.i
-
-Binding.s: Binding.cpp.s
-.PHONY : Binding.s
-
-# target to generate assembly for a file
-Binding.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Binding.cpp.s
-.PHONY : Binding.cpp.s
-
-Cards.o: Cards.cpp.o
-.PHONY : Cards.o
-
-# target to build an object file
-Cards.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Cards.cpp.o
-.PHONY : Cards.cpp.o
-
-Cards.i: Cards.cpp.i
-.PHONY : Cards.i
-
-# target to preprocess a source file
-Cards.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Cards.cpp.i
-.PHONY : Cards.cpp.i
-
-Cards.s: Cards.cpp.s
-.PHONY : Cards.s
-
-# target to generate assembly for a file
-Cards.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Cards.cpp.s
-.PHONY : Cards.cpp.s
-
-GuideCache.o: GuideCache.cpp.o
-.PHONY : GuideCache.o
-
-# target to build an object file
-GuideCache.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/GuideCache.cpp.o
-.PHONY : GuideCache.cpp.o
-
-GuideCache.i: GuideCache.cpp.i
-.PHONY : GuideCache.i
-
-# target to preprocess a source file
-GuideCache.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/GuideCache.cpp.i
-.PHONY : GuideCache.cpp.i
-
-GuideCache.s: GuideCache.cpp.s
-.PHONY : GuideCache.s
-
-# target to generate assembly for a file
-GuideCache.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/GuideCache.cpp.s
-.PHONY : GuideCache.cpp.s
 
 HairMath.o: HairMath.cpp.o
 .PHONY : HairMath.o
 
 # target to build an object file
 HairMath.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.o
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.o
 .PHONY : HairMath.cpp.o
 
 HairMath.i: HairMath.cpp.i
@@ -263,7 +167,7 @@ HairMath.i: HairMath.cpp.i
 
 # target to preprocess a source file
 HairMath.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.i
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.i
 .PHONY : HairMath.cpp.i
 
 HairMath.s: HairMath.cpp.s
@@ -271,87 +175,15 @@ HairMath.s: HairMath.cpp.s
 
 # target to generate assembly for a file
 HairMath.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.s
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/HairMath.cpp.s
 .PHONY : HairMath.cpp.s
-
-Lod.o: Lod.cpp.o
-.PHONY : Lod.o
-
-# target to build an object file
-Lod.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Lod.cpp.o
-.PHONY : Lod.cpp.o
-
-Lod.i: Lod.cpp.i
-.PHONY : Lod.i
-
-# target to preprocess a source file
-Lod.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Lod.cpp.i
-.PHONY : Lod.cpp.i
-
-Lod.s: Lod.cpp.s
-.PHONY : Lod.s
-
-# target to generate assembly for a file
-Lod.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Lod.cpp.s
-.PHONY : Lod.cpp.s
-
-MeshIO.o: MeshIO.cpp.o
-.PHONY : MeshIO.o
-
-# target to build an object file
-MeshIO.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/MeshIO.cpp.o
-.PHONY : MeshIO.cpp.o
-
-MeshIO.i: MeshIO.cpp.i
-.PHONY : MeshIO.i
-
-# target to preprocess a source file
-MeshIO.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/MeshIO.cpp.i
-.PHONY : MeshIO.cpp.i
-
-MeshIO.s: MeshIO.cpp.s
-.PHONY : MeshIO.s
-
-# target to generate assembly for a file
-MeshIO.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/MeshIO.cpp.s
-.PHONY : MeshIO.cpp.s
-
-Metrics.o: Metrics.cpp.o
-.PHONY : Metrics.o
-
-# target to build an object file
-Metrics.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Metrics.cpp.o
-.PHONY : Metrics.cpp.o
-
-Metrics.i: Metrics.cpp.i
-.PHONY : Metrics.i
-
-# target to preprocess a source file
-Metrics.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Metrics.cpp.i
-.PHONY : Metrics.cpp.i
-
-Metrics.s: Metrics.cpp.s
-.PHONY : Metrics.s
-
-# target to generate assembly for a file
-Metrics.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Metrics.cpp.s
-.PHONY : Metrics.cpp.s
 
 RenderData.o: RenderData.cpp.o
 .PHONY : RenderData.o
 
 # target to build an object file
 RenderData.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.o
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.o
 .PHONY : RenderData.cpp.o
 
 RenderData.i: RenderData.cpp.i
@@ -359,7 +191,7 @@ RenderData.i: RenderData.cpp.i
 
 # target to preprocess a source file
 RenderData.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.i
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.i
 .PHONY : RenderData.cpp.i
 
 RenderData.s: RenderData.cpp.s
@@ -367,7 +199,7 @@ RenderData.s: RenderData.cpp.s
 
 # target to generate assembly for a file
 RenderData.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.s
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.s
 .PHONY : RenderData.cpp.s
 
 SampleAsset.o: SampleAsset.cpp.o
@@ -375,7 +207,7 @@ SampleAsset.o: SampleAsset.cpp.o
 
 # target to build an object file
 SampleAsset.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/SampleAsset.cpp.o
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/SampleAsset.cpp.o
 .PHONY : SampleAsset.cpp.o
 
 SampleAsset.i: SampleAsset.cpp.i
@@ -383,7 +215,7 @@ SampleAsset.i: SampleAsset.cpp.i
 
 # target to preprocess a source file
 SampleAsset.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/SampleAsset.cpp.i
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/SampleAsset.cpp.i
 .PHONY : SampleAsset.cpp.i
 
 SampleAsset.s: SampleAsset.cpp.s
@@ -391,80 +223,8 @@ SampleAsset.s: SampleAsset.cpp.s
 
 # target to generate assembly for a file
 SampleAsset.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/SampleAsset.cpp.s
+	cd /mnt/data/workmask/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/SampleAsset.cpp.s
 .PHONY : SampleAsset.cpp.s
-
-UsdExport.o: UsdExport.cpp.o
-.PHONY : UsdExport.o
-
-# target to build an object file
-UsdExport.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/UsdExport.cpp.o
-.PHONY : UsdExport.cpp.o
-
-UsdExport.i: UsdExport.cpp.i
-.PHONY : UsdExport.i
-
-# target to preprocess a source file
-UsdExport.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/UsdExport.cpp.i
-.PHONY : UsdExport.cpp.i
-
-UsdExport.s: UsdExport.cpp.s
-.PHONY : UsdExport.s
-
-# target to generate assembly for a file
-UsdExport.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/UsdExport.cpp.s
-.PHONY : UsdExport.cpp.s
-
-Validation.o: Validation.cpp.o
-.PHONY : Validation.o
-
-# target to build an object file
-Validation.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Validation.cpp.o
-.PHONY : Validation.cpp.o
-
-Validation.i: Validation.cpp.i
-.PHONY : Validation.i
-
-# target to preprocess a source file
-Validation.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Validation.cpp.i
-.PHONY : Validation.cpp.i
-
-Validation.s: Validation.cpp.s
-.PHONY : Validation.s
-
-# target to generate assembly for a file
-Validation.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Validation.cpp.s
-.PHONY : Validation.cpp.s
-
-Wig.o: Wig.cpp.o
-.PHONY : Wig.o
-
-# target to build an object file
-Wig.cpp.o:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Wig.cpp.o
-.PHONY : Wig.cpp.o
-
-Wig.i: Wig.cpp.i
-.PHONY : Wig.i
-
-# target to preprocess a source file
-Wig.cpp.i:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Wig.cpp.i
-.PHONY : Wig.cpp.i
-
-Wig.s: Wig.cpp.s
-.PHONY : Wig.s
-
-# target to generate assembly for a file
-Wig.cpp.s:
-	cd /mnt/data/work/repo/build_test && $(MAKE) $(MAKESILENT) -f src/hairgpu_core/CMakeFiles/hairgpu_core.dir/build.make src/hairgpu_core/CMakeFiles/hairgpu_core.dir/Wig.cpp.s
-.PHONY : Wig.cpp.s
 
 # Help Target
 help:
@@ -475,48 +235,18 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... hairgpu_core"
-	@echo "... Adaptive.o"
-	@echo "... Adaptive.i"
-	@echo "... Adaptive.s"
 	@echo "... AssetIO.o"
 	@echo "... AssetIO.i"
 	@echo "... AssetIO.s"
-	@echo "... Binding.o"
-	@echo "... Binding.i"
-	@echo "... Binding.s"
-	@echo "... Cards.o"
-	@echo "... Cards.i"
-	@echo "... Cards.s"
-	@echo "... GuideCache.o"
-	@echo "... GuideCache.i"
-	@echo "... GuideCache.s"
 	@echo "... HairMath.o"
 	@echo "... HairMath.i"
 	@echo "... HairMath.s"
-	@echo "... Lod.o"
-	@echo "... Lod.i"
-	@echo "... Lod.s"
-	@echo "... MeshIO.o"
-	@echo "... MeshIO.i"
-	@echo "... MeshIO.s"
-	@echo "... Metrics.o"
-	@echo "... Metrics.i"
-	@echo "... Metrics.s"
 	@echo "... RenderData.o"
 	@echo "... RenderData.i"
 	@echo "... RenderData.s"
 	@echo "... SampleAsset.o"
 	@echo "... SampleAsset.i"
 	@echo "... SampleAsset.s"
-	@echo "... UsdExport.o"
-	@echo "... UsdExport.i"
-	@echo "... UsdExport.s"
-	@echo "... Validation.o"
-	@echo "... Validation.i"
-	@echo "... Validation.s"
-	@echo "... Wig.o"
-	@echo "... Wig.i"
-	@echo "... Wig.s"
 .PHONY : help
 
 
@@ -528,6 +258,6 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
-	cd /mnt/data/work/repo/build_test && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
+	cd /mnt/data/workmask/build_test && $(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

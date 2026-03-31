@@ -1,7 +1,7 @@
 src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.o: \
- /mnt/data/work/repo/src/hairgpu_core/RenderData.cpp \
+ /mnt/data/workmask/src/hairgpu_core/RenderData.cpp \
  /usr/include/stdc-predef.h \
- /mnt/data/work/repo/include/hairgpu/RenderData.h \
+ /mnt/data/workmask/include/hairgpu/RenderData.h \
  /usr/include/c++/14/cstdint \
  /usr/include/x86_64-linux-gnu/c++/14/bits/c++config.h \
  /usr/include/x86_64-linux-gnu/c++/14/bits/os_defines.h \
@@ -62,8 +62,8 @@ src/hairgpu_core/CMakeFiles/hairgpu_core.dir/RenderData.cpp.o: \
  /usr/lib/gcc/x86_64-linux-gnu/14/include/stddef.h \
  /usr/include/c++/14/bits/uses_allocator.h \
  /usr/include/c++/14/bits/uses_allocator_args.h /usr/include/c++/14/tuple \
- /mnt/data/work/repo/include/hairgpu/Types.h /usr/include/c++/14/array \
- /usr/include/c++/14/compare /mnt/data/work/repo/include/hairgpu/Math.h \
+ /mnt/data/workmask/include/hairgpu/Types.h /usr/include/c++/14/array \
+ /usr/include/c++/14/compare /mnt/data/workmask/include/hairgpu/Math.h \
  /usr/include/c++/14/cmath /usr/include/math.h \
  /usr/include/x86_64-linux-gnu/bits/math-vector.h \
  /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \

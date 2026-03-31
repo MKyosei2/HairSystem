@@ -90,6 +90,24 @@ namespace hairgpu
         uint32_t particlesPerStrand = 0;
     };
 
+
+
+    struct WigParameters
+    {
+        float overallLength = 0.92f;
+        float partingOffset = 0.0f;
+        float partWidth = 0.030f;
+        float scalpConform = 0.85f;
+        float rootLift = 0.030f;
+        float silhouetteWidth = 0.090f;
+        float sideVolume = 0.070f;
+        float backVolume = 0.055f;
+        float lowerRingLengthBias = 0.28f;
+        float strandNoise = 0.020f;
+        float followerSpread = 0.010f;
+        float tipInward = 0.020f;
+    };
+
     struct GpuSimulationConfig
     {
         uint32_t solverIterations = 6;
@@ -158,6 +176,20 @@ namespace hairgpu
     Vec3 EvaluateRootBindingPosition(const ScalpMesh& scalpMesh, const RootBinding& binding);
     void RebuildRootRestPositionsFromScalp(HairAsset& asset);
 
+    WigParameters DefaultWigParameters();
+    HairAsset BuildStaticWigHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength, const WigParameters& parameters);
     HairAsset BuildSampleGuideHairAsset(uint32_t strandCount, uint32_t particlesPerStrand, float segmentLength);
     HairAsset BuildSampleHybridHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength);
+
+    enum class SampleMaskSourceMode : uint32_t
+    {
+        Auto = 0,
+        ExternalFiles = 1,
+        Procedural = 2,
+    };
+
+    void SetSampleMaskOverridePaths(const char* partingMaskPath, const char* regionMaskPath);
+    void ClearSampleMaskOverridePaths();
+    void SetSampleMaskSourceMode(SampleMaskSourceMode mode);
+    SampleMaskSourceMode GetSampleMaskSourceMode();
 }
