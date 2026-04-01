@@ -1,4 +1,5 @@
 ﻿  AssetIO.cpp
+  Authoring.cpp
   HairMath.cpp
   RenderData.cpp
   SampleAsset.cpp

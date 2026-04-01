@@ -51,7 +51,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;./&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;shaders&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -67,19 +67,24 @@
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
-copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
-copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
-copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
 copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
-copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"
-copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"</Command>
+copy /Y "$(ProjectDir)shaders\HairBrickInstanced.hlsl" "$(OutDir)HairBrickInstanced.hlsl"
+copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"
+copy /Y "$(ProjectDir)shaders\HairIndirectArgs.hlsl" "$(OutDir)HairIndirectArgs.hlsl"
+copy /Y "$(ProjectDir)shaders\HairLine.hlsl" "$(OutDir)HairLine.hlsl"
+copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
+copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
+copy /Y "$(ProjectDir)shaders\HairStrandInstanced.hlsl" "$(OutDir)HairStrandInstanced.hlsl"
+copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
+copy /Y "$(ProjectDir)shaders\HairVoxel.hlsl" "$(OutDir)HairVoxel.hlsl"
+copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;./&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;shaders&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -99,12 +104,17 @@ copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"</Com
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
-copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
-copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
-copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
 copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
-copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"
-copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"</Command>
+copy /Y "$(ProjectDir)shaders\HairBrickInstanced.hlsl" "$(OutDir)HairBrickInstanced.hlsl"
+copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"
+copy /Y "$(ProjectDir)shaders\HairIndirectArgs.hlsl" "$(OutDir)HairIndirectArgs.hlsl"
+copy /Y "$(ProjectDir)shaders\HairLine.hlsl" "$(OutDir)HairLine.hlsl"
+copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
+copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
+copy /Y "$(ProjectDir)shaders\HairStrandInstanced.hlsl" "$(OutDir)HairStrandInstanced.hlsl"
+copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
+copy /Y "$(ProjectDir)shaders\HairVoxel.hlsl" "$(OutDir)HairVoxel.hlsl"
+copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -115,12 +125,17 @@ copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"</Com
     <ClInclude Include="src\GpuHairViewer.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\DebugLine.hlsl" />
+    <None Include="shaders\HairBrickInstanced.hlsl" />
+    <None Include="shaders\HairCpuMesh.hlsl" />
+    <None Include="shaders\HairIndirectArgs.hlsl" />
+    <None Include="shaders\HairLine.hlsl" />
     <None Include="shaders\HairRibbon.hlsl" />
     <None Include="shaders\HairSim.hlsl" />
+    <None Include="shaders\HairStrandInstanced.hlsl" />
     <None Include="shaders\HairTube.hlsl" />
-    <None Include="shaders\DebugLine.hlsl" />
+    <None Include="shaders\HairVoxel.hlsl" />
     <None Include="shaders\ScalpMesh.hlsl" />
-    <None Include="shaders\HairCpuMesh.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\hairgpu_core\hairgpu_core.vcxproj">

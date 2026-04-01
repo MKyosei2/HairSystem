@@ -92,6 +92,14 @@ namespace hairgpu
 
 
 
+    enum class SimTier : uint32_t
+    {
+        Full = 0,
+        Reduced = 1,
+        Frozen = 2,
+        Cached = 3,
+    };
+
     struct WigParameters
     {
         float overallLength = 0.92f;

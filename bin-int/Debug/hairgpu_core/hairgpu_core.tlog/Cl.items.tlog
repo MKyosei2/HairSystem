@@ -1,14 +1,6 @@
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Adaptive.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Adaptive.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\AssetIO.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\AssetIO.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Binding.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Binding.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Cards.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Cards.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\GuideCache.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\GuideCache.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Wig.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Wig.obj
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Authoring.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Authoring.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairMath.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\HairMath.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Lod.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Lod.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\MeshIO.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\MeshIO.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Metrics.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Metrics.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\UsdExport.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\UsdExport.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Validation.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Validation.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\RenderData.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\RenderData.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\SampleAsset.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\SampleAsset.obj
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Wig.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Wig.obj

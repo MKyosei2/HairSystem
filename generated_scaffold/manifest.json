@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "assetSummary": {
+    "strandCount": 2,
+    "guideStrandCount": 1,
+    "followerStrandCount": 1,
+    "pointCount": 8,
+    "particlesPerStrand": 4
+  },
+  "settings": {
+    "normalizeAsset": true,
+    "generateRootBindingsIfMissing": true,
+    "snapRootsToScalp": false,
+    "exportScalpObj": true,
+    "exportCards": true,
+    "exportUsda": true,
+    "exportLods": true,
+    "exportGuideCache": true,
+    "guideCacheFrameRate": 30,
+    "guideCacheFrameCount": 60
+  },
+  "outputs": {
+    "normalizedHairPath": "generated_scaffold/asset_normalized.hairbin",
+    "validationReportPath": "generated_scaffold/validation_report.txt",
+    "metricsJsonPath": "generated_scaffold/metrics.json",
+    "manifestJsonPath": "generated_scaffold/manifest.json",
+    "scalpObjPath": "generated_scaffold/scalp.obj",
+    "cardsObjPath": "generated_scaffold/cards.obj",
+    "usdaPath": "generated_scaffold/asset.usda",
+    "guideCachePath": "generated_scaffold/guide_rest.guidecache",
+    "lodPaths": ["generated_scaffold/lod0.hairbin", "generated_scaffold/lod1.hairbin", "generated_scaffold/lod2.hairbin"]
+  },
+  "normalizationSummary": "No normalization changes were needed.",
+  "validationSummary": "valid | errors=0 warnings=0 info=1 | avgSeg=0.183203 maxSeg=0.240832\n- [info] Asset validation passed without issues."
+}

@@ -490,8 +490,9 @@ namespace hairgpu::viewer
         m_simConfig.selfCollisionCellSize = 0.085f;
         m_selfCollisionRadius = m_simConfig.selfCollisionRadius;
         m_selfCollisionStiffness = m_simConfig.selfCollisionStiffness;
-        m_renderMode = RenderMode::BrickInstanced;
-        m_showScalpMesh = false;
+        m_widthScale = 3.2f;
+        m_renderMode = RenderMode::TubePreview;
+        m_showScalpMesh = true;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
         m_showGuideSkeleton = false;
@@ -1478,6 +1479,8 @@ namespace hairgpu::viewer
             m_pointWidths.srv.Get()
         };
 
+        const bool useCpuHairPreview = (m_renderMode == RenderMode::Ribbon || m_renderMode == RenderMode::TubePreview || m_showTestMesh);
+
         if (m_renderMode == RenderMode::BrickInstanced && m_brickVertexBuffer && m_brickInstanceBuffer && m_brickIndexBuffer && m_renderData.segmentCount > 0)
         {
             UINT strides[2] = { sizeof(BrickVertex), sizeof(BrickInstance) };
@@ -1497,7 +1500,7 @@ namespace hairgpu::viewer
             ID3D11ShaderResourceView* nullHairSrvs[2] = {};
             m_context->VSSetShaderResources(0, 2, nullHairSrvs);
         }
-        else if (hairVB && m_renderData.segmentVertices.size() >= 2)
+        else if (!useCpuHairPreview && hairVB && m_renderData.segmentVertices.size() >= 2)
         {
             m_context->IASetInputLayout(m_inputLayout.Get());
             m_context->IASetVertexBuffers(0, 1, &hairVB, &hairStride, &offset);
@@ -1510,15 +1513,15 @@ namespace hairgpu::viewer
 
             switch (m_renderMode)
             {
-            case RenderMode::Ribbon:
-                m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
-                m_context->GSSetShader(m_ribbonGS.Get(), nullptr, 0);
-                m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
-                break;
             case RenderMode::VoxelPreview:
                 m_context->VSSetShader(m_voxelVS.Get(), nullptr, 0);
                 m_context->GSSetShader(m_voxelGS.Get(), nullptr, 0);
                 m_context->PSSetShader(m_voxelPS.Get(), nullptr, 0);
+                break;
+            case RenderMode::Ribbon:
+                m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
+                m_context->GSSetShader(m_ribbonGS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
                 break;
             case RenderMode::TubePreview:
             default:
@@ -1535,7 +1538,7 @@ namespace hairgpu::viewer
             m_context->GSSetShaderResources(0, 2, nullHairSrvs);
         }
 
-        if (m_showTestMesh)
+        if (useCpuHairPreview)
         {
             const bool haveParticleReadback = ReadBackCurrentParticlePositions(m_debugReadbackParticles) && ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset);
             if (!haveParticleReadback)
@@ -1815,7 +1818,7 @@ namespace hairgpu::viewer
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Tube Preview"));
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Voxel Blocks"));
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Instanced Brick Chain"));
-        SendMessageW(m_comboRenderMode, CB_SETCURSEL, 3, 0);
+        SendMessageW(m_comboRenderMode, CB_SETCURSEL, 1, 0);
 
         createControl(0, L"STATIC", L"Color Debug", SS_LEFT, 0);
         m_comboDebugColor = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_DEBUG_COLOR);
@@ -2037,6 +2040,8 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::SyncControlsFromState()
     {
+        m_syncingControls = true;
+
         SetDlgItemInt(m_hwnd, IDC_EDIT_GUIDES, m_builderGuideCount, FALSE);
         SetDlgItemInt(m_hwnd, IDC_EDIT_FOLLOWERS, m_builderFollowersPerGuide, FALSE);
         SetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, m_builderParticlesPerStrand, FALSE);
@@ -2092,10 +2097,16 @@ namespace hairgpu::viewer
         SetWindowTextFormat(m_labelBendCompliance, L"Bend Compliance: " + FormatScientific(m_simConfig.bendCompliance));
         SetWindowTextFormat(m_btnPlayPause, m_paused ? L"Play" : L"Pause");
         RefreshAssetStatsText();
+
+        m_syncingControls = false;
     }
 
     void GpuHairViewer::SyncStateFromControls()
     {
+        if (m_syncingControls)
+        {
+            return;
+        }
         m_enableSelfCollision = (SendMessageW(m_checkSelfCollision, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_enableGridSelfCollision = (SendMessageW(m_checkGrid, BM_GETCHECK, 0, 0) == BST_CHECKED);
         m_enableScalpMotion = (SendMessageW(m_checkScalpMotion, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -2143,8 +2154,8 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
     {
-        m_renderMode = RenderMode::BrickInstanced;
-        m_showScalpMesh = false;
+        m_renderMode = RenderMode::TubePreview;
+        m_showScalpMesh = true;
         m_showGuideSkeleton = false;
         m_showFollowerSkeleton = false;
         m_showRootMarkers = false;
@@ -2439,7 +2450,7 @@ namespace hairgpu::viewer
         OPENFILENAMEW ofn = {};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = m_hwnd;
-        ofn.lpstrFilter = L"Mask Files (*.bmp;*.pgm;*.ppm;*.csv) *.bmp;*.pgm;*.ppm;*.csv Bitmap (*.bmp) *.bmp Portable Graymap (*.pgm) *.pgm Portable Pixmap (*.ppm) *.ppm CSV (*.csv) *.csv All Files *.* ";
+        ofn.lpstrFilter = L"Mask Files (*.bmp;*.pgm;*.ppm;*.csv)\0*.bmp;*.pgm;*.ppm;*.csv\0Bitmap (*.bmp)\0*.bmp\0Portable Graymap (*.pgm)\0*.pgm\0Portable Pixmap (*.ppm)\0*.ppm\0CSV (*.csv)\0*.csv\0All Files\0*.*\0";
         ofn.lpstrFile = fileName;
         ofn.nMaxFile = MAX_PATH;
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -3337,10 +3348,18 @@ namespace hairgpu::viewer
             return 0;
         }
         case WM_HSCROLL:
-            SyncStateFromControls();
+            if (!m_syncingControls)
+            {
+                SyncStateFromControls();
+            }
             return 0;
         case WM_COMMAND:
         {
+            if (m_syncingControls)
+            {
+                return 0;
+            }
+
             const int id = LOWORD(wParam);
             const int code = HIWORD(wParam);
             switch (id)
@@ -3502,7 +3521,7 @@ namespace hairgpu::viewer
             case IDC_EDIT_GUIDES:
             case IDC_EDIT_FOLLOWERS:
             case IDC_EDIT_PARTICLES:
-                if (code == EN_CHANGE)
+                if (code == EN_KILLFOCUS)
                 {
                     SyncStateFromControls();
                     RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);

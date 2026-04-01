@@ -480,3 +480,114 @@ namespace hairgpu
 #endif
     }
 }
+
+namespace hairgpu
+{
+    namespace
+    {
+        template <typename T>
+        bool WriteRaw(std::ofstream& out, const T& value)
+        {
+            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+            return static_cast<bool>(out);
+        }
+
+        template <typename T>
+        bool ReadRaw(std::ifstream& in, T& value)
+        {
+            in.read(reinterpret_cast<char*>(&value), sizeof(T));
+            return static_cast<bool>(in);
+        }
+
+        template <typename T>
+        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
+        {
+            uint64_t count = static_cast<uint64_t>(values.size());
+            if (!WriteRaw(out, count)) return false;
+            if (!values.empty()) out.write(reinterpret_cast<const char*>(values.data()), sizeof(T) * values.size());
+            return static_cast<bool>(out);
+        }
+
+        template <typename T>
+        bool ReadVector(std::ifstream& in, std::vector<T>& values)
+        {
+            uint64_t count = 0;
+            if (!ReadRaw(in, count)) return false;
+            values.resize(static_cast<size_t>(count));
+            if (!values.empty()) in.read(reinterpret_cast<char*>(values.data()), sizeof(T) * values.size());
+            return static_cast<bool>(in);
+        }
+    }
+
+    bool SaveHairAssetToAlembic(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError)
+    {
+        (void)asset;
+        outError = "Alembic export is not available in this build.";
+        return false;
+    }
+
+    bool LoadHairAssetFromHairFile(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)
+    {
+        return LoadHairAssetFromHairBinary(filePath, outAsset, outError);
+    }
+
+    bool SaveHairAssetToHairBinary(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError)
+    {
+        std::ofstream out(filePath, std::ios::binary);
+        if (!out)
+        {
+            outError = "Failed to open output file: " + filePath.string();
+            return false;
+        }
+        const char magic[8] = {'H','G','P','U','H','B','I','N'};
+        out.write(magic, sizeof(magic));
+        uint32_t version = 1;
+        WriteRaw(out, version);
+        WriteRaw(out, asset.guideStrandCount);
+        WriteRaw(out, asset.followerStrandCount);
+        WriteRaw(out, asset.particlesPerStrand);
+        if (!WriteVector(out, asset.strands) || !WriteVector(out, asset.restPoints) || !WriteVector(out, asset.pointWidths) ||
+            !WriteVector(out, asset.materials) || !WriteVector(out, asset.rootBindings) || !WriteVector(out, asset.followData) ||
+            !WriteVector(out, asset.scalpMesh.positions) || !WriteVector(out, asset.scalpMesh.normals) || !WriteVector(out, asset.scalpMesh.uvs) ||
+            !WriteVector(out, asset.scalpMesh.triangles) || !WriteVector(out, asset.scalpMesh.skinWeights) || !WriteRaw(out, asset.scalpMesh.boneCount))
+        {
+            outError = "Failed while writing binary hair asset.";
+            return false;
+        }
+        return true;
+    }
+
+    bool LoadHairAssetFromHairBinary(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)
+    {
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in)
+        {
+            outError = "Failed to open binary hair asset: " + filePath.string();
+            return false;
+        }
+        char magic[8] = {};
+        in.read(magic, sizeof(magic));
+        const std::string got(magic, magic + sizeof(magic));
+        if (got != "HGPUHBIN")
+        {
+            outError = "Invalid hair binary header.";
+            return false;
+        }
+        uint32_t version = 0;
+        if (!ReadRaw(in, version) || version != 1)
+        {
+            outError = "Unsupported hair binary version.";
+            return false;
+        }
+        if (!ReadRaw(in, outAsset.guideStrandCount) || !ReadRaw(in, outAsset.followerStrandCount) || !ReadRaw(in, outAsset.particlesPerStrand) ||
+            !ReadVector(in, outAsset.strands) || !ReadVector(in, outAsset.restPoints) || !ReadVector(in, outAsset.pointWidths) ||
+            !ReadVector(in, outAsset.materials) || !ReadVector(in, outAsset.rootBindings) || !ReadVector(in, outAsset.followData) ||
+            !ReadVector(in, outAsset.scalpMesh.positions) || !ReadVector(in, outAsset.scalpMesh.normals) || !ReadVector(in, outAsset.scalpMesh.uvs) ||
+            !ReadVector(in, outAsset.scalpMesh.triangles) || !ReadVector(in, outAsset.scalpMesh.skinWeights) || !ReadRaw(in, outAsset.scalpMesh.boneCount))
+        {
+            outError = "Failed while reading binary hair asset.";
+            return false;
+        }
+        return true;
+    }
+}

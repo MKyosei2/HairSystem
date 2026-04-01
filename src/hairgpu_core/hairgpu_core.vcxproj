@@ -83,6 +83,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AssetIO.cpp" />
+    <ClCompile Include="Authoring.cpp" />
     <ClCompile Include="HairMath.cpp" />
     <ClCompile Include="RenderData.cpp" />
     <ClCompile Include="SampleAsset.cpp" />
@@ -90,6 +91,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\hairgpu\AssetIO.h" />
+    <ClInclude Include="..\..\include\hairgpu\Authoring.h" />
     <ClInclude Include="..\..\include\hairgpu\Math.h" />
     <ClInclude Include="..\..\include\hairgpu\RenderData.h" />
     <ClInclude Include="..\..\include\hairgpu\Types.h" />

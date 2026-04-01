@@ -238,6 +238,7 @@ namespace hairgpu::viewer
         bool m_running = true;
         bool m_paused = false;
         bool m_dragging = false;
+        bool m_syncingControls = false;
         bool m_enableSelfCollision = true;
         bool m_enableScalpMotion = true;
         bool m_showColliderDebug = false;
@@ -259,7 +260,7 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_cameraPosition = { 0.0f, 0.0f, 0.0f };
         hairgpu::Vec3 m_scalpCenter = { 0.0f, 1.60f, 0.0f };
         hairgpu::Vec3 m_neckPivot = { 0.0f, 1.42f, -0.03f };
-        float m_widthScale = 1.8f;
+        float m_widthScale = 3.2f;
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
