@@ -19,6 +19,7 @@ namespace hairgpu
         bool saveCards = true;
         bool saveUsda = true;
         bool saveGuideCache = true;
+        bool saveHairCache = true;
         bool saveScalpObj = true;
     };
 
@@ -32,6 +33,7 @@ namespace hairgpu
         std::filesystem::path cardsObjPath;
         std::filesystem::path usdaPath;
         std::filesystem::path guideCachePath;
+        std::filesystem::path hairCachePath;
         std::filesystem::path scalpObjPath;
     };
 

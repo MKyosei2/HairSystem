@@ -210,6 +210,39 @@ namespace hairgpu
         return true;
     }
 
+    namespace
+    {
+        float SafeAcos(float v)
+        {
+            return std::acos(std::clamp(v, -1.0f, 1.0f));
+        }
+
+        void EnforceSegmentLengths(HairAsset& asset, const StrandRange& strand, const std::vector<float>& segmentLengths)
+        {
+            if (strand.pointCount < 2u)
+            {
+                return;
+            }
+            for (uint32_t localIndex = 1u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const uint32_t prevIndex = strand.pointOffset + localIndex - 1u;
+                const uint32_t currIndex = strand.pointOffset + localIndex;
+                const float targetLength = segmentLengths[localIndex - 1u];
+                Vec3 delta = asset.restPoints[currIndex] - asset.restPoints[prevIndex];
+                const float length = Length(delta);
+                if (length <= kEpsilon)
+                {
+                    delta = Vec3(0.0f, -targetLength, 0.0f);
+                }
+                else
+                {
+                    delta = delta * (targetLength / length);
+                }
+                asset.restPoints[currIndex] = asset.restPoints[prevIndex] + delta;
+            }
+        }
+    }
+
     void ApplyConstraints(HairAsset& asset, const ConstraintSettings& settings)
     {
         for (const StrandRange& strand : asset.strands)
@@ -302,6 +335,147 @@ namespace hairgpu
             return false;
         }
         return true;
+    }
+
+    void ApplyAngularBendRelaxation(HairAsset& asset, const AngularBendRelaxationSettings& settings)
+    {
+        const float maxBend = std::max(0.01f, settings.maxBendRadians);
+        const float smoothing = Clamp01(settings.smoothing);
+        for (const StrandRange& strand : asset.strands)
+        {
+            if (strand.pointCount < 3u || strand.pointOffset + strand.pointCount > asset.restPoints.size())
+            {
+                continue;
+            }
+
+            std::vector<float> segmentLengths;
+            segmentLengths.reserve(strand.pointCount - 1u);
+            for (uint32_t localIndex = 1u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const Vec3 a = asset.restPoints[strand.pointOffset + localIndex - 1u];
+                const Vec3 b = asset.restPoints[strand.pointOffset + localIndex];
+                segmentLengths.push_back(std::max(Length(b - a), 1.0e-4f));
+            }
+
+            for (uint32_t iteration = 0u; iteration < std::max<uint32_t>(1u, settings.iterations); ++iteration)
+            {
+                std::vector<Vec3> original(strand.pointCount);
+                for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+                {
+                    original[localIndex] = asset.restPoints[strand.pointOffset + localIndex];
+                }
+
+                for (uint32_t localIndex = settings.affectRootAdjacentPoint ? 1u : 2u; localIndex + 1u < strand.pointCount; ++localIndex)
+                {
+                    const Vec3 prev = original[localIndex - 1u];
+                    const Vec3 curr = original[localIndex];
+                    const Vec3 next = original[localIndex + 1u];
+                    const Vec3 dirPrev = Normalize(curr - prev);
+                    const Vec3 dirNext = Normalize(next - curr);
+                    if (Length(dirPrev) <= kEpsilon || Length(dirNext) <= kEpsilon)
+                    {
+                        continue;
+                    }
+
+                    const float angle = SafeAcos(Dot(dirPrev, dirNext));
+                    if (angle <= maxBend)
+                    {
+                        continue;
+                    }
+
+                    const float excess = angle - maxBend;
+                    const float weight = Clamp01((excess / 3.14159265f) * smoothing * 2.0f);
+                    const Vec3 midpoint = (prev + next) * 0.5f;
+                    asset.restPoints[strand.pointOffset + localIndex] = Lerp(curr, midpoint, weight);
+                }
+
+                if (settings.preserveSegmentLengths)
+                {
+                    EnforceSegmentLengths(asset, strand, segmentLengths);
+                }
+            }
+        }
+    }
+
+
+    void ApplyAngularXpbdBendRelaxation(HairAsset& asset, const AngularXpbdBendSettings& settings)
+    {
+        const float targetBend = std::clamp(settings.targetBendRadians, 0.0f, 3.05f);
+        const float compliance = std::max(settings.bendCompliance, 0.0f);
+        const float damping = Clamp01(settings.damping);
+        const uint32_t iterations = std::max<uint32_t>(1u, settings.iterations);
+
+        for (const StrandRange& strand : asset.strands)
+        {
+            if (strand.pointCount < 3u || strand.pointOffset + strand.pointCount > asset.restPoints.size())
+            {
+                continue;
+            }
+
+            std::vector<float> segmentLengths;
+            segmentLengths.reserve(strand.pointCount - 1u);
+            for (uint32_t localIndex = 1u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const Vec3 a = asset.restPoints[strand.pointOffset + localIndex - 1u];
+                const Vec3 b = asset.restPoints[strand.pointOffset + localIndex];
+                segmentLengths.push_back(std::max(Length(b - a), 1.0e-4f));
+            }
+
+            for (uint32_t iteration = 0u; iteration < iterations; ++iteration)
+            {
+                std::vector<Vec3> original(strand.pointCount);
+                for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+                {
+                    original[localIndex] = asset.restPoints[strand.pointOffset + localIndex];
+                }
+
+                for (uint32_t localIndex = settings.affectRootAdjacentPoint ? 1u : 2u; localIndex + 1u < strand.pointCount; ++localIndex)
+                {
+                    const Vec3 prev = original[localIndex - 1u];
+                    const Vec3 curr = original[localIndex];
+                    const Vec3 next = original[localIndex + 1u];
+                    const Vec3 v0 = curr - prev;
+                    const Vec3 v1 = next - curr;
+                    const float l0 = Length(v0);
+                    const float l1 = Length(v1);
+                    if (l0 <= kEpsilon || l1 <= kEpsilon)
+                    {
+                        continue;
+                    }
+
+                    const Vec3 d0 = v0 / l0;
+                    const Vec3 d1 = v1 / l1;
+                    const float angle = SafeAcos(Dot(d0, d1));
+                    const float constraint = angle - targetBend;
+                    if (std::abs(constraint) <= 1.0e-4f)
+                    {
+                        continue;
+                    }
+
+                    Vec3 bisector = Normalize(d0 + d1);
+                    if (Length(bisector) <= kEpsilon)
+                    {
+                        bisector = Normalize(Cross(d0, Vec3(0.0f, 1.0f, 0.0f)));
+                        if (Length(bisector) <= kEpsilon)
+                        {
+                            bisector = Vec3(0.0f, 0.0f, 1.0f);
+                        }
+                    }
+
+                    const float stiffness = 1.0f / (1.0f + compliance * static_cast<float>(iteration + 1u) * 1024.0f);
+                    const float moveScale = std::clamp(constraint * stiffness * 0.35f, -0.35f, 0.35f);
+                    const Vec3 target = (prev + next) * 0.5f + bisector * ((l0 + l1) * 0.18f * targetBend);
+                    Vec3 corrected = Lerp(curr, target, std::abs(moveScale));
+                    corrected = Lerp(corrected, curr, damping * 0.5f);
+                    asset.restPoints[strand.pointOffset + localIndex] = corrected;
+                }
+
+                if (settings.preserveSegmentLengths)
+                {
+                    EnforceSegmentLengths(asset, strand, segmentLengths);
+                }
+            }
+        }
     }
 
     bool ApplyPaletteToRegion(HairAsset& asset, const RegionSelectionResult& selection, const Palette& palette, float strength, std::string& outError)

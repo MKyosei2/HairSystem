@@ -7,10 +7,9 @@ cbuffer RenderConstants : register(b0)
     uint DebugColorMode;
     uint GuideStrandCount;
     uint ParticlesPerStrand;
-    uint RenderStride;
-    uint RenderPhase;
     uint TotalStrandCount;
-    uint StrandTemplateIndexCount;
+    uint TubeRingSides;
+    uint _RenderPadding0;
     uint _RenderPadding1;
 };
 
@@ -83,16 +82,7 @@ VSOutput VSMain(VSInput input)
 {
     VSOutput output;
 
-    const uint guideCount = GuideStrandCount;
-    const uint followerInstance = (input.instanceId >= guideCount) ? (input.instanceId - guideCount) : 0u;
-    const uint stride = max(RenderStride, 1u);
-    const uint phase = (stride > 1u) ? (RenderPhase % stride) : 0u;
-    uint strandIndex = input.instanceId;
-    if (input.instanceId >= guideCount)
-    {
-        strandIndex = guideCount + followerInstance * stride + phase;
-        strandIndex = min(strandIndex, max(TotalStrandCount, 1u) - 1u);
-    }
+    const uint strandIndex = min(input.instanceId, max(TotalStrandCount, 1u) - 1u);
     const float u = saturate(input.strandU);
     const float prevU = max(u - (1.0f / max((float)ParticlesPerStrand - 1.0f, 1.0f)), 0.0f);
     const float nextU = min(u + (1.0f / max((float)ParticlesPerStrand - 1.0f, 1.0f)), 1.0f);

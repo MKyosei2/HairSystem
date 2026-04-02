@@ -10,3 +10,6 @@ This build replaces the previous geometry-shader-only hair preview path with a s
 
 ## Why
 The previous preview path depended on geometry shader expansion from structured buffers. In some environments the viewer initialized correctly but showed only the background. This build uses a CPU fallback mesh path so the simulated hair is visible as normal triangle geometry.
+
+
+Update: the runtime viewer now keeps the standard `Ribbon` and `Tube Preview` paths on the GPU. The old CPU fallback remains only for explicit test-mesh / debug use, rather than the normal visible hair path.

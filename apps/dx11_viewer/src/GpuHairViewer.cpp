@@ -413,6 +413,45 @@ namespace hairgpu::viewer
             return ss.str();
         }
 
+        uint32_t NextPowerOfTwo(uint32_t value)
+        {
+            if (value <= 1u)
+            {
+                return 1u;
+            }
+            --value;
+            value |= value >> 1u;
+            value |= value >> 2u;
+            value |= value >> 4u;
+            value |= value >> 8u;
+            value |= value >> 16u;
+            return value + 1u;
+        }
+
+        const wchar_t* BroadphaseModeShortName(uint32_t mode)
+        {
+            switch (mode % 4u)
+            {
+            case 0u: return L"dense-grid";
+            case 1u: return L"spatial-hash";
+            case 2u: return L"adaptive-hash";
+            case 3u: return L"sorted-grid";
+            default: return L"unknown";
+            }
+        }
+
+        const wchar_t* BroadphaseModeLongName(uint32_t mode)
+        {
+            switch (mode % 4u)
+            {
+            case 0u: return L"Dense Grid";
+            case 1u: return L"Spatial Hash";
+            case 2u: return L"Adaptive Hash";
+            case 3u: return L"Sorted Grid";
+            default: return L"Unknown";
+            }
+        }
+
         void ShowStartupDialog(HWND owner, const wchar_t* title, const std::wstring& message)
         {
             MessageBoxW(owner, message.c_str(), title, MB_OK | MB_ICONERROR);
@@ -490,6 +529,11 @@ namespace hairgpu::viewer
         m_simConfig.selfCollisionCellSize = 0.085f;
         m_selfCollisionRadius = m_simConfig.selfCollisionRadius;
         m_selfCollisionStiffness = m_simConfig.selfCollisionStiffness;
+        m_enableRuntimeAngularBend = true;
+        m_runtimeAngularBendRadians = 0.16f;
+        m_runtimeAngularBendCompliance = 5.0e-6f;
+        m_runtimeAngularBendStiffness = 0.36f;
+        m_runtimeAngularBendDamping = 0.08f;
         m_widthScale = 3.2f;
         m_renderMode = RenderMode::TubePreview;
         m_showScalpMesh = true;
@@ -563,6 +607,7 @@ namespace hairgpu::viewer
         MSG msg = {};
         while (m_running)
         {
+            ResolveGpuTimingFrame(m_gpuTimingFrames[m_gpuTimingWriteIndex]);
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
             {
                 if (msg.message == WM_QUIT)
@@ -584,6 +629,16 @@ namespace hairgpu::viewer
             m_smoothedFps = (m_smoothedFps <= 0.0f) ? instantFps : (m_smoothedFps * 0.92f + instantFps * 0.08f);
             m_statsUpdateAccumulator += dt;
 
+            GpuTimingFrame& gpuFrame = m_gpuTimingFrames[m_gpuTimingWriteIndex];
+            m_activeGpuTimingFrameIndex = -1;
+            if (gpuFrame.disjoint)
+            {
+                m_context->Begin(gpuFrame.disjoint.Get());
+                m_context->End(gpuFrame.frameStart.Get());
+                gpuFrame.issued = true;
+                m_activeGpuTimingFrameIndex = static_cast<int32_t>(m_gpuTimingWriteIndex);
+            }
+
             m_lastSimulationStepMilliseconds = 0.0f;
             if (!m_paused)
             {
@@ -599,6 +654,11 @@ namespace hairgpu::viewer
                 }
                 QueryPerformanceCounter(&simEnd);
                 m_lastSimulationStepMilliseconds = static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
+            }
+            else if (gpuFrame.issued)
+            {
+                m_context->End(gpuFrame.simStart.Get());
+                m_context->End(gpuFrame.simEnd.Get());
             }
 
             PerformanceSample sample = {};
@@ -618,6 +678,11 @@ namespace hairgpu::viewer
 
             UpdateCamera();
             Render();
+            if (!m_gpuTimingFrames.empty())
+            {
+                m_gpuTimingWriteIndex = (m_gpuTimingWriteIndex + 1u) % static_cast<uint32_t>(m_gpuTimingFrames.size());
+            }
+            m_activeGpuTimingFrameIndex = -1;
             if (m_statsUpdateAccumulator >= 0.2f)
             {
                 UpdateStatsLabel();
@@ -812,6 +877,23 @@ namespace hairgpu::viewer
         m_gridCellCountsBuffer = CreateStructuredBuffer(sizeof(uint32_t), gridCellCount, zeroCellCounts.data(), true);
         m_gridCellIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(zeroCellIndices.size()), zeroCellIndices.data(), true);
 
+        const UINT hashBucketCount = std::max<UINT>(m_simConfig.selfCollisionHashBucketCount, 1u);
+        std::vector<uint32_t> zeroHashHeads(hashBucketCount, 0xFFFFFFFFu);
+        std::vector<uint32_t> zeroParticleNext(std::max<UINT>(totalParticles, 1u), 0xFFFFFFFFu);
+        m_gridHashHeadsBuffer = CreateStructuredBuffer(sizeof(uint32_t), hashBucketCount, zeroHashHeads.data(), true);
+        m_gridParticleNextBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(zeroParticleNext.size()), zeroParticleNext.data(), true);
+
+        const UINT totalGuideParticles = std::max<UINT>(m_asset.guideStrandCount * m_asset.particlesPerStrand, 1u);
+        m_sortedBroadphasePaddedCount = NextPowerOfTwo(totalGuideParticles);
+        std::vector<uint32_t> invalidSortedKeys(m_sortedBroadphasePaddedCount, 0xFFFFFFFFu);
+        std::vector<uint32_t> invalidSortedIndices(m_sortedBroadphasePaddedCount, 0xFFFFFFFFu);
+        std::vector<uint32_t> invalidSortedStarts(gridCellCount, 0xFFFFFFFFu);
+        std::vector<uint32_t> invalidSortedEnds(gridCellCount, 0xFFFFFFFFu);
+        m_sortedKeysBuffer = CreateStructuredBuffer(sizeof(uint32_t), m_sortedBroadphasePaddedCount, invalidSortedKeys.data(), true);
+        m_sortedParticleIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), m_sortedBroadphasePaddedCount, invalidSortedIndices.data(), true);
+        m_sortedCellStartsBuffer = CreateStructuredBuffer(sizeof(uint32_t), gridCellCount, invalidSortedStarts.data(), true);
+        m_sortedCellEndsBuffer = CreateStructuredBuffer(sizeof(uint32_t), gridCellCount, invalidSortedEnds.data(), true);
+
         D3D11_BUFFER_DESC vbDesc = {};
         vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
         vbDesc.ByteWidth = static_cast<UINT>(m_renderData.segmentVertices.size() * sizeof(SegmentRenderVertex));
@@ -823,13 +905,92 @@ namespace hairgpu::viewer
             return false;
         }
 
+        m_strandTubeVertexBuffer.Reset();
+        m_strandTubeIndexBuffer.Reset();
+        m_strandTubeIndexCount = 0;
+        m_strandTubeRingSides = 8u;
+        if (m_asset.particlesPerStrand >= 2u && !m_asset.strands.empty())
+        {
+            std::vector<StrandTubeVertex> tubeTemplateVertices;
+            std::vector<uint32_t> tubeTemplateIndices;
+            const uint32_t ringCount = m_asset.particlesPerStrand;
+            const uint32_t ringSides = m_strandTubeRingSides;
+            tubeTemplateVertices.reserve(static_cast<size_t>(ringCount) * ringSides);
+            tubeTemplateIndices.reserve(static_cast<size_t>(ringCount - 1u) * ringSides * 6u);
+
+            constexpr float kTau = 6.28318530718f;
+            for (uint32_t ring = 0; ring < ringCount; ++ring)
+            {
+                const float u = (ringCount > 1u) ? (static_cast<float>(ring) / static_cast<float>(ringCount - 1u)) : 0.0f;
+                for (uint32_t side = 0; side < ringSides; ++side)
+                {
+                    const float angle = (static_cast<float>(side) / static_cast<float>(ringSides)) * kTau;
+                    tubeTemplateVertices.push_back({ u, angle });
+                }
+            }
+
+            for (uint32_t ring = 0; ring + 1u < ringCount; ++ring)
+            {
+                const uint32_t base0 = ring * ringSides;
+                const uint32_t base1 = (ring + 1u) * ringSides;
+                for (uint32_t side = 0; side < ringSides; ++side)
+                {
+                    const uint32_t nextSide = (side + 1u) % ringSides;
+                    const uint32_t i00 = base0 + side;
+                    const uint32_t i01 = base0 + nextSide;
+                    const uint32_t i10 = base1 + side;
+                    const uint32_t i11 = base1 + nextSide;
+                    tubeTemplateIndices.push_back(i00);
+                    tubeTemplateIndices.push_back(i10);
+                    tubeTemplateIndices.push_back(i01);
+                    tubeTemplateIndices.push_back(i01);
+                    tubeTemplateIndices.push_back(i10);
+                    tubeTemplateIndices.push_back(i11);
+                }
+            }
+
+            if (!tubeTemplateVertices.empty() && !tubeTemplateIndices.empty())
+            {
+                D3D11_BUFFER_DESC tubeVbDesc = {};
+                tubeVbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+                tubeVbDesc.ByteWidth = static_cast<UINT>(tubeTemplateVertices.size() * sizeof(StrandTubeVertex));
+                tubeVbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+                D3D11_SUBRESOURCE_DATA tubeVbData = {};
+                tubeVbData.pSysMem = tubeTemplateVertices.data();
+                if (FAILED(m_device->CreateBuffer(&tubeVbDesc, &tubeVbData, &m_strandTubeVertexBuffer)))
+                {
+                    return false;
+                }
+
+                D3D11_BUFFER_DESC tubeIbDesc = {};
+                tubeIbDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+                tubeIbDesc.ByteWidth = static_cast<UINT>(tubeTemplateIndices.size() * sizeof(uint32_t));
+                tubeIbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+                D3D11_SUBRESOURCE_DATA tubeIbData = {};
+                tubeIbData.pSysMem = tubeTemplateIndices.data();
+                if (FAILED(m_device->CreateBuffer(&tubeIbDesc, &tubeIbData, &m_strandTubeIndexBuffer)))
+                {
+                    return false;
+                }
+
+                m_strandTubeIndexCount = static_cast<uint32_t>(tubeTemplateIndices.size());
+            }
+        }
+
         std::vector<ScalpVertex> scalpVertices;
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
         for (size_t i = 0; i < m_asset.scalpMesh.positions.size(); ++i)
         {
-            const GpuParticle& p = m_animatedScalpParticles[i];
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
-            scalpVertices.push_back({ p.x, p.y, p.z, n.x, n.y, n.z, 0.76f, 0.62f, 0.52f });
+            ScalpVertex v = {};
+            v.scalpIndex = static_cast<uint32_t>(i);
+            v.nx = n.x;
+            v.ny = n.y;
+            v.nz = n.z;
+            v.r = 0.76f;
+            v.g = 0.62f;
+            v.b = 0.52f;
+            scalpVertices.push_back(v);
         }
         if (!scalpVertices.empty())
         {
@@ -854,6 +1015,7 @@ namespace hairgpu::viewer
             scalpIndices.push_back(tri.b);
             scalpIndices.push_back(tri.c);
         }
+        m_scalpIndexCount = static_cast<uint32_t>(scalpIndices.size());
         if (!scalpIndices.empty())
         {
             D3D11_BUFFER_DESC scalpIbDesc = {};
@@ -878,13 +1040,100 @@ namespace hairgpu::viewer
             return false;
         }
 
+        cbDesc.ByteWidth = sizeof(BitonicConstants);
+        if (FAILED(m_device->CreateBuffer(&cbDesc, nullptr, &m_bitonicConstants)))
+        {
+            return false;
+        }
+
         cbDesc.ByteWidth = sizeof(RenderConstants);
         if (FAILED(m_device->CreateBuffer(&cbDesc, nullptr, &m_renderConstants)))
         {
             return false;
         }
 
+        m_gpuDebugLinesDirty = true;
+        m_debugLineStats = {};
         return true;
+    }
+
+    bool GpuHairViewer::CreateGpuTimingQueries()
+    {
+        for (GpuTimingFrame& frame : m_gpuTimingFrames)
+        {
+            frame = {};
+            auto createQuery = [this](D3D11_QUERY query, Microsoft::WRL::ComPtr<ID3D11Query>& outQuery) -> bool
+            {
+                D3D11_QUERY_DESC desc = {};
+                desc.Query = query;
+                return SUCCEEDED(m_device->CreateQuery(&desc, &outQuery));
+            };
+            if (!createQuery(D3D11_QUERY_TIMESTAMP_DISJOINT, frame.disjoint) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.frameStart) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.simStart) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.simEnd) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.hairDrawStart) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.hairDrawEnd) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.debugDrawStart) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.debugDrawEnd) ||
+                !createQuery(D3D11_QUERY_TIMESTAMP, frame.frameEnd) ||
+                !createQuery(D3D11_QUERY_PIPELINE_STATISTICS, frame.hairPipelineStats) ||
+                !createQuery(D3D11_QUERY_PIPELINE_STATISTICS, frame.debugPipelineStats))
+            {
+                return false;
+            }
+        }
+        m_gpuTimingWriteIndex = 0u;
+        m_activeGpuTimingFrameIndex = -1;
+        return true;
+    }
+
+    void GpuHairViewer::ResolveGpuTimingFrame(GpuTimingFrame& frame)
+    {
+        if (!frame.issued || !frame.disjoint)
+        {
+            return;
+        }
+
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint = {};
+        UINT64 frameStart = 0ull;
+        UINT64 simStart = 0ull;
+        UINT64 simEnd = 0ull;
+        UINT64 hairStart = 0ull;
+        UINT64 hairEnd = 0ull;
+        UINT64 debugStart = 0ull;
+        UINT64 debugEnd = 0ull;
+        UINT64 frameEnd = 0ull;
+        D3D11_QUERY_DATA_PIPELINE_STATISTICS hairStats = {};
+        D3D11_QUERY_DATA_PIPELINE_STATISTICS debugStats = {};
+
+        const UINT flags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
+        if (m_context->GetData(frame.disjoint.Get(), &disjoint, sizeof(disjoint), flags) != S_OK ||
+            m_context->GetData(frame.frameStart.Get(), &frameStart, sizeof(frameStart), flags) != S_OK ||
+            m_context->GetData(frame.simStart.Get(), &simStart, sizeof(simStart), flags) != S_OK ||
+            m_context->GetData(frame.simEnd.Get(), &simEnd, sizeof(simEnd), flags) != S_OK ||
+            m_context->GetData(frame.hairDrawStart.Get(), &hairStart, sizeof(hairStart), flags) != S_OK ||
+            m_context->GetData(frame.hairDrawEnd.Get(), &hairEnd, sizeof(hairEnd), flags) != S_OK ||
+            m_context->GetData(frame.debugDrawStart.Get(), &debugStart, sizeof(debugStart), flags) != S_OK ||
+            m_context->GetData(frame.debugDrawEnd.Get(), &debugEnd, sizeof(debugEnd), flags) != S_OK ||
+            m_context->GetData(frame.frameEnd.Get(), &frameEnd, sizeof(frameEnd), flags) != S_OK ||
+            m_context->GetData(frame.hairPipelineStats.Get(), &hairStats, sizeof(hairStats), flags) != S_OK ||
+            m_context->GetData(frame.debugPipelineStats.Get(), &debugStats, sizeof(debugStats), flags) != S_OK)
+        {
+            return;
+        }
+
+        if (!disjoint.Disjoint && disjoint.Frequency > 0ull)
+        {
+            const double invFreqMs = 1000.0 / static_cast<double>(disjoint.Frequency);
+            m_lastGpuFrameMilliseconds = static_cast<float>(static_cast<double>(frameEnd - frameStart) * invFreqMs);
+            m_lastGpuSimulationMilliseconds = static_cast<float>(static_cast<double>(simEnd - simStart) * invFreqMs);
+            m_lastGpuHairDrawMilliseconds = static_cast<float>(static_cast<double>(hairEnd - hairStart) * invFreqMs);
+            m_lastGpuDebugDrawMilliseconds = static_cast<float>(static_cast<double>(debugEnd - debugStart) * invFreqMs);
+        }
+        m_lastHairPipelineStats = hairStats;
+        m_lastDebugPipelineStats = debugStats;
+        frame.issued = false;
     }
 
     bool GpuHairViewer::CreateRenderResources()
@@ -920,6 +1169,27 @@ namespace hairgpu::viewer
         {
             return false;
         }
+
+        if (!m_debugLineTemplateVertexBuffer)
+        {
+            const DebugLineTemplateVertex debugTemplate[2] = { { 0.0f }, { 1.0f } };
+            D3D11_BUFFER_DESC debugTemplateDesc = {};
+            debugTemplateDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            debugTemplateDesc.ByteWidth = sizeof(debugTemplate);
+            debugTemplateDesc.Usage = D3D11_USAGE_IMMUTABLE;
+            D3D11_SUBRESOURCE_DATA debugTemplateData = {};
+            debugTemplateData.pSysMem = debugTemplate;
+            if (FAILED(m_device->CreateBuffer(&debugTemplateDesc, &debugTemplateData, &m_debugLineTemplateVertexBuffer)))
+            {
+                return false;
+            }
+        }
+
+        if (!CreateGpuTimingQueries())
+        {
+            return false;
+        }
+
         UpdateScalpOverlayVertexBuffer();
         return true;
     }
@@ -958,6 +1228,19 @@ namespace hairgpu::viewer
         if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_tubeVS)) ||
             FAILED(m_device->CreateGeometryShader(gsBlob->GetBufferPointer(), gsBlob->GetBufferSize(), nullptr, &m_tubeGS)) ||
             FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_tubePS)))
+        {
+            return false;
+        }
+
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairStrandInstanced.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_strandTubeVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_strandTubePS)))
         {
             return false;
         }
@@ -1043,6 +1326,18 @@ namespace hairgpu::viewer
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_clearGridCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "BuildGridCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildGridCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "ClearHashGridCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_clearHashGridCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "BuildHashGridCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildHashGridCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "ClearSortedRangesCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_clearSortedRangesCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "BuildSortedEntriesCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildSortedEntriesCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "BitonicSortCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_bitonicSortCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "BuildSortedRangesCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildSortedRangesCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "SelfCollisionCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_selfCollisionCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "FollowCS", "cs_5_0", &csBlob, errorText) ||
@@ -1067,6 +1362,21 @@ namespace hairgpu::viewer
             return false;
         }
 
+        ComPtr<ID3DBlob> strandTubeVsBlob;
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "VSMain", "vs_5_0", &strandTubeVsBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        const D3D11_INPUT_ELEMENT_DESC strandTubeLayout[] = {
+            { "TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, offsetof(StrandTubeVertex, strandU), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, offsetof(StrandTubeVertex, angle), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        if (FAILED(m_device->CreateInputLayout(strandTubeLayout, 2, strandTubeVsBlob->GetBufferPointer(), strandTubeVsBlob->GetBufferSize(), &m_strandTubeInputLayout)))
+        {
+            return false;
+        }
+
         ComPtr<ID3DBlob> debugVsBlob;
         if (!CompileShaderFromFile(L"DebugLine.hlsl", "VSMain", "vs_5_0", &debugVsBlob, errorText))
         {
@@ -1074,8 +1384,7 @@ namespace hairgpu::viewer
             return false;
         }
         const D3D11_INPUT_ELEMENT_DESC debugLayout[] = {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DebugLineVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(DebugLineVertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, offsetof(DebugLineTemplateVertex, endpointId), D3D11_INPUT_PER_VERTEX_DATA, 0 },
         };
         if (FAILED(m_device->CreateInputLayout(debugLayout, 2, debugVsBlob->GetBufferPointer(), debugVsBlob->GetBufferSize(), &m_debugInputLayout)))
         {
@@ -1089,7 +1398,7 @@ namespace hairgpu::viewer
             return false;
         }
         const D3D11_INPUT_ELEMENT_DESC scalpLayout[] = {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(ScalpVertex, scalpIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
             { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, nx), D3D11_INPUT_PER_VERTEX_DATA, 0 },
             { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ScalpVertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0 },
         };
@@ -1136,6 +1445,19 @@ namespace hairgpu::viewer
         std::vector<uint32_t> zeroCellIndices(std::max<UINT>(gridCellCount * m_simConfig.selfCollisionCellCapacity, 1u), 0xFFFFFFFFu);
         m_context->UpdateSubresource(m_gridCellCountsBuffer.buffer.Get(), 0, nullptr, zeroCellCounts.data(), 0, 0);
         m_context->UpdateSubresource(m_gridCellIndicesBuffer.buffer.Get(), 0, nullptr, zeroCellIndices.data(), 0, 0);
+        const UINT hashBucketCount = std::max<UINT>(m_simConfig.selfCollisionHashBucketCount, 1u);
+        std::vector<uint32_t> zeroHashHeads(hashBucketCount, 0xFFFFFFFFu);
+        std::vector<uint32_t> zeroParticleNext(std::max<UINT>(static_cast<UINT>(m_initialParticles.size()), 1u), 0xFFFFFFFFu);
+        m_context->UpdateSubresource(m_gridHashHeadsBuffer.buffer.Get(), 0, nullptr, zeroHashHeads.data(), 0, 0);
+        m_context->UpdateSubresource(m_gridParticleNextBuffer.buffer.Get(), 0, nullptr, zeroParticleNext.data(), 0, 0);
+        std::vector<uint32_t> invalidSortedKeys(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 0xFFFFFFFFu);
+        std::vector<uint32_t> invalidSortedIndices(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 0xFFFFFFFFu);
+        std::vector<uint32_t> invalidSortedStarts(gridCellCount, 0xFFFFFFFFu);
+        std::vector<uint32_t> invalidSortedEnds(gridCellCount, 0xFFFFFFFFu);
+        m_context->UpdateSubresource(m_sortedKeysBuffer.buffer.Get(), 0, nullptr, invalidSortedKeys.data(), 0, 0);
+        m_context->UpdateSubresource(m_sortedParticleIndicesBuffer.buffer.Get(), 0, nullptr, invalidSortedIndices.data(), 0, 0);
+        m_context->UpdateSubresource(m_sortedCellStartsBuffer.buffer.Get(), 0, nullptr, invalidSortedStarts.data(), 0, 0);
+        m_context->UpdateSubresource(m_sortedCellEndsBuffer.buffer.Get(), 0, nullptr, invalidSortedEnds.data(), 0, 0);
         UpdateAnimatedScalp(0.0f);
         m_accumulator = 0.0f;
         m_elapsedSeconds = 0.0f;
@@ -1226,6 +1548,14 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::StepSimulation(float dt)
     {
+        GpuTimingFrame* gpuTimingFrame = (m_activeGpuTimingFrameIndex >= 0 && static_cast<size_t>(m_activeGpuTimingFrameIndex) < m_gpuTimingFrames.size())
+            ? &m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)]
+            : nullptr;
+        if (gpuTimingFrame && gpuTimingFrame->issued)
+        {
+            m_context->End(gpuTimingFrame->simStart.Get());
+        }
+
         UpdateAnimatedScalp(m_elapsedSeconds);
 
         if (!m_zeroDistanceLambdas.empty())
@@ -1275,6 +1605,22 @@ namespace hairgpu::viewer
             constants->gridOrigin[1] = m_simConfig.selfCollisionGridOrigin.y;
             constants->gridOrigin[2] = m_simConfig.selfCollisionGridOrigin.z;
             constants->enableGridSelfCollision = m_enableGridSelfCollision ? 1u : 0u;
+            constants->looseConstraintStiffness = m_simConfig.looseConstraintStiffness;
+            constants->looseConstraintMaxDistance = m_simConfig.looseConstraintMaxDistance;
+            constants->supportCollisionRadius = m_simConfig.supportCollisionRadius;
+            constants->supportCollisionStiffness = m_simConfig.supportCollisionStiffness;
+            constants->tangentialFriction = m_simConfig.tangentialFriction;
+            constants->lateralFriction = m_simConfig.lateralFriction;
+            constants->freezeBackThreshold = m_simConfig.freezeBackThreshold;
+            constants->freezeBlend = m_simConfig.freezeBlend;
+            constants->broadphaseMode = m_selfCollisionBroadphaseMode;
+            constants->broadphaseHashBucketCount = std::max<uint32_t>(m_simConfig.selfCollisionHashBucketCount, 1u);
+            constants->sortedPaddedEntryCount = std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
+            constants->enableRuntimeAngularBend = m_enableRuntimeAngularBend ? 1u : 0u;
+            constants->angularBendRadians = m_runtimeAngularBendRadians;
+            constants->angularBendCompliance = m_runtimeAngularBendCompliance;
+            constants->angularBendStiffness = m_runtimeAngularBendStiffness;
+            constants->angularBendDamping = m_runtimeAngularBendDamping;
             constants->windDirection[0] = m_simConfig.windDirection.x;
             constants->windDirection[1] = m_simConfig.windDirection.y;
             constants->windDirection[2] = m_simConfig.windDirection.z;
@@ -1311,6 +1657,8 @@ namespace hairgpu::viewer
         const UINT followerGroups = DispatchGroups(followerStrandCount, 64u);
         const UINT gridCellCount = std::max<UINT>(m_simConfig.selfCollisionGridDimX * m_simConfig.selfCollisionGridDimY * m_simConfig.selfCollisionGridDimZ, 1u);
         const UINT gridCellGroups = DispatchGroups(gridCellCount, 64u);
+        const UINT sortedEntryGroups = DispatchGroups(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 64u);
+        const UINT bitonicGroups = DispatchGroups(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 256u);
 
         ID3D11ShaderResourceView* bindSrvs[] = {
             m_scalpPositions.srv.Get(),
@@ -1343,18 +1691,42 @@ namespace hairgpu::viewer
             m_scalpTrianglesBuffer.srv.Get(),
             m_rootBindingsBuffer.srv.Get()
         };
+        ID3D11UnorderedAccessView* broadphaseUav4 = nullptr;
+        ID3D11UnorderedAccessView* broadphaseUav5 = nullptr;
+        ID3D11UnorderedAccessView* broadphaseUav6 = nullptr;
+        ID3D11UnorderedAccessView* broadphaseUav7 = nullptr;
+        if (m_selfCollisionBroadphaseMode == 0u)
+        {
+            broadphaseUav4 = m_gridCellCountsBuffer.uav.Get();
+            broadphaseUav5 = m_gridCellIndicesBuffer.uav.Get();
+        }
+        else if (m_selfCollisionBroadphaseMode == 3u)
+        {
+            broadphaseUav4 = m_sortedKeysBuffer.uav.Get();
+            broadphaseUav5 = m_sortedParticleIndicesBuffer.uav.Get();
+            broadphaseUav6 = m_sortedCellStartsBuffer.uav.Get();
+            broadphaseUav7 = m_sortedCellEndsBuffer.uav.Get();
+        }
+        else
+        {
+            broadphaseUav6 = m_gridHashHeadsBuffer.uav.Get();
+            broadphaseUav7 = m_gridParticleNextBuffer.uav.Get();
+        }
+
         ID3D11UnorderedAccessView* simUavs[] = {
             m_positions[nextBufferIndex].uav.Get(),
             m_previousPositions[nextBufferIndex].uav.Get(),
             m_distanceLambdaBuffer.uav.Get(),
             m_bendLambdaBuffer.uav.Get(),
-            m_gridCellCountsBuffer.uav.Get(),
-            m_gridCellIndicesBuffer.uav.Get()
+            broadphaseUav4,
+            broadphaseUav5,
+            broadphaseUav6,
+            broadphaseUav7
         };
 
         m_context->CSSetConstantBuffers(0, 1, &simCb);
         m_context->CSSetShaderResources(0, 7, integrateSrvs);
-        m_context->CSSetUnorderedAccessViews(0, 6, simUavs, nullptr);
+        m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
 
         m_context->CSSetShader(m_integrateCS.Get(), nullptr, 0);
         m_context->Dispatch(DispatchGroups(totalParticleCount, 64u), 1, 1);
@@ -1376,11 +1748,55 @@ namespace hairgpu::viewer
                 {
                     if (m_enableGridSelfCollision)
                     {
-                        m_context->CSSetShader(m_clearGridCS.Get(), nullptr, 0);
-                        m_context->Dispatch(gridCellGroups, 1, 1);
+                        if (m_selfCollisionBroadphaseMode == 0u)
+                        {
+                            m_context->CSSetShader(m_clearGridCS.Get(), nullptr, 0);
+                            m_context->Dispatch(gridCellGroups, 1, 1);
 
-                        m_context->CSSetShader(m_buildGridCS.Get(), nullptr, 0);
-                        m_context->Dispatch(guideParticleGroups, 1, 1);
+                            m_context->CSSetShader(m_buildGridCS.Get(), nullptr, 0);
+                            m_context->Dispatch(guideParticleGroups, 1, 1);
+                        }
+                        else if (m_selfCollisionBroadphaseMode == 3u)
+                        {
+                            m_context->CSSetShader(m_clearSortedRangesCS.Get(), nullptr, 0);
+                            m_context->Dispatch(gridCellGroups, 1, 1);
+
+                            m_context->CSSetShader(m_buildSortedEntriesCS.Get(), nullptr, 0);
+                            m_context->Dispatch(sortedEntryGroups, 1, 1);
+
+                            ID3D11Buffer* bitonicCb = m_bitonicConstants.Get();
+                            for (uint32_t k = 2u; k <= std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u); k <<= 1u)
+                            {
+                                for (uint32_t j = k >> 1u; j > 0u; j >>= 1u)
+                                {
+                                    D3D11_MAPPED_SUBRESOURCE bitonicMapped = {};
+                                    if (SUCCEEDED(m_context->Map(m_bitonicConstants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &bitonicMapped)))
+                                    {
+                                        BitonicConstants* constants = reinterpret_cast<BitonicConstants*>(bitonicMapped.pData);
+                                        constants->j = j;
+                                        constants->k = k;
+                                        constants->entryCount = std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
+                                        m_context->Unmap(m_bitonicConstants.Get(), 0);
+                                    }
+                                    m_context->CSSetConstantBuffers(1, 1, &bitonicCb);
+                                    m_context->CSSetShader(m_bitonicSortCS.Get(), nullptr, 0);
+                                    m_context->Dispatch(bitonicGroups, 1, 1);
+                                }
+                            }
+
+                            m_context->CSSetShader(m_buildSortedRangesCS.Get(), nullptr, 0);
+                            m_context->Dispatch(sortedEntryGroups, 1, 1);
+                        }
+                        else
+                        {
+                            const UINT hashBucketGroups = DispatchGroups(std::max<UINT>(m_simConfig.selfCollisionHashBucketCount, 1u), 64u);
+                            const UINT hashClearGroups = std::max(hashBucketGroups, guideParticleGroups);
+                            m_context->CSSetShader(m_clearHashGridCS.Get(), nullptr, 0);
+                            m_context->Dispatch(hashClearGroups, 1, 1);
+
+                            m_context->CSSetShader(m_buildHashGridCS.Get(), nullptr, 0);
+                            m_context->Dispatch(guideParticleGroups, 1, 1);
+                        }
                     }
 
                     m_context->CSSetShader(m_selfCollisionCS.Get(), nullptr, 0);
@@ -1396,12 +1812,18 @@ namespace hairgpu::viewer
         }
 
         ID3D11ShaderResourceView* nullSrvs[7] = {};
-        ID3D11UnorderedAccessView* nullUavs[6] = {};
+        ID3D11UnorderedAccessView* nullUavs[8] = {};
+        ID3D11Buffer* nullCb = nullptr;
         m_context->CSSetShader(nullptr, nullptr, 0);
         m_context->CSSetShaderResources(0, 7, nullSrvs);
-        m_context->CSSetUnorderedAccessViews(0, 6, nullUavs, nullptr);
+        m_context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
+        m_context->CSSetConstantBuffers(1, 1, &nullCb);
 
         m_currentBufferIndex = nextBufferIndex;
+        if (gpuTimingFrame && gpuTimingFrame->issued)
+        {
+            m_context->End(gpuTimingFrame->simEnd.Get());
+        }
     }
 
     void GpuHairViewer::UpdateCamera()
@@ -1449,6 +1871,9 @@ namespace hairgpu::viewer
         rc.widthScale = m_widthScale;
         rc.debugColorMode = static_cast<uint32_t>(m_debugColorMode);
         rc.guideStrandCount = m_asset.guideStrandCount;
+        rc.particlesPerStrand = m_asset.particlesPerStrand;
+        rc.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+        rc.tubeRingSides = m_strandTubeRingSides;
         m_context->UpdateSubresource(m_renderConstants.Get(), 0, nullptr, &rc, 0, 0);
 
         const float clearColor[4] = { 0.10f, 0.12f, 0.16f, 1.0f };
@@ -1479,7 +1904,42 @@ namespace hairgpu::viewer
             m_pointWidths.srv.Get()
         };
 
-        const bool useCpuHairPreview = (m_renderMode == RenderMode::Ribbon || m_renderMode == RenderMode::TubePreview || m_showTestMesh);
+        const bool useCpuHairPreview = m_showTestMesh;
+        GpuTimingFrame* gpuTimingFrame = (m_activeGpuTimingFrameIndex >= 0 && static_cast<size_t>(m_activeGpuTimingFrameIndex) < m_gpuTimingFrames.size())
+            ? &m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)]
+            : nullptr;
+        m_lastCurrentHairDrawCalls = 0u;
+        m_lastCurrentHairVertexCount = 0u;
+        m_lastCurrentHairPrimitiveCount = 0u;
+        m_lastCurrentHairInstanceCount = 0u;
+        m_lastTotalDrawCalls = 0u;
+
+        if (m_showScalpMesh && m_scalpVertexBuffer && m_scalpIndexBuffer && m_scalpIndexCount > 0u)
+        {
+            const UINT scalpStride = sizeof(ScalpVertex);
+            ID3D11Buffer* scalpVB = m_scalpVertexBuffer.Get();
+            ID3D11ShaderResourceView* scalpSrv = m_scalpPositions.srv.Get();
+            m_context->IASetInputLayout(m_scalpInputLayout.Get());
+            m_context->IASetVertexBuffers(0, 1, &scalpVB, &scalpStride, &offset);
+            m_context->IASetIndexBuffer(m_scalpIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_context->VSSetConstantBuffers(0, 1, &renderCb);
+            m_context->PSSetConstantBuffers(0, 1, &renderCb);
+            m_context->VSSetShaderResources(0, 1, &scalpSrv);
+            m_context->VSSetShader(m_scalpVS.Get(), nullptr, 0);
+            m_context->GSSetShader(nullptr, nullptr, 0);
+            m_context->PSSetShader(m_scalpPS.Get(), nullptr, 0);
+            m_context->DrawIndexed(m_scalpIndexCount, 0, 0);
+            ID3D11ShaderResourceView* nullScalpSrv[1] = {};
+            m_context->VSSetShaderResources(0, 1, nullScalpSrv);
+            ++m_lastTotalDrawCalls;
+        }
+
+        if (gpuTimingFrame && gpuTimingFrame->issued)
+        {
+            m_context->End(gpuTimingFrame->hairDrawStart.Get());
+            m_context->Begin(gpuTimingFrame->hairPipelineStats.Get());
+        }
 
         if (m_renderMode == RenderMode::BrickInstanced && m_brickVertexBuffer && m_brickInstanceBuffer && m_brickIndexBuffer && m_renderData.segmentCount > 0)
         {
@@ -1497,6 +1957,33 @@ namespace hairgpu::viewer
             m_context->GSSetShader(nullptr, nullptr, 0);
             m_context->PSSetShader(m_brickPS.Get(), nullptr, 0);
             m_context->DrawIndexedInstanced(m_brickIndexCount, m_renderData.segmentCount, 0, 0, 0);
+            m_lastCurrentHairDrawCalls = 1u;
+            m_lastCurrentHairVertexCount = static_cast<uint64_t>(m_brickIndexCount) * static_cast<uint64_t>(m_renderData.segmentCount);
+            m_lastCurrentHairPrimitiveCount = (static_cast<uint64_t>(m_brickIndexCount) / 3ull) * static_cast<uint64_t>(m_renderData.segmentCount);
+            m_lastCurrentHairInstanceCount = m_renderData.segmentCount;
+            ID3D11ShaderResourceView* nullHairSrvs[2] = {};
+            m_context->VSSetShaderResources(0, 2, nullHairSrvs);
+        }
+        else if (!useCpuHairPreview && m_renderMode == RenderMode::TubePreview && m_strandTubeVertexBuffer && m_strandTubeIndexBuffer && m_strandTubeIndexCount > 0)
+        {
+            const UINT tubeStride = sizeof(StrandTubeVertex);
+            ID3D11Buffer* tubeVB = m_strandTubeVertexBuffer.Get();
+            m_context->IASetInputLayout(m_strandTubeInputLayout.Get());
+            m_context->IASetVertexBuffers(0, 1, &tubeVB, &tubeStride, &offset);
+            m_context->IASetIndexBuffer(m_strandTubeIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_context->VSSetConstantBuffers(0, 1, &renderCb);
+            m_context->PSSetConstantBuffers(0, 1, &renderCb);
+            m_context->VSSetShaderResources(0, 2, hairSrvs);
+            m_context->VSSetShader(m_strandTubeVS.Get(), nullptr, 0);
+            m_context->GSSetShader(nullptr, nullptr, 0);
+            m_context->PSSetShader(m_strandTubePS.Get(), nullptr, 0);
+            m_context->DrawIndexedInstanced(m_strandTubeIndexCount, static_cast<UINT>(m_asset.strands.size()), 0, 0, 0);
+            m_lastCurrentHairDrawCalls = 1u;
+            m_lastCurrentHairVertexCount = static_cast<uint64_t>(m_strandTubeIndexCount) * static_cast<uint64_t>(m_asset.strands.size());
+            m_lastCurrentHairPrimitiveCount = (static_cast<uint64_t>(m_strandTubeIndexCount) / 3ull) * static_cast<uint64_t>(m_asset.strands.size());
+            m_lastCurrentHairInstanceCount = static_cast<uint32_t>(m_asset.strands.size());
+
             ID3D11ShaderResourceView* nullHairSrvs[2] = {};
             m_context->VSSetShaderResources(0, 2, nullHairSrvs);
         }
@@ -1532,6 +2019,10 @@ namespace hairgpu::viewer
             }
 
             m_context->Draw(static_cast<UINT>(m_renderData.segmentVertices.size()), 0);
+            m_lastCurrentHairDrawCalls = 1u;
+            m_lastCurrentHairVertexCount = static_cast<uint64_t>(m_renderData.segmentVertices.size());
+            m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_renderData.segmentCount);
+            m_lastCurrentHairInstanceCount = static_cast<uint32_t>(m_renderData.segmentCount);
 
             ID3D11ShaderResourceView* nullHairSrvs[2] = {};
             m_context->VSSetShaderResources(0, 2, nullHairSrvs);
@@ -1566,31 +2057,61 @@ namespace hairgpu::viewer
                     m_context->VSSetConstantBuffers(0, 1, &renderCb);
                     m_context->PSSetConstantBuffers(0, 1, &renderCb);
                     m_context->Draw(static_cast<UINT>(m_hairMeshVertices.size()), 0);
+                    m_lastCurrentHairDrawCalls = 1u;
+                    m_lastCurrentHairVertexCount = static_cast<uint64_t>(m_hairMeshVertices.size());
+                    m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_hairMeshVertices.size() / 3u);
+                    m_lastCurrentHairInstanceCount = 1u;
                 }
             }
         }
-        BuildDebugLineVertices(renderWidth / renderHeight);
-        if (!m_debugLineVertices.empty() && EnsureDebugVertexCapacity(m_debugLineVertices.size()))
+        if (gpuTimingFrame && gpuTimingFrame->issued)
         {
-            D3D11_MAPPED_SUBRESOURCE mapped = {};
-            if (SUCCEEDED(m_context->Map(m_debugLineVertexBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
-            {
-                std::memcpy(mapped.pData, m_debugLineVertices.data(), m_debugLineVertices.size() * sizeof(DebugLineVertex));
-                m_context->Unmap(m_debugLineVertexBuffer.Get(), 0);
-
-                const UINT debugStride = sizeof(DebugLineVertex);
-                ID3D11Buffer* debugBuffer = m_debugLineVertexBuffer.Get();
-                m_context->IASetInputLayout(m_debugInputLayout.Get());
-                m_context->IASetVertexBuffers(0, 1, &debugBuffer, &debugStride, &offset);
-                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-                m_context->VSSetShader(m_debugLineVS.Get(), nullptr, 0);
-                m_context->GSSetShader(nullptr, nullptr, 0);
-                m_context->PSSetShader(m_debugLinePS.Get(), nullptr, 0);
-                m_context->VSSetConstantBuffers(0, 1, &renderCb);
-                m_context->PSSetConstantBuffers(0, 1, &renderCb);
-                m_context->Draw(static_cast<UINT>(m_debugLineVertices.size()), 0);
-            }
+            m_context->End(gpuTimingFrame->hairPipelineStats.Get());
+            m_context->End(gpuTimingFrame->hairDrawEnd.Get());
+            m_context->End(gpuTimingFrame->debugDrawStart.Get());
+            m_context->Begin(gpuTimingFrame->debugPipelineStats.Get());
         }
+
+        if (m_gpuDebugLinesDirty)
+        {
+            RebuildGpuDebugLineEntries();
+        }
+        if (!m_gpuDebugLineEntries.empty() && EnsureGpuDebugLineCapacity(m_gpuDebugLineEntries.size()) && m_debugLineTemplateVertexBuffer && m_debugLineEntriesBuffer.srv)
+        {
+            m_context->UpdateSubresource(m_debugLineEntriesBuffer.buffer.Get(), 0, nullptr, m_gpuDebugLineEntries.data(), 0, 0);
+
+            const UINT debugStride = sizeof(DebugLineTemplateVertex);
+            ID3D11Buffer* debugBuffer = m_debugLineTemplateVertexBuffer.Get();
+            ID3D11ShaderResourceView* debugSrvs[] = {
+                m_positions[m_currentBufferIndex].srv.Get(),
+                m_scalpPositions.srv.Get(),
+                m_debugLineEntriesBuffer.srv.Get()
+            };
+            m_context->IASetInputLayout(m_debugInputLayout.Get());
+            m_context->IASetVertexBuffers(0, 1, &debugBuffer, &debugStride, &offset);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->VSSetShader(m_debugLineVS.Get(), nullptr, 0);
+            m_context->GSSetShader(nullptr, nullptr, 0);
+            m_context->PSSetShader(m_debugLinePS.Get(), nullptr, 0);
+            m_context->VSSetConstantBuffers(0, 1, &renderCb);
+            m_context->PSSetConstantBuffers(0, 1, &renderCb);
+            m_context->VSSetShaderResources(0, 3, debugSrvs);
+            m_context->DrawInstanced(2u, static_cast<UINT>(m_gpuDebugLineEntries.size()), 0u, 0u);
+            ID3D11ShaderResourceView* nullDebugSrvs[3] = {};
+            m_context->VSSetShaderResources(0, 3, nullDebugSrvs);
+            ++m_lastTotalDrawCalls;
+        }
+
+        if (gpuTimingFrame && gpuTimingFrame->issued)
+        {
+            m_context->End(gpuTimingFrame->debugPipelineStats.Get());
+            m_context->End(gpuTimingFrame->debugDrawEnd.Get());
+            m_context->End(gpuTimingFrame->frameEnd.Get());
+            m_context->End(gpuTimingFrame->disjoint.Get());
+        }
+
+        m_lastTotalDrawCalls += m_lastCurrentHairDrawCalls;
+        UpdateRenderStatistics();
 
         m_swapChain->Present(1, 0);
         UpdateWindowTitle();
@@ -1639,9 +2160,11 @@ namespace hairgpu::viewer
            << L"  totalStrands=" << m_asset.strands.size()
            << L"  particles=" << m_asset.restPoints.size()
            << L"  render=" << (m_renderMode == RenderMode::Ribbon ? L"ribbon" : (m_renderMode == RenderMode::TubePreview ? L"tube" : (m_renderMode == RenderMode::VoxelPreview ? L"voxel" : L"brick")))
+           << L"  gpuFrameMs=" << std::setprecision(2) << m_lastGpuFrameMilliseconds
            << L"  widthScale=" << m_widthScale
            << L"  stretchCompliance=" << m_simConfig.stretchCompliance
-           << L"  selfCollision=" << (m_enableSelfCollision ? (m_enableGridSelfCollision ? L"grid" : L"legacy") : L"off")
+           << L"  selfCollision=" << (m_enableSelfCollision ? (m_enableGridSelfCollision ? BroadphaseModeShortName(m_selfCollisionBroadphaseMode) : L"legacy") : L"off")
+           << L"  angularXPBD=" << (m_enableRuntimeAngularBend ? L"on" : L"off")
            << L"  scalpSkinning=" << (m_enableScalpMotion ? L"on" : L"off")
            << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
@@ -2098,6 +2621,7 @@ namespace hairgpu::viewer
         SetWindowTextFormat(m_btnPlayPause, m_paused ? L"Play" : L"Pause");
         RefreshAssetStatsText();
 
+        m_gpuDebugLinesDirty = true;
         m_syncingControls = false;
     }
 
@@ -2149,6 +2673,7 @@ namespace hairgpu::viewer
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, &ok, FALSE);
         if (ok) { m_builderParticlesPerStrand = std::max<UINT>(4u, std::min<UINT>(value, 64u)); }
 
+        m_gpuDebugLinesDirty = true;
         SyncControlsFromState();
     }
 
@@ -2300,6 +2825,15 @@ namespace hairgpu::viewer
                 [](float acc, const PerformanceSample& s) { return acc + s.simulationMilliseconds; }) / static_cast<float>(m_performanceSamples.size())
             : 0.0f;
 
+        const uint64_t totalStrands = static_cast<uint64_t>(m_asset.strands.size());
+        const uint64_t ribbonSegments = static_cast<uint64_t>(m_renderData.segmentCount);
+        const uint64_t ribbonInputVertices = static_cast<uint64_t>(m_renderData.segmentVertices.size());
+        const uint64_t voxelTriangles = ribbonSegments * 12ull;
+        const uint64_t voxelBoxes = ribbonSegments;
+        const uint64_t tubeTemplateVertices = static_cast<uint64_t>(m_asset.particlesPerStrand) * static_cast<uint64_t>(m_strandTubeRingSides);
+        const uint64_t tubeTrianglesPerStrand = static_cast<uint64_t>(m_strandTubeIndexCount) / 3ull;
+        const uint64_t tubeTotalTriangles = tubeTrianglesPerStrand * totalStrands;
+
         std::wstringstream ss;
         ss << L"Runtime\n"
            << L"Preset: " << m_activePresetName << L"\n"
@@ -2307,21 +2841,42 @@ namespace hairgpu::viewer
            << L"  Frame: " << std::setprecision(2) << (m_lastFrameSeconds * 1000.0f) << L" ms\n"
            << L"Sim Step: " << std::setprecision(2) << m_lastSimulationStepMilliseconds << L" ms"
            << L"  AvgSim: " << avgSimMs << L" ms\n"
-           << L"Avg Frame: " << avgFrameMs << L" ms\n"
-           << L"Sim Time: " << std::setprecision(2) << m_elapsedSeconds << L" s\n"
+           << L"GPU Frame: " << m_lastGpuFrameMilliseconds << L" ms"
+           << L"  GPU Sim: " << m_lastGpuSimulationMilliseconds << L" ms\n"
+           << L"GPU Hair: " << m_lastGpuHairDrawMilliseconds << L" ms"
+           << L"  GPU Debug: " << m_lastGpuDebugDrawMilliseconds << L" ms\n"
+           << L"Avg Frame: " << avgFrameMs << L" ms"
+           << L"  Draws: " << m_lastTotalDrawCalls << L"\n"
            << L"Mode: " << (m_renderMode == RenderMode::Ribbon ? L"Ribbon" : (m_renderMode == RenderMode::TubePreview ? L"Tube" : (m_renderMode == RenderMode::VoxelPreview ? L"Voxel" : L"Brick Chain")))
-           << L"  |  Rebuild: guides/followers/particles auto-apply"
-           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : L"Natural")) << L"\n"
-           << L"Debug: G=" << (m_showGuideSkeleton ? L"On" : L"Off")
-           << L" F=" << (m_showFollowerSkeleton ? L"On" : L"Off")
-           << L" Roots=" << (m_showRootMarkers ? L"On" : L"Off")
-           << L" Links=" << (m_showFollowLinks ? L"On" : L"Off") << L"\n"
-           << L"Self Collision: " << (m_enableSelfCollision ? (m_enableGridSelfCollision ? L"Grid" : L"Legacy") : L"Off")
+           << L"  HairVerts: " << m_lastCurrentHairVertexCount
+           << L"  HairPrims: " << m_lastCurrentHairPrimitiveCount
+           << L"  Inst: " << m_lastCurrentHairInstanceCount << L"\n"
+           << L"Ribbon: segments=" << ribbonSegments
+           << L"  inputVerts=" << ribbonInputVertices << L"\n"
+           << L"Voxel: boxes=" << voxelBoxes
+           << L"  approxTris=" << voxelTriangles << L"\n"
+           << L"Tube: templateVerts=" << tubeTemplateVertices
+           << L"  tris/strand=" << tubeTrianglesPerStrand
+           << L"  totalTris=" << tubeTotalTriangles << L"\n"
+           << L"Debug GPU Lines: total=" << m_debugLineStats.totalLineCount
+           << L"  world=" << m_debugLineStats.worldLineCount
+           << L"  hair=" << m_debugLineStats.hairLineCount
+           << L"  scalp=" << m_debugLineStats.scalpLineCount
+           << L"  roots=" << m_debugLineStats.rootMarkerCount << L"\n"
+           << L"Hair Pipe: VS=" << m_lastHairPipelineStats.VSInvocations
+           << L"  GSPrims=" << m_lastHairPipelineStats.GSPrimitives
+           << L"  PS=" << m_lastHairPipelineStats.PSInvocations << L"\n"
+           << L"Debug Pipe: VS=" << m_lastDebugPipelineStats.VSInvocations
+           << L"  Prims=" << m_lastDebugPipelineStats.IAPrimitives
+           << L"  PS=" << m_lastDebugPipelineStats.PSInvocations << L"\n"
+           << L"Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : L"Natural"))
+           << L"  Rebuild: guides/followers/particles auto-apply\n"
+           << L"Self Collision: " << (m_enableSelfCollision ? (m_enableGridSelfCollision ? BroadphaseModeLongName(m_selfCollisionBroadphaseMode) : L"Legacy") : L"Off")
+           << L"  Angular XPBD: " << (m_enableRuntimeAngularBend ? L"On" : L"Off")
            << L"  Samples: " << m_performanceSamples.size()
            << (m_paused ? L"\n[PAUSED]" : L"");
         SetWindowTextFormat(m_labelStats, ss.str());
     }
-
     bool GpuHairViewer::SaveSettingsToFile(const std::wstring& filePath) const
     {
         std::ofstream out{ std::filesystem::path(filePath) };
@@ -2342,10 +2897,17 @@ namespace hairgpu::viewer
         out << "selfCollisionRadius=" << m_selfCollisionRadius << "\n";
         out << "selfCollisionStiffness=" << m_selfCollisionStiffness << "\n";
         out << "gridCellSize=" << m_simConfig.selfCollisionCellSize << "\n";
+        out << "broadphaseMode=" << m_selfCollisionBroadphaseMode << "\n";
+        out << "hashBucketCount=" << m_simConfig.selfCollisionHashBucketCount << "\n";
         out << "stretchCompliance=" << m_simConfig.stretchCompliance << "\n";
         out << "bendCompliance=" << m_simConfig.bendCompliance << "\n";
         out << "enableSelfCollision=" << (m_enableSelfCollision ? 1 : 0) << "\n";
         out << "enableGridSelfCollision=" << (m_enableGridSelfCollision ? 1 : 0) << "\n";
+        out << "enableRuntimeAngularBend=" << (m_enableRuntimeAngularBend ? 1 : 0) << "\n";
+        out << "runtimeAngularBendRadians=" << m_runtimeAngularBendRadians << "\n";
+        out << "runtimeAngularBendCompliance=" << m_runtimeAngularBendCompliance << "\n";
+        out << "runtimeAngularBendStiffness=" << m_runtimeAngularBendStiffness << "\n";
+        out << "runtimeAngularBendDamping=" << m_runtimeAngularBendDamping << "\n";
         out << "enableScalpMotion=" << (m_enableScalpMotion ? 1 : 0) << "\n";
         out << "showColliderDebug=" << (m_showColliderDebug ? 1 : 0) << "\n";
         out << "showScalpMesh=" << (m_showScalpMesh ? 1 : 0) << "\n";
@@ -2417,6 +2979,13 @@ namespace hairgpu::viewer
         m_selfCollisionRadius = getFloat("selfCollisionRadius", m_selfCollisionRadius);
         m_selfCollisionStiffness = getFloat("selfCollisionStiffness", m_selfCollisionStiffness);
         m_simConfig.selfCollisionCellSize = getFloat("gridCellSize", m_simConfig.selfCollisionCellSize);
+        m_selfCollisionBroadphaseMode = getUInt("broadphaseMode", m_selfCollisionBroadphaseMode) % 4u;
+        m_simConfig.selfCollisionHashBucketCount = std::max<uint32_t>(getUInt("hashBucketCount", m_simConfig.selfCollisionHashBucketCount), 1u);
+        m_enableRuntimeAngularBend = getBool("enableRuntimeAngularBend", m_enableRuntimeAngularBend);
+        m_runtimeAngularBendRadians = getFloat("runtimeAngularBendRadians", m_runtimeAngularBendRadians);
+        m_runtimeAngularBendCompliance = getFloat("runtimeAngularBendCompliance", m_runtimeAngularBendCompliance);
+        m_runtimeAngularBendStiffness = getFloat("runtimeAngularBendStiffness", m_runtimeAngularBendStiffness);
+        m_runtimeAngularBendDamping = getFloat("runtimeAngularBendDamping", m_runtimeAngularBendDamping);
         m_simConfig.stretchCompliance = getFloat("stretchCompliance", m_simConfig.stretchCompliance);
         m_simConfig.bendCompliance = getFloat("bendCompliance", m_simConfig.bendCompliance);
         m_enableSelfCollision = getBool("enableSelfCollision", m_enableSelfCollision);
@@ -2589,7 +3158,15 @@ namespace hairgpu::viewer
                 g = 0.20f + 0.80f * region.y;
                 b = 0.20f + 0.80f * region.z;
             }
-            scalpVertices.push_back({ p.x, p.y, p.z, n.x, n.y, n.z, r, g, b });
+            ScalpVertex v = {};
+            v.scalpIndex = static_cast<uint32_t>(i);
+            v.nx = n.x;
+            v.ny = n.y;
+            v.nz = n.z;
+            v.r = r;
+            v.g = g;
+            v.b = b;
+            scalpVertices.push_back(v);
         }
 
         D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -2706,13 +3283,17 @@ namespace hairgpu::viewer
         {
             loaded = hairgpu::LoadHairAssetFromCurvesCsv(path, importedAsset, errorText);
         }
+        else if (ext == L".usd" || ext == L".usda")
+        {
+            loaded = hairgpu::LoadHairAssetFromUsda(path, importedAsset, errorText);
+        }
         else if (ext == L".abc")
         {
             loaded = hairgpu::LoadHairAssetFromAlembic(path, importedAsset, errorText);
         }
         else
         {
-            errorText = "Unsupported hair asset file type. Use .csv now, or .abc with an Alembic-enabled build.";
+            errorText = "Unsupported hair asset file type. Use .csv / .usda / .usd, or .abc with an Alembic-enabled build.";
         }
 
         if (!loaded)
@@ -2738,7 +3319,7 @@ namespace hairgpu::viewer
         m_builderParticlesPerStrand = m_asset.particlesPerStrand;
         m_activePresetName = L"Imported Asset";
         m_lastAssetSource = path.filename().wstring();
-        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : L"Alembic imported";
+        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : ((ext == L".usd" || ext == L".usda") ? L"USD ASCII imported" : L"Alembic imported");
 
         if (!CreateSimulationResources())
         {
@@ -3020,42 +3601,100 @@ namespace hairgpu::viewer
         return true;
     }
 
-    bool GpuHairViewer::EnsureDebugVertexCapacity(size_t vertexCount)
+    bool GpuHairViewer::EnsureGpuDebugLineCapacity(size_t lineCount)
     {
-        if (vertexCount == 0)
+        if (lineCount == 0)
         {
             return true;
         }
-        if (m_debugLineVertexBuffer && m_debugLineVertexCapacity >= vertexCount)
+        if (m_debugLineEntriesBuffer.buffer && m_debugLineEntryCapacity >= lineCount)
         {
             return true;
         }
 
-        m_debugLineVertexBuffer.Reset();
-        m_debugLineVertexCapacity = std::max(vertexCount, static_cast<size_t>(4096));
+        const size_t newCapacity = std::max<size_t>(lineCount, m_debugLineEntryCapacity > 0 ? m_debugLineEntryCapacity * 2ull : 4096ull);
+        if (newCapacity > static_cast<size_t>(std::numeric_limits<UINT>::max() / sizeof(GpuDebugLineEntry)))
+        {
+            return false;
+        }
+
+        m_debugLineEntriesBuffer = {};
+        m_debugLineEntryCapacity = newCapacity;
 
         D3D11_BUFFER_DESC desc = {};
-        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        desc.ByteWidth = static_cast<UINT>(m_debugLineVertexCapacity * sizeof(DebugLineVertex));
-        desc.Usage = D3D11_USAGE_DYNAMIC;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        return SUCCEEDED(m_device->CreateBuffer(&desc, nullptr, &m_debugLineVertexBuffer));
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.ByteWidth = static_cast<UINT>(newCapacity * sizeof(GpuDebugLineEntry));
+        desc.StructureByteStride = sizeof(GpuDebugLineEntry);
+        desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        if (FAILED(m_device->CreateBuffer(&desc, nullptr, &m_debugLineEntriesBuffer.buffer)))
+        {
+            return false;
+        }
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = static_cast<UINT>(newCapacity);
+        return SUCCEEDED(m_device->CreateShaderResourceView(m_debugLineEntriesBuffer.buffer.Get(), &srvDesc, &m_debugLineEntriesBuffer.srv));
     }
 
-    void GpuHairViewer::BuildDebugLineVertices(float aspectRatio)
+    void GpuHairViewer::RebuildGpuDebugLineEntries()
     {
-        m_debugLineVertices.clear();
+        m_gpuDebugLineEntries.clear();
+        m_debugLineStats = {};
 
-        auto addLine = [&](const Vec3& a, const Vec3& b, float r, float g, float bl, float alpha = 1.0f)
+        auto addWorldLine = [&](const Vec3& a, const Vec3& b, float r, float g, float bl, float alpha = 1.0f)
         {
-            Vec3 na;
-            Vec3 nb;
-            if (!ProjectWorldToNdc(a, m_cameraPosition, m_cameraTarget, aspectRatio, na) || !ProjectWorldToNdc(b, m_cameraPosition, m_cameraTarget, aspectRatio, nb))
+            GpuDebugLineEntry entry = {};
+            entry.type = 0u;
+            entry.data0[0] = a.x; entry.data0[1] = a.y; entry.data0[2] = a.z;
+            entry.data1[0] = b.x; entry.data1[1] = b.y; entry.data1[2] = b.z;
+            entry.color[0] = r; entry.color[1] = g; entry.color[2] = bl; entry.color[3] = alpha;
+            m_gpuDebugLineEntries.push_back(entry);
+            ++m_debugLineStats.worldLineCount;
+        };
+
+        auto addHairLine = [&](uint32_t aIndex, uint32_t bIndex, float r, float g, float bl, float alpha = 1.0f)
+        {
+            GpuDebugLineEntry entry = {};
+            entry.type = 1u;
+            entry.indexA = aIndex;
+            entry.indexB = bIndex;
+            entry.color[0] = r; entry.color[1] = g; entry.color[2] = bl; entry.color[3] = alpha;
+            m_gpuDebugLineEntries.push_back(entry);
+            ++m_debugLineStats.hairLineCount;
+        };
+
+        auto addScalpLine = [&](uint32_t aIndex, uint32_t bIndex, float r, float g, float bl, float alpha = 1.0f)
+        {
+            GpuDebugLineEntry entry = {};
+            entry.type = 2u;
+            entry.indexA = aIndex;
+            entry.indexB = bIndex;
+            entry.color[0] = r; entry.color[1] = g; entry.color[2] = bl; entry.color[3] = alpha;
+            m_gpuDebugLineEntries.push_back(entry);
+            ++m_debugLineStats.scalpLineCount;
+        };
+
+        auto addRootMarker = [&](uint32_t particleIndex, bool isGuide)
+        {
+            const float s = isGuide ? 0.018f : 0.012f;
+            const float r = isGuide ? 0.10f : 0.98f;
+            const float g = isGuide ? 0.92f : 0.52f;
+            const float b = isGuide ? 1.00f : 0.18f;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
             {
-                return;
+                GpuDebugLineEntry entry = {};
+                entry.type = 3u;
+                entry.indexA = particleIndex;
+                entry.axisOrFlags = axis;
+                entry.data0[3] = s;
+                entry.color[0] = r; entry.color[1] = g; entry.color[2] = b; entry.color[3] = 0.95f;
+                m_gpuDebugLineEntries.push_back(entry);
+                ++m_debugLineStats.rootMarkerCount;
             }
-            m_debugLineVertices.push_back({ na.x, na.y, na.z, r, g, bl, alpha });
-            m_debugLineVertices.push_back({ nb.x, nb.y, nb.z, r, g, bl, alpha });
         };
 
         if (m_showFloorGuide)
@@ -3065,11 +3704,11 @@ namespace hairgpu::viewer
             const float step = 0.2f;
             for (float x = -halfExtent; x <= halfExtent + 0.001f; x += step)
             {
-                addLine(Vec3(x, floorY, -halfExtent), Vec3(x, floorY, halfExtent), 0.32f, 0.58f, 0.38f, 0.40f);
+                addWorldLine(Vec3(x, floorY, -halfExtent), Vec3(x, floorY, halfExtent), 0.32f, 0.58f, 0.38f, 0.40f);
             }
             for (float z = -halfExtent; z <= halfExtent + 0.001f; z += step)
             {
-                addLine(Vec3(-halfExtent, floorY, z), Vec3(halfExtent, floorY, z), 0.32f, 0.58f, 0.38f, 0.40f);
+                addWorldLine(Vec3(-halfExtent, floorY, z), Vec3(halfExtent, floorY, z), 0.32f, 0.58f, 0.38f, 0.40f);
             }
         }
 
@@ -3089,11 +3728,11 @@ namespace hairgpu::viewer
             const Vec3 p011 = origin + Vec3(0.0f, extents.y, extents.z);
             const Vec3 p111 = origin + extents;
             const float r = 0.15f, g = 0.95f, b = 0.65f, a = 0.75f;
-            addLine(p000, p100, r, g, b, a); addLine(p000, p010, r, g, b, a); addLine(p000, p001, r, g, b, a);
-            addLine(p111, p101, r, g, b, a); addLine(p111, p110, r, g, b, a); addLine(p111, p011, r, g, b, a);
-            addLine(p100, p110, r, g, b, a); addLine(p100, p101, r, g, b, a);
-            addLine(p010, p110, r, g, b, a); addLine(p010, p011, r, g, b, a);
-            addLine(p001, p101, r, g, b, a); addLine(p001, p011, r, g, b, a);
+            addWorldLine(p000, p100, r, g, b, a); addWorldLine(p000, p010, r, g, b, a); addWorldLine(p000, p001, r, g, b, a);
+            addWorldLine(p111, p101, r, g, b, a); addWorldLine(p111, p110, r, g, b, a); addWorldLine(p111, p011, r, g, b, a);
+            addWorldLine(p100, p110, r, g, b, a); addWorldLine(p100, p101, r, g, b, a);
+            addWorldLine(p010, p110, r, g, b, a); addWorldLine(p010, p011, r, g, b, a);
+            addWorldLine(p001, p101, r, g, b, a); addWorldLine(p001, p011, r, g, b, a);
         }
 
         if (m_showScalpWireframe)
@@ -3104,12 +3743,9 @@ namespace hairgpu::viewer
                 {
                     continue;
                 }
-                const Vec3 a(m_animatedScalpParticles[tri.a].x, m_animatedScalpParticles[tri.a].y, m_animatedScalpParticles[tri.a].z);
-                const Vec3 b(m_animatedScalpParticles[tri.b].x, m_animatedScalpParticles[tri.b].y, m_animatedScalpParticles[tri.b].z);
-                const Vec3 c(m_animatedScalpParticles[tri.c].x, m_animatedScalpParticles[tri.c].y, m_animatedScalpParticles[tri.c].z);
-                addLine(a, b, 0.25f, 0.85f, 1.0f, 0.55f);
-                addLine(b, c, 0.25f, 0.85f, 1.0f, 0.55f);
-                addLine(c, a, 0.25f, 0.85f, 1.0f, 0.55f);
+                addScalpLine(tri.a, tri.b, 0.25f, 0.85f, 1.0f, 0.55f);
+                addScalpLine(tri.b, tri.c, 0.25f, 0.85f, 1.0f, 0.55f);
+                addScalpLine(tri.c, tri.a, 0.25f, 0.85f, 1.0f, 0.55f);
             }
         }
 
@@ -3141,7 +3777,7 @@ namespace hairgpu::viewer
                             p0.x += std::cos(a0) * sphere.radius; p0.y += std::sin(a0) * sphere.radius;
                             p1.x += std::cos(a1) * sphere.radius; p1.y += std::sin(a1) * sphere.radius;
                         }
-                        addLine(p0, p1, 1.0f, 0.55f, 0.15f, 0.8f);
+                        addWorldLine(p0, p1, 1.0f, 0.55f, 0.15f, 0.8f);
                     }
                 }
             }
@@ -3163,122 +3799,103 @@ namespace hairgpu::viewer
                     const Vec3 a1p = capsule.pointA + ring1 * capsule.radiusA;
                     const Vec3 b0p = capsule.pointB + ring0 * capsule.radiusB;
                     const Vec3 b1p = capsule.pointB + ring1 * capsule.radiusB;
-                    addLine(a0p, a1p, 0.85f, 0.35f, 0.90f, 0.75f);
-                    addLine(b0p, b1p, 0.85f, 0.35f, 0.90f, 0.75f);
+                    addWorldLine(a0p, a1p, 0.85f, 0.35f, 0.90f, 0.75f);
+                    addWorldLine(b0p, b1p, 0.85f, 0.35f, 0.90f, 0.75f);
                     if ((i % 6) == 0)
                     {
-                        addLine(a0p, b0p, 0.85f, 0.35f, 0.90f, 0.75f);
+                        addWorldLine(a0p, b0p, 0.85f, 0.35f, 0.90f, 0.75f);
                     }
                 }
             }
         }
 
         const bool needStrandDebug = m_showGuideSkeleton || m_showFollowerSkeleton || m_showRootMarkers || m_showFollowLinks;
-        if (!needStrandDebug)
+        if (needStrandDebug)
         {
-            return;
-        }
+            const uint32_t guideCount = m_asset.guideStrandCount;
+            const uint32_t followerCount = m_asset.followerStrandCount;
+            const uint32_t totalCount = static_cast<uint32_t>(m_asset.strands.size());
+            const uint32_t followerStride = std::max<uint32_t>(1u, followerCount / 96u + ((followerCount > 96u) ? 1u : 0u));
 
-        if (m_debugReadbackParticles.size() < m_asset.restPoints.size() || !ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset))
-        {
-            if (!ReadBackCurrentParticlePositions(m_debugReadbackParticles) || !ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset))
+            auto addStrandSkeleton = [&](uint32_t strandIndex, float r, float g, float b, float alpha)
             {
-                m_debugReadbackParticles = m_initialParticles;
-                if (!ParticleArrayLooksValid(reinterpret_cast<const float*>(m_debugReadbackParticles.data()), m_debugReadbackParticles.size(), m_asset))
+                if (strandIndex >= totalCount)
                 {
                     return;
                 }
-            }
-        }
-
-        const auto particleAt = [&](uint32_t particleIndex) -> Vec3
-        {
-            const GpuParticle& p = m_debugReadbackParticles[particleIndex];
-            return { p.x, p.y, p.z };
-        };
-
-        const uint32_t guideCount = m_asset.guideStrandCount;
-        const uint32_t followerCount = m_asset.followerStrandCount;
-        const uint32_t totalCount = static_cast<uint32_t>(m_asset.strands.size());
-        const uint32_t followerStride = std::max<uint32_t>(1u, followerCount / 96u + ((followerCount > 96u) ? 1u : 0u));
-
-        auto addRootMarker = [&](const Vec3& root, bool isGuide)
-        {
-            const float s = isGuide ? 0.018f : 0.012f;
-            const float r = isGuide ? 0.10f : 0.98f;
-            const float g = isGuide ? 0.92f : 0.52f;
-            const float b = isGuide ? 1.00f : 0.18f;
-            addLine(root - Vec3(s, 0.0f, 0.0f), root + Vec3(s, 0.0f, 0.0f), r, g, b, 0.95f);
-            addLine(root - Vec3(0.0f, s, 0.0f), root + Vec3(0.0f, s, 0.0f), r, g, b, 0.95f);
-            addLine(root - Vec3(0.0f, 0.0f, s), root + Vec3(0.0f, 0.0f, s), r, g, b, 0.95f);
-        };
-
-        auto addStrandSkeleton = [&](uint32_t strandIndex, float r, float g, float b, float alpha)
-        {
-            if (strandIndex >= totalCount)
-            {
-                return;
-            }
-            const StrandRange& strand = m_asset.strands[strandIndex];
-            for (uint32_t i = 1; i < strand.pointCount; ++i)
-            {
-                const uint32_t aIndex = strand.pointOffset + i - 1u;
-                const uint32_t bIndex = strand.pointOffset + i;
-                addLine(particleAt(aIndex), particleAt(bIndex), r, g, b, alpha);
-            }
-        };
-
-        if (m_showGuideSkeleton || m_showRootMarkers)
-        {
-            for (uint32_t strandIndex = 0; strandIndex < guideCount; ++strandIndex)
-            {
                 const StrandRange& strand = m_asset.strands[strandIndex];
-                const Vec3 root = particleAt(strand.pointOffset);
-                if (m_showGuideSkeleton)
+                for (uint32_t i = 1; i < strand.pointCount; ++i)
                 {
-                    addStrandSkeleton(strandIndex, 0.12f, 0.95f, 0.92f, 0.85f);
+                    const uint32_t aIndex = strand.pointOffset + i - 1u;
+                    const uint32_t bIndex = strand.pointOffset + i;
+                    addHairLine(aIndex, bIndex, r, g, b, alpha);
                 }
-                if (m_showRootMarkers)
-                {
-                    addRootMarker(root, true);
-                }
-            }
-        }
+            };
 
-        if (m_showFollowerSkeleton || m_showRootMarkers || m_showFollowLinks)
-        {
-            for (uint32_t followerLocalIndex = 0; followerLocalIndex < followerCount; ++followerLocalIndex)
+            if (m_showGuideSkeleton || m_showRootMarkers)
             {
-                if (followerLocalIndex % followerStride != 0u)
+                for (uint32_t strandIndex = 0; strandIndex < guideCount; ++strandIndex)
                 {
-                    continue;
-                }
-                const uint32_t strandIndex = guideCount + followerLocalIndex;
-                if (strandIndex >= totalCount)
-                {
-                    continue;
-                }
-                const StrandRange& strand = m_asset.strands[strandIndex];
-                const Vec3 root = particleAt(strand.pointOffset);
-                if (m_showFollowerSkeleton)
-                {
-                    addStrandSkeleton(strandIndex, 1.00f, 0.52f, 0.18f, 0.42f);
-                }
-                if (m_showRootMarkers)
-                {
-                    addRootMarker(root, false);
-                }
-                if (m_showFollowLinks && strandIndex < m_asset.followData.size())
-                {
-                    const int32_t parentGuide = m_asset.followData[strandIndex].parentGuide;
-                    if (parentGuide >= 0 && static_cast<uint32_t>(parentGuide) < guideCount)
+                    const StrandRange& strand = m_asset.strands[strandIndex];
+                    if (m_showGuideSkeleton)
                     {
-                        const Vec3 guideRoot = particleAt(m_asset.strands[static_cast<uint32_t>(parentGuide)].pointOffset);
-                        addLine(root, guideRoot, 0.86f, 0.30f, 1.00f, 0.32f);
+                        addStrandSkeleton(strandIndex, 0.12f, 0.95f, 0.92f, 0.85f);
+                    }
+                    if (m_showRootMarkers)
+                    {
+                        addRootMarker(strand.pointOffset, true);
+                    }
+                }
+            }
+
+            if (m_showFollowerSkeleton || m_showRootMarkers || m_showFollowLinks)
+            {
+                for (uint32_t followerLocalIndex = 0; followerLocalIndex < followerCount; ++followerLocalIndex)
+                {
+                    if (followerLocalIndex % followerStride != 0u)
+                    {
+                        continue;
+                    }
+                    const uint32_t strandIndex = guideCount + followerLocalIndex;
+                    if (strandIndex >= totalCount)
+                    {
+                        continue;
+                    }
+                    const StrandRange& strand = m_asset.strands[strandIndex];
+                    if (m_showFollowerSkeleton)
+                    {
+                        addStrandSkeleton(strandIndex, 1.00f, 0.52f, 0.18f, 0.42f);
+                    }
+                    if (m_showRootMarkers)
+                    {
+                        addRootMarker(strand.pointOffset, false);
+                    }
+                    if (m_showFollowLinks && strandIndex < m_asset.followData.size())
+                    {
+                        const int32_t parentGuide = m_asset.followData[strandIndex].parentGuide;
+                        if (parentGuide >= 0 && static_cast<uint32_t>(parentGuide) < guideCount)
+                        {
+                            addHairLine(strand.pointOffset, m_asset.strands[static_cast<uint32_t>(parentGuide)].pointOffset, 0.86f, 0.30f, 1.00f, 0.32f);
+                        }
                     }
                 }
             }
         }
+
+        m_debugLineStats.totalLineCount = m_debugLineStats.worldLineCount + m_debugLineStats.hairLineCount + m_debugLineStats.scalpLineCount + m_debugLineStats.rootMarkerCount;
+        m_gpuDebugLinesDirty = false;
+    }
+
+    void GpuHairViewer::UpdateRenderStatistics()
+    {
+        const uint64_t totalStrands = static_cast<uint64_t>(m_asset.strands.size());
+        const uint64_t ribbonSegments = static_cast<uint64_t>(m_renderData.segmentCount);
+        const uint64_t voxelTriangles = ribbonSegments * 12ull;
+        const uint64_t tubeTriangles = (static_cast<uint64_t>(m_strandTubeIndexCount) / 3ull) * totalStrands;
+        const uint64_t brickTriangles = (static_cast<uint64_t>(m_brickIndexCount) / 3ull) * ribbonSegments;
+        (void)voxelTriangles;
+        (void)tubeTriangles;
+        (void)brickTriangles;
     }
 
     LRESULT CALLBACK GpuHairViewer::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -3624,6 +4241,10 @@ namespace hairgpu::viewer
                 return 0;
             case 'G':
                 m_enableGridSelfCollision = !m_enableGridSelfCollision;
+                SyncControlsFromState();
+                return 0;
+            case 'B':
+                m_selfCollisionBroadphaseMode = (m_selfCollisionBroadphaseMode + 1u) % 4u;
                 SyncControlsFromState();
                 return 0;
             case 'M':

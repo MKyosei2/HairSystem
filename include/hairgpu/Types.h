@@ -145,13 +145,18 @@ namespace hairgpu
         float freezeBackThreshold = -0.045f;
         float freezeBlend = 0.82f;
 
-        // Uniform-grid broadphase for GPU self collision.
+        // Dense uniform-grid broadphase for GPU self collision.
         uint32_t selfCollisionGridDimX = 18;
         uint32_t selfCollisionGridDimY = 18;
         uint32_t selfCollisionGridDimZ = 18;
         uint32_t selfCollisionCellCapacity = 24;
         Vec3 selfCollisionGridOrigin = { -0.72f, 0.48f, -0.72f };
         float selfCollisionCellSize = 0.085f;
+
+        // Broadphase backend selection. DenseGrid keeps the original fixed-volume layout,
+        // while SpatialHash supports sparse coordinates and larger motion ranges.
+        uint32_t selfCollisionBroadphaseMode = 1u;
+        uint32_t selfCollisionHashBucketCount = 32768u;
     };
 
     enum class ColliderType : uint32_t

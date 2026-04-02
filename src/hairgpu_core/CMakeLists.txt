@@ -1,10 +1,14 @@
 add_library(hairgpu_core
     AssetIO.cpp
+    Broadphase.cpp
+    Collision.cpp
     Adaptive.cpp
     Authoring.cpp
     Binding.cpp
+    BoneAnimation.cpp
     Cards.cpp
     GuideCache.cpp
+    HairCache.cpp
     HairMath.cpp
     Lod.cpp
     MeshIO.cpp

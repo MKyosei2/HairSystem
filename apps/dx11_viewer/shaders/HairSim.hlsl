@@ -51,8 +51,31 @@ cbuffer SimConstants : register(b0)
     float FreezeBackThreshold;
     float FreezeBlend;
 
+    uint BroadphaseMode;
+    uint BroadphaseHashBucketCount;
+    uint BroadphasePadding0;
+    uint BroadphasePadding1;
+
+    uint SortedPaddedEntryCount;
+    uint EnableRuntimeAngularBend;
+    uint RuntimePadding0;
+    uint RuntimePadding1;
+
+    float AngularBendRadians;
+    float AngularBendCompliance;
+    float AngularBendStiffness;
+    float AngularBendDamping;
+
     float SphereData[16];
     float CapsuleData[32];
+};
+
+cbuffer BitonicConstants : register(b1)
+{
+    uint BitonicJ;
+    uint BitonicK;
+    uint BitonicEntryCount;
+    uint BitonicPadding;
 };
 
 struct FollowData
@@ -93,6 +116,8 @@ RWStructuredBuffer<float> DistanceLambdas : register(u2);
 RWStructuredBuffer<float> BendLambdas : register(u3);
 RWStructuredBuffer<uint> GridCellCounts : register(u4);
 RWStructuredBuffer<uint> GridCellIndices : register(u5);
+RWStructuredBuffer<uint> GridHashHeads : register(u6);
+RWStructuredBuffer<uint> GridParticleNext : register(u7);
 
 float3 SafeNormalize(float3 v)
 {
@@ -110,19 +135,87 @@ uint TotalGridCells()
     return max(GridDimX * GridDimY * GridDimZ, 1u);
 }
 
-uint3 ComputeGridCoord(float3 p)
+int3 ComputeSignedGridCoord(float3 p)
 {
     float3 local = (p - GridOrigin) / max(GridCellSize, 1.0e-5f);
-    uint3 coord;
-    coord.x = min((uint)clamp(floor(local.x), 0.0f, max((float)GridDimX - 1.0f, 0.0f)), GridDimX - 1u);
-    coord.y = min((uint)clamp(floor(local.y), 0.0f, max((float)GridDimY - 1.0f, 0.0f)), GridDimY - 1u);
-    coord.z = min((uint)clamp(floor(local.z), 0.0f, max((float)GridDimZ - 1.0f, 0.0f)), GridDimZ - 1u);
-    return coord;
+    return int3((int)floor(local.x), (int)floor(local.y), (int)floor(local.z));
+}
+
+uint3 ClampGridCoord(int3 coord)
+{
+    uint3 result;
+    result.x = min((uint)max(coord.x, 0), GridDimX - 1u);
+    result.y = min((uint)max(coord.y, 0), GridDimY - 1u);
+    result.z = min((uint)max(coord.z, 0), GridDimZ - 1u);
+    return result;
+}
+
+uint3 ComputeGridCoord(float3 p)
+{
+    return ClampGridCoord(ComputeSignedGridCoord(p));
+}
+
+float ComputeCellSizeForLevel(uint level)
+{
+    return GridCellSize * (float)(1u << min(level, 8u));
+}
+
+int3 ComputeSignedGridCoordWithCellSize(float3 p, float cellSize)
+{
+    float3 local = (p - GridOrigin) / max(cellSize, 1.0e-5f);
+    return int3((int)floor(local.x), (int)floor(local.y), (int)floor(local.z));
+}
+
+uint ComputeAdaptiveBroadphaseLevel(uint localIndex)
+{
+    if (ParticlesPerStrand <= 1u)
+    {
+        return 0u;
+    }
+
+    float t = float(localIndex) / float(ParticlesPerStrand - 1u);
+    if (t > 0.72f)
+    {
+        return 2u;
+    }
+    if (t > 0.35f)
+    {
+        return 1u;
+    }
+    return 0u;
 }
 
 uint ComputeGridCellIndex(uint3 coord)
 {
     return coord.x + coord.y * GridDimX + coord.z * GridDimX * GridDimY;
+}
+
+uint ComputeHashBucketIndexWithLevel(int3 coord, uint level)
+{
+    uint bucketCount = max(BroadphaseHashBucketCount, 1u);
+    uint hx = asuint(coord.x * 73856093);
+    uint hy = asuint(coord.y * 19349663);
+    uint hz = asuint(coord.z * 83492791);
+    uint hl = (level + 1u) * 2654435761u;
+    return (hx ^ hy ^ hz ^ hl) % bucketCount;
+}
+
+uint ComputeHashBucketIndex(int3 coord)
+{
+    return ComputeHashBucketIndexWithLevel(coord, 0u);
+}
+
+bool ShouldSwapSortedPair(uint keyA, uint indexA, uint keyB, uint indexB, bool ascending)
+{
+    bool greater = (keyA > keyB) || (keyA == keyB && indexA > indexB);
+    bool less = (keyA < keyB) || (keyA == keyB && indexA < indexB);
+    return ascending ? greater : less;
+}
+
+float ComputeAngularTargetOffset(float prevLength, float nextLength)
+{
+    float avgSegment = 0.5f * (prevLength + nextLength);
+    return avgSegment * sin(max(AngularBendRadians, 0.0f) * 0.5f);
 }
 
 float3 EvaluateBoundRoot(uint strandIndex)
@@ -441,14 +534,35 @@ void BendCS(uint3 id : SV_DispatchThreadID)
         float3 c = OutputPositions[nextIndex].xyz;
         float3 midpoint = 0.5f * (a + c);
         float3 delta = b - midpoint;
-        float lenValue = max(length(delta), 1.0e-6f);
-        float C = lenValue * BendStiffness;
+        float lenValue = length(delta);
+        float3 restA = RestPositions[prevIndex].xyz;
+        float3 restB = RestPositions[currentIndex].xyz;
+        float3 restC = RestPositions[nextIndex].xyz;
+        float3 restDelta = restB - 0.5f * (restA + restC);
+        float3 direction = (lenValue > 1.0e-6f) ? (delta / lenValue) : SafeNormalize(restDelta + float3(0.0f, 1.0e-4f, 0.0f));
+
+        float C = 0.0f;
+        if (EnableRuntimeAngularBend != 0u)
+        {
+            float prevLength = length(b - a);
+            float nextLength = length(c - b);
+            float targetOffset = ComputeAngularTargetOffset(prevLength, nextLength);
+            alpha = AngularBendCompliance / max(DeltaTime * DeltaTime, 1.0e-8f);
+            C = (lenValue - targetOffset) * max(AngularBendStiffness, 1.0e-4f);
+        }
+        else
+        {
+            lenValue = max(lenValue, 1.0e-6f);
+            C = lenValue * BendStiffness;
+        }
+
         float dLambda = (-C - alpha * lambda) / (1.0f + alpha);
         lambda += dLambda;
         BendLambdas[lambdaIndex] = lambda;
 
-        float3 correction = (delta / lenValue) * dLambda;
-        b += correction;
+        float3 correction = direction * dLambda;
+        float blend = (EnableRuntimeAngularBend != 0u) ? saturate(1.0f - AngularBendDamping) : 1.0f;
+        b = lerp(b, b + correction, blend);
         OutputPositions[currentIndex] = float4(b, 1.0f);
     }
 }
@@ -574,6 +688,151 @@ void BuildGridCS(uint3 id : SV_DispatchThreadID)
     }
 }
 
+[numthreads(64, 1, 1)]
+void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    uint totalGuideParticles = TotalGuideParticles();
+    uint bucketCount = max(BroadphaseHashBucketCount, 1u);
+    if (index < bucketCount)
+    {
+        GridHashHeads[index] = 0xFFFFFFFFu;
+    }
+    if (index < totalGuideParticles)
+    {
+        GridParticleNext[index] = 0xFFFFFFFFu;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void BuildHashGridCS(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIndex = id.x;
+    uint totalGuideParticles = TotalGuideParticles();
+    if (particleIndex >= totalGuideParticles)
+    {
+        return;
+    }
+
+    uint localIndex = particleIndex % ParticlesPerStrand;
+    if (localIndex == 0)
+    {
+        GridParticleNext[particleIndex] = 0xFFFFFFFFu;
+        return;
+    }
+
+    uint level = (BroadphaseMode == 2u) ? ComputeAdaptiveBroadphaseLevel(localIndex) : 0u;
+    float cellSize = (BroadphaseMode == 2u) ? ComputeCellSizeForLevel(level) : GridCellSize;
+    int3 coord = ComputeSignedGridCoordWithCellSize(OutputPositions[particleIndex].xyz, cellSize);
+    uint bucketIndex = ComputeHashBucketIndexWithLevel(coord, level);
+    uint previousHead = 0xFFFFFFFFu;
+    InterlockedExchange(GridHashHeads[bucketIndex], particleIndex, previousHead);
+    GridParticleNext[particleIndex] = previousHead;
+}
+
+[numthreads(64, 1, 1)]
+void ClearSortedRangesCS(uint3 id : SV_DispatchThreadID)
+{
+    uint cellIndex = id.x;
+    uint totalCells = TotalGridCells();
+    if (cellIndex >= totalCells)
+    {
+        return;
+    }
+
+    GridHashHeads[cellIndex] = 0xFFFFFFFFu;
+    GridParticleNext[cellIndex] = 0xFFFFFFFFu;
+}
+
+[numthreads(64, 1, 1)]
+void BuildSortedEntriesCS(uint3 id : SV_DispatchThreadID)
+{
+    uint entryIndex = id.x;
+    if (entryIndex >= max(SortedPaddedEntryCount, 1u))
+    {
+        return;
+    }
+
+    uint totalGuideParticles = TotalGuideParticles();
+    if (entryIndex >= totalGuideParticles)
+    {
+        GridCellCounts[entryIndex] = 0xFFFFFFFFu;
+        GridCellIndices[entryIndex] = 0xFFFFFFFFu;
+        return;
+    }
+
+    uint localIndex = entryIndex % ParticlesPerStrand;
+    if (localIndex == 0u)
+    {
+        GridCellCounts[entryIndex] = 0xFFFFFFFFu;
+        GridCellIndices[entryIndex] = 0xFFFFFFFFu;
+        return;
+    }
+
+    uint cellIndex = ComputeGridCellIndex(ComputeGridCoord(OutputPositions[entryIndex].xyz));
+    GridCellCounts[entryIndex] = cellIndex;
+    GridCellIndices[entryIndex] = entryIndex;
+}
+
+[numthreads(256, 1, 1)]
+void BitonicSortCS(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= BitonicEntryCount)
+    {
+        return;
+    }
+
+    uint partner = index ^ BitonicJ;
+    if (partner <= index || partner >= BitonicEntryCount)
+    {
+        return;
+    }
+
+    uint keyA = GridCellCounts[index];
+    uint keyB = GridCellCounts[partner];
+    uint particleA = GridCellIndices[index];
+    uint particleB = GridCellIndices[partner];
+    bool ascending = ((index & BitonicK) == 0u);
+    if (ShouldSwapSortedPair(keyA, particleA, keyB, particleB, ascending))
+    {
+        GridCellCounts[index] = keyB;
+        GridCellCounts[partner] = keyA;
+        GridCellIndices[index] = particleB;
+        GridCellIndices[partner] = particleA;
+    }
+}
+
+[numthreads(64, 1, 1)]
+void BuildSortedRangesCS(uint3 id : SV_DispatchThreadID)
+{
+    uint entryIndex = id.x;
+    uint entryCount = max(SortedPaddedEntryCount, 1u);
+    if (entryIndex >= entryCount)
+    {
+        return;
+    }
+
+    uint key = GridCellCounts[entryIndex];
+    uint particleIndex = GridCellIndices[entryIndex];
+    if (key == 0xFFFFFFFFu || particleIndex == 0xFFFFFFFFu || key >= TotalGridCells())
+    {
+        return;
+    }
+
+    uint prevKey = (entryIndex > 0u) ? GridCellCounts[entryIndex - 1u] : 0xFFFFFFFFu;
+    if (entryIndex == 0u || prevKey != key)
+    {
+        GridHashHeads[key] = entryIndex;
+    }
+
+    uint nextKey = (entryIndex + 1u < entryCount) ? GridCellCounts[entryIndex + 1u] : 0xFFFFFFFFu;
+    if (entryIndex + 1u >= entryCount || nextKey != key)
+    {
+        GridParticleNext[key] = entryIndex + 1u;
+    }
+}
+
 float3 ComputeLegacySelfCollision(uint particleIndex, uint strandIndex, uint localIndex)
 {
     float3 p = OutputPositions[particleIndex].xyz;
@@ -621,6 +880,78 @@ float3 ComputeLegacySelfCollision(uint particleIndex, uint strandIndex, uint loc
     return p;
 }
 
+bool ShouldCullSelfCollisionPair(uint strandIndex, uint localIndex, uint otherStrand, uint otherLocal)
+{
+    if (otherStrand == strandIndex)
+    {
+        int localDelta = abs(int(otherLocal) - int(localIndex));
+        return localDelta <= 2;
+    }
+
+    if (localIndex <= 2u && otherLocal <= 2u)
+    {
+        RootBindingData a = RootBindings[strandIndex];
+        RootBindingData b = RootBindings[otherStrand];
+        if (a.TriangleIndex == b.TriangleIndex)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void AccumulateSelfCollisionResponse(
+    uint particleIndex,
+    uint strandIndex,
+    uint localIndex,
+    float3 p,
+    uint otherIndex,
+    float contactRadius,
+    float contactSpringRadius,
+    float preferredSeparation,
+    inout float3 push,
+    inout float3 spring,
+    inout uint pushSamples,
+    inout uint springSamples)
+{
+    if (otherIndex == 0xFFFFFFFFu || otherIndex == particleIndex)
+    {
+        return;
+    }
+
+    uint otherStrand = otherIndex / ParticlesPerStrand;
+    uint otherLocal = otherIndex % ParticlesPerStrand;
+    if (ShouldCullSelfCollisionPair(strandIndex, localIndex, otherStrand, otherLocal))
+    {
+        return;
+    }
+
+    float3 q = OutputPositions[otherIndex].xyz;
+    float3 delta = p - q;
+    float distSq = dot(delta, delta);
+    if (distSq <= 1.0e-8f)
+    {
+        return;
+    }
+
+    float distValue = sqrt(distSq);
+    float3 dir = delta / distValue;
+    if (distValue < contactRadius)
+    {
+        float penetration = contactRadius - distValue;
+        push += dir * penetration;
+        pushSamples += 1u;
+    }
+    else if (distValue < contactSpringRadius)
+    {
+        float error = distValue - preferredSeparation;
+        float springWeight = saturate(1.0f - (distValue - contactRadius) / max(contactSpringRadius - contactRadius, 1.0e-5f));
+        spring += dir * error * springWeight;
+        springSamples += 1u;
+    }
+}
+
 [numthreads(64, 1, 1)]
 void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
 {
@@ -653,7 +984,7 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
     }
 
     float3 p = OutputPositions[particleIndex].xyz;
-    uint3 baseCoord = ComputeGridCoord(p);
+    int3 baseCoord = ComputeSignedGridCoord(p);
     float3 push = float3(0.0f, 0.0f, 0.0f);
     float3 spring = float3(0.0f, 0.0f, 0.0f);
     uint pushSamples = 0u;
@@ -662,72 +993,161 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
     float contactSpringRadius = SelfCollisionRadius * 1.85f;
     float preferredSeparation = SelfCollisionRadius * 1.08f;
 
-    [loop]
-    for (int dz = -1; dz <= 1; ++dz)
+    if (BroadphaseMode == 0u)
     {
-        int z = int(baseCoord.z) + dz;
-        if (z < 0 || z >= int(GridDimZ))
-        {
-            continue;
-        }
         [loop]
-        for (int dy = -1; dy <= 1; ++dy)
+        for (int dz = -1; dz <= 1; ++dz)
         {
-            int y = int(baseCoord.y) + dy;
-            if (y < 0 || y >= int(GridDimY))
+            int z = baseCoord.z + dz;
+            if (z < 0 || z >= int(GridDimZ))
             {
                 continue;
             }
             [loop]
-            for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
             {
-                int x = int(baseCoord.x) + dx;
-                if (x < 0 || x >= int(GridDimX))
+                int y = baseCoord.y + dy;
+                if (y < 0 || y >= int(GridDimY))
                 {
                     continue;
                 }
-
-                uint neighborCell = ComputeGridCellIndex(uint3(uint(x), uint(y), uint(z)));
-                uint count = min(GridCellCounts[neighborCell], GridCellCapacity);
-                uint start = neighborCell * GridCellCapacity;
                 [loop]
-                for (uint i = 0u; i < count; ++i)
+                for (int dx = -1; dx <= 1; ++dx)
                 {
-                    uint otherIndex = GridCellIndices[start + i];
-                    if (otherIndex == 0xFFFFFFFFu || otherIndex == particleIndex)
+                    int x = baseCoord.x + dx;
+                    if (x < 0 || x >= int(GridDimX))
                     {
                         continue;
                     }
 
-                    uint otherStrand = otherIndex / ParticlesPerStrand;
-                    uint otherLocal = otherIndex % ParticlesPerStrand;
-                    if (otherStrand == strandIndex && abs(int(otherLocal) - int(localIndex)) <= 1)
+                    uint neighborCell = ComputeGridCellIndex(uint3(uint(x), uint(y), uint(z)));
+                    uint count = min(GridCellCounts[neighborCell], GridCellCapacity);
+                    uint start = neighborCell * GridCellCapacity;
+                    [loop]
+                    for (uint i = 0u; i < count; ++i)
+                    {
+                        AccumulateSelfCollisionResponse(
+                            particleIndex,
+                            strandIndex,
+                            localIndex,
+                            p,
+                            GridCellIndices[start + i],
+                            contactRadius,
+                            contactSpringRadius,
+                            preferredSeparation,
+                            push,
+                            spring,
+                            pushSamples,
+                            springSamples);
+                    }
+                }
+            }
+        }
+    }
+    else if (BroadphaseMode == 3u)
+    {
+        [loop]
+        for (int dz = -1; dz <= 1; ++dz)
+        {
+            int z = baseCoord.z + dz;
+            if (z < 0 || z >= int(GridDimZ))
+            {
+                continue;
+            }
+            [loop]
+            for (int dy = -1; dy <= 1; ++dy)
+            {
+                int y = baseCoord.y + dy;
+                if (y < 0 || y >= int(GridDimY))
+                {
+                    continue;
+                }
+                [loop]
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int x = baseCoord.x + dx;
+                    if (x < 0 || x >= int(GridDimX))
                     {
                         continue;
                     }
 
-                    float3 q = OutputPositions[otherIndex].xyz;
-                    float3 delta = p - q;
-                    float distSq = dot(delta, delta);
-                    if (distSq <= 1.0e-8f)
+                    uint neighborCell = ComputeGridCellIndex(uint3(uint(x), uint(y), uint(z)));
+                    uint start = GridHashHeads[neighborCell];
+                    uint end = GridParticleNext[neighborCell];
+                    if (start == 0xFFFFFFFFu || end == 0xFFFFFFFFu || end <= start)
                     {
                         continue;
                     }
 
-                    float distValue = sqrt(distSq);
-                    float3 dir = delta / distValue;
-                    if (distValue < contactRadius)
+                    [loop]
+                    for (uint i = start; i < end; ++i)
                     {
-                        float penetration = contactRadius - distValue;
-                        push += dir * penetration;
-                        pushSamples += 1u;
+                        AccumulateSelfCollisionResponse(
+                            particleIndex,
+                            strandIndex,
+                            localIndex,
+                            p,
+                            GridCellIndices[i],
+                            contactRadius,
+                            contactSpringRadius,
+                            preferredSeparation,
+                            push,
+                            spring,
+                            pushSamples,
+                            springSamples);
                     }
-                    else if (distValue < contactSpringRadius)
+                }
+            }
+        }
+    }
+    else
+    {
+        uint queryLevelBegin = (BroadphaseMode == 2u) ? 0u : 0u;
+        uint queryLevelEnd = (BroadphaseMode == 2u) ? 2u : 0u;
+        [loop]
+        for (uint queryLevel = queryLevelBegin; queryLevel <= queryLevelEnd; ++queryLevel)
+        {
+            float queryCellSize = (BroadphaseMode == 2u) ? ComputeCellSizeForLevel(queryLevel) : GridCellSize;
+            int3 queryBaseCoord = (BroadphaseMode == 2u) ? ComputeSignedGridCoordWithCellSize(p, queryCellSize) : baseCoord;
+            [loop]
+            for (int dz = -1; dz <= 1; ++dz)
+            {
+                [loop]
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    [loop]
+                    for (int dx = -1; dx <= 1; ++dx)
                     {
-                        float error = distValue - preferredSeparation;
-                        float springWeight = saturate(1.0f - (distValue - contactRadius) / max(contactSpringRadius - contactRadius, 1.0e-5f));
-                        spring += dir * error * springWeight;
-                        springSamples += 1u;
+                        int3 neighborCoord = int3(queryBaseCoord.x + dx, queryBaseCoord.y + dy, queryBaseCoord.z + dz);
+                        uint bucketIndex = ComputeHashBucketIndexWithLevel(neighborCoord, queryLevel);
+                        uint otherIndex = GridHashHeads[bucketIndex];
+                        uint chainGuard = 0u;
+                        [loop]
+                        while (otherIndex != 0xFFFFFFFFu && chainGuard < totalGuideParticles)
+                        {
+                            uint otherLocal = otherIndex % ParticlesPerStrand;
+                            uint otherLevel = (BroadphaseMode == 2u) ? ComputeAdaptiveBroadphaseLevel(otherLocal) : 0u;
+                            float otherCellSize = (BroadphaseMode == 2u) ? ComputeCellSizeForLevel(otherLevel) : GridCellSize;
+                            int3 otherCoord = ComputeSignedGridCoordWithCellSize(OutputPositions[otherIndex].xyz, otherCellSize);
+                            if (otherLevel == queryLevel && all(otherCoord == neighborCoord))
+                            {
+                                AccumulateSelfCollisionResponse(
+                                    particleIndex,
+                                    strandIndex,
+                                    localIndex,
+                                    p,
+                                    otherIndex,
+                                    contactRadius,
+                                    contactSpringRadius,
+                                    preferredSeparation,
+                                    push,
+                                    spring,
+                                    pushSamples,
+                                    springSamples);
+                            }
+                            otherIndex = GridParticleNext[otherIndex];
+                            chainGuard += 1u;
+                        }
                     }
                 }
             }

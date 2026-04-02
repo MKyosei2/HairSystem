@@ -6,12 +6,19 @@ cbuffer RenderConstants : register(b0)
     float WidthScale;
     uint DebugColorMode;
     uint GuideStrandCount;
+    uint ParticlesPerStrand;
+    uint TotalStrandCount;
+    uint TubeRingSides;
     uint _Padding0;
+    uint _Padding1;
+    uint _Padding2;
 };
+
+StructuredBuffer<float4> ScalpPositions : register(t0);
 
 struct VSInput
 {
-    float3 position : POSITION;
+    uint scalpIndex : TEXCOORD0;
     float3 normal : NORMAL;
     float3 color : COLOR0;
 };
@@ -27,8 +34,9 @@ struct VSOutput
 VSOutput VSMain(VSInput input)
 {
     VSOutput output;
-    output.position = mul(float4(input.position, 1.0f), ViewProjection);
-    output.worldPosition = input.position;
+    const float3 position = ScalpPositions[input.scalpIndex].xyz;
+    output.position = mul(float4(position, 1.0f), ViewProjection);
+    output.worldPosition = position;
     output.worldNormal = normalize(input.normal);
     output.color = input.color;
     return output;

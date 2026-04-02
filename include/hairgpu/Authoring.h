@@ -55,6 +55,25 @@ namespace hairgpu
         float maxRootRadius = 10.0f;
     };
 
+    struct AngularBendRelaxationSettings
+    {
+        float maxBendRadians = 1.10f;
+        uint32_t iterations = 4u;
+        float smoothing = 0.65f;
+        bool preserveSegmentLengths = true;
+        bool affectRootAdjacentPoint = true;
+    };
+
+    struct AngularXpbdBendSettings
+    {
+        float targetBendRadians = 0.20f;
+        float bendCompliance = 5.0e-5f;
+        uint32_t iterations = 8u;
+        bool preserveSegmentLengths = true;
+        bool affectRootAdjacentPoint = false;
+        float damping = 0.08f;
+    };
+
     struct PaletteSample
     {
         float u = 0.0f;
@@ -70,6 +89,8 @@ namespace hairgpu
     RegionSelectionResult SelectRegion(const HairAsset& asset, const RegionSelectionSettings& settings);
     bool ApplyEditToRegion(HairAsset& asset, const RegionSelectionResult& selection, const EditSettings& settings, std::string& outError);
     void ApplyConstraints(HairAsset& asset, const ConstraintSettings& settings);
+    void ApplyAngularBendRelaxation(HairAsset& asset, const AngularBendRelaxationSettings& settings);
+    void ApplyAngularXpbdBendRelaxation(HairAsset& asset, const AngularXpbdBendSettings& settings);
     bool LoadPaletteCsv(const std::filesystem::path& path, Palette& outPalette, std::string& outError);
     bool ApplyPaletteToRegion(HairAsset& asset, const RegionSelectionResult& selection, const Palette& palette, float strength, std::string& outError);
 }

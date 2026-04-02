@@ -7,6 +7,7 @@
 #include "hairgpu/Binding.h"
 #include "hairgpu/Cards.h"
 #include "hairgpu/GuideCache.h"
+#include "hairgpu/HairCache.h"
 #include "hairgpu/Lod.h"
 #include "hairgpu/MeshIO.h"
 #include "hairgpu/Metrics.h"
@@ -90,6 +91,7 @@ namespace hairgpu
         outputs.cardsObjPath = outputDirectory / "cards.obj";
         outputs.usdaPath = outputDirectory / "asset.usda";
         outputs.guideCachePath = outputDirectory / "guide_rest.guidecache";
+        outputs.hairCachePath = outputDirectory / "rest_pose.haircache";
         outputs.scalpObjPath = outputDirectory / "scalp.obj";
 
         std::string error;
@@ -207,6 +209,29 @@ namespace hairgpu
             if (!SaveGuideCacheToFile(outputs.guideCachePath, cache, error))
             {
                 outError = "Failed to save guide cache: " + error;
+                return false;
+            }
+        }
+
+        if (settings.saveHairCache)
+        {
+            HairCache hairCache = {};
+            if (!InitializeHairCacheForAsset(asset, settings.guideCacheFrameRate, hairCache, error))
+            {
+                outError = "Failed to initialize hair cache: " + error;
+                return false;
+            }
+            for (uint32_t frameIndex = 0u; frameIndex < std::max<uint32_t>(1u, settings.guideCacheFrameCount); ++frameIndex)
+            {
+                if (!AppendHairCacheFrame(hairCache, asset, asset.restPoints, error))
+                {
+                    outError = "Failed to append hair cache frame: " + error;
+                    return false;
+                }
+            }
+            if (!SaveHairCacheToFile(outputs.hairCachePath, hairCache, error))
+            {
+                outError = "Failed to save hair cache: " + error;
                 return false;
             }
         }

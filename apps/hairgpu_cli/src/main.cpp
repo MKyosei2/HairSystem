@@ -10,8 +10,12 @@
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/Binding.h"
+#include "hairgpu/BoneAnimation.h"
+#include "hairgpu/Broadphase.h"
 #include "hairgpu/Cards.h"
+#include "hairgpu/Collision.h"
 #include "hairgpu/GuideCache.h"
+#include "hairgpu/HairCache.h"
 #include "hairgpu/Lod.h"
 #include "hairgpu/MeshIO.h"
 #include "hairgpu/Metrics.h"
@@ -38,6 +42,7 @@ namespace
     {
         const std::string ext = LowerExt(path);
         if (ext == ".csv") return LoadHairAssetFromCurvesCsv(path, asset, error);
+        if (ext == ".usd" || ext == ".usda") return LoadHairAssetFromUsda(path, asset, error);
         if (ext == ".hair") return LoadHairAssetFromHairFile(path, asset, error);
         if (ext == ".hairbin") return LoadHairAssetFromHairBinary(path, asset, error);
         if (ext == ".abc") return LoadHairAssetFromAlembic(path, asset, error);
@@ -93,6 +98,174 @@ namespace
         }
     }
 
+    std::vector<std::string> SplitSimpleCsv(const std::string& line)
+    {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : line)
+        {
+            if (c == ',')
+            {
+                parts.push_back(current);
+                current.clear();
+            }
+            else
+            {
+                current.push_back(c);
+            }
+        }
+        parts.push_back(current);
+        return parts;
+    }
+
+    bool ParseBoneMatrixLine(const std::string& line, uint32_t& outBoneIndex, hairgpu::Mat4& outMatrix, bool& outHasExplicitIndex)
+    {
+        std::string normalized = line;
+        for (char& c : normalized)
+        {
+            if (c == ',')
+            {
+                c = ' ';
+            }
+        }
+
+        std::stringstream ss(normalized);
+        std::vector<float> values;
+        float value = 0.0f;
+        while (ss >> value)
+        {
+            values.push_back(value);
+        }
+
+        if (values.size() == 16u)
+        {
+            outHasExplicitIndex = false;
+            for (size_t i = 0; i < 16u; ++i)
+            {
+                outMatrix.m[i] = values[i];
+            }
+            return true;
+        }
+        if (values.size() == 17u)
+        {
+            outHasExplicitIndex = true;
+            outBoneIndex = static_cast<uint32_t>(std::max(0.0f, values[0]));
+            for (size_t i = 0; i < 16u; ++i)
+            {
+                outMatrix.m[i] = values[i + 1u];
+            }
+            return true;
+        }
+        return false;
+    }
+
+    bool LoadBoneMatricesCsv(const std::filesystem::path& path, uint32_t expectedBoneCount, std::vector<hairgpu::Mat4>& outMatrices, std::string& outError)
+    {
+        std::ifstream in(path);
+        if (!in)
+        {
+            outError = "Failed to open bone matrix CSV: " + path.string();
+            return false;
+        }
+
+        outMatrices.assign(std::max<uint32_t>(1u, expectedBoneCount), hairgpu::Identity());
+        std::string line;
+        uint32_t sequentialIndex = 0u;
+        bool anyLoaded = false;
+        while (std::getline(in, line))
+        {
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+
+            uint32_t boneIndex = sequentialIndex;
+            hairgpu::Mat4 matrix = hairgpu::Identity();
+            bool hasExplicitIndex = false;
+            if (!ParseBoneMatrixLine(line, boneIndex, matrix, hasExplicitIndex))
+            {
+                continue;
+            }
+
+            if (!hasExplicitIndex)
+            {
+                boneIndex = sequentialIndex;
+            }
+            sequentialIndex = std::max(sequentialIndex + 1u, boneIndex + 1u);
+            if (boneIndex >= outMatrices.size())
+            {
+                outMatrices.resize(boneIndex + 1u, hairgpu::Identity());
+            }
+            outMatrices[boneIndex] = matrix;
+            anyLoaded = true;
+        }
+
+        if (!anyLoaded)
+        {
+            outError = "Bone matrix CSV did not contain any valid 4x4 matrices.";
+            return false;
+        }
+        outError.clear();
+        return true;
+    }
+
+    SelfCollisionBroadphaseMode ParseBroadphaseMode(const std::string& text)
+    {
+        std::string lowered = text;
+        for (char& c : lowered)
+        {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (lowered == "hash" || lowered == "hashed" || lowered == "spatialhash" || lowered == "spatial-hash")
+        {
+            return SelfCollisionBroadphaseMode::SpatialHash;
+        }
+        if (lowered == "adaptive" || lowered == "adaptive-hash" || lowered == "multilevel" || lowered == "multi-level")
+        {
+            return SelfCollisionBroadphaseMode::AdaptiveSpatialHash;
+        }
+        if (lowered == "sorted" || lowered == "sorted-grid" || lowered == "radix" || lowered == "radix-grid")
+        {
+            return SelfCollisionBroadphaseMode::SortedGrid;
+        }
+        return SelfCollisionBroadphaseMode::DenseGrid;
+    }
+
+    const char* BroadphaseModeName(SelfCollisionBroadphaseMode mode)
+    {
+        switch (mode)
+        {
+        case SelfCollisionBroadphaseMode::SpatialHash: return "spatial-hash";
+        case SelfCollisionBroadphaseMode::AdaptiveSpatialHash: return "adaptive-spatial-hash";
+        case SelfCollisionBroadphaseMode::SortedGrid: return "sorted-grid";
+        default: return "dense-grid";
+        }
+    }
+
+    bool WriteBoneTemplateCsv(const std::filesystem::path& path, uint32_t boneCount, std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to open output CSV: " + path.string();
+            return false;
+        }
+
+        out << "# boneIndex,m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33\n";
+        for (uint32_t boneIndex = 0u; boneIndex < std::max<uint32_t>(1u, boneCount); ++boneIndex)
+        {
+            const hairgpu::Mat4 identity = hairgpu::Identity();
+            out << boneIndex;
+            for (float m : identity.m)
+            {
+                out << ',' << m;
+            }
+            out << '\n';
+        }
+        outError.clear();
+        return true;
+    }
+
     RegionSelectionSettings ParseRegion(int argc, char** argv, int startIndex)
     {
         RegionSelectionSettings s;
@@ -120,12 +293,26 @@ namespace
             << "  hairgpu_cli build-lods <input> <output_dir>\n"
             << "  hairgpu_cli guidecache-info <input.guidecache>\n"
             << "  hairgpu_cli guidecache-rest <input> <output.guidecache> [fps] [frames]\n"
+            << "  hairgpu_cli haircache-info <input.haircache>\n"
+            << "  hairgpu_cli haircache-rest <input> <output.haircache> [fps] [frames]\n"
             << "  hairgpu_cli save-hairbin <input> <output.hairbin>\n"
             << "  hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]\n"
             << "  hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]\n"
             << "  hairgpu_cli constrain <input> <output.hairbin> [maxStretch maxBend floorY maxRootRadius]\n"
+            << "  hairgpu_cli broadphase-stats <input> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount]\n"
+            << "  hairgpu_cli broadphase-export <input> <output.csv> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount] [maxPairs=512]\n"
+            << "  hairgpu_cli relax-angular-bend <input> <output.hairbin> [maxBendRadians] [iterations] [smoothing] [preserveLengths=1] [affectRootAdjacent=1]\n"
+            << "  hairgpu_cli relax-angular-xpbd <input> <output.hairbin> [targetBendRadians] [bendCompliance] [iterations] [preserveLengths=1] [affectRootAdjacent=0] [damping]\n"
+            << "  hairgpu_cli collide-scalp-mesh <input> <output.hairbin> [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1]\n"
+            << "  hairgpu_cli collide-scalp-sdf <input> <output.hairbin> [resolution] [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1] [padding]\n"
+            << "  hairgpu_cli export-scalp-sdf <input> <output.csv> [resolution] [padding]\n"
             << "  hairgpu_cli palette-region <input> <palette.csv> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [strength]\n"
             << "  hairgpu_cli export-scalp-obj <input> <output.obj>\n"
+            << "  hairgpu_cli export-bone-template <input> <output.csv>\n"
+            << "  hairgpu_cli export-bone-anim-template <input> <output.csv> [frames] [fps]\n"
+            << "  hairgpu_cli apply-scalp-pose <input> <bones.csv> <output.hairbin> [translateEntireStrands=1]\n"
+            << "  hairgpu_cli build-scalp-anim-cache <input> <bones_anim.csv> <output.haircache> [translateEntireStrands=1]\n"
+            << "  hairgpu_cli sample-haircache-frame <input.haircache> <timeSeconds> <output.hairbin> [loop=1]\n"
             << "  hairgpu_cli import-scalp-obj <input> <scalp.obj> <output.hairbin>\n"
             << "  hairgpu_cli rebind-roots <input> <scalp.obj> <output.hairbin> [snapRoots=1]\n"
             << "  hairgpu_cli scaffold-project <input> <output_dir> [guideCacheFps] [guideCacheFrames]\n"
@@ -476,6 +663,47 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    if (command == "haircache-info")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairCache cache;
+        std::string error;
+        if (!LoadHairCacheFromFile(argv[2], cache, error))
+        {
+            return PrintLoadFailure("Hair cache load failed", error, 66);
+        }
+        std::cout << BuildHairCacheSummary(cache) << "\n";
+        return 0;
+    }
+
+    if (command == "sample-haircache-frame")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairCache cache;
+        std::string error;
+        if (!LoadHairCacheFromFile(argv[2], cache, error))
+        {
+            return PrintLoadFailure("Hair cache load failed", error, 75);
+        }
+        HairAsset sampled;
+        const float timeSeconds = ArgToFloat(argc, argv, 3, 0.0f);
+        const bool loop = ArgToInt(argc, argv, 5, 1) != 0;
+        if (!BuildHairAssetFrameFromCache(cache, timeSeconds, loop, sampled, error) ||
+            !SaveHairAssetToHairBinary(argv[4], sampled, error))
+        {
+            return PrintLoadFailure("Hair cache sample failed", error, 76);
+        }
+        return 0;
+    }
+
     if (argc < 3)
     {
         PrintUsage();
@@ -600,6 +828,215 @@ int main(int argc, char** argv)
         if (!SaveHairAssetToHairBinary(argv[3], asset, error))
         {
             return PrintLoadFailure("Constrain save failed", error, 16);
+        }
+        return 0;
+    }
+
+    if (command == "broadphase-stats")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Failed to load asset", error, 2);
+        }
+
+        const float cellSize = ArgToFloat(argc, argv, 3, 0.085f);
+        const SelfCollisionBroadphaseMode mode = (argc >= 5) ? ParseBroadphaseMode(argv[4]) : SelfCollisionBroadphaseMode::DenseGrid;
+        uint32_t hashBucketCount = ArgToUInt(argc, argv, 5, 32768u);
+        if (mode == SelfCollisionBroadphaseMode::DenseGrid || mode == SelfCollisionBroadphaseMode::SortedGrid)
+        {
+            hashBucketCount = 0u;
+        }
+
+        BroadphaseStats stats;
+        if (!EvaluateBroadphaseStats(asset, cellSize, mode, hashBucketCount, stats, error))
+        {
+            std::cerr << "Broadphase stats failed: " << error << "\n";
+            return 30;
+        }
+
+        std::cout
+            << "mode=" << BroadphaseModeName(stats.mode) << "\n"
+            << "cellSize=" << stats.cellSize << "\n"
+            << "guideStrands=" << stats.strandCount << "\n"
+            << "totalPoints=" << stats.particleCount << "\n"
+            << "insertedParticles=" << stats.insertedParticles << "\n"
+            << "occupiedBins=" << stats.occupiedBins << "\n"
+            << "averageBinOccupancy=" << stats.averageBinOccupancy << "\n"
+            << "maxBinOccupancy=" << stats.maxBinOccupancy << "\n"
+            << "candidatePairs=" << stats.candidatePairs << "\n"
+            << "skippedSameStrandAdjacentPairs=" << stats.skippedSameStrandAdjacentPairs << "\n"
+            << "skippedSameRootTrianglePairs=" << stats.skippedSameRootTrianglePairs << "\n"
+            << "duplicateCandidatePairsRemoved=" << stats.duplicateCandidatePairsRemoved << "\n"
+            << "sortedCellRangeCount=" << stats.sortedCellRangeCount << "\n"
+            << "activeAdaptiveLevels=" << stats.activeAdaptiveLevels << "\n"
+            << "maxAdaptiveLevel=" << stats.maxAdaptiveLevel << "\n";
+
+        if (stats.mode == SelfCollisionBroadphaseMode::SpatialHash || stats.mode == SelfCollisionBroadphaseMode::AdaptiveSpatialHash)
+        {
+            std::cout
+                << "hashBucketCount=" << stats.hashBucketCount << "\n"
+                << "usedHashBuckets=" << stats.usedHashBuckets << "\n"
+                << "averageHashBucketOccupancy=" << stats.averageHashBucketOccupancy << "\n"
+                << "maxHashBucketOccupancy=" << stats.maxHashBucketOccupancy << "\n";
+        }
+        return 0;
+    }
+
+    if (command == "broadphase-export")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Failed to load asset", error, 2);
+        }
+
+        const float cellSize = ArgToFloat(argc, argv, 4, 0.085f);
+        const SelfCollisionBroadphaseMode mode = (argc >= 6) ? ParseBroadphaseMode(argv[5]) : SelfCollisionBroadphaseMode::DenseGrid;
+        uint32_t hashBucketCount = ArgToUInt(argc, argv, 6, 32768u);
+        if (mode == SelfCollisionBroadphaseMode::DenseGrid || mode == SelfCollisionBroadphaseMode::SortedGrid)
+        {
+            hashBucketCount = 0u;
+        }
+        const uint32_t maxPairs = ArgToUInt(argc, argv, 7, 512u);
+
+        if (!ExportBroadphaseDebugCsv(asset, cellSize, mode, hashBucketCount, argv[3], maxPairs, error))
+        {
+            return PrintLoadFailure("Broadphase export failed", error, 31);
+        }
+
+        std::cout << "Wrote " << argv[3] << " using mode=" << BroadphaseModeName(mode) << "\n";
+        return 0;
+    }
+
+    if (command == "relax-angular-bend")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        AngularBendRelaxationSettings s;
+        s.maxBendRadians = ArgToFloat(argc, argv, 4, s.maxBendRadians);
+        s.iterations = ArgToUInt(argc, argv, 5, s.iterations);
+        s.smoothing = ArgToFloat(argc, argv, 6, s.smoothing);
+        s.preserveSegmentLengths = ArgToInt(argc, argv, 7, s.preserveSegmentLengths ? 1 : 0) != 0;
+        s.affectRootAdjacentPoint = ArgToInt(argc, argv, 8, s.affectRootAdjacentPoint ? 1 : 0) != 0;
+        ApplyAngularBendRelaxation(asset, s);
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Angular bend save failed", error, 160);
+        }
+        return 0;
+    }
+
+
+    if (command == "relax-angular-xpbd")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        AngularXpbdBendSettings s = {};
+        s.targetBendRadians = ArgToFloat(argc, argv, 4, s.targetBendRadians);
+        s.bendCompliance = ArgToFloat(argc, argv, 5, s.bendCompliance);
+        s.iterations = ArgToUInt(argc, argv, 6, s.iterations);
+        s.preserveSegmentLengths = ArgToInt(argc, argv, 7, s.preserveSegmentLengths ? 1 : 0) != 0;
+        s.affectRootAdjacentPoint = ArgToInt(argc, argv, 8, s.affectRootAdjacentPoint ? 1 : 0) != 0;
+        s.damping = ArgToFloat(argc, argv, 9, s.damping);
+        ApplyAngularXpbdBendRelaxation(asset, s);
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Angular XPBD bend save failed", error, 166);
+        }
+        return 0;
+    }
+
+    if (command == "collide-scalp-mesh")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairCollisionSettings s;
+        s.shellDistance = ArgToFloat(argc, argv, 4, s.shellDistance);
+        s.stiffness = ArgToFloat(argc, argv, 5, s.stiffness);
+        s.iterations = ArgToUInt(argc, argv, 6, s.iterations);
+        s.affectRootPoints = ArgToInt(argc, argv, 7, s.affectRootPoints ? 1 : 0) != 0;
+        s.affectAllPoints = ArgToInt(argc, argv, 8, s.affectAllPoints ? 1 : 0) != 0;
+        HairCollisionReport report = {};
+        if (!ApplyScalpMeshCollision(asset, s, &report))
+        {
+            return PrintLoadFailure("Scalp mesh collision failed", "Asset needs strands and a scalp mesh.", 161);
+        }
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Scalp mesh collision save failed", error, 162);
+        }
+        std::cout << "affected=" << report.affectedPointCount
+                  << " avgPenetration=" << report.averagePenetration
+                  << " maxPenetration=" << report.maxPenetration << "\n";
+        return 0;
+    }
+
+    if (command == "collide-scalp-sdf")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairCollisionSettings s;
+        s.sdfResolution = ArgToUInt(argc, argv, 4, s.sdfResolution);
+        s.shellDistance = ArgToFloat(argc, argv, 5, s.shellDistance);
+        s.stiffness = ArgToFloat(argc, argv, 6, s.stiffness);
+        s.iterations = ArgToUInt(argc, argv, 7, s.iterations);
+        s.affectRootPoints = ArgToInt(argc, argv, 8, s.affectRootPoints ? 1 : 0) != 0;
+        s.affectAllPoints = ArgToInt(argc, argv, 9, s.affectAllPoints ? 1 : 0) != 0;
+        s.sdfPadding = ArgToFloat(argc, argv, 10, s.sdfPadding);
+        HairCollisionReport report = {};
+        if (!ApplyScalpSdfCollision(asset, s, &report))
+        {
+            return PrintLoadFailure("Scalp SDF collision failed", "Asset needs strands and a scalp mesh.", 163);
+        }
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Scalp SDF collision save failed", error, 164);
+        }
+        std::cout << "affected=" << report.affectedPointCount
+                  << " avgPenetration=" << report.averagePenetration
+                  << " maxPenetration=" << report.maxPenetration << "\n";
+        return 0;
+    }
+
+    if (command == "export-scalp-sdf")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const uint32_t resolution = ArgToUInt(argc, argv, 4, 28u);
+        const float padding = ArgToFloat(argc, argv, 5, 0.04f);
+        if (!ExportScalpSdfSlicesCsv(asset, argv[3], resolution, padding, error))
+        {
+            return PrintLoadFailure("Scalp SDF export failed", error, 165);
         }
         return 0;
     }
@@ -730,6 +1167,34 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    if (command == "haircache-rest")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const float fps = ArgToFloat(argc, argv, 4, 30.0f);
+        const uint32_t frameCount = ArgToUInt(argc, argv, 5, 60u);
+        HairCache cache;
+        if (!InitializeHairCacheForAsset(asset, fps, cache, error))
+        {
+            return PrintLoadFailure("Hair cache init failed", error, 67);
+        }
+        for (uint32_t frame = 0u; frame < frameCount; ++frame)
+        {
+            if (!AppendHairCacheFrame(cache, asset, asset.restPoints, error))
+            {
+                return PrintLoadFailure("Hair cache append failed", error, 68);
+            }
+        }
+        if (!SaveHairCacheToFile(argv[3], cache, error))
+        {
+            return PrintLoadFailure("Hair cache save failed", error, 69);
+        }
+        return 0;
+    }
+
     if (command == "export-scalp-obj")
     {
         if (argc < 4)
@@ -740,6 +1205,110 @@ int main(int argc, char** argv)
         if (!SaveScalpMeshToObj(argv[3], asset.scalpMesh, error))
         {
             return PrintLoadFailure("Scalp export failed", error, 56);
+        }
+        return 0;
+    }
+
+    if (command == "export-bone-template")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const uint32_t boneCount = std::max<uint32_t>(1u, asset.scalpMesh.boneCount);
+        if (!WriteBoneTemplateCsv(argv[3], boneCount, error))
+        {
+            return PrintLoadFailure("Bone template export failed", error, 63);
+        }
+        return 0;
+    }
+
+    if (command == "export-bone-anim-template")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const uint32_t boneCount = std::max<uint32_t>(1u, asset.scalpMesh.boneCount);
+        const uint32_t frameCount = ArgToUInt(argc, argv, 4, 60u);
+        const float fps = ArgToFloat(argc, argv, 5, 30.0f);
+        if (!SaveBoneAnimationTemplateCsv(argv[3], boneCount, frameCount, fps, error))
+        {
+            return PrintLoadFailure("Bone animation template export failed", error, 70);
+        }
+        return 0;
+    }
+
+    if (command == "build-scalp-anim-cache")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        if (asset.scalpMesh.positions.empty())
+        {
+            return PrintLoadFailure("Animated scalp cache failed", "Asset does not contain a scalp mesh.", 71);
+        }
+        if (asset.rootBindings.size() < asset.strands.size())
+        {
+            RootBindingQualityReport report = {};
+            if (!GenerateRootBindingsFromScalp(asset, false, &report))
+            {
+                return PrintLoadFailure("Animated scalp cache failed", "Root bindings are missing and could not be generated from the scalp mesh.", 72);
+            }
+        }
+        BoneAnimationClip clip;
+        if (!LoadBoneAnimationCsv(argv[3], clip, error))
+        {
+            return PrintLoadFailure("Animated scalp cache failed", error, 73);
+        }
+        const bool translateEntireStrands = ArgToInt(argc, argv, 5, 1) != 0;
+        HairCache cache;
+        if (!BuildScalpAnimatedHairCache(asset, clip, translateEntireStrands, cache, error) ||
+            !SaveHairCacheToFile(argv[4], cache, error))
+        {
+            return PrintLoadFailure("Animated scalp cache build failed", error, 74);
+        }
+        std::cout << BuildHairCacheSummary(cache) << "\n";
+        return 0;
+    }
+
+    if (command == "apply-scalp-pose")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        if (asset.scalpMesh.positions.empty())
+        {
+            return PrintLoadFailure("Scalp pose failed", "Asset does not contain a scalp mesh.", 64);
+        }
+        if (asset.rootBindings.size() < asset.strands.size())
+        {
+            RootBindingQualityReport report = {};
+            if (!GenerateRootBindingsFromScalp(asset, false, &report))
+            {
+                return PrintLoadFailure("Scalp pose failed", "Root bindings are missing and could not be generated from the scalp mesh.", 65);
+            }
+        }
+        std::vector<Mat4> boneMatrices;
+        const uint32_t expectedBoneCount = std::max<uint32_t>(1u, asset.scalpMesh.boneCount);
+        if (!LoadBoneMatricesCsv(argv[3], expectedBoneCount, boneMatrices, error))
+        {
+            return PrintLoadFailure("Scalp pose failed", error, 66);
+        }
+        const bool translateEntireStrands = ArgToInt(argc, argv, 5, 1) != 0;
+        const std::vector<Vec3> skinnedPositions = ComputeSkinnedScalpPositions(asset.scalpMesh, boneMatrices);
+        asset.scalpMesh.positions = skinnedPositions;
+        asset.scalpMesh.boneCount = static_cast<uint32_t>(boneMatrices.size());
+        RebuildRootRestPositionsFromScalpPositions(asset, skinnedPositions, translateEntireStrands);
+        if (!SaveHairAssetToHairBinary(argv[4], asset, error))
+        {
+            return PrintLoadFailure("Scalp pose save failed", error, 67);
         }
         return 0;
     }
