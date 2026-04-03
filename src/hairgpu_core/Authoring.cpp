@@ -4,6 +4,8 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <limits>
+#include <unordered_map>
 
 namespace hairgpu
 {
@@ -476,6 +478,280 @@ namespace hairgpu
                 }
             }
         }
+    }
+
+
+    namespace
+    {
+        Vec3 SampleCanonicalPoint(const HairAsset& asset, const StrandRange& strand, float t)
+        {
+            if (strand.pointCount == 0u || strand.pointOffset >= asset.restPoints.size())
+            {
+                return {};
+            }
+            if (strand.pointCount == 1u)
+            {
+                return asset.restPoints[strand.pointOffset];
+            }
+            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
+            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
+            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
+            const float alpha = scaled - static_cast<float>(i0);
+            return Lerp(asset.restPoints[strand.pointOffset + i0], asset.restPoints[strand.pointOffset + i1], alpha);
+        }
+
+        float SampleCanonicalWidth(const HairAsset& asset, const StrandRange& strand, float t)
+        {
+            if (strand.pointCount == 0u || strand.pointOffset >= asset.pointWidths.size())
+            {
+                return 0.004f;
+            }
+            if (strand.pointCount == 1u)
+            {
+                return asset.pointWidths[strand.pointOffset];
+            }
+            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
+            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
+            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
+            const float alpha = scaled - static_cast<float>(i0);
+            return Lerp(asset.pointWidths[strand.pointOffset + i0], asset.pointWidths[strand.pointOffset + i1], alpha);
+        }
+
+        bool SourceStrandIsGuide(const HairAsset& asset, uint32_t strandIndex)
+        {
+            const bool orderedGuide = strandIndex < asset.guideStrandCount;
+            const bool flaggedGuide = strandIndex < asset.strands.size() && ((asset.strands[strandIndex].flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u);
+            if (asset.guideStrandCount > 0u)
+            {
+                return orderedGuide || flaggedGuide;
+            }
+            return flaggedGuide;
+        }
+
+        uint32_t FindClosestGuide(const HairAsset& asset, const std::vector<uint32_t>& guideIndices, uint32_t strandIndex)
+        {
+            if (guideIndices.empty())
+            {
+                return 0u;
+            }
+            const StrandRange& strand = asset.strands[strandIndex];
+            const Vec3 root = (strand.pointCount > 0u && strand.pointOffset < asset.restPoints.size()) ? asset.restPoints[strand.pointOffset] : Vec3{};
+            uint32_t bestGuide = guideIndices.front();
+            float bestDistanceSq = std::numeric_limits<float>::max();
+            for (uint32_t guideIndex : guideIndices)
+            {
+                if (guideIndex >= asset.strands.size())
+                {
+                    continue;
+                }
+                const StrandRange& guide = asset.strands[guideIndex];
+                if (guide.pointCount == 0u || guide.pointOffset >= asset.restPoints.size())
+                {
+                    continue;
+                }
+                const Vec3 delta = asset.restPoints[guide.pointOffset] - root;
+                const float distanceSq = Dot(delta, delta);
+                if (distanceSq < bestDistanceSq)
+                {
+                    bestDistanceSq = distanceSq;
+                    bestGuide = guideIndex;
+                }
+            }
+            return bestGuide;
+        }
+
+        void AppendCanonicalStrand(HairAsset& dst,
+                                   const HairAsset& src,
+                                   uint32_t srcStrandIndex,
+                                   uint32_t targetPointCount,
+                                   uint32_t groupId,
+                                   uint32_t flags,
+                                   int32_t parentGuide)
+        {
+            const StrandRange& srcStrand = src.strands[srcStrandIndex];
+            StrandRange dstStrand = {};
+            dstStrand.pointOffset = static_cast<uint32_t>(dst.restPoints.size());
+            dstStrand.pointCount = targetPointCount;
+            dstStrand.groupId = groupId;
+            dstStrand.flags = flags;
+            dst.strands.push_back(dstStrand);
+
+            StrandMaterial material = (srcStrandIndex < src.materials.size()) ? src.materials[srcStrandIndex] : StrandMaterial{};
+            dst.materials.push_back(material);
+
+            RootBinding binding = (srcStrandIndex < src.rootBindings.size()) ? src.rootBindings[srcStrandIndex] : RootBinding{};
+            if (!dst.scalpMesh.triangles.empty())
+            {
+                binding.triangleIndex = std::min<uint32_t>(binding.triangleIndex, static_cast<uint32_t>(dst.scalpMesh.triangles.size() - 1u));
+            }
+            else
+            {
+                binding.triangleIndex = 0u;
+                binding.barycentric = {1.0f, 0.0f, 0.0f};
+            }
+            dst.rootBindings.push_back(binding);
+
+            FollowData follow = (srcStrandIndex < src.followData.size()) ? src.followData[srcStrandIndex] : FollowData{};
+            follow.parentGuide = parentGuide;
+            if ((flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u)
+            {
+                follow.parentGuide = static_cast<int32_t>(groupId);
+                follow.followWeight = 1.0f;
+                follow.clumpWeight = 0.0f;
+                follow.noiseWeight = 0.0f;
+            }
+            dst.followData.push_back(follow);
+
+            for (uint32_t pointIndex = 0u; pointIndex < targetPointCount; ++pointIndex)
+            {
+                const float t = (targetPointCount > 1u) ? (static_cast<float>(pointIndex) / static_cast<float>(targetPointCount - 1u)) : 0.0f;
+                dst.restPoints.push_back(SampleCanonicalPoint(src, srcStrand, t));
+                dst.pointWidths.push_back(SampleCanonicalWidth(src, srcStrand, t));
+            }
+        }
+    }
+
+    bool CanonicalizeHairAssetToParticleChains(HairAsset& asset, const ParticleChainCanonicalizationSettings& settings, std::string& outError)
+    {
+        outError.clear();
+        if (asset.strands.empty())
+        {
+            outError = "Asset has no strands to canonicalize.";
+            return false;
+        }
+        if (asset.restPoints.empty())
+        {
+            outError = "Asset has no points to canonicalize.";
+            return false;
+        }
+        if (asset.pointWidths.size() != asset.restPoints.size())
+        {
+            outError = "pointWidths must match restPoints before canonicalization.";
+            return false;
+        }
+
+        uint32_t targetPointCount = settings.targetPointCount;
+        if (targetPointCount == 0u)
+        {
+            targetPointCount = std::max<uint32_t>(asset.particlesPerStrand, 0u);
+            for (const StrandRange& strand : asset.strands)
+            {
+                targetPointCount = std::max(targetPointCount, strand.pointCount);
+            }
+        }
+        targetPointCount = std::max<uint32_t>(targetPointCount, 2u);
+
+        std::vector<uint32_t> guideIndices;
+        std::vector<uint32_t> followerIndices;
+        guideIndices.reserve(asset.strands.size());
+        followerIndices.reserve(asset.strands.size());
+
+        for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+        {
+            if (SourceStrandIsGuide(asset, strandIndex))
+            {
+                guideIndices.push_back(strandIndex);
+            }
+        }
+        if (guideIndices.empty())
+        {
+            for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+            {
+                const bool hasParentGuide = strandIndex < asset.followData.size() && asset.followData[strandIndex].parentGuide >= 0;
+                if (!hasParentGuide)
+                {
+                    guideIndices.push_back(strandIndex);
+                }
+            }
+        }
+        if (guideIndices.empty())
+        {
+            for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+            {
+                guideIndices.push_back(strandIndex);
+            }
+        }
+
+        std::vector<uint8_t> guideMask(asset.strands.size(), 0u);
+        for (uint32_t strandIndex : guideIndices)
+        {
+            if (strandIndex < guideMask.size())
+            {
+                guideMask[strandIndex] = 1u;
+            }
+        }
+        for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+        {
+            if (guideMask[strandIndex] == 0u)
+            {
+                followerIndices.push_back(strandIndex);
+            }
+        }
+
+        HairAsset canonical = {};
+        canonical.scalpMesh = asset.scalpMesh;
+        canonical.particlesPerStrand = targetPointCount;
+        canonical.guideStrandCount = static_cast<uint32_t>(guideIndices.size());
+        canonical.followerStrandCount = static_cast<uint32_t>(followerIndices.size());
+        canonical.strands.reserve(asset.strands.size());
+        canonical.restPoints.reserve(asset.strands.size() * static_cast<size_t>(targetPointCount));
+        canonical.pointWidths.reserve(asset.strands.size() * static_cast<size_t>(targetPointCount));
+        canonical.materials.reserve(asset.strands.size());
+        canonical.rootBindings.reserve(asset.strands.size());
+        canonical.followData.reserve(asset.strands.size());
+
+        std::unordered_map<uint32_t, uint32_t> oldGuideToNewGuide;
+        oldGuideToNewGuide.reserve(guideIndices.size());
+        for (uint32_t newGuideIndex = 0u; newGuideIndex < guideIndices.size(); ++newGuideIndex)
+        {
+            const uint32_t oldStrandIndex = guideIndices[newGuideIndex];
+            oldGuideToNewGuide[oldStrandIndex] = newGuideIndex;
+            AppendCanonicalStrand(canonical,
+                                  asset,
+                                  oldStrandIndex,
+                                  targetPointCount,
+                                  newGuideIndex,
+                                  static_cast<uint32_t>(StrandFlags::Guide),
+                                  static_cast<int32_t>(newGuideIndex));
+        }
+
+        for (uint32_t followerOrder = 0u; followerOrder < followerIndices.size(); ++followerOrder)
+        {
+            const uint32_t oldStrandIndex = followerIndices[followerOrder];
+            int32_t parentGuide = -1;
+            if (oldStrandIndex < asset.followData.size())
+            {
+                parentGuide = asset.followData[oldStrandIndex].parentGuide;
+            }
+            uint32_t resolvedSourceGuide = 0u;
+            auto remapIt = (parentGuide >= 0) ? oldGuideToNewGuide.find(static_cast<uint32_t>(parentGuide)) : oldGuideToNewGuide.end();
+            if (remapIt != oldGuideToNewGuide.end())
+            {
+                resolvedSourceGuide = remapIt->second;
+            }
+            else
+            {
+                const uint32_t closestOldGuide = FindClosestGuide(asset, guideIndices, oldStrandIndex);
+                auto closestIt = oldGuideToNewGuide.find(closestOldGuide);
+                resolvedSourceGuide = (closestIt != oldGuideToNewGuide.end()) ? closestIt->second : 0u;
+            }
+
+            AppendCanonicalStrand(canonical,
+                                  asset,
+                                  oldStrandIndex,
+                                  targetPointCount,
+                                  resolvedSourceGuide,
+                                  asset.strands[oldStrandIndex].flags & ~static_cast<uint32_t>(StrandFlags::Guide),
+                                  static_cast<int32_t>(resolvedSourceGuide));
+        }
+
+        if (settings.snapRootsToScalp && !canonical.scalpMesh.triangles.empty() && canonical.rootBindings.size() == canonical.strands.size())
+        {
+            RebuildRootRestPositionsFromScalp(canonical);
+        }
+
+        asset = std::move(canonical);
+        return true;
     }
 
     bool ApplyPaletteToRegion(HairAsset& asset, const RegionSelectionResult& selection, const Palette& palette, float strength, std::string& outError)

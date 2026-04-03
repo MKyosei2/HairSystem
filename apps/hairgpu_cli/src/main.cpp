@@ -41,13 +41,31 @@ namespace
     bool LoadHairAssetAny(const std::filesystem::path& path, HairAsset& asset, std::string& error)
     {
         const std::string ext = LowerExt(path);
-        if (ext == ".csv") return LoadHairAssetFromCurvesCsv(path, asset, error);
-        if (ext == ".usd" || ext == ".usda") return LoadHairAssetFromUsda(path, asset, error);
-        if (ext == ".hair") return LoadHairAssetFromHairFile(path, asset, error);
-        if (ext == ".hairbin") return LoadHairAssetFromHairBinary(path, asset, error);
-        if (ext == ".abc") return LoadHairAssetFromAlembic(path, asset, error);
-        error = "Unsupported input extension: " + ext;
-        return false;
+        bool loaded = false;
+        if (ext == ".csv") loaded = LoadHairAssetFromCurvesCsv(path, asset, error);
+        else if (ext == ".usd" || ext == ".usda") loaded = LoadHairAssetFromUsda(path, asset, error);
+        else if (ext == ".hair") loaded = LoadHairAssetFromHairFile(path, asset, error);
+        else if (ext == ".hairbin") loaded = LoadHairAssetFromHairBinary(path, asset, error);
+        else if (ext == ".abc") loaded = LoadHairAssetFromAlembic(path, asset, error);
+        else
+        {
+            error = "Unsupported input extension: " + ext;
+            return false;
+        }
+
+        if (!loaded)
+        {
+            return false;
+        }
+
+        ParticleChainCanonicalizationSettings canonicalSettings = {};
+        canonicalSettings.targetPointCount = asset.particlesPerStrand;
+        canonicalSettings.snapRootsToScalp = true;
+        if (!CanonicalizeHairAssetToParticleChains(asset, canonicalSettings, error))
+        {
+            return false;
+        }
+        return true;
     }
 
     uint32_t ArgToUInt(int argc, char** argv, int index, uint32_t fallback)

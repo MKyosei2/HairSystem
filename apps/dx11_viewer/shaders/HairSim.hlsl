@@ -936,18 +936,21 @@ void AccumulateSelfCollisionResponse(
     }
 
     float distValue = sqrt(distSq);
-    float3 dir = delta / distValue;
-    if (distValue < contactRadius)
+    if (distValue >= contactSpringRadius)
     {
-        float penetration = contactRadius - distValue;
-        push += dir * penetration;
-        pushSamples += 1u;
+        return;
     }
-    else if (distValue < contactSpringRadius)
+
+    float3 dir = delta / distValue;
+    float kernel = saturate(1.0f - distValue / max(contactSpringRadius, 1.0e-5f));
+    float densityWeight = kernel * kernel;
+    push += dir * densityWeight;
+    pushSamples += 1u;
+
+    if (distValue < preferredSeparation)
     {
-        float error = distValue - preferredSeparation;
-        float springWeight = saturate(1.0f - (distValue - contactRadius) / max(contactSpringRadius - contactRadius, 1.0e-5f));
-        spring += dir * error * springWeight;
+        float penetration = preferredSeparation - distValue;
+        spring += dir * penetration;
         springSamples += 1u;
     }
 }
@@ -1156,12 +1159,13 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
 
     if (pushSamples > 0u)
     {
-        p += (push / float(pushSamples)) * SelfCollisionStiffness;
+        float densityGain = lerp(0.35f, 1.25f, saturate(float(pushSamples) / 8.0f));
+        p += (push / float(pushSamples)) * (SelfCollisionStiffness * densityGain);
     }
 
     if (springSamples > 0u)
     {
-        p -= (spring / float(springSamples)) * (SelfCollisionStiffness * 0.18f);
+        p += (spring / float(springSamples)) * (SelfCollisionStiffness * 0.22f);
     }
 
     p = ApplyLooseGuideConstraints(strandIndex, localIndex, p);

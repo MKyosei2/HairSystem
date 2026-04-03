@@ -1,0 +1,35 @@
+HairSystem DX11 Viewer patch checklist
+=====================================
+
+Applied fixes
+-------------
+1. apps/dx11_viewer/hairgpu_dx11_viewer.vcxproj
+   - Visual Studio debugger working directory is now $(ProjectDir).
+   - Post-build now copies all .hlsl files to $(OutDir)\shaders\.
+   - Key startup shaders are also copied to $(OutDir) root for backward compatibility.
+
+2. apps/dx11_viewer/src/GpuHairViewer.cpp
+   - Shader search now also checks repo-root/apps/dx11_viewer/shaders.
+   - Missing-file errors are distinguished from HLSL compile errors.
+   - Startup dialog now lists concrete checks instead of only "Unknown shader compilation error".
+
+What to verify in Visual Studio
+-------------------------------
+1. Open HairSystem.sln.
+2. Right-click hairgpu_dx11_viewer -> Set as Startup Project.
+3. Use Debug | x64 or Release | x64.
+4. Delete stale output folders before the first rebuild if needed:
+   - .vs
+   - bin
+   - bin-int
+5. Rebuild the solution.
+
+What to verify after build
+--------------------------
+1. Confirm these paths now exist:
+   - bin\Debug\hairgpu_dx11_viewer\shaders\HairParticle.hlsl
+   - bin\Debug\hairgpu_dx11_viewer\shaders\HairSim.hlsl
+   - bin\Debug\hairgpu_dx11_viewer\shaders\DebugLine.hlsl
+   - bin\Debug\hairgpu_dx11_viewer\shaders\ScalpMesh.hlsl
+2. If you run under the debugger, the working directory should be apps\dx11_viewer.
+3. If startup still fails, the dialog should now say whether the shader file is missing or the HLSL itself failed to compile.

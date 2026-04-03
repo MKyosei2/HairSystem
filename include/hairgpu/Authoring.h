@@ -74,6 +74,13 @@ namespace hairgpu
         float damping = 0.08f;
     };
 
+    struct ParticleChainCanonicalizationSettings
+    {
+        uint32_t targetPointCount = 0u;
+        bool snapRootsToScalp = true;
+        bool reorderGuideFirst = true;
+    };
+
     struct PaletteSample
     {
         float u = 0.0f;
@@ -93,4 +100,5 @@ namespace hairgpu
     void ApplyAngularXpbdBendRelaxation(HairAsset& asset, const AngularXpbdBendSettings& settings);
     bool LoadPaletteCsv(const std::filesystem::path& path, Palette& outPalette, std::string& outError);
     bool ApplyPaletteToRegion(HairAsset& asset, const RegionSelectionResult& selection, const Palette& palette, float strength, std::string& outError);
+    bool CanonicalizeHairAssetToParticleChains(HairAsset& asset, const ParticleChainCanonicalizationSettings& settings, std::string& outError);
 }

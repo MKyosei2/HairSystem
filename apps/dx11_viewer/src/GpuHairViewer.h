@@ -106,12 +106,6 @@ namespace hairgpu::viewer
             uint32_t strandIndex = 0;
         };
 
-        struct StrandTubeVertex
-        {
-            float strandU = 0.0f;
-            float angle = 0.0f;
-        };
-
         struct PerformanceSample
         {
             float elapsedSeconds = 0.0f;
@@ -177,7 +171,7 @@ namespace hairgpu::viewer
             float freezeBackThreshold = -0.045f;
             float freezeBlend = 0.82f;
 
-            uint32_t broadphaseMode = 1u;
+            uint32_t broadphaseMode = 0u;
             uint32_t broadphaseHashBucketCount = 32768u;
             uint32_t _broadphasePadding0 = 0u;
             uint32_t _broadphasePadding1 = 0u;
@@ -206,10 +200,8 @@ namespace hairgpu::viewer
 
         enum class RenderMode : uint32_t
         {
-            Ribbon = 0,
-            TubePreview = 1,
-            VoxelPreview = 2,
-            BrickInstanced = 3,
+            ParticlePointSprite = 0,
+            ParticleBillboard = 1,
         };
 
         enum class DebugColorMode : uint32_t
@@ -321,7 +313,7 @@ namespace hairgpu::viewer
         bool m_dragging = false;
         bool m_syncingControls = false;
         bool m_enableSelfCollision = true;
-        bool m_enableScalpMotion = true;
+        bool m_enableScalpMotion = false;
         bool m_showColliderDebug = false;
         bool m_showScalpWireframe = false;
         bool m_showScalpMesh = true;
@@ -331,7 +323,7 @@ namespace hairgpu::viewer
         bool m_showFollowerSkeleton = false;
         bool m_showRootMarkers = false;
         bool m_showFollowLinks = false;
-        bool m_showTestMesh = false;
+        bool m_showTestMesh = false; // legacy CPU test mesh path disabled in runtime UI
         POINT m_lastMouse = {};
 
         float m_cameraYaw = 0.1f;
@@ -345,7 +337,7 @@ namespace hairgpu::viewer
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
-        uint32_t m_selfCollisionBroadphaseMode = 1u;
+        uint32_t m_selfCollisionBroadphaseMode = 0u;
         bool m_enableRuntimeAngularBend = true;
         float m_runtimeAngularBendRadians = 0.18f;
         float m_runtimeAngularBendCompliance = 5.0e-6f;
@@ -400,19 +392,10 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Texture2D> m_depthTexture;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_dsv;
 
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_ribbonVS;
-        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_ribbonGS;
-        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ribbonPS;
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_tubeVS;
-        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_tubeGS;
-        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_tubePS;
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_strandTubeVS;
-        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_strandTubePS;
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_voxelVS;
-        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_voxelGS;
-        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_voxelPS;
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_brickVS;
-        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_brickPS;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_particleVS;
+        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particlePointGS;
+        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particleBillboardGS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_particlePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_debugLineVS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_debugLinePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_scalpVS;
@@ -434,9 +417,6 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildSortedRangesCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_selfCollisionCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
-        Microsoft::WRL::ComPtr<ID3D11InputLayout> m_inputLayout;
-        Microsoft::WRL::ComPtr<ID3D11InputLayout> m_strandTubeInputLayout;
-        Microsoft::WRL::ComPtr<ID3D11InputLayout> m_brickInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_scalpInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_hairMeshInputLayout;
@@ -463,11 +443,7 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_strandTubeVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_strandTubeIndexBuffer;
         uint32_t m_strandTubeIndexCount = 0;
-        uint32_t m_strandTubeRingSides = 8;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_brickVertexBuffer;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_brickIndexBuffer;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_brickInstanceBuffer;
-        uint32_t m_brickIndexCount = 0;
+        uint32_t m_strandTubeRingSides = 0;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_hairMeshVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_debugLineTemplateVertexBuffer;
         StructuredBuffer m_debugLineEntriesBuffer;
@@ -499,7 +475,7 @@ namespace hairgpu::viewer
         uint32_t m_gpuTimingWriteIndex = 0u;
         int32_t m_activeGpuTimingFrameIndex = -1;
 
-        RenderMode m_renderMode = RenderMode::BrickInstanced;
+        RenderMode m_renderMode = RenderMode::ParticleBillboard;
         DebugColorMode m_debugColorMode = DebugColorMode::Natural;
 
         LARGE_INTEGER m_qpcFrequency = {};
@@ -539,7 +515,6 @@ namespace hairgpu::viewer
         HWND m_checkShowFollowers = nullptr;
         HWND m_checkShowRoots = nullptr;
         HWND m_checkShowLinks = nullptr;
-        HWND m_checkShowTestMesh = nullptr;
         HWND m_editGuides = nullptr;
         HWND m_editFollowers = nullptr;
         HWND m_editParticles = nullptr;

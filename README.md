@@ -14,7 +14,7 @@ Recommended first step on Windows:
 3. Set `hairgpu_dx11_viewer` as the startup project
 4. Build and run
 
-The viewer project copies `HairSim.hlsl`, `HairRibbon.hlsl`, and `HairTube.hlsl` to the output directory automatically and uses `./` as the shader search path while debugging.
+The viewer project copies only the active particle-runtime shaders (`HairSim.hlsl`, `HairParticle.hlsl`, `DebugLine.hlsl`, and `ScalpMesh.hlsl`) to the output directory automatically and uses `./` as the shader search path while debugging.
 
 Helper scripts:
 
@@ -112,6 +112,19 @@ hairgpu_cli relax-angular-xpbd generated_scaffold\asset_normalized.hairbin xpbd_
 ```
 
 この経路では **full-strand hair cache**, **CSV ベースの bone animation → scalp pose → animated hair cache**, **offline angular XPBD bend relaxation** をコア/CLI だけで検証できます。
+
+
+## 複数PCでの最安・最速テスト配布
+
+このリポジトリには、**内部テスト向けの最安・最速署名フロー**を追加しています。
+
+- `docs/FASTEST_INTERNAL_TEST_SIGNING.md`
+- `tools/signing/Create-InternalTestCodeSigningCert.ps1`
+- `tools/signing/Install-InternalTestCodeSigningCert.ps1`
+- `tools/signing/Sign-HairSystemBuild.ps1`
+- `tools/signing/Create-HairSystemTestBundle.ps1`
+
+要点だけ言うと、**自己署名のテスト用コード署名証明書を作り、署名済みビルド + 公開証明書を配る**流れです。これは内部テストでは最も安くて速いですが、**Smart App Control や組織管理の App Control / AppLocker を必ず通す方法ではありません**。詳細は `docs/FASTEST_INTERNAL_TEST_SIGNING.md` を見てください。
 
 ## ビューア操作
 

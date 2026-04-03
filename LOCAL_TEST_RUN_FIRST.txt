@@ -1,0 +1,12 @@
+HairSystem local test quick steps
+================================
+
+1. Run build_scripts\Setup_Local_Test_Signing.cmd once on each test PC.
+2. Build hairgpu_dx11_viewer in Visual Studio.
+3. The post-build step will copy shaders and auto-sign the output when the test certificate exists.
+4. To make a signed handoff ZIP, run build_scripts\Create_Signed_Test_Bundle.cmd.
+
+Notes:
+- ScalpSim.hlsl is now included and copied to the output directory.
+- If ScalpSim.hlsl is missing at runtime, the viewer falls back to an embedded shader or CPU scalp animation instead of aborting startup.
+- Very strict managed App Control / AppLocker / WDAC devices can still require the administrator to allow the signer or app.

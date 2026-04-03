@@ -67,17 +67,11 @@
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
-copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
-copy /Y "$(ProjectDir)shaders\HairBrickInstanced.hlsl" "$(OutDir)HairBrickInstanced.hlsl"
-copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"
-copy /Y "$(ProjectDir)shaders\HairIndirectArgs.hlsl" "$(OutDir)HairIndirectArgs.hlsl"
-copy /Y "$(ProjectDir)shaders\HairLine.hlsl" "$(OutDir)HairLine.hlsl"
-copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
-copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
-copy /Y "$(ProjectDir)shaders\HairStrandInstanced.hlsl" "$(OutDir)HairStrandInstanced.hlsl"
-copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
-copy /Y "$(ProjectDir)shaders\HairVoxel.hlsl" "$(OutDir)HairVoxel.hlsl"
-copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"</Command>
+if exist "$(ProjectDir)shaders\DebugLine.hlsl" copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
+if exist "$(ProjectDir)shaders\HairParticle.hlsl" copy /Y "$(ProjectDir)shaders\HairParticle.hlsl" "$(OutDir)HairParticle.hlsl"
+if exist "$(ProjectDir)shaders\HairSim.hlsl" copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
+if exist "$(ProjectDir)shaders\ScalpMesh.hlsl" copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"
+exit /b 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -104,17 +98,11 @@ copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"</Command
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
-copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
-copy /Y "$(ProjectDir)shaders\HairBrickInstanced.hlsl" "$(OutDir)HairBrickInstanced.hlsl"
-copy /Y "$(ProjectDir)shaders\HairCpuMesh.hlsl" "$(OutDir)HairCpuMesh.hlsl"
-copy /Y "$(ProjectDir)shaders\HairIndirectArgs.hlsl" "$(OutDir)HairIndirectArgs.hlsl"
-copy /Y "$(ProjectDir)shaders\HairLine.hlsl" "$(OutDir)HairLine.hlsl"
-copy /Y "$(ProjectDir)shaders\HairRibbon.hlsl" "$(OutDir)HairRibbon.hlsl"
-copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
-copy /Y "$(ProjectDir)shaders\HairStrandInstanced.hlsl" "$(OutDir)HairStrandInstanced.hlsl"
-copy /Y "$(ProjectDir)shaders\HairTube.hlsl" "$(OutDir)HairTube.hlsl"
-copy /Y "$(ProjectDir)shaders\HairVoxel.hlsl" "$(OutDir)HairVoxel.hlsl"
-copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"</Command>
+if exist "$(ProjectDir)shaders\DebugLine.hlsl" copy /Y "$(ProjectDir)shaders\DebugLine.hlsl" "$(OutDir)DebugLine.hlsl"
+if exist "$(ProjectDir)shaders\HairParticle.hlsl" copy /Y "$(ProjectDir)shaders\HairParticle.hlsl" "$(OutDir)HairParticle.hlsl"
+if exist "$(ProjectDir)shaders\HairSim.hlsl" copy /Y "$(ProjectDir)shaders\HairSim.hlsl" "$(OutDir)HairSim.hlsl"
+if exist "$(ProjectDir)shaders\ScalpMesh.hlsl" copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"
+exit /b 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -126,15 +114,8 @@ copy /Y "$(ProjectDir)shaders\ScalpMesh.hlsl" "$(OutDir)ScalpMesh.hlsl"</Command
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\DebugLine.hlsl" />
-    <None Include="shaders\HairBrickInstanced.hlsl" />
-    <None Include="shaders\HairCpuMesh.hlsl" />
-    <None Include="shaders\HairIndirectArgs.hlsl" />
-    <None Include="shaders\HairLine.hlsl" />
-    <None Include="shaders\HairRibbon.hlsl" />
+    <None Include="shaders\HairParticle.hlsl" />
     <None Include="shaders\HairSim.hlsl" />
-    <None Include="shaders\HairStrandInstanced.hlsl" />
-    <None Include="shaders\HairTube.hlsl" />
-    <None Include="shaders\HairVoxel.hlsl" />
     <None Include="shaders\ScalpMesh.hlsl" />
   </ItemGroup>
   <ItemGroup>
