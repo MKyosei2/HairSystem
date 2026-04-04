@@ -31,8 +31,14 @@ namespace hairgpu
     {
         std::vector<Vec3> currentGuideRoots;
         std::vector<Vec3> previousGuideRoots;
+        std::vector<Vec3> prePreviousGuideRoots;
         std::vector<float> guideUncertainty;
         std::vector<float> guideContactScores;
+        std::vector<float> guideExternalContactScores;
+        std::vector<float> guideAccelerationScores;
+        std::vector<float> guideStretchScores;
+        std::vector<float> guideBendScores;
+        std::vector<float> guideDensityScores;
         std::vector<float> guideVisibilityScores;
         Vec3 cameraPosition = { 0.0f, 1.6f, -1.8f };
         Vec3 cameraForward = { 0.0f, 0.0f, 1.0f };
@@ -41,15 +47,21 @@ namespace hairgpu
 
     struct ActiveSetScoringSettings
     {
-        float motionWeight = 0.24f;
-        float displacementWeight = 0.18f;
-        float visibilityWeight = 0.14f;
-        float silhouetteWeight = 0.14f;
-        float uncertaintyWeight = 0.10f;
-        float contactWeight = 0.14f;
-        float clusterSizeWeight = 0.06f;
+        float motionWeight = 0.18f;
+        float displacementWeight = 0.14f;
+        float visibilityWeight = 0.10f;
+        float silhouetteWeight = 0.10f;
+        float uncertaintyWeight = 0.08f;
+        float contactWeight = 0.10f;
+        float accelerationWeight = 0.08f;
+        float stretchWeight = 0.08f;
+        float bendWeight = 0.06f;
+        float densityWeight = 0.04f;
+        float externalContactWeight = 0.02f;
+        float clusterSizeWeight = 0.02f;
         float velocitySoftRange = 0.35f;
         float displacementSoftRange = 0.030f;
+        float accelerationSoftRange = 8.0f;
         float nearDistance = 0.55f;
         float farDistance = 2.50f;
     };
@@ -80,6 +92,11 @@ namespace hairgpu
         float silhouetteScore = 0.0f;
         float uncertaintyScore = 0.0f;
         float contactScore = 0.0f;
+        float accelerationScore = 0.0f;
+        float stretchScore = 0.0f;
+        float bendScore = 0.0f;
+        float densityScore = 0.0f;
+        float externalContactScore = 0.0f;
         float clusterSizeScore = 0.0f;
         float finalScore = 0.0f;
         bool selected = false;

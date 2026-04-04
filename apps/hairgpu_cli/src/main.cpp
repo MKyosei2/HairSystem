@@ -229,6 +229,34 @@ namespace
         return true;
     }
 
+    bool WriteLodPackageManifest(const std::filesystem::path& filePath,
+                                 const std::vector<hairgpu::HairLodAsset>& lods,
+                                 const std::string& cardsFileName,
+                                 std::string& outError)
+    {
+        std::ofstream out(filePath);
+        if (!out)
+        {
+            outError = "Failed to open LOD package manifest: " + filePath.string();
+            return false;
+        }
+        out << "{\n  \"lods\": [\n";
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            const auto& lod = lods[i];
+            out << "    {\"index\": " << i
+                << ", \"name\": \"" << lod.descriptor.name << "\""
+                << ", \"strandFraction\": " << lod.descriptor.strandFraction
+                << ", \"particleFraction\": " << lod.descriptor.particleFraction
+                << ", \"switchDistance\": " << lod.descriptor.switchDistance
+                << ", \"hairbin\": \"lod" << i << ".hairbin\"}"
+                << ((i + 1 < lods.size()) ? "," : "") << "\n";
+        }
+        out << "  ],\n  \"farCardsObj\": \"" << cardsFileName << "\"\n}\n";
+        outError.clear();
+        return true;
+    }
+
     SelfCollisionBroadphaseMode ParseBroadphaseMode(const std::string& text)
     {
         std::string lowered = text;
@@ -311,6 +339,7 @@ namespace
   hairgpu_cli export-usda <input> <output.usda>
   hairgpu_cli export-cards <input> <output.obj>
   hairgpu_cli build-lods <input> <output_dir>
+  hairgpu_cli build-lod-package <input> <output_dir>
   hairgpu_cli guidecache-info <input.guidecache>
   hairgpu_cli guidecache-rest <input> <output.guidecache> [fps] [frames]
   hairgpu_cli haircache-info <input.haircache>
@@ -346,9 +375,10 @@ namespace
   hairgpu_cli reduced-eval <input.reducedbin> <sequence_dir> [report.txt]
   hairgpu_cli reduced-eval-json <input.reducedbin> <sequence_dir> <report.json>
   hairgpu_cli hybrid-teacher-dataset <input> <output_dir> [frames] [fps] [swayAmplitude] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [maxSolverIterations]
-  hairgpu_cli hybrid-train-bundle <teacher_dir> <output_dir> [priorGuides] [residualGuides] [maxInfluences] [regularization] [validationStride] [smoothingAlpha] [residualGuideGain] [residualBlend]
+  hairgpu_cli hybrid-train-bundle <teacher_dir> <output_dir> [priorGuides] [residualGuides] [maxInfluences] [regularization] [validationStride] [smoothingAlpha] [residualGuideGain] [residualBlend] [enableRuntimeRefinement=1] [refinementPasses=2]
   hairgpu_cli hybrid-bundle-info <bundle_dir>
   hairgpu_cli hybrid-run-bundle <teacher_dir> <bundle_dir> <output_dir> [residualBlendOverride] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [exportPerFrameHairBins]
+  hairgpu_cli hybrid-run-ablation <teacher_dir> <bundle_dir> <output.json> [targetFrameMs]
 )USAGE";
     }
 
@@ -492,6 +522,8 @@ int main(int argc, char** argv)
         settings.priorGuideSmoothingAlpha = ArgToFloat(argc, argv, 9, settings.priorGuideSmoothingAlpha);
         settings.residualGuideGain = ArgToFloat(argc, argv, 10, settings.residualGuideGain);
         settings.residualBlend = ArgToFloat(argc, argv, 11, settings.residualBlend);
+        settings.enableRuntimeRefinement = ArgToInt(argc, argv, 12, settings.enableRuntimeRefinement ? 1 : 0) != 0;
+        settings.refinementPasses = ArgToUInt(argc, argv, 13, settings.refinementPasses);
 
         HybridModelBundle bundle;
         HybridModelTrainingReport report;
@@ -567,7 +599,54 @@ int main(int argc, char** argv)
                   << " avgHybridRmsAfter=" << report.averageHybridRmsErrorAfterCorrection
                   << " avgSelectedClusters=" << report.averageSelectedClusterCount
                   << " avgSelectedGuides=" << report.averageSelectedGuideCount
-                  << " avgPenetration=" << report.averagePenetration << "\n";
+                  << " avgPenetration=" << report.averagePenetration
+                  << " avgEstimatedFrameMs=" << report.averageEstimatedFrameMilliseconds
+                  << " p95EstimatedFrameMs=" << report.p95EstimatedFrameMilliseconds
+                  << " p99EstimatedFrameMs=" << report.p99EstimatedFrameMilliseconds
+                  << " peakEstimatedFrameMs=" << report.peakEstimatedFrameMilliseconds
+                  << " budgetHitRate=" << report.frameBudgetHitRate
+                  << " estimatedPeakMemoryMB=" << report.estimatedPeakMemoryMegabytes << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-run-ablation")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        ReducedModelTrainingSequence teacherSequence;
+        HybridModelBundle bundle;
+        std::string error;
+        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
+        {
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 78);
+        }
+        if (!LoadHybridModelBundle(argv[3], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 79);
+        }
+
+        if (argc >= 6)
+        {
+            bundle.budget.targetFrameMilliseconds = ArgToFloat(argc, argv, 5, bundle.budget.targetFrameMilliseconds);
+        }
+
+        HybridAblationReport report;
+        ColliderSet colliders = {};
+        if (!RunHybridAblationStudy(teacherSequence, colliders, bundle, ArgToFloat(argc, argv, 5, bundle.budget.targetFrameMilliseconds), argv[4], report, error))
+        {
+            return PrintLoadFailure("Hybrid ablation failed", error, 80);
+        }
+        std::cout << "frames=" << report.frameCount
+                  << " priorOnlyAfter=" << report.priorOnly.averageRmsError
+                  << " priorResidualAfter=" << report.priorResidualOnly.averageRmsError
+                  << " activeSetOnlyAfter=" << report.activeSetCorrectiveOnly.averageRmsError
+                  << " fullHybridAfter=" << report.fullHybrid.averageRmsError
+                  << " fullHybridP95Ms=" << report.fullHybrid.p95EstimatedFrameMilliseconds
+                  << " fullHybridBudgetHitRate=" << report.fullHybrid.frameBudgetHitRate << "\n";
         return 0;
     }
 
@@ -1338,6 +1417,46 @@ int main(int argc, char** argv)
             {
                 return PrintLoadFailure("Failed to write LOD", error, 8);
             }
+        }
+        return 0;
+    }
+
+    if (command == "build-lod-package")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const std::filesystem::path outDir = argv[3];
+        std::error_code ec;
+        std::filesystem::create_directories(outDir, ec);
+        if (ec)
+        {
+            std::cerr << "Failed to create output directory: " << outDir.string() << "\n";
+            return 7;
+        }
+        const auto lods = BuildDefaultHairLodChain(asset);
+        for (size_t i = 0u; i < lods.size(); ++i)
+        {
+            const std::filesystem::path outPath = outDir / ("lod" + std::to_string(i) + ".hairbin");
+            if (!SaveHairAssetToHairBinary(outPath, lods[i].asset, error))
+            {
+                return PrintLoadFailure("Failed to write LOD package hair", error, 8);
+            }
+        }
+        HairCardBuilderSettings cardSettings = {};
+        cardSettings.cardsPerGuide = 1u;
+        cardSettings.segmentsPerCard = std::max<uint32_t>(4u, asset.particlesPerStrand > 1u ? asset.particlesPerStrand - 1u : 4u);
+        const HairCardMesh cards = BuildHairCardMesh(lods.back().asset, cardSettings);
+        const std::string cardsFileName = "lod_far_cards.obj";
+        if (!SaveHairCardMeshToObj(outDir / cardsFileName, cards, error))
+        {
+            return PrintLoadFailure("Failed to write LOD package cards", error, 8);
+        }
+        if (!WriteLodPackageManifest(outDir / "lod_package_manifest.json", lods, cardsFileName, error))
+        {
+            return PrintLoadFailure("Failed to write LOD package manifest", error, 8);
         }
         return 0;
     }

@@ -329,6 +329,7 @@ namespace hairgpu
         std::vector<Vec3> restGuideRoots = BuildGuideRestRoots(asset);
         std::vector<Vec3> currentGuideRoots = runtimeInput.currentGuideRoots;
         std::vector<Vec3> previousGuideRoots = runtimeInput.previousGuideRoots;
+        std::vector<Vec3> prePreviousGuideRoots = runtimeInput.prePreviousGuideRoots;
         if (currentGuideRoots.size() != guideCount)
         {
             currentGuideRoots = restGuideRoots;
@@ -336,6 +337,10 @@ namespace hairgpu
         if (previousGuideRoots.size() != guideCount)
         {
             previousGuideRoots = currentGuideRoots;
+        }
+        if (prePreviousGuideRoots.size() != guideCount)
+        {
+            prePreviousGuideRoots = previousGuideRoots;
         }
 
         Vec3 boundsMin = {};
@@ -390,6 +395,32 @@ namespace hairgpu
             const float contact = (runtimeInput.guideContactScores.size() == guideCount)
                 ? Clamp(AverageScalar(runtimeInput.guideContactScores, cluster.guideStrandIndices), 0.0f, 1.0f)
                 : 0.0f;
+            const float externalContact = (runtimeInput.guideExternalContactScores.size() == guideCount)
+                ? Clamp(AverageScalar(runtimeInput.guideExternalContactScores, cluster.guideStrandIndices), 0.0f, 1.0f)
+                : contact;
+            float acceleration = 0.0f;
+            if (runtimeInput.guideAccelerationScores.size() == guideCount)
+            {
+                acceleration = Clamp(AverageScalar(runtimeInput.guideAccelerationScores, cluster.guideStrandIndices), 0.0f, 1.0f);
+            }
+            else
+            {
+                const Vec3 centroidPrePrevious = AveragePosition(prePreviousGuideRoots, cluster.guideStrandIndices);
+                const Vec3 currentVelocity = (centroidCurrent - centroidPrevious) / safeTimeStep;
+                const Vec3 previousVelocity = (centroidPrevious - centroidPrePrevious) / safeTimeStep;
+                acceleration = Clamp(Length(currentVelocity - previousVelocity) /
+                                     std::max(scoringSettings.accelerationSoftRange, 1.0e-4f),
+                                     0.0f, 1.0f);
+            }
+            const float stretch = (runtimeInput.guideStretchScores.size() == guideCount)
+                ? Clamp(AverageScalar(runtimeInput.guideStretchScores, cluster.guideStrandIndices), 0.0f, 1.0f)
+                : 0.0f;
+            const float bend = (runtimeInput.guideBendScores.size() == guideCount)
+                ? Clamp(AverageScalar(runtimeInput.guideBendScores, cluster.guideStrandIndices), 0.0f, 1.0f)
+                : 0.0f;
+            const float density = (runtimeInput.guideDensityScores.size() == guideCount)
+                ? Clamp(AverageScalar(runtimeInput.guideDensityScores, cluster.guideStrandIndices), 0.0f, 1.0f)
+                : 0.0f;
             const float clusterSizeScore = Clamp(static_cast<float>(cluster.strandIndices.size()) / maxClusterStrands, 0.0f, 1.0f);
 
             const float finalScore = Clamp(
@@ -399,6 +430,11 @@ namespace hairgpu
                 silhouette * scoringSettings.silhouetteWeight +
                 uncertainty * scoringSettings.uncertaintyWeight +
                 contact * scoringSettings.contactWeight +
+                acceleration * scoringSettings.accelerationWeight +
+                stretch * scoringSettings.stretchWeight +
+                bend * scoringSettings.bendWeight +
+                density * scoringSettings.densityWeight +
+                externalContact * scoringSettings.externalContactWeight +
                 clusterSizeScore * scoringSettings.clusterSizeWeight,
                 0.0f, 1.0f);
 
@@ -410,6 +446,11 @@ namespace hairgpu
             score.silhouetteScore = silhouette;
             score.uncertaintyScore = uncertainty;
             score.contactScore = contact;
+            score.accelerationScore = acceleration;
+            score.stretchScore = stretch;
+            score.bendScore = bend;
+            score.densityScore = density;
+            score.externalContactScore = externalContact;
             score.clusterSizeScore = clusterSizeScore;
             score.finalScore = finalScore;
             outPlan.scores.push_back(score);
