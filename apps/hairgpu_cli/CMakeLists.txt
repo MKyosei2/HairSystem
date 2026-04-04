@@ -1,5 +1,5 @@
 add_executable(hairgpu_cli
-    src/Main.cpp
+    src/main.cpp
 )
 
 target_link_libraries(hairgpu_cli

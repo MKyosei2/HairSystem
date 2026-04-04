@@ -11,7 +11,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ActiveSet.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Adaptive.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="AssetIO.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Authoring.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -23,7 +22,7 @@
     <ClCompile Include="GuideCache.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="HairCache.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="HairMath.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="LOD.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="Lod.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MeshIO.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Metrics.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Pipeline.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -35,7 +34,6 @@
     <ClCompile Include="Wig.cpp"><Filter>Source Files</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\include\hairgpu\ActiveSet.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Adaptive.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\AssetIO.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Authoring.h"><Filter>Header Files</Filter></ClInclude>
@@ -46,7 +44,7 @@
     <ClInclude Include="..\..\include\hairgpu\Collision.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\GuideCache.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\HairCache.h"><Filter>Header Files</Filter></ClInclude>
-    <ClInclude Include="..\..\include\hairgpu\LOD.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\..\include\hairgpu\Lod.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Math.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\MeshIO.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Metrics.h"><Filter>Header Files</Filter></ClInclude>

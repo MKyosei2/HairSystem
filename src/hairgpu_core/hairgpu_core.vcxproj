@@ -82,7 +82,6 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="ActiveSet.cpp" />
     <ClCompile Include="Adaptive.cpp" />
     <ClCompile Include="AssetIO.cpp" />
     <ClCompile Include="Authoring.cpp" />
@@ -94,7 +93,7 @@
     <ClCompile Include="GuideCache.cpp" />
     <ClCompile Include="HairCache.cpp" />
     <ClCompile Include="HairMath.cpp" />
-    <ClCompile Include="LOD.cpp" />
+    <ClCompile Include="Lod.cpp" />
     <ClCompile Include="MeshIO.cpp" />
     <ClCompile Include="Metrics.cpp" />
     <ClCompile Include="Pipeline.cpp" />
@@ -106,7 +105,6 @@
     <ClCompile Include="Wig.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\include\hairgpu\ActiveSet.h" />
     <ClInclude Include="..\..\include\hairgpu\Adaptive.h" />
     <ClInclude Include="..\..\include\hairgpu\AssetIO.h" />
     <ClInclude Include="..\..\include\hairgpu\Authoring.h" />
@@ -117,7 +115,7 @@
     <ClInclude Include="..\..\include\hairgpu\Collision.h" />
     <ClInclude Include="..\..\include\hairgpu\GuideCache.h" />
     <ClInclude Include="..\..\include\hairgpu\HairCache.h" />
-    <ClInclude Include="..\..\include\hairgpu\LOD.h" />
+    <ClInclude Include="..\..\include\hairgpu\Lod.h" />
     <ClInclude Include="..\..\include\hairgpu\Math.h" />
     <ClInclude Include="..\..\include\hairgpu\MeshIO.h" />
     <ClInclude Include="..\..\include\hairgpu\Metrics.h" />

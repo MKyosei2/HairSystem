@@ -1965,23 +1965,56 @@ namespace hairgpu::viewer
         ComPtr<ID3DBlob> shaderBlob;
         ComPtr<ID3DBlob> errorBlob;
 
-        wchar_t modulePath[MAX_PATH] = {};
+                wchar_t modulePath[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
         const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
-        std::array<std::filesystem::path, 6> candidates = {
-            std::filesystem::path(filePath),
-            std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / filePath,
-            exeDir / filePath,
-            exeDir / L"shaders" / filePath,
-            std::filesystem::current_path() / filePath,
-            std::filesystem::current_path() / L"shaders" / filePath
+
+        std::vector<std::filesystem::path> candidates;
+        auto pushCandidate = [&candidates](const std::filesystem::path& candidate)
+        {
+            if (candidate.empty())
+            {
+                return;
+            }
+            const auto normalized = candidate.lexically_normal();
+            if (std::find(candidates.begin(), candidates.end(), normalized) == candidates.end())
+            {
+                candidates.push_back(normalized);
+            }
         };
+
+        pushCandidate(std::filesystem::path(filePath));
+        pushCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / filePath);
+        pushCandidate(exeDir / filePath);
+        pushCandidate(exeDir / L"shaders" / filePath);
+        pushCandidate(std::filesystem::current_path() / filePath);
+        pushCandidate(std::filesystem::current_path() / L"shaders" / filePath);
+
+        std::filesystem::path searchRoot = exeDir;
+        for (int i = 0; i < 6; ++i)
+        {
+            pushCandidate(searchRoot / L"apps" / L"dx11_viewer" / L"shaders" / filePath);
+            pushCandidate(searchRoot / L"dx11_viewer" / L"shaders" / filePath);
+            if (!searchRoot.has_parent_path())
+            {
+                break;
+            }
+            const auto parent = searchRoot.parent_path();
+            if (parent == searchRoot)
+            {
+                break;
+            }
+            searchRoot = parent;
+        }
 
         HRESULT hr = E_FAIL;
         std::wstringstream tried;
         for (const auto& candidate : candidates)
         {
-            tried << candidate.c_str() << L"\r\n";
+            tried << candidate.c_str();
+            tried << (std::filesystem::exists(candidate) ? L"  [exists]" : L"  [missing]") << L"\r\n";
+            errorBlob.Reset();
+            shaderBlob.Reset();
             hr = D3DCompileFromFile(candidate.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPoint, target, flags, 0, &shaderBlob, &errorBlob);
             if (SUCCEEDED(hr))
             {
@@ -1998,9 +2031,14 @@ namespace hairgpu::viewer
             else
             {
                 errorText = L"Unknown shader compilation error.";
+                std::wstringstream hrHex;
+                hrHex << std::hex << std::uppercase << static_cast<unsigned long>(hr);
+                errorText += L"\r\nHRESULT: 0x";
+                errorText += hrHex.str();
             }
             errorText += L"\r\n\r\nTried paths:\r\n";
             errorText += tried.str();
+            errorText += L"\r\nHint: verify that the .hlsl files were copied next to the executable or into its shaders subfolder.";
             return false;
         }
         *blobOut = shaderBlob.Detach();

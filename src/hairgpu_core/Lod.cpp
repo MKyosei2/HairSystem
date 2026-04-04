@@ -1,4 +1,4 @@
-#include "hairgpu/LOD.h"
+#include "hairgpu/Lod.h"
 
 #include <algorithm>
 #include <cmath>

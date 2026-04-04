@@ -1,4 +1,3 @@
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\ActiveSet.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\ActiveSet.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Adaptive.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Adaptive.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\AssetIO.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\AssetIO.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Authoring.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Authoring.obj
@@ -10,7 +9,7 @@ C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Collision.cpp;C:\Users\k
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\GuideCache.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\GuideCache.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairCache.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\HairCache.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairMath.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\HairMath.obj
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\LOD.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\LOD.obj
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Lod.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Lod.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\MeshIO.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\MeshIO.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Metrics.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Metrics.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Pipeline.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\hairgpu_core\Pipeline.obj
