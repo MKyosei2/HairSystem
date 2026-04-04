@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "hairgpu/ActiveSet.h"
+#include "hairgpu/HybridRuntime.h"
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
 
@@ -116,6 +118,25 @@ namespace hairgpu::viewer
             uint32_t followerCount = 0;
             uint32_t totalStrandCount = 0;
             uint32_t totalParticleCount = 0;
+            uint32_t activeSetClusterCount = 0;
+            uint32_t activeSetSelectedClusterCount = 0;
+            uint32_t activeSetSelectedGuideCount = 0;
+            uint32_t activeSetSelectedStrandCount = 0;
+            float activeSetHighestScore = 0.0f;
+            float activeSetAverageSelectedScore = 0.0f;
+            float activeSetEvaluationMilliseconds = 0.0f;
+            float activeSetBudgetScale = 1.0f;
+            uint32_t activeSetRecommendedSolverIterations = 0u;
+            uint32_t fullTierCount = 0u;
+            uint32_t reducedTierCount = 0u;
+            uint32_t frozenTierCount = 0u;
+            uint32_t cachedTierCount = 0u;
+            uint32_t correctiveStrandCount = 0u;
+            uint32_t correctivePointCount = 0u;
+            float correctiveAveragePenetration = 0.0f;
+            float correctiveMaxPenetration = 0.0f;
+            float correctiveAverageLengthErrorBefore = 0.0f;
+            float correctiveAverageLengthErrorAfter = 0.0f;
         };
 
         struct alignas(16) SimConstants
@@ -277,6 +298,10 @@ namespace hairgpu::viewer
         void UpdateWindowTitle();
         void Shutdown();
         void UpdateAnimatedScalp(float elapsedSeconds);
+        void RebuildActiveSetFoundation();
+        void UpdateActiveSetRuntimeFromParticles(const std::vector<GpuParticle>& particles);
+        std::vector<hairgpu::Vec3> BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const;
+        std::vector<float> BuildGuideContactScoresFromParticles(const std::vector<GpuParticle>& particles) const;
         void BuildHairMeshVertices(const std::vector<GpuParticle>& particles, float aspectRatio);
         void RebuildGpuDebugLineEntries();
         bool EnsureHairMeshVertexCapacity(size_t vertexCount);
@@ -383,6 +408,19 @@ namespace hairgpu::viewer
         std::vector<HairMeshVertex> m_hairMeshVertices;
         std::vector<GpuDebugLineEntry> m_gpuDebugLineEntries;
         std::vector<GpuParticle> m_debugReadbackParticles;
+        bool m_enableActiveSetRuntime = true;
+        hairgpu::ActiveSetClusterSettings m_activeSetClusterSettings;
+        hairgpu::ActiveSetScoringSettings m_activeSetScoringSettings;
+        hairgpu::ActiveSetBudget m_activeSetBudget;
+        std::vector<hairgpu::ActiveSetCluster> m_activeSetClusters;
+        hairgpu::ActiveSetPlan m_activeSetPlan;
+        std::vector<hairgpu::Vec3> m_activeSetPreviousGuideRoots;
+        std::vector<float> m_activeSetGuideContactScores;
+        std::vector<float> m_activeSetGuideUncertainty;
+        std::wstring m_activeSetLastStatus = L"Not evaluated";
+        float m_activeSetEvaluationMilliseconds = 0.0f;
+        hairgpu::SparseCorrectiveSettings m_sparseCorrectiveSettings;
+        hairgpu::SparseCorrectiveReport m_sparseCorrectiveReport;
         std::vector<PerformanceSample> m_performanceSamples;
 
         Microsoft::WRL::ComPtr<ID3D11Device> m_device;

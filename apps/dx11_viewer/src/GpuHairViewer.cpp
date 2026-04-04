@@ -17,6 +17,7 @@
 #include <sstream>
 #include <unordered_map>
 
+#include "hairgpu/ActiveSet.h"
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/Math.h"
 #include "hairgpu/Wig.h"
@@ -361,6 +362,23 @@ namespace hairgpu::viewer
             return extentX < 20.0f && extentY < 20.0f && extentZ < 20.0f && minY > -20.0f && maxY < 20.0f;
         }
 
+        float DistanceToSphereSurface(const hairgpu::Vec3& p, const hairgpu::SphereCollider& sphere)
+        {
+            return hairgpu::Length(p - sphere.center) - sphere.radius;
+        }
+
+        float DistanceToCapsuleSurface(const hairgpu::Vec3& p, const hairgpu::CapsuleCollider& capsule)
+        {
+            const hairgpu::Vec3 ab = capsule.pointB - capsule.pointA;
+            const float denom = hairgpu::Dot(ab, ab);
+            const float t = (denom > 1.0e-6f)
+                ? hairgpu::Clamp(hairgpu::Dot(p - capsule.pointA, ab) / denom, 0.0f, 1.0f)
+                : 0.0f;
+            const hairgpu::Vec3 closest = capsule.pointA + ab * t;
+            const float radius = hairgpu::Lerp(capsule.radiusA, capsule.radiusB, t);
+            return hairgpu::Length(p - closest) - radius;
+        }
+
         bool ProjectWorldToNdc(const hairgpu::Vec3& world, const hairgpu::Vec3& eye, const hairgpu::Vec3& target, float aspectRatio, hairgpu::Vec3& outNdc)
         {
             constexpr float kFovY = 60.0f * 3.1415926535f / 180.0f;
@@ -505,6 +523,9 @@ namespace hairgpu::viewer
         }
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Sample asset active";
+        m_activeSetBudget.maxActiveClusters = 6u;
+        m_activeSetBudget.maxActiveGuides = 64u;
+        m_activeSetBudget.promoteScoreThreshold = 0.52f;
         m_simConfig.solverIterations = 5;
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 19.0f;
@@ -590,6 +611,7 @@ namespace hairgpu::viewer
             return false;
         }
 
+        RebuildActiveSetFoundation();
         ResetSimulation();
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
@@ -669,6 +691,25 @@ namespace hairgpu::viewer
             sample.followerCount = m_asset.followerStrandCount;
             sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
             sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
+            sample.activeSetClusterCount = m_activeSetPlan.summary.clusterCount;
+            sample.activeSetSelectedClusterCount = m_activeSetPlan.summary.selectedClusterCount;
+            sample.activeSetSelectedGuideCount = m_activeSetPlan.summary.selectedGuideCount;
+            sample.activeSetSelectedStrandCount = m_activeSetPlan.summary.selectedStrandCount;
+            sample.activeSetHighestScore = m_activeSetPlan.summary.highestScore;
+            sample.activeSetAverageSelectedScore = m_activeSetPlan.summary.averageSelectedScore;
+            sample.activeSetEvaluationMilliseconds = m_activeSetEvaluationMilliseconds;
+            sample.activeSetBudgetScale = m_activeSetPlan.summary.budgetScale;
+            sample.activeSetRecommendedSolverIterations = m_activeSetPlan.summary.recommendedSolverIterations;
+            sample.fullTierCount = m_activeSetPlan.summary.fullTierCount;
+            sample.reducedTierCount = m_activeSetPlan.summary.reducedTierCount;
+            sample.frozenTierCount = m_activeSetPlan.summary.frozenTierCount;
+            sample.cachedTierCount = m_activeSetPlan.summary.cachedTierCount;
+            sample.correctiveStrandCount = m_sparseCorrectiveReport.correctedStrandCount;
+            sample.correctivePointCount = m_sparseCorrectiveReport.correctedPointCount;
+            sample.correctiveAveragePenetration = m_sparseCorrectiveReport.averagePenetration;
+            sample.correctiveMaxPenetration = m_sparseCorrectiveReport.maxPenetration;
+            sample.correctiveAverageLengthErrorBefore = m_sparseCorrectiveReport.averageLengthErrorBefore;
+            sample.correctiveAverageLengthErrorAfter = m_sparseCorrectiveReport.averageLengthErrorAfter;
             m_performanceSamples.push_back(sample);
             if (m_performanceSamples.size() > 12000)
             {
@@ -1319,6 +1360,7 @@ namespace hairgpu::viewer
         m_elapsedSeconds = 0.0f;
         m_lastSimulationStepMilliseconds = 0.0f;
         m_performanceSamples.clear();
+        RebuildActiveSetFoundation();
         SyncControlsFromState();
         UpdateStatsLabel();
     }
@@ -1342,6 +1384,25 @@ namespace hairgpu::viewer
         sample.followerCount = m_asset.followerStrandCount;
         sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
         sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
+        sample.activeSetClusterCount = m_activeSetPlan.summary.clusterCount;
+        sample.activeSetSelectedClusterCount = m_activeSetPlan.summary.selectedClusterCount;
+        sample.activeSetSelectedGuideCount = m_activeSetPlan.summary.selectedGuideCount;
+        sample.activeSetSelectedStrandCount = m_activeSetPlan.summary.selectedStrandCount;
+        sample.activeSetHighestScore = m_activeSetPlan.summary.highestScore;
+        sample.activeSetAverageSelectedScore = m_activeSetPlan.summary.averageSelectedScore;
+        sample.activeSetEvaluationMilliseconds = m_activeSetEvaluationMilliseconds;
+        sample.activeSetBudgetScale = m_activeSetPlan.summary.budgetScale;
+        sample.activeSetRecommendedSolverIterations = m_activeSetPlan.summary.recommendedSolverIterations;
+        sample.fullTierCount = m_activeSetPlan.summary.fullTierCount;
+        sample.reducedTierCount = m_activeSetPlan.summary.reducedTierCount;
+        sample.frozenTierCount = m_activeSetPlan.summary.frozenTierCount;
+        sample.cachedTierCount = m_activeSetPlan.summary.cachedTierCount;
+        sample.correctiveStrandCount = m_sparseCorrectiveReport.correctedStrandCount;
+        sample.correctivePointCount = m_sparseCorrectiveReport.correctedPointCount;
+        sample.correctiveAveragePenetration = m_sparseCorrectiveReport.averagePenetration;
+        sample.correctiveMaxPenetration = m_sparseCorrectiveReport.maxPenetration;
+        sample.correctiveAverageLengthErrorBefore = m_sparseCorrectiveReport.averageLengthErrorBefore;
+        sample.correctiveAverageLengthErrorAfter = m_sparseCorrectiveReport.averageLengthErrorAfter;
         m_performanceSamples.push_back(sample);
         if (m_performanceSamples.size() > 12000)
         {
@@ -1383,6 +1444,183 @@ namespace hairgpu::viewer
     {
         // Particle runtime keeps scalp roots static on the GPU side.
         // No per-frame CPU skinning or readback path is used here.
+    }
+
+    void GpuHairViewer::RebuildActiveSetFoundation()
+    {
+        m_activeSetClusters = hairgpu::BuildActiveSetClusters(m_asset, m_activeSetClusterSettings);
+        m_activeSetPlan = {};
+        m_activeSetGuideContactScores.clear();
+        m_activeSetGuideUncertainty.clear();
+        m_activeSetEvaluationMilliseconds = 0.0f;
+        m_sparseCorrectiveReport = {};
+
+        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        m_activeSetPreviousGuideRoots.assign(guideCount, hairgpu::Vec3(0.0f, 0.0f, 0.0f));
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+            if (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
+            {
+                m_activeSetPreviousGuideRoots[guideIndex] = m_asset.restPoints[strand.pointOffset];
+            }
+        }
+
+        std::wstringstream ss;
+        ss << L"Ready (clusters=" << m_activeSetClusters.size() << L")";
+        m_activeSetLastStatus = ss.str();
+    }
+
+    std::vector<hairgpu::Vec3> GpuHairViewer::BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const
+    {
+        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        std::vector<hairgpu::Vec3> roots(guideCount, hairgpu::Vec3(0.0f, 0.0f, 0.0f));
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+            if (strand.pointCount > 0u && strand.pointOffset < particles.size())
+            {
+                const GpuParticle& rootParticle = particles[strand.pointOffset];
+                roots[guideIndex] = hairgpu::Vec3(rootParticle.x, rootParticle.y, rootParticle.z);
+            }
+            else if (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
+            {
+                roots[guideIndex] = m_asset.restPoints[strand.pointOffset];
+            }
+        }
+        return roots;
+    }
+
+    std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std::vector<GpuParticle>& particles) const
+    {
+        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        std::vector<float> scores(guideCount, 0.0f);
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+            if (strand.pointCount == 0u)
+            {
+                continue;
+            }
+
+            const uint32_t sampleOffsets[3] = { 0u, strand.pointCount / 2u, strand.pointCount - 1u };
+            float bestScore = 0.0f;
+            for (uint32_t sampleOffset : sampleOffsets)
+            {
+                const uint32_t particleIndex = strand.pointOffset + std::min<uint32_t>(sampleOffset, strand.pointCount - 1u);
+                if (particleIndex >= particles.size())
+                {
+                    continue;
+                }
+
+                const GpuParticle& particle = particles[particleIndex];
+                const hairgpu::Vec3 p(particle.x, particle.y, particle.z);
+                float proximityScore = hairgpu::Clamp((0.030f - (p.y - m_simConfig.floorY)) / 0.030f, 0.0f, 1.0f);
+                for (const hairgpu::SphereCollider& sphere : m_colliders.spheres)
+                {
+                    const float surfaceDistance = DistanceToSphereSurface(p, sphere);
+                    proximityScore = std::max(proximityScore, hairgpu::Clamp((0.040f - surfaceDistance) / 0.040f, 0.0f, 1.0f));
+                }
+                for (const hairgpu::CapsuleCollider& capsule : m_colliders.capsules)
+                {
+                    const float surfaceDistance = DistanceToCapsuleSurface(p, capsule);
+                    proximityScore = std::max(proximityScore, hairgpu::Clamp((0.045f - surfaceDistance) / 0.045f, 0.0f, 1.0f));
+                }
+                bestScore = std::max(bestScore, proximityScore);
+            }
+            scores[guideIndex] = bestScore;
+        }
+        return scores;
+    }
+
+    void GpuHairViewer::UpdateActiveSetRuntimeFromParticles(const std::vector<GpuParticle>& particles)
+    {
+        if (!m_enableActiveSetRuntime || m_activeSetClusters.empty())
+        {
+            m_activeSetPlan = {};
+            m_activeSetLastStatus = L"Disabled";
+            m_activeSetEvaluationMilliseconds = 0.0f;
+            return;
+        }
+
+        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        if (guideCount == 0u)
+        {
+            m_activeSetPlan = {};
+            m_activeSetLastStatus = L"No guides";
+            m_activeSetEvaluationMilliseconds = 0.0f;
+            return;
+        }
+
+        const std::vector<hairgpu::Vec3> currentGuideRoots = BuildGuideRootPositionsFromParticles(particles);
+        if (m_activeSetPreviousGuideRoots.size() != currentGuideRoots.size())
+        {
+            m_activeSetPreviousGuideRoots = currentGuideRoots;
+        }
+        m_activeSetGuideContactScores = BuildGuideContactScoresFromParticles(particles);
+        m_activeSetGuideUncertainty.assign(guideCount, 0.0f);
+        const float safeDt = std::max(m_simConfig.fixedTimeStep, 1.0e-4f);
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+            const hairgpu::Vec3& currentRoot = currentGuideRoots[guideIndex];
+            const hairgpu::Vec3& previousRoot = m_activeSetPreviousGuideRoots[guideIndex];
+            const hairgpu::Vec3 restRoot = (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
+                ? m_asset.restPoints[strand.pointOffset]
+                : hairgpu::Vec3(0.0f, 0.0f, 0.0f);
+            const float velocityProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - previousRoot) / safeDt / 0.30f, 0.0f, 1.0f);
+            const float displacementProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - restRoot) / 0.030f, 0.0f, 1.0f);
+            const float contactProxy = (guideIndex < m_activeSetGuideContactScores.size()) ? m_activeSetGuideContactScores[guideIndex] : 0.0f;
+            m_activeSetGuideUncertainty[guideIndex] = hairgpu::Clamp(velocityProxy * 0.45f + displacementProxy * 0.30f + contactProxy * 0.25f, 0.0f, 1.0f);
+        }
+
+        hairgpu::ActiveSetRuntimeInput runtimeInput = {};
+        runtimeInput.currentGuideRoots = currentGuideRoots;
+        runtimeInput.previousGuideRoots = m_activeSetPreviousGuideRoots;
+        runtimeInput.guideUncertainty = m_activeSetGuideUncertainty;
+        runtimeInput.guideContactScores = m_activeSetGuideContactScores;
+        runtimeInput.cameraPosition = m_cameraPosition;
+        runtimeInput.cameraForward = hairgpu::Normalize(m_cameraTarget - m_cameraPosition);
+        runtimeInput.fixedTimeStep = safeDt;
+        m_activeSetBudget.previousFrameMilliseconds = m_lastSimulationStepMilliseconds;
+
+        LARGE_INTEGER begin = {};
+        LARGE_INTEGER end = {};
+        QueryPerformanceCounter(&begin);
+        hairgpu::ActiveSetPlan plan;
+        std::string error;
+        const bool ok = hairgpu::EvaluateActiveSetPlan(m_asset,
+                                                       m_activeSetClusters,
+                                                       runtimeInput,
+                                                       m_activeSetScoringSettings,
+                                                       m_activeSetBudget,
+                                                       plan,
+                                                       error);
+        QueryPerformanceCounter(&end);
+        m_activeSetEvaluationMilliseconds = static_cast<float>(end.QuadPart - begin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
+
+        if (ok)
+        {
+            m_activeSetPlan = std::move(plan);
+            if (m_activeSetPlan.summary.recommendedSolverIterations > 0u)
+            {
+                m_simConfig.solverIterations = std::max<uint32_t>(1u, m_activeSetPlan.summary.recommendedSolverIterations);
+            }
+            std::wstringstream ss;
+            ss << L"OK  clusters=" << m_activeSetPlan.summary.selectedClusterCount
+               << L" guides=" << m_activeSetPlan.summary.selectedGuideCount
+               << L" strands=" << m_activeSetPlan.summary.selectedStrandCount
+               << L"  budgetScale=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.budgetScale
+               << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations;
+            m_activeSetLastStatus = ss.str();
+        }
+        else
+        {
+            m_activeSetPlan = std::move(plan);
+            m_activeSetLastStatus = Utf8ToWide(error);
+        }
+
+        m_activeSetPreviousGuideRoots = currentGuideRoots;
     }
 
     void GpuHairViewer::StepSimulation(float dt)
@@ -1762,6 +2000,33 @@ namespace hairgpu::viewer
 
         if (!cpuMeshParticles.empty())
         {
+            UpdateActiveSetRuntimeFromParticles(cpuMeshParticles);
+            std::vector<hairgpu::Vec3> correctedPoints;
+            correctedPoints.reserve(cpuMeshParticles.size());
+            for (const GpuParticle& particle : cpuMeshParticles)
+            {
+                correctedPoints.push_back(hairgpu::Vec3(particle.x, particle.y, particle.z));
+            }
+            m_sparseCorrectiveReport = {};
+            if (!correctedPoints.empty())
+            {
+                std::string correctiveError;
+                if (hairgpu::ApplySparseCorrectivePhysics(m_asset,
+                                                         m_activeSetPlan,
+                                                         m_colliders,
+                                                         correctedPoints,
+                                                         m_sparseCorrectiveSettings,
+                                                         &m_sparseCorrectiveReport,
+                                                         correctiveError))
+                {
+                    for (size_t i = 0; i < std::min(correctedPoints.size(), cpuMeshParticles.size()); ++i)
+                    {
+                        cpuMeshParticles[i].x = correctedPoints[i].x;
+                        cpuMeshParticles[i].y = correctedPoints[i].y;
+                        cpuMeshParticles[i].z = correctedPoints[i].z;
+                    }
+                }
+            }
             BuildHairMeshVertices(cpuMeshParticles, renderWidth / renderHeight);
             if (!m_hairMeshVertices.empty() && EnsureHairMeshVertexCapacity(m_hairMeshVertices.size()) && m_hairMeshVertexBuffer && m_hairMeshInputLayout && m_hairMeshVS && m_hairMeshPS)
             {
@@ -2617,6 +2882,7 @@ namespace hairgpu::viewer
             MessageBoxW(m_hwnd, L"Failed to rebuild simulation resources after changing the asset.", L"Rebuild Failed", MB_OK | MB_ICONERROR);
             return false;
         }
+        RebuildActiveSetFoundation();
         RefreshAssetStatsText();
         ResetSimulation();
         SyncControlsFromState();
@@ -2668,7 +2934,24 @@ namespace hairgpu::viewer
            << L"  Prims=" << m_lastDebugPipelineStats.IAPrimitives
            << L"  PS=" << m_lastDebugPipelineStats.PSInvocations << L"\n"
            << L"Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : L"Natural"))
-           << L"  GPU runtime: guide solve + follower interpolate\n"
+           << L"\nActive Set: " << (m_enableActiveSetRuntime ? L"On" : L"Off")
+           << L"  Plan: " << m_activeSetPlan.summary.selectedClusterCount << L"/" << m_activeSetPlan.summary.clusterCount << L" clusters"
+           << L"  Guides: " << m_activeSetPlan.summary.selectedGuideCount
+           << L"  Eval: " << std::setprecision(2) << m_activeSetEvaluationMilliseconds << L" ms\n"
+           << L"Active Score: hi=" << m_activeSetPlan.summary.highestScore
+           << L"  avg=" << m_activeSetPlan.summary.averageSelectedScore
+           << L"  status=" << m_activeSetLastStatus << L"\n"
+           << L"Budget: scale=" << m_activeSetPlan.summary.budgetScale
+           << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations
+           << L"  tiers F/R/Fz/C=" << m_activeSetPlan.summary.fullTierCount << L"/"
+           << m_activeSetPlan.summary.reducedTierCount << L"/"
+           << m_activeSetPlan.summary.frozenTierCount << L"/"
+           << m_activeSetPlan.summary.cachedTierCount << L"\n"
+           << L"Corrective: strands=" << m_sparseCorrectiveReport.correctedStrandCount
+           << L"  points=" << m_sparseCorrectiveReport.correctedPointCount
+           << L"  avgPen=" << m_sparseCorrectiveReport.averagePenetration
+           << L"  maxPen=" << m_sparseCorrectiveReport.maxPenetration << L"\n"
+           << L"GPU runtime: guide solve + follower interpolate\n"
            << L"Self Collision: " << (m_enableSelfCollision ? L"Density Grid Repulsion" : L"Off")
            << L"  Angular XPBD: " << (m_enableRuntimeAngularBend ? L"On" : L"Off")
            << L"  Samples: " << m_performanceSamples.size()
@@ -3016,7 +3299,7 @@ namespace hairgpu::viewer
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter\n";
         for (size_t i = 0; i < m_performanceSamples.size(); ++i)
         {
             const PerformanceSample& s = m_performanceSamples[i];
@@ -3028,7 +3311,26 @@ namespace hairgpu::viewer
                 << s.guideCount << ","
                 << s.followerCount << ","
                 << s.totalStrandCount << ","
-                << s.totalParticleCount << "\n";
+                << s.totalParticleCount << ","
+                << s.activeSetClusterCount << ","
+                << s.activeSetSelectedClusterCount << ","
+                << s.activeSetSelectedGuideCount << ","
+                << s.activeSetSelectedStrandCount << ","
+                << s.activeSetHighestScore << ","
+                << s.activeSetAverageSelectedScore << ","
+                << s.activeSetEvaluationMilliseconds << ","
+                << s.activeSetBudgetScale << ","
+                << s.activeSetRecommendedSolverIterations << ","
+                << s.fullTierCount << ","
+                << s.reducedTierCount << ","
+                << s.frozenTierCount << ","
+                << s.cachedTierCount << ","
+                << s.correctiveStrandCount << ","
+                << s.correctivePointCount << ","
+                << s.correctiveAveragePenetration << ","
+                << s.correctiveMaxPenetration << ","
+                << s.correctiveAverageLengthErrorBefore << ","
+                << s.correctiveAverageLengthErrorAfter << "\n";
         }
         return true;
     }
@@ -3126,6 +3428,7 @@ namespace hairgpu::viewer
             return false;
         }
 
+        RebuildActiveSetFoundation();
         RefreshAssetStatsText();
         ResetSimulation();
         SyncControlsFromState();
@@ -3319,10 +3622,49 @@ namespace hairgpu::viewer
                 continue;
             }
 
-            for (uint32_t i = 0; i + 1u < strand.pointCount; ++i)
+            const hairgpu::SimTier tier = (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
+                ? m_activeSetPlan.recommendedSimulationTiers[strandIndex]
+                : hairgpu::SimTier::Reduced;
+            uint32_t segmentStride = 1u;
+            int tubeSides = kTubeSides;
+            float alpha = 0.98f;
+            switch (tier)
             {
+            case hairgpu::SimTier::Full:
+                segmentStride = 1u;
+                tubeSides = kTubeSides;
+                alpha = 0.98f;
+                break;
+            case hairgpu::SimTier::Reduced:
+                segmentStride = 2u;
+                tubeSides = 5;
+                alpha = 0.90f;
+                break;
+            case hairgpu::SimTier::Frozen:
+                segmentStride = 3u;
+                tubeSides = 4;
+                alpha = 0.78f;
+                break;
+            case hairgpu::SimTier::Cached:
+                if (strandIndex >= m_asset.guideStrandCount)
+                {
+                    continue;
+                }
+                segmentStride = 4u;
+                tubeSides = 3;
+                alpha = 0.58f;
+                break;
+            }
+
+            for (uint32_t i = 0; i + 1u < strand.pointCount; i += segmentStride)
+            {
+                const uint32_t nextPoint = std::min<uint32_t>(i + segmentStride, strand.pointCount - 1u);
+                if (nextPoint == i)
+                {
+                    continue;
+                }
                 const uint32_t idx0 = strand.pointOffset + i;
-                const uint32_t idx1 = strand.pointOffset + i + 1u;
+                const uint32_t idx1 = strand.pointOffset + nextPoint;
                 const Vec3 p0 = particleAt(idx0);
                 const Vec3 p1 = particleAt(idx1);
                 const Vec3 tangent = Normalize(p1 - p0);
@@ -3341,17 +3683,18 @@ namespace hairgpu::viewer
 
                 const float width0 = (idx0 < m_asset.pointWidths.size()) ? m_asset.pointWidths[idx0] : 0.0035f;
                 const float width1 = (idx1 < m_asset.pointWidths.size()) ? m_asset.pointWidths[idx1] : 0.0030f;
-                const float r0 = std::max(width0 * widthScale * 0.55f, 0.0040f);
-                const float r1 = std::max(width1 * widthScale * 0.55f, 0.0032f);
+                const float tierRadiusScale = (tier == hairgpu::SimTier::Full) ? 1.00f : ((tier == hairgpu::SimTier::Reduced) ? 0.92f : ((tier == hairgpu::SimTier::Frozen) ? 0.84f : 0.76f));
+                const float r0 = std::max(width0 * widthScale * 0.55f * tierRadiusScale, 0.0030f);
+                const float r1 = std::max(width1 * widthScale * 0.55f * tierRadiusScale, 0.0026f);
                 const float widthN0 = Clamp((width0 * widthScale - 0.0010f) / 0.0120f, 0.0f, 1.0f);
                 const float widthN1 = Clamp((width1 * widthScale - 0.0010f) / 0.0120f, 0.0f, 1.0f);
                 const Vec3 color0 = computeColor(strandIndex, widthN0);
                 const Vec3 color1 = computeColor(strandIndex, widthN1);
 
-                for (int sideIndex = 0; sideIndex < kTubeSides; ++sideIndex)
+                for (int sideIndex = 0; sideIndex < tubeSides; ++sideIndex)
                 {
-                    const float a0 = static_cast<float>(sideIndex) * 6.28318530718f / static_cast<float>(kTubeSides);
-                    const float a1 = static_cast<float>(sideIndex + 1) * 6.28318530718f / static_cast<float>(kTubeSides);
+                    const float a0 = static_cast<float>(sideIndex) * 6.28318530718f / static_cast<float>(tubeSides);
+                    const float a1 = static_cast<float>(sideIndex + 1) * 6.28318530718f / static_cast<float>(tubeSides);
                     const Vec3 radial0 = Normalize(side * std::cos(a0) + binormal * std::sin(a0));
                     const Vec3 radial1 = Normalize(side * std::cos(a1) + binormal * std::sin(a1));
                     const Vec3 v00 = p0 + radial0 * r0;
@@ -3362,7 +3705,7 @@ namespace hairgpu::viewer
                                v01, radial1, color0,
                                v10, radial0, color1,
                                v11, radial1, color1,
-                               0.98f);
+                               alpha);
                 }
             }
         }

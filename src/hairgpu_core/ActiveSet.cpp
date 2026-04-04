@@ -137,6 +137,46 @@ namespace hairgpu
                 outMax = Vec3(0.1f, 1.8f, 0.1f);
             }
         }
+
+        float ComputeBudgetScale(const ActiveSetBudget& budget)
+        {
+            if (!budget.enableBudgetAdaptation || budget.targetFrameMilliseconds <= 1.0e-4f || budget.previousFrameMilliseconds <= 0.0f)
+            {
+                return 1.0f;
+            }
+
+            const float overloadThreshold = budget.targetFrameMilliseconds * std::max(budget.overloadRatio, 1.0f);
+            const float underloadThreshold = budget.targetFrameMilliseconds * Clamp(budget.underloadRatio, 0.1f, 1.0f);
+            if (budget.previousFrameMilliseconds > overloadThreshold)
+            {
+                const float severity = Clamp((budget.previousFrameMilliseconds - overloadThreshold) /
+                                             std::max(budget.targetFrameMilliseconds, 1.0e-4f),
+                                             0.0f, 1.0f);
+                return Clamp(1.0f - budget.budgetStep * (0.5f + severity), 0.45f, 1.0f);
+            }
+            if (budget.previousFrameMilliseconds < underloadThreshold)
+            {
+                const float headroom = Clamp((underloadThreshold - budget.previousFrameMilliseconds) /
+                                             std::max(budget.targetFrameMilliseconds, 1.0e-4f),
+                                             0.0f, 1.0f);
+                return Clamp(1.0f + budget.budgetStep * (0.35f + headroom), 1.0f, 1.35f);
+            }
+            return 1.0f;
+        }
+
+        uint32_t RecommendSolverIterations(const ActiveSetBudget& budget, float budgetScale)
+        {
+            const uint32_t minIterations = std::max<uint32_t>(1u, budget.minSolverIterations);
+            const uint32_t maxIterations = std::max<uint32_t>(minIterations, budget.maxSolverIterations);
+            if (maxIterations == minIterations)
+            {
+                return minIterations;
+            }
+            const float normalized = Clamp((budgetScale - 0.45f) / (1.35f - 0.45f), 0.0f, 1.0f);
+            const float blended = static_cast<float>(minIterations) +
+                                  normalized * static_cast<float>(maxIterations - minIterations);
+            return static_cast<uint32_t>(std::round(blended));
+        }
     }
 
     std::vector<ActiveSetCluster> BuildActiveSetClusters(const HairAsset& asset,
@@ -316,6 +356,7 @@ namespace hairgpu
         {
             uint32_t clusterIndex = 0u;
             float finalScore = 0.0f;
+            float visibility = 0.0f;
             uint32_t guideCount = 0u;
             uint32_t strandCount = 0u;
         };
@@ -373,7 +414,9 @@ namespace hairgpu
             score.finalScore = finalScore;
             outPlan.scores.push_back(score);
 
-            ranked.push_back({ cluster.clusterIndex, finalScore,
+            ranked.push_back({ cluster.clusterIndex,
+                               finalScore,
+                               visibility,
                                static_cast<uint32_t>(cluster.guideStrandIndices.size()),
                                static_cast<uint32_t>(cluster.strandIndices.size()) });
             highestScore = std::max(highestScore, finalScore);
@@ -404,7 +447,13 @@ namespace hairgpu
         uint32_t selectedStrandCount = 0u;
         float selectedScoreSum = 0.0f;
         float lowestSelectedScore = 0.0f;
-        const uint32_t maxActiveClusters = std::max<uint32_t>(budget.minActiveClusters, budget.maxActiveClusters);
+        const float budgetScale = ComputeBudgetScale(budget);
+        const uint32_t effectiveMaxActiveClusters = std::max<uint32_t>(budget.minActiveClusters,
+            static_cast<uint32_t>(std::round(static_cast<float>(std::max<uint32_t>(budget.maxActiveClusters, budget.minActiveClusters)) * budgetScale)));
+        const uint32_t maxActiveClusters = std::min<uint32_t>(std::max<uint32_t>(budget.minActiveClusters, budget.maxActiveClusters), effectiveMaxActiveClusters);
+        const uint32_t maxActiveGuides = (budget.maxActiveGuides > 0u)
+            ? std::max<uint32_t>(budget.minActiveClusters, static_cast<uint32_t>(std::round(static_cast<float>(budget.maxActiveGuides) * budgetScale)))
+            : 0u;
 
         for (size_t rankedIndex = 0u; rankedIndex < ranked.size(); ++rankedIndex)
         {
@@ -424,7 +473,7 @@ namespace hairgpu
             {
                 break;
             }
-            if (budget.maxActiveGuides > 0u && selectedGuideCount + candidate.guideCount > budget.maxActiveGuides)
+            if (maxActiveGuides > 0u && selectedGuideCount + candidate.guideCount > maxActiveGuides)
             {
                 continue;
             }
@@ -468,6 +517,67 @@ namespace hairgpu
         outPlan.selectedStrandIndices.erase(std::unique(outPlan.selectedStrandIndices.begin(), outPlan.selectedStrandIndices.end()),
                                             outPlan.selectedStrandIndices.end());
 
+        uint32_t fullTierCount = 0u;
+        uint32_t reducedTierCount = 0u;
+        uint32_t frozenTierCount = 0u;
+        uint32_t cachedTierCount = 0u;
+        for (size_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+        {
+            const bool selected = (strandIndex < outPlan.strandCorrectiveMask.size()) && (outPlan.strandCorrectiveMask[strandIndex] != 0u);
+            if (selected)
+            {
+                outPlan.recommendedSimulationTiers[strandIndex] = SimTier::Full;
+            }
+            else
+            {
+                const Vec3 root = ComputeGuideRestRoot(asset, static_cast<uint32_t>(std::min<size_t>(strandIndex, guideCount > 0u ? (guideCount - 1u) : 0u)));
+                const float visibility = ComputeDistanceVisibility(root,
+                                                                  runtimeInput.cameraPosition,
+                                                                  runtimeInput.cameraForward,
+                                                                  scoringSettings.nearDistance,
+                                                                  scoringSettings.farDistance);
+                const float distance = Length(root - runtimeInput.cameraPosition);
+                if (distance > scoringSettings.farDistance * 1.20f && visibility < 0.18f)
+                {
+                    outPlan.recommendedSimulationTiers[strandIndex] = SimTier::Cached;
+                }
+                else if (distance > scoringSettings.farDistance && visibility < 0.35f)
+                {
+                    outPlan.recommendedSimulationTiers[strandIndex] = SimTier::Frozen;
+                }
+                else
+                {
+                    outPlan.recommendedSimulationTiers[strandIndex] = SimTier::Reduced;
+                }
+            }
+
+            if (strandIndex < asset.followData.size())
+            {
+                const FollowData& follow = asset.followData[strandIndex];
+                if (follow.parentGuide >= 0 && static_cast<size_t>(follow.parentGuide) < outPlan.recommendedSimulationTiers.size())
+                {
+                    const SimTier parentTier = outPlan.recommendedSimulationTiers[static_cast<size_t>(follow.parentGuide)];
+                    if (parentTier == SimTier::Full && !selected)
+                    {
+                        outPlan.recommendedSimulationTiers[strandIndex] = SimTier::Reduced;
+                    }
+                    else if (parentTier == SimTier::Cached)
+                    {
+                        outPlan.recommendedSimulationTiers[strandIndex] = SimTier::Cached;
+                    }
+                }
+            }
+
+            switch (outPlan.recommendedSimulationTiers[strandIndex])
+            {
+            case SimTier::Full: ++fullTierCount; break;
+            case SimTier::Frozen: ++frozenTierCount; break;
+            case SimTier::Cached: ++cachedTierCount; break;
+            case SimTier::Reduced:
+            default: ++reducedTierCount; break;
+            }
+        }
+
         outPlan.summary.clusterCount = static_cast<uint32_t>(clusters.size());
         outPlan.summary.selectedClusterCount = static_cast<uint32_t>(outPlan.selectedClusterIndices.size());
         outPlan.summary.selectedGuideCount = static_cast<uint32_t>(outPlan.selectedGuideStrandIndices.size());
@@ -477,6 +587,12 @@ namespace hairgpu
         outPlan.summary.averageSelectedScore = outPlan.selectedClusterIndices.empty()
             ? 0.0f
             : (selectedScoreSum / static_cast<float>(outPlan.selectedClusterIndices.size()));
+        outPlan.summary.budgetScale = budgetScale;
+        outPlan.summary.recommendedSolverIterations = RecommendSolverIterations(budget, budgetScale);
+        outPlan.summary.fullTierCount = fullTierCount;
+        outPlan.summary.reducedTierCount = reducedTierCount;
+        outPlan.summary.frozenTierCount = frozenTierCount;
+        outPlan.summary.cachedTierCount = cachedTierCount;
 
         if (outPlan.selectedClusterIndices.empty())
         {
@@ -496,7 +612,11 @@ namespace hairgpu
             << " selectedStrands=" << plan.summary.selectedStrandCount
             << " highestScore=" << plan.summary.highestScore
             << " averageSelectedScore=" << plan.summary.averageSelectedScore
-            << " lowestSelectedScore=" << plan.summary.lowestSelectedScore;
+            << " lowestSelectedScore=" << plan.summary.lowestSelectedScore
+            << " budgetScale=" << plan.summary.budgetScale
+            << " recommendedSolverIterations=" << plan.summary.recommendedSolverIterations
+            << " tierCounts=" << plan.summary.fullTierCount << "/" << plan.summary.reducedTierCount << "/"
+            << plan.summary.frozenTierCount << "/" << plan.summary.cachedTierCount;
         return out.str();
     }
 

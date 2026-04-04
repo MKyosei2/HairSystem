@@ -61,6 +61,14 @@ namespace hairgpu
         uint32_t maxActiveStrands = 0u;
         uint32_t minActiveClusters = 1u;
         float promoteScoreThreshold = 0.52f;
+        bool enableBudgetAdaptation = true;
+        float targetFrameMilliseconds = 8.0f;
+        float previousFrameMilliseconds = 0.0f;
+        float overloadRatio = 1.05f;
+        float underloadRatio = 0.72f;
+        float budgetStep = 0.18f;
+        uint32_t minSolverIterations = 3u;
+        uint32_t maxSolverIterations = 8u;
     };
 
     struct ActiveSetClusterScore
@@ -86,6 +94,12 @@ namespace hairgpu
         float highestScore = 0.0f;
         float lowestSelectedScore = 0.0f;
         float averageSelectedScore = 0.0f;
+        float budgetScale = 1.0f;
+        uint32_t recommendedSolverIterations = 0u;
+        uint32_t fullTierCount = 0u;
+        uint32_t reducedTierCount = 0u;
+        uint32_t frozenTierCount = 0u;
+        uint32_t cachedTierCount = 0u;
     };
 
     struct ActiveSetPlan

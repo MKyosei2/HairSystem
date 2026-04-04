@@ -1,4 +1,5 @@
 add_library(hairgpu_core
+    ActiveSet.cpp
     AssetIO.cpp
     Broadphase.cpp
     Collision.cpp
@@ -10,12 +11,14 @@ add_library(hairgpu_core
     GuideCache.cpp
     HairCache.cpp
     HairMath.cpp
+    HybridRuntime.cpp
     Lod.cpp
     MeshIO.cpp
     Metrics.cpp
     Pipeline.cpp
     ReducedModel.cpp
     RenderData.cpp
+    SampleAsset.cpp
     UsdExport.cpp
     Validation.cpp
     Wig.cpp

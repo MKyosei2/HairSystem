@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "hairgpu/ActiveSet.h"
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/Binding.h"
@@ -15,6 +16,7 @@
 #include "hairgpu/Cards.h"
 #include "hairgpu/Collision.h"
 #include "hairgpu/GuideCache.h"
+#include "hairgpu/HybridRuntime.h"
 #include "hairgpu/HairCache.h"
 #include "hairgpu/Lod.h"
 #include "hairgpu/MeshIO.h"
@@ -299,50 +301,55 @@ namespace
 
     void PrintUsage()
     {
-        std::cout
-            << "hairgpu_cli usage:\n"
-            << "  hairgpu_cli help\n"
-            << "  hairgpu_cli version\n"
-            << "  hairgpu_cli info <input>\n"
-            << "  hairgpu_cli validate <input> [report.txt]\n"
-            << "  hairgpu_cli metrics-json <input> <metrics.json>\n"
-            << "  hairgpu_cli export-usda <input> <output.usda>\n"
-            << "  hairgpu_cli export-cards <input> <output.obj>\n"
-            << "  hairgpu_cli build-lods <input> <output_dir>\n"
-            << "  hairgpu_cli guidecache-info <input.guidecache>\n"
-            << "  hairgpu_cli guidecache-rest <input> <output.guidecache> [fps] [frames]\n"
-            << "  hairgpu_cli haircache-info <input.haircache>\n"
-            << "  hairgpu_cli haircache-rest <input> <output.haircache> [fps] [frames]\n"
-            << "  hairgpu_cli save-hairbin <input> <output.hairbin>\n"
-            << "  hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]\n"
-            << "  hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]\n"
-            << "  hairgpu_cli constrain <input> <output.hairbin> [maxStretch maxBend floorY maxRootRadius]\n"
-            << "  hairgpu_cli broadphase-stats <input> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount]\n"
-            << "  hairgpu_cli broadphase-export <input> <output.csv> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount] [maxPairs=512]\n"
-            << "  hairgpu_cli relax-angular-bend <input> <output.hairbin> [maxBendRadians] [iterations] [smoothing] [preserveLengths=1] [affectRootAdjacent=1]\n"
-            << "  hairgpu_cli relax-angular-xpbd <input> <output.hairbin> [targetBendRadians] [bendCompliance] [iterations] [preserveLengths=1] [affectRootAdjacent=0] [damping]\n"
-            << "  hairgpu_cli collide-scalp-mesh <input> <output.hairbin> [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1]\n"
-            << "  hairgpu_cli collide-scalp-sdf <input> <output.hairbin> [resolution] [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1] [padding]\n"
-            << "  hairgpu_cli export-scalp-sdf <input> <output.csv> [resolution] [padding]\n"
-            << "  hairgpu_cli palette-region <input> <palette.csv> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [strength]\n"
-            << "  hairgpu_cli export-scalp-obj <input> <output.obj>\n"
-            << "  hairgpu_cli export-bone-template <input> <output.csv>\n"
-            << "  hairgpu_cli export-bone-anim-template <input> <output.csv> [frames] [fps]\n"
-            << "  hairgpu_cli apply-scalp-pose <input> <bones.csv> <output.hairbin> [translateEntireStrands=1]\n"
-            << "  hairgpu_cli build-scalp-anim-cache <input> <bones_anim.csv> <output.haircache> [translateEntireStrands=1]\n"
-            << "  hairgpu_cli sample-haircache-frame <input.haircache> <timeSeconds> <output.hairbin> [loop=1]\n"
-            << "  hairgpu_cli import-scalp-obj <input> <scalp.obj> <output.hairbin>\n"
-            << "  hairgpu_cli rebind-roots <input> <scalp.obj> <output.hairbin> [snapRoots=1]\n"
-            << "  hairgpu_cli scaffold-project <input> <output_dir> [guideCacheFps] [guideCacheFrames]\n"
-            << "  hairgpu_cli synthesize-training-set <input> <output_dir> [frames] [amplitude] [fps]\n"
-            << "  hairgpu_cli reduced-train <sequence_dir> <output.reducedbin> [guideCount] [maxInfluences] [regularization] [validationStride] [useGuideDisplacements] [rootLockBlend]\n"
-            << "  hairgpu_cli reduced-autotune <sequence_dir> <output.reducedbin> [minGuides] [maxGuides] [step] [maxInfluences] [regularization] [validationStride]\n"
-            << "  hairgpu_cli reduced-info <input.reducedbin>\n"
-            << "  hairgpu_cli reduced-export-guidecache <input.reducedbin> <sequence_dir> <output.guidecache>\n"
-            << "  hairgpu_cli reduced-reconstruct-frame <input.reducedbin> <sequence_dir> <frameIndex> <output.hairbin>\n"
-            << "  hairgpu_cli reduced-reconstruct-sequence <input.reducedbin> <sequence_dir> <output_dir>\n"
-            << "  hairgpu_cli reduced-eval <input.reducedbin> <sequence_dir> [report.txt]\n"
-            << "  hairgpu_cli reduced-eval-json <input.reducedbin> <sequence_dir> <report.json>\n";
+        std::cout << R"USAGE(hairgpu_cli usage:
+  hairgpu_cli help
+  hairgpu_cli version
+  hairgpu_cli info <input>
+  hairgpu_cli validate <input> [report.txt]
+  hairgpu_cli metrics-json <input> <metrics.json>
+  hairgpu_cli active-set-plan <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
+  hairgpu_cli export-usda <input> <output.usda>
+  hairgpu_cli export-cards <input> <output.obj>
+  hairgpu_cli build-lods <input> <output_dir>
+  hairgpu_cli guidecache-info <input.guidecache>
+  hairgpu_cli guidecache-rest <input> <output.guidecache> [fps] [frames]
+  hairgpu_cli haircache-info <input.haircache>
+  hairgpu_cli haircache-rest <input> <output.haircache> [fps] [frames]
+  hairgpu_cli save-hairbin <input> <output.hairbin>
+  hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
+  hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
+  hairgpu_cli constrain <input> <output.hairbin> [maxStretch maxBend floorY maxRootRadius]
+  hairgpu_cli broadphase-stats <input> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount]
+  hairgpu_cli broadphase-export <input> <output.csv> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount] [maxPairs=512]
+  hairgpu_cli relax-angular-bend <input> <output.hairbin> [maxBendRadians] [iterations] [smoothing] [preserveLengths=1] [affectRootAdjacent=1]
+  hairgpu_cli relax-angular-xpbd <input> <output.hairbin> [targetBendRadians] [bendCompliance] [iterations] [preserveLengths=1] [affectRootAdjacent=0] [damping]
+  hairgpu_cli collide-scalp-mesh <input> <output.hairbin> [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1]
+  hairgpu_cli collide-scalp-sdf <input> <output.hairbin> [resolution] [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1] [padding]
+  hairgpu_cli export-scalp-sdf <input> <output.csv> [resolution] [padding]
+  hairgpu_cli palette-region <input> <palette.csv> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [strength]
+  hairgpu_cli export-scalp-obj <input> <output.obj>
+  hairgpu_cli export-bone-template <input> <output.csv>
+  hairgpu_cli export-bone-anim-template <input> <output.csv> [frames] [fps]
+  hairgpu_cli apply-scalp-pose <input> <bones.csv> <output.hairbin> [translateEntireStrands=1]
+  hairgpu_cli build-scalp-anim-cache <input> <bones_anim.csv> <output.haircache> [translateEntireStrands=1]
+  hairgpu_cli sample-haircache-frame <input.haircache> <timeSeconds> <output.hairbin> [loop=1]
+  hairgpu_cli import-scalp-obj <input> <scalp.obj> <output.hairbin>
+  hairgpu_cli rebind-roots <input> <scalp.obj> <output.hairbin> [snapRoots=1]
+  hairgpu_cli scaffold-project <input> <output_dir> [guideCacheFps] [guideCacheFrames]
+  hairgpu_cli synthesize-training-set <input> <output_dir> [frames] [amplitude] [fps]
+  hairgpu_cli reduced-train <sequence_dir> <output.reducedbin> [guideCount] [maxInfluences] [regularization] [validationStride] [useGuideDisplacements] [rootLockBlend]
+  hairgpu_cli reduced-autotune <sequence_dir> <output.reducedbin> [minGuides] [maxGuides] [step] [maxInfluences] [regularization] [validationStride]
+  hairgpu_cli reduced-info <input.reducedbin>
+  hairgpu_cli reduced-export-guidecache <input.reducedbin> <sequence_dir> <output.guidecache>
+  hairgpu_cli reduced-reconstruct-frame <input.reducedbin> <sequence_dir> <frameIndex> <output.hairbin>
+  hairgpu_cli reduced-reconstruct-sequence <input.reducedbin> <sequence_dir> <output_dir>
+  hairgpu_cli reduced-eval <input.reducedbin> <sequence_dir> [report.txt]
+  hairgpu_cli reduced-eval-json <input.reducedbin> <sequence_dir> <report.json>
+  hairgpu_cli hybrid-teacher-dataset <input> <output_dir> [frames] [fps] [swayAmplitude] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [maxSolverIterations]
+  hairgpu_cli hybrid-train-bundle <teacher_dir> <output_dir> [priorGuides] [residualGuides] [maxInfluences] [regularization] [validationStride] [smoothingAlpha] [residualGuideGain] [residualBlend]
+  hairgpu_cli hybrid-bundle-info <bundle_dir>
+  hairgpu_cli hybrid-run-bundle <teacher_dir> <bundle_dir> <output_dir> [residualBlendOverride] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [exportPerFrameHairBins]
+)USAGE";
     }
 
     int PrintLoadFailure(const std::string& context, const std::string& error, int code)
@@ -371,6 +378,196 @@ int main(int argc, char** argv)
     if (command == "version")
     {
         std::cout << "hairgpu_cli 0.2.0\n";
+        return 0;
+    }
+
+    if (command == "active-set-plan")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 63);
+        }
+
+        ActiveSetClusterSettings clusterSettings = {};
+        clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 4, clusterSettings.targetGuideCountPerCluster);
+        clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 5, clusterSettings.maxGuideRootDistance);
+        const std::vector<ActiveSetCluster> clusters = BuildActiveSetClusters(asset, clusterSettings);
+        if (clusters.empty())
+        {
+            return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 64);
+        }
+
+        ActiveSetRuntimeInput runtimeInput = {};
+        runtimeInput.fixedTimeStep = 1.0f / 60.0f;
+        ActiveSetScoringSettings scoringSettings = {};
+        ActiveSetBudget budget = {};
+        budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
+        budget.maxActiveGuides = ArgToUInt(argc, argv, 7, budget.maxActiveGuides);
+        budget.promoteScoreThreshold = ArgToFloat(argc, argv, 8, budget.promoteScoreThreshold);
+
+        ActiveSetPlan plan;
+        if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
+        {
+            return PrintLoadFailure("Active-set evaluation failed", error, 65);
+        }
+        if (!WriteActiveSetPlanJson(argv[3], asset, plan, error))
+        {
+            return PrintLoadFailure("Active-set JSON export failed", error, 66);
+        }
+
+        std::cout << BuildActiveSetPlanSummary(plan) << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-teacher-dataset")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 70);
+        }
+
+        HybridTeacherDatasetSettings settings = {};
+        settings.frameCount = ArgToUInt(argc, argv, 4, settings.frameCount);
+        settings.frameRate = ArgToFloat(argc, argv, 5, settings.frameRate);
+        settings.swayAmplitude = ArgToFloat(argc, argv, 6, settings.swayAmplitude);
+        settings.budget.maxActiveClusters = ArgToUInt(argc, argv, 7, settings.budget.maxActiveClusters);
+        settings.budget.maxActiveGuides = ArgToUInt(argc, argv, 8, settings.budget.maxActiveGuides);
+        settings.budget.targetFrameMilliseconds = ArgToFloat(argc, argv, 9, settings.budget.targetFrameMilliseconds);
+        settings.budget.maxSolverIterations = ArgToUInt(argc, argv, 10, settings.budget.maxSolverIterations);
+        settings.budget.minSolverIterations = std::min<uint32_t>(settings.budget.minSolverIterations, settings.budget.maxSolverIterations);
+
+        HybridTeacherDatasetReport report;
+        ColliderSet colliders = {};
+        if (!GenerateHybridTeacherDataset(asset, colliders, settings, argv[3], report, error))
+        {
+            return PrintLoadFailure("Hybrid teacher dataset generation failed", error, 71);
+        }
+
+        std::cout << "frames=" << report.frameCount
+                  << " avgSelectedClusters=" << report.averageSelectedClusterCount
+                  << " avgSelectedGuides=" << report.averageSelectedGuideCount
+                  << " avgSelectedStrands=" << report.averageSelectedStrandCount
+                  << " avgPenetration=" << report.averagePenetration
+                  << " peakEstimatedSimulationMs=" << report.peakEstimatedSimulationMilliseconds << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-train-bundle")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        ReducedModelTrainingSequence teacherSequence;
+        std::string error;
+        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
+        {
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 72);
+        }
+
+        HybridModelTrainingSettings settings = {};
+        settings.priorGuideCount = ArgToUInt(argc, argv, 4, settings.priorGuideCount);
+        settings.residualGuideCount = ArgToUInt(argc, argv, 5, settings.residualGuideCount);
+        settings.maxInfluencesPerFollower = ArgToUInt(argc, argv, 6, settings.maxInfluencesPerFollower);
+        settings.regularization = ArgToFloat(argc, argv, 7, settings.regularization);
+        settings.validationStride = ArgToUInt(argc, argv, 8, settings.validationStride);
+        settings.priorGuideSmoothingAlpha = ArgToFloat(argc, argv, 9, settings.priorGuideSmoothingAlpha);
+        settings.residualGuideGain = ArgToFloat(argc, argv, 10, settings.residualGuideGain);
+        settings.residualBlend = ArgToFloat(argc, argv, 11, settings.residualBlend);
+
+        HybridModelBundle bundle;
+        HybridModelTrainingReport report;
+        ColliderSet colliders = {};
+        if (!TrainHybridModelBundle(teacherSequence, colliders, settings, bundle, report, error) ||
+            !SaveHybridModelBundle(argv[3], bundle, &report, error))
+        {
+            return PrintLoadFailure("Hybrid bundle training failed", error, 73);
+        }
+
+        std::cout << BuildHybridModelBundleSummary(bundle, &report) << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-bundle-info")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HybridModelBundle bundle;
+        std::string error;
+        if (!LoadHybridModelBundle(argv[2], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 74);
+        }
+        std::cout << BuildHybridModelBundleSummary(bundle, nullptr) << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-run-bundle")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        ReducedModelTrainingSequence teacherSequence;
+        HybridModelBundle bundle;
+        std::string error;
+        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
+        {
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 75);
+        }
+        if (!LoadHybridModelBundle(argv[3], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 76);
+        }
+
+        FullHybridRuntimeSettings settings = {};
+        settings.residualBlendOverride = ArgToFloat(argc, argv, 5, settings.residualBlendOverride);
+        settings.useBudgetOverride = argc >= 9;
+        if (settings.useBudgetOverride)
+        {
+            settings.budgetOverride = bundle.budget;
+            settings.budgetOverride.maxActiveClusters = ArgToUInt(argc, argv, 6, settings.budgetOverride.maxActiveClusters);
+            settings.budgetOverride.maxActiveGuides = ArgToUInt(argc, argv, 7, settings.budgetOverride.maxActiveGuides);
+            settings.budgetOverride.targetFrameMilliseconds = ArgToFloat(argc, argv, 8, settings.budgetOverride.targetFrameMilliseconds);
+        }
+        settings.exportPerFrameHairBins = ArgToInt(argc, argv, 9, 0) != 0;
+
+        FullHybridRuntimeReport report;
+        ColliderSet colliders = {};
+        if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, settings, argv[4], report, error))
+        {
+            return PrintLoadFailure("Full hybrid runtime failed", error, 77);
+        }
+        std::cout << "frames=" << report.frameCount
+                  << " avgPriorRms=" << report.averagePriorRmsError
+                  << " avgHybridRmsBefore=" << report.averageHybridRmsErrorBeforeCorrection
+                  << " avgHybridRmsAfter=" << report.averageHybridRmsErrorAfterCorrection
+                  << " avgSelectedClusters=" << report.averageSelectedClusterCount
+                  << " avgSelectedGuides=" << report.averageSelectedGuideCount
+                  << " avgPenetration=" << report.averagePenetration << "\n";
         return 0;
     }
 
