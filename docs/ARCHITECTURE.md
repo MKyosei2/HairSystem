@@ -23,7 +23,15 @@
 - scalp mesh と root bind の基礎関数
 - scalp skin weight を含むテスト用アセット生成
 
-### 2. dx11_viewer
+### 2. Active-set planning layer
+
+責務:
+- guide strand を cluster 単位に束ねる
+- motion / displacement / visibility / silhouette / uncertainty / contact proxy から cluster score を計算する
+- フレーム予算に合わせて corrective physics 対象 cluster を選ぶ
+- 既存 runtime に対して「どこだけ高価な補正を打つか」を渡す
+
+### 3. dx11_viewer
 
 責務:
 - GPU バッファ作成
@@ -93,6 +101,8 @@ strand を GPU 描画向けの segment topology に変換した中間データ�
 
 ## このベースで未実装の主要機能
 
+- active-set で選ばれた cluster に対する runtime corrective physics の GPU 実装
+- detector に uncertainty / contact / penetration depth の実測入力を直結すること
 - radix sort / hash / voxel broadphase への高度化
 - production quality angular XPBD bend constraint
 - animated scalp mesh の skeletal bind 本実装

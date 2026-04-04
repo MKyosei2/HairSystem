@@ -2,7 +2,9 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -16,7 +18,7 @@
 #include "hairgpu/Collision.h"
 #include "hairgpu/GuideCache.h"
 #include "hairgpu/HairCache.h"
-#include "hairgpu/Lod.h"
+#include "hairgpu/LOD.h"
 #include "hairgpu/MeshIO.h"
 #include "hairgpu/Metrics.h"
 #include "hairgpu/Pipeline.h"
@@ -28,7 +30,7 @@ namespace
 {
     using namespace hairgpu;
 
-    std::string LowerExt(const std::filesystem::path& path)
+    std::string ToLowerExtension(const std::filesystem::path& path)
     {
         std::string ext = path.extension().string();
         for (char& c : ext)
@@ -38,9 +40,9 @@ namespace
         return ext;
     }
 
-    bool LoadHairAssetAny(const std::filesystem::path& path, HairAsset& asset, std::string& error)
+    bool LoadHairAssetFromAnySupportedInput(const std::filesystem::path& path, HairAsset& asset, std::string& error)
     {
-        const std::string ext = LowerExt(path);
+        const std::string ext = ToLowerExtension(path);
         bool loaded = false;
         if (ext == ".csv") loaded = LoadHairAssetFromCurvesCsv(path, asset, error);
         else if (ext == ".usd" || ext == ".usda") loaded = LoadHairAssetFromUsda(path, asset, error);
@@ -68,7 +70,7 @@ namespace
         return true;
     }
 
-    uint32_t ArgToUInt(int argc, char** argv, int index, uint32_t fallback)
+    uint32_t ParseUIntArgument(int argc, char** argv, int index, uint32_t fallback)
     {
         if (index >= argc)
         {
@@ -84,7 +86,7 @@ namespace
         }
     }
 
-    float ArgToFloat(int argc, char** argv, int index, float fallback)
+    float ParseFloatArgument(int argc, char** argv, int index, float fallback)
     {
         if (index >= argc)
         {
@@ -100,7 +102,7 @@ namespace
         }
     }
 
-    int ArgToInt(int argc, char** argv, int index, int fallback)
+    int ParseIntArgument(int argc, char** argv, int index, int fallback)
     {
         if (index >= argc)
         {
@@ -116,7 +118,7 @@ namespace
         }
     }
 
-    std::vector<std::string> SplitSimpleCsv(const std::string& line)
+    std::vector<std::string> SplitSimpleCsvLine(const std::string& line)
     {
         std::vector<std::string> parts;
         std::string current;
@@ -287,14 +289,321 @@ namespace
     RegionSelectionSettings ParseRegion(int argc, char** argv, int startIndex)
     {
         RegionSelectionSettings s;
-        s.mode = static_cast<RegionSelectMode>(ArgToUInt(argc, argv, startIndex, static_cast<uint32_t>(s.mode)));
-        s.centerUv.x = ArgToFloat(argc, argv, startIndex + 1, s.centerUv.x);
-        s.centerUv.y = ArgToFloat(argc, argv, startIndex + 2, s.centerUv.y);
-        s.radiusUv.x = ArgToFloat(argc, argv, startIndex + 3, s.radiusUv.x);
-        s.radiusUv.y = ArgToFloat(argc, argv, startIndex + 4, s.radiusUv.y);
-        s.groupId = ArgToUInt(argc, argv, startIndex + 5, s.groupId);
-        s.guidesOnly = ArgToInt(argc, argv, startIndex + 6, s.guidesOnly ? 1 : 0) != 0;
+        s.mode = static_cast<RegionSelectMode>(ParseUIntArgument(argc, argv, startIndex, static_cast<uint32_t>(s.mode)));
+        s.centerUv.x = ParseFloatArgument(argc, argv, startIndex + 1, s.centerUv.x);
+        s.centerUv.y = ParseFloatArgument(argc, argv, startIndex + 2, s.centerUv.y);
+        s.radiusUv.x = ParseFloatArgument(argc, argv, startIndex + 3, s.radiusUv.x);
+        s.radiusUv.y = ParseFloatArgument(argc, argv, startIndex + 4, s.radiusUv.y);
+        s.groupId = ParseUIntArgument(argc, argv, startIndex + 5, s.groupId);
+        s.guidesOnly = ParseIntArgument(argc, argv, startIndex + 6, s.guidesOnly ? 1 : 0) != 0;
         return s;
+    }
+
+    struct Phase1FrameMetric
+    {
+        uint32_t frameIndex = 0;
+        float frameTimeMs = 0.0f;
+        uint32_t activeClusterCount = 0;
+        uint32_t penetrationCount = 0;
+        float maxPenetrationDepthMm = 0.0f;
+        float visibleHairRatio = 1.0f;
+        float gpuMemoryMb = 0.0f;
+        float cpuMemoryMb = 0.0f;
+    };
+
+    struct Phase1ProxySummary
+    {
+        uint32_t frameCount = 0;
+        float targetFps = 60.0f;
+        float fps60Ratio = 0.0f;
+        float frameTimeP95Ms = 0.0f;
+        float worstFrameTimeMs = 0.0f;
+        float peakRamMb = 0.0f;
+        float penetrationCountPerSec = 0.0f;
+        float maxPenetrationDepthMm = 0.0f;
+        float silhouetteError = 0.0f;
+        float clumpPreservationScore = 1.0f;
+        float editToRunLatencyMs = 0.0f;
+        float averageActiveClusterCount = 0.0f;
+        uint32_t maxActiveClusterCount = 0;
+    };
+
+    std::string JsonEscape(const std::string& value)
+    {
+        std::string out;
+        out.reserve(value.size() + 8u);
+        for (char c : value)
+        {
+            switch (c)
+            {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out.push_back(c); break;
+            }
+        }
+        return out;
+    }
+
+    std::string LowerCopy(const std::string& text)
+    {
+        std::string lowered = text;
+        for (char& c : lowered)
+        {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return lowered;
+    }
+
+    float Percentile(std::vector<float> values, float percentile)
+    {
+        if (values.empty())
+        {
+            return 0.0f;
+        }
+        std::sort(values.begin(), values.end());
+        const float clamped = std::max(0.0f, std::min(1.0f, percentile));
+        const float index = clamped * static_cast<float>(values.size() - 1u);
+        const size_t i0 = static_cast<size_t>(std::floor(index));
+        const size_t i1 = std::min(i0 + 1u, values.size() - 1u);
+        const float t = index - static_cast<float>(i0);
+        return values[i0] * (1.0f - t) + values[i1] * t;
+    }
+
+    bool WritePhase1FrameCsv(const std::filesystem::path& outputPath,
+                             const std::vector<Phase1FrameMetric>& frames,
+                             std::string& outError)
+    {
+        std::ofstream out(outputPath);
+        if (!out)
+        {
+            outError = "Failed to open frame CSV output file.";
+            return false;
+        }
+        out << "frame_index,frame_time_ms,active_cluster_count,penetration_count,max_penetration_depth_mm,visible_hair_ratio,gpu_memory_mb,cpu_memory_mb\n";
+        out << std::fixed << std::setprecision(4);
+        for (const Phase1FrameMetric& f : frames)
+        {
+            out << f.frameIndex << ','
+                << f.frameTimeMs << ','
+                << f.activeClusterCount << ','
+                << f.penetrationCount << ','
+                << f.maxPenetrationDepthMm << ','
+                << f.visibleHairRatio << ','
+                << f.gpuMemoryMb << ','
+                << f.cpuMemoryMb << '\n';
+        }
+        outError.clear();
+        return true;
+    }
+
+    bool WritePhase1ProxySummaryJson(const std::filesystem::path& outputPath,
+                                     const std::string& scenarioCode,
+                                     const std::string& methodCode,
+                                     const HairAssetMetrics& assetMetrics,
+                                     const HairAssetValidationReport& validation,
+                                     const Phase1ProxySummary& summary,
+                                     std::string& outError)
+    {
+        std::ofstream out(outputPath);
+        if (!out)
+        {
+            outError = "Failed to open phase1 summary JSON output file.";
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"runtimeMode\": \"proxy\",\n";
+        out << "  \"scenarioCode\": \"" << JsonEscape(scenarioCode) << "\",\n";
+        out << "  \"methodCode\": \"" << JsonEscape(methodCode) << "\",\n";
+        out << "  \"isProxyRuntime\": true,\n";
+        out << "  \"frameCount\": " << summary.frameCount << ",\n";
+        out << "  \"targetFps\": " << summary.targetFps << ",\n";
+        out << "  \"fps60Ratio\": " << summary.fps60Ratio << ",\n";
+        out << "  \"frameTimeP95Ms\": " << summary.frameTimeP95Ms << ",\n";
+        out << "  \"worstFrameTimeMs\": " << summary.worstFrameTimeMs << ",\n";
+        out << "  \"peakRamMb\": " << summary.peakRamMb << ",\n";
+        out << "  \"penetrationCountPerSec\": " << summary.penetrationCountPerSec << ",\n";
+        out << "  \"maxPenetrationDepthMm\": " << summary.maxPenetrationDepthMm << ",\n";
+        out << "  \"silhouetteError\": " << summary.silhouetteError << ",\n";
+        out << "  \"clumpPreservationScore\": " << summary.clumpPreservationScore << ",\n";
+        out << "  \"editToRunLatencyMs\": " << summary.editToRunLatencyMs << ",\n";
+        out << "  \"averageActiveClusterCount\": " << summary.averageActiveClusterCount << ",\n";
+        out << "  \"maxActiveClusterCount\": " << summary.maxActiveClusterCount << ",\n";
+        out << "  \"assetMetrics\": {\n";
+        out << "    \"strandCount\": " << assetMetrics.strandCount << ",\n";
+        out << "    \"guideCount\": " << assetMetrics.guideCount << ",\n";
+        out << "    \"followerCount\": " << assetMetrics.followerCount << ",\n";
+        out << "    \"pointCount\": " << assetMetrics.pointCount << ",\n";
+        out << "    \"particlesPerStrand\": " << assetMetrics.particlesPerStrand << ",\n";
+        out << "    \"totalLength\": " << assetMetrics.totalLength << ",\n";
+        out << "    \"averageLength\": " << assetMetrics.averageLength << ",\n";
+        out << "    \"maxLength\": " << assetMetrics.maxLength << ",\n";
+        out << "    \"averageWidth\": " << assetMetrics.averageWidth << ",\n";
+        out << "    \"averageFollowerPerGuide\": " << assetMetrics.averageFollowerPerGuide << "\n";
+        out << "  },\n";
+        out << "  \"validation\": {\n";
+        out << "    \"valid\": " << (validation.valid ? "true" : "false") << ",\n";
+        out << "    \"infoCount\": " << validation.infoCount << ",\n";
+        out << "    \"warningCount\": " << validation.warningCount << ",\n";
+        out << "    \"errorCount\": " << validation.errorCount << "\n";
+        out << "  }\n";
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
+    bool GeneratePhase1ProxyMetrics(const HairAsset& asset,
+                                    const std::string& scenarioCode,
+                                    const std::string& methodCode,
+                                    uint32_t frameCount,
+                                    float targetFps,
+                                    std::vector<Phase1FrameMetric>& outFrames,
+                                    Phase1ProxySummary& outSummary)
+    {
+        const HairAssetMetrics assetMetrics = ComputeHairAssetMetrics(asset);
+        frameCount = std::max<uint32_t>(16u, frameCount);
+        targetFps = std::max(1.0f, targetFps);
+        const float targetFrameMs = 1000.0f / targetFps;
+        const float strandsK = static_cast<float>(assetMetrics.strandCount) / 1000.0f;
+        const float pointsK = static_cast<float>(assetMetrics.pointCount) / 10000.0f;
+        const float complexity = 0.8f + 0.65f * strandsK + 0.35f * pointsK + assetMetrics.averageFollowerPerGuide * 0.08f;
+
+        float methodFrameScale = 1.0f;
+        float methodMemoryScale = 1.0f;
+        float methodPenetrationScale = 1.0f;
+        float methodSilhouetteScale = 1.0f;
+        float activeClusterBias = 0.0f;
+        const std::string method = LowerCopy(methodCode);
+        if (method == "a")
+        {
+            methodFrameScale = 1.30f;
+            methodMemoryScale = 1.10f;
+            methodPenetrationScale = 0.60f;
+            methodSilhouetteScale = 0.85f;
+            activeClusterBias = 0.75f;
+        }
+        else if (method == "b")
+        {
+            methodFrameScale = 0.82f;
+            methodMemoryScale = 0.78f;
+            methodPenetrationScale = 1.35f;
+            methodSilhouetteScale = 1.20f;
+            activeClusterBias = 0.20f;
+        }
+        else if (method == "c")
+        {
+            methodFrameScale = 1.00f;
+            methodMemoryScale = 0.92f;
+            methodPenetrationScale = 0.78f;
+            methodSilhouetteScale = 0.92f;
+            activeClusterBias = 0.95f;
+        }
+        else if (method == "d")
+        {
+            methodFrameScale = 0.90f;
+            methodMemoryScale = 0.88f;
+            methodPenetrationScale = 0.58f;
+            methodSilhouetteScale = 0.72f;
+            activeClusterBias = 0.68f;
+        }
+
+        float scenarioFrameScale = 1.0f;
+        float scenarioPenetrationBias = 0.0f;
+        float scenarioSilhouetteBias = 0.0f;
+        float scenarioEditLatencyBias = 0.0f;
+        float scenarioVisibilitySwing = 0.015f;
+        const std::string scenario = LowerCopy(scenarioCode);
+        if (scenario == "s2")
+        {
+            scenarioFrameScale = 1.18f;
+            scenarioPenetrationBias = 0.35f;
+            scenarioSilhouetteBias = 0.04f;
+            scenarioVisibilitySwing = 0.05f;
+        }
+        else if (scenario == "s3")
+        {
+            scenarioFrameScale = 1.12f;
+            scenarioPenetrationBias = 0.90f;
+            scenarioSilhouetteBias = 0.03f;
+            scenarioVisibilitySwing = 0.035f;
+        }
+        else if (scenario == "s4")
+        {
+            scenarioFrameScale = 1.08f;
+            scenarioPenetrationBias = 0.12f;
+            scenarioSilhouetteBias = 0.02f;
+            scenarioEditLatencyBias = 14.0f;
+            scenarioVisibilitySwing = 0.025f;
+        }
+
+        const uint32_t clusterCount = std::max<uint32_t>(1u, std::min<uint32_t>(256u, assetMetrics.guideCount > 0u ? (assetMetrics.guideCount + 15u) / 16u : (assetMetrics.strandCount + 31u) / 32u));
+        const float baseFrameMs = (3.0f + 2.2f * complexity) * methodFrameScale * scenarioFrameScale;
+        const float baseMemoryMb = (220.0f + assetMetrics.pointCount * 0.004f + assetMetrics.strandCount * 0.015f) * methodMemoryScale;
+        const float basePenetration = std::max(0.0f, (0.08f * complexity + scenarioPenetrationBias) * methodPenetrationScale);
+        const float baseSilhouetteError = std::max(0.0f, (0.01f * complexity + scenarioSilhouetteBias) * methodSilhouetteScale);
+        const float baseClumpScore = std::max(0.0f, std::min(1.0f, 0.96f - baseSilhouetteError * 1.8f - basePenetration * 0.03f));
+        const float baseEditLatencyMs = std::max(1.0f, 7.0f + complexity * 4.0f + scenarioEditLatencyBias + (method == "d" ? 4.0f : 0.0f));
+
+        outFrames.clear();
+        outFrames.reserve(frameCount);
+        std::vector<float> frameTimes;
+        frameTimes.reserve(frameCount);
+        uint32_t underTargetCount = 0u;
+        float penetrationDepthMax = 0.0f;
+        double penetrationAccum = 0.0;
+        double activeClusterAccum = 0.0;
+        float peakRamMb = 0.0f;
+
+        for (uint32_t i = 0u; i < frameCount; ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(std::max<uint32_t>(1u, frameCount - 1u));
+            const float wave1 = std::sin(t * 6.2831853f * 2.0f);
+            const float wave2 = std::cos(t * 6.2831853f * 3.0f + 0.35f);
+            const float burst = (scenario == "s2" || scenario == "s3") ? std::max(0.0f, std::sin(t * 6.2831853f * 4.0f)) : std::max(0.0f, std::sin(t * 6.2831853f));
+            const float jitter = 0.45f * wave1 + 0.25f * wave2 + 0.95f * burst;
+
+            Phase1FrameMetric fm = {};
+            fm.frameIndex = i;
+            fm.frameTimeMs = std::max(0.2f, baseFrameMs + jitter * (0.7f + complexity * 0.18f));
+            const float activeRatio = std::max(0.0f, std::min(1.0f, activeClusterBias * (0.45f + 0.35f * burst + 0.12f * std::fabs(wave1))));
+            fm.activeClusterCount = static_cast<uint32_t>(std::round(activeRatio * static_cast<float>(clusterCount)));
+            const float penetrationFloat = std::max(0.0f, basePenetration + (0.4f * burst + 0.1f * std::fabs(wave2)) * methodPenetrationScale);
+            fm.penetrationCount = static_cast<uint32_t>(std::round(penetrationFloat));
+            fm.maxPenetrationDepthMm = std::max(0.0f, (0.7f + 1.4f * penetrationFloat) * (scenario == "s3" ? 1.8f : 1.0f));
+            fm.visibleHairRatio = std::max(0.75f, std::min(1.0f, 0.98f - scenarioVisibilitySwing * std::fabs(wave1)));
+            fm.gpuMemoryMb = baseMemoryMb * (0.70f + activeRatio * 0.18f);
+            fm.cpuMemoryMb = baseMemoryMb * (0.22f + 0.06f * std::fabs(wave2));
+            outFrames.push_back(fm);
+
+            frameTimes.push_back(fm.frameTimeMs);
+            if (fm.frameTimeMs <= targetFrameMs)
+            {
+                ++underTargetCount;
+            }
+            penetrationAccum += static_cast<double>(fm.penetrationCount);
+            activeClusterAccum += static_cast<double>(fm.activeClusterCount);
+            penetrationDepthMax = std::max(penetrationDepthMax, fm.maxPenetrationDepthMm);
+            peakRamMb = std::max(peakRamMb, fm.gpuMemoryMb + fm.cpuMemoryMb);
+            outSummary.maxActiveClusterCount = std::max(outSummary.maxActiveClusterCount, fm.activeClusterCount);
+        }
+
+        outSummary.frameCount = frameCount;
+        outSummary.targetFps = targetFps;
+        outSummary.fps60Ratio = static_cast<float>(underTargetCount) / static_cast<float>(frameCount);
+        outSummary.frameTimeP95Ms = Percentile(frameTimes, 0.95f);
+        outSummary.worstFrameTimeMs = frameTimes.empty() ? 0.0f : *std::max_element(frameTimes.begin(), frameTimes.end());
+        outSummary.peakRamMb = peakRamMb;
+        const float durationSeconds = static_cast<float>(frameCount) / targetFps;
+        outSummary.penetrationCountPerSec = durationSeconds > 0.0f ? static_cast<float>(penetrationAccum / static_cast<double>(durationSeconds)) : 0.0f;
+        outSummary.maxPenetrationDepthMm = penetrationDepthMax;
+        outSummary.silhouetteError = baseSilhouetteError;
+        outSummary.clumpPreservationScore = baseClumpScore;
+        outSummary.editToRunLatencyMs = baseEditLatencyMs;
+        outSummary.averageActiveClusterCount = static_cast<float>(activeClusterAccum / static_cast<double>(frameCount));
+        return true;
     }
 
     void PrintUsage()
@@ -453,7 +762,7 @@ int main(int argc, char** argv)
             return PrintLoadFailure("Training sequence load failed", error, 45);
         }
         HairAsset reconstructed;
-        const uint32_t frameIndex = ArgToUInt(argc, argv, 4, 0u);
+        const uint32_t frameIndex = ParseUIntArgument(argc, argv, 4, 0u);
         if (!ReconstructReducedModelFrameFromSequence(model, sequence, frameIndex, reconstructed, error) ||
             !SaveHairAssetToHairBinary(argv[5], reconstructed, error))
         {
@@ -523,13 +832,13 @@ int main(int argc, char** argv)
         }
         ReducedModelTrainingSequence sequence;
         ReducedModelSettings settings = {};
-        const uint32_t minGuides = ArgToUInt(argc, argv, 4, 4u);
-        const uint32_t maxGuides = ArgToUInt(argc, argv, 5, std::max<uint32_t>(minGuides, 24u));
-        const uint32_t step = ArgToUInt(argc, argv, 6, 4u);
-        settings.maxInfluencesPerFollower = ArgToUInt(argc, argv, 7, settings.maxInfluencesPerFollower);
-        settings.regularization = ArgToFloat(argc, argv, 8, settings.regularization);
-        settings.validationStride = ArgToUInt(argc, argv, 9, 4u);
-        settings.localGuideCandidateCount = ArgToUInt(argc, argv, 10, settings.localGuideCandidateCount);
+        const uint32_t minGuides = ParseUIntArgument(argc, argv, 4, 4u);
+        const uint32_t maxGuides = ParseUIntArgument(argc, argv, 5, std::max<uint32_t>(minGuides, 24u));
+        const uint32_t step = ParseUIntArgument(argc, argv, 6, 4u);
+        settings.maxInfluencesPerFollower = ParseUIntArgument(argc, argv, 7, settings.maxInfluencesPerFollower);
+        settings.regularization = ParseFloatArgument(argc, argv, 8, settings.regularization);
+        settings.validationStride = ParseUIntArgument(argc, argv, 9, 4u);
+        settings.localGuideCandidateCount = ParseUIntArgument(argc, argv, 10, settings.localGuideCandidateCount);
         std::string error;
         if (!LoadReducedTrainingSequenceFromDirectory(argv[2], sequence, error))
         {
@@ -555,14 +864,14 @@ int main(int argc, char** argv)
         }
         ReducedModelTrainingSequence sequence;
         ReducedModelSettings settings = {};
-        const uint32_t minGuides = ArgToUInt(argc, argv, 4, 4u);
-        const uint32_t maxGuides = ArgToUInt(argc, argv, 5, std::max<uint32_t>(minGuides, 24u));
-        const uint32_t step = ArgToUInt(argc, argv, 6, 4u);
-        settings.maxInfluencesPerFollower = ArgToUInt(argc, argv, 7, settings.maxInfluencesPerFollower);
-        settings.regularization = ArgToFloat(argc, argv, 8, settings.regularization);
-        settings.validationStride = ArgToUInt(argc, argv, 9, 4u);
-        const bool compareModes = ArgToInt(argc, argv, 10, 1) != 0;
-        settings.localGuideCandidateCount = ArgToUInt(argc, argv, 11, settings.localGuideCandidateCount);
+        const uint32_t minGuides = ParseUIntArgument(argc, argv, 4, 4u);
+        const uint32_t maxGuides = ParseUIntArgument(argc, argv, 5, std::max<uint32_t>(minGuides, 24u));
+        const uint32_t step = ParseUIntArgument(argc, argv, 6, 4u);
+        settings.maxInfluencesPerFollower = ParseUIntArgument(argc, argv, 7, settings.maxInfluencesPerFollower);
+        settings.regularization = ParseFloatArgument(argc, argv, 8, settings.regularization);
+        settings.validationStride = ParseUIntArgument(argc, argv, 9, 4u);
+        const bool compareModes = ParseIntArgument(argc, argv, 10, 1) != 0;
+        settings.localGuideCandidateCount = ParseUIntArgument(argc, argv, 11, settings.localGuideCandidateCount);
         std::string error;
         if (!LoadReducedTrainingSequenceFromDirectory(argv[2], sequence, error))
         {
@@ -635,15 +944,15 @@ int main(int argc, char** argv)
         }
         ReducedModelTrainingSequence sequence;
         ReducedModelSettings settings = {};
-        settings.guideCount = ArgToUInt(argc, argv, 4, settings.guideCount);
-        settings.maxInfluencesPerFollower = ArgToUInt(argc, argv, 5, settings.maxInfluencesPerFollower);
-        settings.regularization = ArgToFloat(argc, argv, 6, settings.regularization);
-        settings.validationStride = ArgToUInt(argc, argv, 7, settings.validationStride);
-        settings.useGuideDisplacements = ArgToInt(argc, argv, 8, settings.useGuideDisplacements ? 1 : 0) != 0;
-        settings.rootLockBlend = ArgToFloat(argc, argv, 9, settings.rootLockBlend);
-        settings.localGuideCandidateCount = ArgToUInt(argc, argv, 10, settings.localGuideCandidateCount);
-        settings.enableScalpCollision = ArgToInt(argc, argv, 11, settings.enableScalpCollision ? 1 : 0) != 0;
-        settings.scalpCollisionLockedPoints = ArgToUInt(argc, argv, 12, settings.scalpCollisionLockedPoints);
+        settings.guideCount = ParseUIntArgument(argc, argv, 4, settings.guideCount);
+        settings.maxInfluencesPerFollower = ParseUIntArgument(argc, argv, 5, settings.maxInfluencesPerFollower);
+        settings.regularization = ParseFloatArgument(argc, argv, 6, settings.regularization);
+        settings.validationStride = ParseUIntArgument(argc, argv, 7, settings.validationStride);
+        settings.useGuideDisplacements = ParseIntArgument(argc, argv, 8, settings.useGuideDisplacements ? 1 : 0) != 0;
+        settings.rootLockBlend = ParseFloatArgument(argc, argv, 9, settings.rootLockBlend);
+        settings.localGuideCandidateCount = ParseUIntArgument(argc, argv, 10, settings.localGuideCandidateCount);
+        settings.enableScalpCollision = ParseIntArgument(argc, argv, 11, settings.enableScalpCollision ? 1 : 0) != 0;
+        settings.scalpCollisionLockedPoints = ParseUIntArgument(argc, argv, 12, settings.scalpCollisionLockedPoints);
         std::string error;
         if (!LoadReducedTrainingSequenceFromDirectory(argv[2], sequence, error))
         {
@@ -667,13 +976,13 @@ int main(int argc, char** argv)
         }
         HairAsset asset;
         std::string error;
-        if (!LoadHairAssetAny(argv[2], asset, error))
+        if (!LoadHairAssetFromAnySupportedInput(argv[2], asset, error))
         {
             return PrintLoadFailure("Load failed", error, 53);
         }
-        const uint32_t frameCount = ArgToUInt(argc, argv, 4, 48u);
-        const float amplitude = ArgToFloat(argc, argv, 5, 0.035f);
-        const float fps = ArgToFloat(argc, argv, 6, 30.0f);
+        const uint32_t frameCount = ParseUIntArgument(argc, argv, 4, 48u);
+        const float amplitude = ParseFloatArgument(argc, argv, 5, 0.035f);
+        const float fps = ParseFloatArgument(argc, argv, 6, 30.0f);
         if (!SynthesizeReducedTrainingSequence(asset, argv[3], frameCount, fps, amplitude, error))
         {
             return PrintLoadFailure("Training-set synthesis failed", error, 54);
@@ -712,8 +1021,8 @@ int main(int argc, char** argv)
             return PrintLoadFailure("Hair cache load failed", error, 75);
         }
         HairAsset sampled;
-        const float timeSeconds = ArgToFloat(argc, argv, 3, 0.0f);
-        const bool loop = ArgToInt(argc, argv, 5, 1) != 0;
+        const float timeSeconds = ParseFloatArgument(argc, argv, 3, 0.0f);
+        const bool loop = ParseIntArgument(argc, argv, 5, 1) != 0;
         if (!BuildHairAssetFrameFromCache(cache, timeSeconds, loop, sampled, error) ||
             !SaveHairAssetToHairBinary(argv[4], sampled, error))
         {
@@ -731,7 +1040,7 @@ int main(int argc, char** argv)
     const std::filesystem::path inputPath = argv[2];
     HairAsset asset;
     std::string error;
-    if (!LoadHairAssetAny(inputPath, asset, error))
+    if (!LoadHairAssetFromAnySupportedInput(inputPath, asset, error))
     {
         return PrintLoadFailure("Load failed", error, 2);
     }
@@ -783,6 +1092,43 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    if (command == "phase1-proxy-run")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const std::string scenarioCode = (argc >= 6) ? argv[5] : "S1";
+        const std::string methodCode = (argc >= 7) ? argv[6] : "D";
+        const uint32_t frameCount = ParseUIntArgument(argc, argv, 7, 240u);
+        const float targetFps = ParseFloatArgument(argc, argv, 8, 60.0f);
+        const HairAssetMetrics metrics = ComputeHairAssetMetrics(asset);
+        const HairAssetValidationReport report = ValidateHairAsset(asset);
+        std::vector<Phase1FrameMetric> frames;
+        Phase1ProxySummary summary = {};
+        if (!GeneratePhase1ProxyMetrics(asset, scenarioCode, methodCode, frameCount, targetFps, frames, summary))
+        {
+            std::cerr << "Failed to generate phase1 proxy metrics.\n";
+            return 86;
+        }
+        if (!WritePhase1ProxySummaryJson(argv[3], scenarioCode, methodCode, metrics, report, summary, error))
+        {
+            return PrintLoadFailure("Phase1 proxy summary export failed", error, 87);
+        }
+        if (!WritePhase1FrameCsv(argv[4], frames, error))
+        {
+            return PrintLoadFailure("Phase1 frame CSV export failed", error, 88);
+        }
+        std::cout << "phase1_proxy frameCount=" << summary.frameCount
+                  << " fps60Ratio=" << summary.fps60Ratio
+                  << " p95Ms=" << summary.frameTimeP95Ms
+                  << " peakRamMb=" << summary.peakRamMb
+                  << " maxPenDepthMm=" << summary.maxPenetrationDepthMm
+                  << "\n";
+        return report.valid ? 0 : 4;
+    }
+
     if (command == "save-hairbin")
     {
         if (argc < 4)
@@ -815,13 +1161,13 @@ int main(int argc, char** argv)
         RegionSelectionSettings region = ParseRegion(argc, argv, 4);
         EditSettings edit;
         const int base = 11;
-        edit.lengthScale = ArgToFloat(argc, argv, base, edit.lengthScale);
-        edit.widthScale = ArgToFloat(argc, argv, base + 1, edit.widthScale);
-        edit.rootOffset.y = ArgToFloat(argc, argv, base + 2, edit.rootOffset.y);
-        edit.tipOffset.y = ArgToFloat(argc, argv, base + 3, edit.tipOffset.y);
-        edit.sideOffset = ArgToFloat(argc, argv, base + 4, edit.sideOffset);
-        edit.yawRadians = ArgToFloat(argc, argv, base + 5, edit.yawRadians);
-        edit.followerInfluence = ArgToFloat(argc, argv, base + 6, edit.followerInfluence);
+        edit.lengthScale = ParseFloatArgument(argc, argv, base, edit.lengthScale);
+        edit.widthScale = ParseFloatArgument(argc, argv, base + 1, edit.widthScale);
+        edit.rootOffset.y = ParseFloatArgument(argc, argv, base + 2, edit.rootOffset.y);
+        edit.tipOffset.y = ParseFloatArgument(argc, argv, base + 3, edit.tipOffset.y);
+        edit.sideOffset = ParseFloatArgument(argc, argv, base + 4, edit.sideOffset);
+        edit.yawRadians = ParseFloatArgument(argc, argv, base + 5, edit.yawRadians);
+        edit.followerInfluence = ParseFloatArgument(argc, argv, base + 6, edit.followerInfluence);
         const RegionSelectionResult result = SelectRegion(asset, region);
         if (!ApplyEditToRegion(asset, result, edit, error) || !SaveHairAssetToHairBinary(argv[3], asset, error))
         {
@@ -838,10 +1184,10 @@ int main(int argc, char** argv)
             return 1;
         }
         ConstraintSettings s;
-        s.maxStretchRatio = ArgToFloat(argc, argv, 4, s.maxStretchRatio);
-        s.maxBendRadians = ArgToFloat(argc, argv, 5, s.maxBendRadians);
-        s.floorY = ArgToFloat(argc, argv, 6, s.floorY);
-        s.maxRootRadius = ArgToFloat(argc, argv, 7, s.maxRootRadius);
+        s.maxStretchRatio = ParseFloatArgument(argc, argv, 4, s.maxStretchRatio);
+        s.maxBendRadians = ParseFloatArgument(argc, argv, 5, s.maxBendRadians);
+        s.floorY = ParseFloatArgument(argc, argv, 6, s.floorY);
+        s.maxRootRadius = ParseFloatArgument(argc, argv, 7, s.maxRootRadius);
         ApplyConstraints(asset, s);
         if (!SaveHairAssetToHairBinary(argv[3], asset, error))
         {
@@ -860,14 +1206,14 @@ int main(int argc, char** argv)
 
         HairAsset asset;
         std::string error;
-        if (!LoadHairAssetAny(argv[2], asset, error))
+        if (!LoadHairAssetFromAnySupportedInput(argv[2], asset, error))
         {
             return PrintLoadFailure("Failed to load asset", error, 2);
         }
 
-        const float cellSize = ArgToFloat(argc, argv, 3, 0.085f);
+        const float cellSize = ParseFloatArgument(argc, argv, 3, 0.085f);
         const SelfCollisionBroadphaseMode mode = (argc >= 5) ? ParseBroadphaseMode(argv[4]) : SelfCollisionBroadphaseMode::DenseGrid;
-        uint32_t hashBucketCount = ArgToUInt(argc, argv, 5, 32768u);
+        uint32_t hashBucketCount = ParseUIntArgument(argc, argv, 5, 32768u);
         if (mode == SelfCollisionBroadphaseMode::DenseGrid || mode == SelfCollisionBroadphaseMode::SortedGrid)
         {
             hashBucketCount = 0u;
@@ -918,19 +1264,19 @@ int main(int argc, char** argv)
 
         HairAsset asset;
         std::string error;
-        if (!LoadHairAssetAny(argv[2], asset, error))
+        if (!LoadHairAssetFromAnySupportedInput(argv[2], asset, error))
         {
             return PrintLoadFailure("Failed to load asset", error, 2);
         }
 
-        const float cellSize = ArgToFloat(argc, argv, 4, 0.085f);
+        const float cellSize = ParseFloatArgument(argc, argv, 4, 0.085f);
         const SelfCollisionBroadphaseMode mode = (argc >= 6) ? ParseBroadphaseMode(argv[5]) : SelfCollisionBroadphaseMode::DenseGrid;
-        uint32_t hashBucketCount = ArgToUInt(argc, argv, 6, 32768u);
+        uint32_t hashBucketCount = ParseUIntArgument(argc, argv, 6, 32768u);
         if (mode == SelfCollisionBroadphaseMode::DenseGrid || mode == SelfCollisionBroadphaseMode::SortedGrid)
         {
             hashBucketCount = 0u;
         }
-        const uint32_t maxPairs = ArgToUInt(argc, argv, 7, 512u);
+        const uint32_t maxPairs = ParseUIntArgument(argc, argv, 7, 512u);
 
         if (!ExportBroadphaseDebugCsv(asset, cellSize, mode, hashBucketCount, argv[3], maxPairs, error))
         {
@@ -949,11 +1295,11 @@ int main(int argc, char** argv)
             return 1;
         }
         AngularBendRelaxationSettings s;
-        s.maxBendRadians = ArgToFloat(argc, argv, 4, s.maxBendRadians);
-        s.iterations = ArgToUInt(argc, argv, 5, s.iterations);
-        s.smoothing = ArgToFloat(argc, argv, 6, s.smoothing);
-        s.preserveSegmentLengths = ArgToInt(argc, argv, 7, s.preserveSegmentLengths ? 1 : 0) != 0;
-        s.affectRootAdjacentPoint = ArgToInt(argc, argv, 8, s.affectRootAdjacentPoint ? 1 : 0) != 0;
+        s.maxBendRadians = ParseFloatArgument(argc, argv, 4, s.maxBendRadians);
+        s.iterations = ParseUIntArgument(argc, argv, 5, s.iterations);
+        s.smoothing = ParseFloatArgument(argc, argv, 6, s.smoothing);
+        s.preserveSegmentLengths = ParseIntArgument(argc, argv, 7, s.preserveSegmentLengths ? 1 : 0) != 0;
+        s.affectRootAdjacentPoint = ParseIntArgument(argc, argv, 8, s.affectRootAdjacentPoint ? 1 : 0) != 0;
         ApplyAngularBendRelaxation(asset, s);
         if (!SaveHairAssetToHairBinary(argv[3], asset, error))
         {
@@ -971,12 +1317,12 @@ int main(int argc, char** argv)
             return 1;
         }
         AngularXpbdBendSettings s = {};
-        s.targetBendRadians = ArgToFloat(argc, argv, 4, s.targetBendRadians);
-        s.bendCompliance = ArgToFloat(argc, argv, 5, s.bendCompliance);
-        s.iterations = ArgToUInt(argc, argv, 6, s.iterations);
-        s.preserveSegmentLengths = ArgToInt(argc, argv, 7, s.preserveSegmentLengths ? 1 : 0) != 0;
-        s.affectRootAdjacentPoint = ArgToInt(argc, argv, 8, s.affectRootAdjacentPoint ? 1 : 0) != 0;
-        s.damping = ArgToFloat(argc, argv, 9, s.damping);
+        s.targetBendRadians = ParseFloatArgument(argc, argv, 4, s.targetBendRadians);
+        s.bendCompliance = ParseFloatArgument(argc, argv, 5, s.bendCompliance);
+        s.iterations = ParseUIntArgument(argc, argv, 6, s.iterations);
+        s.preserveSegmentLengths = ParseIntArgument(argc, argv, 7, s.preserveSegmentLengths ? 1 : 0) != 0;
+        s.affectRootAdjacentPoint = ParseIntArgument(argc, argv, 8, s.affectRootAdjacentPoint ? 1 : 0) != 0;
+        s.damping = ParseFloatArgument(argc, argv, 9, s.damping);
         ApplyAngularXpbdBendRelaxation(asset, s);
         if (!SaveHairAssetToHairBinary(argv[3], asset, error))
         {
@@ -993,11 +1339,11 @@ int main(int argc, char** argv)
             return 1;
         }
         HairCollisionSettings s;
-        s.shellDistance = ArgToFloat(argc, argv, 4, s.shellDistance);
-        s.stiffness = ArgToFloat(argc, argv, 5, s.stiffness);
-        s.iterations = ArgToUInt(argc, argv, 6, s.iterations);
-        s.affectRootPoints = ArgToInt(argc, argv, 7, s.affectRootPoints ? 1 : 0) != 0;
-        s.affectAllPoints = ArgToInt(argc, argv, 8, s.affectAllPoints ? 1 : 0) != 0;
+        s.shellDistance = ParseFloatArgument(argc, argv, 4, s.shellDistance);
+        s.stiffness = ParseFloatArgument(argc, argv, 5, s.stiffness);
+        s.iterations = ParseUIntArgument(argc, argv, 6, s.iterations);
+        s.affectRootPoints = ParseIntArgument(argc, argv, 7, s.affectRootPoints ? 1 : 0) != 0;
+        s.affectAllPoints = ParseIntArgument(argc, argv, 8, s.affectAllPoints ? 1 : 0) != 0;
         HairCollisionReport report = {};
         if (!ApplyScalpMeshCollision(asset, s, &report))
         {
@@ -1021,13 +1367,13 @@ int main(int argc, char** argv)
             return 1;
         }
         HairCollisionSettings s;
-        s.sdfResolution = ArgToUInt(argc, argv, 4, s.sdfResolution);
-        s.shellDistance = ArgToFloat(argc, argv, 5, s.shellDistance);
-        s.stiffness = ArgToFloat(argc, argv, 6, s.stiffness);
-        s.iterations = ArgToUInt(argc, argv, 7, s.iterations);
-        s.affectRootPoints = ArgToInt(argc, argv, 8, s.affectRootPoints ? 1 : 0) != 0;
-        s.affectAllPoints = ArgToInt(argc, argv, 9, s.affectAllPoints ? 1 : 0) != 0;
-        s.sdfPadding = ArgToFloat(argc, argv, 10, s.sdfPadding);
+        s.sdfResolution = ParseUIntArgument(argc, argv, 4, s.sdfResolution);
+        s.shellDistance = ParseFloatArgument(argc, argv, 5, s.shellDistance);
+        s.stiffness = ParseFloatArgument(argc, argv, 6, s.stiffness);
+        s.iterations = ParseUIntArgument(argc, argv, 7, s.iterations);
+        s.affectRootPoints = ParseIntArgument(argc, argv, 8, s.affectRootPoints ? 1 : 0) != 0;
+        s.affectAllPoints = ParseIntArgument(argc, argv, 9, s.affectAllPoints ? 1 : 0) != 0;
+        s.sdfPadding = ParseFloatArgument(argc, argv, 10, s.sdfPadding);
         HairCollisionReport report = {};
         if (!ApplyScalpSdfCollision(asset, s, &report))
         {
@@ -1050,8 +1396,8 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-        const uint32_t resolution = ArgToUInt(argc, argv, 4, 28u);
-        const float padding = ArgToFloat(argc, argv, 5, 0.04f);
+        const uint32_t resolution = ParseUIntArgument(argc, argv, 4, 28u);
+        const float padding = ParseFloatArgument(argc, argv, 5, 0.04f);
         if (!ExportScalpSdfSlicesCsv(asset, argv[3], resolution, padding, error))
         {
             return PrintLoadFailure("Scalp SDF export failed", error, 165);
@@ -1072,7 +1418,7 @@ int main(int argc, char** argv)
             return PrintLoadFailure("Palette load failed", error, 17);
         }
         const RegionSelectionSettings region = ParseRegion(argc, argv, 5);
-        const float strength = ArgToFloat(argc, argv, 12, 1.0f);
+        const float strength = ParseFloatArgument(argc, argv, 12, 1.0f);
         const RegionSelectionResult result = SelectRegion(asset, region);
         if (!ApplyPaletteToRegion(asset, result, palette, strength, error) || !SaveHairAssetToHairBinary(argv[4], asset, error))
         {
@@ -1152,8 +1498,8 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-        const float fps = ArgToFloat(argc, argv, 4, 30.0f);
-        const uint32_t frameCount = ArgToUInt(argc, argv, 5, 60u);
+        const float fps = ParseFloatArgument(argc, argv, 4, 30.0f);
+        const uint32_t frameCount = ParseUIntArgument(argc, argv, 5, 60u);
         GuideCache cache;
         if (!InitializeGuideCacheForAsset(asset, fps, cache, error))
         {
@@ -1192,8 +1538,8 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-        const float fps = ArgToFloat(argc, argv, 4, 30.0f);
-        const uint32_t frameCount = ArgToUInt(argc, argv, 5, 60u);
+        const float fps = ParseFloatArgument(argc, argv, 4, 30.0f);
+        const uint32_t frameCount = ParseUIntArgument(argc, argv, 5, 60u);
         HairCache cache;
         if (!InitializeHairCacheForAsset(asset, fps, cache, error))
         {
@@ -1250,8 +1596,8 @@ int main(int argc, char** argv)
             return 1;
         }
         const uint32_t boneCount = std::max<uint32_t>(1u, asset.scalpMesh.boneCount);
-        const uint32_t frameCount = ArgToUInt(argc, argv, 4, 60u);
-        const float fps = ArgToFloat(argc, argv, 5, 30.0f);
+        const uint32_t frameCount = ParseUIntArgument(argc, argv, 4, 60u);
+        const float fps = ParseFloatArgument(argc, argv, 5, 30.0f);
         if (!SaveBoneAnimationTemplateCsv(argv[3], boneCount, frameCount, fps, error))
         {
             return PrintLoadFailure("Bone animation template export failed", error, 70);
@@ -1283,7 +1629,7 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Animated scalp cache failed", error, 73);
         }
-        const bool translateEntireStrands = ArgToInt(argc, argv, 5, 1) != 0;
+        const bool translateEntireStrands = ParseIntArgument(argc, argv, 5, 1) != 0;
         HairCache cache;
         if (!BuildScalpAnimatedHairCache(asset, clip, translateEntireStrands, cache, error) ||
             !SaveHairCacheToFile(argv[4], cache, error))
@@ -1319,7 +1665,7 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Scalp pose failed", error, 66);
         }
-        const bool translateEntireStrands = ArgToInt(argc, argv, 5, 1) != 0;
+        const bool translateEntireStrands = ParseIntArgument(argc, argv, 5, 1) != 0;
         const std::vector<Vec3> skinnedPositions = ComputeSkinnedScalpPositions(asset.scalpMesh, boneMatrices);
         asset.scalpMesh.positions = skinnedPositions;
         asset.scalpMesh.boneCount = static_cast<uint32_t>(boneMatrices.size());
@@ -1363,7 +1709,7 @@ int main(int argc, char** argv)
             return PrintLoadFailure("Scalp import failed", error, 59);
         }
         RootBindingQualityReport report = {};
-        const bool snapRoots = ArgToInt(argc, argv, 5, 1) != 0;
+        const bool snapRoots = ParseIntArgument(argc, argv, 5, 1) != 0;
         if (!GenerateRootBindingsFromScalp(asset, snapRoots, &report))
         {
             return PrintLoadFailure("Root rebind failed", "GenerateRootBindingsFromScalp returned false.", 60);
@@ -1386,8 +1732,8 @@ int main(int argc, char** argv)
             return 1;
         }
         ScaffoldProjectSettings settings = {};
-        settings.guideCacheFrameRate = ArgToFloat(argc, argv, 4, settings.guideCacheFrameRate);
-        settings.guideCacheFrameCount = ArgToUInt(argc, argv, 5, settings.guideCacheFrameCount);
+        settings.guideCacheFrameRate = ParseFloatArgument(argc, argv, 4, settings.guideCacheFrameRate);
+        settings.guideCacheFrameCount = ParseUIntArgument(argc, argv, 5, settings.guideCacheFrameCount);
         ScaffoldProjectOutputs outputs;
         if (!ScaffoldHairProject(asset, argv[3], settings, outputs, error))
         {

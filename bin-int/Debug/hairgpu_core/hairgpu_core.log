@@ -1,4 +1,5 @@
-﻿  Adaptive.cpp
+﻿  ActiveSet.cpp
+  Adaptive.cpp
   AssetIO.cpp
   Authoring.cpp
   Binding.cpp
@@ -9,7 +10,7 @@
   GuideCache.cpp
   HairCache.cpp
   HairMath.cpp
-  Lod.cpp
+  LOD.cpp
   MeshIO.cpp
   Metrics.cpp
   Pipeline.cpp

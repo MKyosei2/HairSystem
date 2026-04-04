@@ -6,7 +6,7 @@ add_library(hairgpu_core
     Authoring.cpp
     Wig.cpp
     UsdExport.cpp
-    Lod.cpp
+    LOD.cpp
     Cards.cpp
     GuideCache.cpp
     Metrics.cpp

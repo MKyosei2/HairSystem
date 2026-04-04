@@ -1,4 +1,23 @@
 
+## Phase 1 experiment data pipeline
+
+Phase 1 now includes a lightweight experiment-data pipeline around `hairgpu_cli`.
+
+Files added under `tools/phase1/` provide:
+- Streamlit form input
+- SQLite experiment log
+- baseline CLI execution (`metrics-json` + `validate`)
+- Excel workbook export
+
+Typical flow:
+1. Build `hairgpu_cli`
+2. Run `python -m streamlit run tools/phase1/hairgpu_phase1_app.py`
+3. Fill experiment metadata and asset path
+4. Run the pipeline and collect outputs in `phase1_outputs/`
+
+A deeper overview is documented in `docs/PHASE1_DATA_PIPELINE.md`.
+
+
 ## Visual Studio 2022 native solution
 
 This repository now includes a native Visual Studio solution in addition to CMake:
@@ -258,3 +277,23 @@ hairgpu_cli export-scalp-sdf <input> <output.csv> [resolution] [padding]
 
 - GPU scalp mesh draw now fetches animated scalp positions from `m_scalpPositions` in the vertex shader, so normal runtime rendering no longer needs a CPU-updated scalp mesh vertex stream.
 - HUD now shows GPU timestamp timings (frame/sim/hair/debug) plus D3D11 pipeline statistics for hair and debug passes.
+
+
+## Phase 1 experiment data pipeline
+
+Phase 1 now includes a lightweight experiment-data pipeline around `hairgpu_cli`.
+
+Files added under `tools/phase1/` provide:
+- SQLite schema + helpers
+- Excel workbook export
+- baseline CLI execution (`metrics-json` + `validate`)
+- Phase 1 proxy runtime/frame generation (`phase1-proxy-run`)
+- a Streamlit input form for experiment registration
+
+Typical flow:
+1. Build `hairgpu_cli`
+2. Run `python -m streamlit run tools/phase1/hairgpu_phase1_app.py`
+3. Enter experiment metadata, asset path, frame count, and target FPS
+4. Run the pipeline and collect outputs in `phase1_outputs/`
+
+The current "inner" instrumentation is CLI-based and writes both summary JSON and per-frame CSV, then imports them into SQLite and regenerates the Excel workbook automatically.

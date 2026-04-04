@@ -8,7 +8,7 @@
 #include "hairgpu/Cards.h"
 #include "hairgpu/GuideCache.h"
 #include "hairgpu/HairCache.h"
-#include "hairgpu/Lod.h"
+#include "hairgpu/LOD.h"
 #include "hairgpu/MeshIO.h"
 #include "hairgpu/Metrics.h"
 #include "hairgpu/UsdExport.h"

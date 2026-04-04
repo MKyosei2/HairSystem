@@ -2,6 +2,11 @@
 
 ## 実装済み
 
+### Active-set foundation
+- **guide-cluster 生成 + budget 選別付き active-set planning layer**
+- **motion / displacement / visibility / silhouette / uncertainty / contact proxy をまとめた cluster score**
+- **corrective physics 候補 cluster の JSON export と CLI 経路**
+
 ### GPU シミュレーション
 - Verlet ベース積分
 - GPU root bind pass
@@ -68,6 +73,7 @@
 
 ## 未実装
 
+- active-set で選ばれた cluster へ corrective physics pass を runtime で差し込む最終統合
 - production 用の完全 GPU radix sort / cell start-end / prefix sum 最適化
 - mesh / SDF collider の runtime GPU 統合
 - animated scalp skinning / skeletal bind の production quality 実装
