@@ -179,10 +179,35 @@ namespace hairgpu
         float radiusB = 0.0f;
     };
 
+    struct PlaneCollider
+    {
+        Vec3 point = { 0.0f, 0.0f, 0.0f };
+        Vec3 normal = { 0.0f, 1.0f, 0.0f };
+    };
+
+    struct AabbCollider
+    {
+        Vec3 minBounds = { 0.0f, 0.0f, 0.0f };
+        Vec3 maxBounds = { 0.0f, 0.0f, 0.0f };
+    };
+
+    struct SdfGridCollider
+    {
+        uint32_t resolutionX = 0u;
+        uint32_t resolutionY = 0u;
+        uint32_t resolutionZ = 0u;
+        Vec3 boundsMin = { 0.0f, 0.0f, 0.0f };
+        Vec3 boundsMax = { 0.0f, 0.0f, 0.0f };
+        std::vector<float> values;
+    };
+
     struct ColliderSet
     {
         std::vector<SphereCollider> spheres;
         std::vector<CapsuleCollider> capsules;
+        std::vector<PlaneCollider> planes;
+        std::vector<AabbCollider> aabbs;
+        std::vector<SdfGridCollider> sdfGrids;
     };
 
     ScalpMesh BuildSampleScalpMesh(uint32_t rows, uint32_t columns, const Vec3& center, float radiusX, float radiusY, float radiusZ);

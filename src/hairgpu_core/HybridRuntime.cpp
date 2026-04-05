@@ -4,6 +4,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
 #include "hairgpu/AssetIO.h"
@@ -23,6 +24,9 @@ namespace hairgpu
             float penetration = 0.0f;
             bool corrected = false;
         };
+
+        float ComputeAverageScalar(const std::vector<float>& values);
+        float ComputeMaxScalar(const std::vector<float>& values);
 
         Vec3 ClosestPointOnSegment(const Vec3& a, const Vec3& b, const Vec3& p)
         {
@@ -104,6 +108,325 @@ namespace hairgpu
             return result;
         }
 
+        bool HasAnyCollider(const ColliderSet& colliders)
+        {
+            return !colliders.spheres.empty() ||
+                   !colliders.capsules.empty() ||
+                   !colliders.planes.empty() ||
+                   !colliders.aabbs.empty() ||
+                   !colliders.sdfGrids.empty();
+        }
+
+        float SignedDistanceToSphere(const Vec3& point, const SphereCollider& sphere)
+        {
+            return Length(point - sphere.center) - sphere.radius;
+        }
+
+        float SignedDistanceToCapsule(const Vec3& point, const CapsuleCollider& capsule)
+        {
+            const Vec3 closest = ClosestPointOnSegment(capsule.pointA, capsule.pointB, point);
+            const Vec3 axis = capsule.pointB - capsule.pointA;
+            const float axisDenom = std::max(Dot(axis, axis), 1.0e-8f);
+            const float t = Clamp(Dot(closest - capsule.pointA, axis) / axisDenom, 0.0f, 1.0f);
+            const float radius = Lerp(capsule.radiusA, capsule.radiusB, t);
+            return Length(point - closest) - radius;
+        }
+
+        float SignedDistanceToPlane(const Vec3& point, const PlaneCollider& plane)
+        {
+            const Vec3 normal = Normalize(plane.normal);
+            const Vec3 safeNormal = (Length(normal) > 1.0e-6f) ? normal : Vec3(0.0f, 1.0f, 0.0f);
+            return Dot(point - plane.point, safeNormal);
+        }
+
+        Vec3 ClosestPointOnAabb(const Vec3& point, const AabbCollider& box)
+        {
+            return Vec3(
+                Clamp(point.x, std::min(box.minBounds.x, box.maxBounds.x), std::max(box.minBounds.x, box.maxBounds.x)),
+                Clamp(point.y, std::min(box.minBounds.y, box.maxBounds.y), std::max(box.minBounds.y, box.maxBounds.y)),
+                Clamp(point.z, std::min(box.minBounds.z, box.maxBounds.z), std::max(box.minBounds.z, box.maxBounds.z)));
+        }
+
+        float SignedDistanceToAabb(const Vec3& point, const AabbCollider& box)
+        {
+            const Vec3 minB(
+                std::min(box.minBounds.x, box.maxBounds.x),
+                std::min(box.minBounds.y, box.maxBounds.y),
+                std::min(box.minBounds.z, box.maxBounds.z));
+            const Vec3 maxB(
+                std::max(box.minBounds.x, box.maxBounds.x),
+                std::max(box.minBounds.y, box.maxBounds.y),
+                std::max(box.minBounds.z, box.maxBounds.z));
+            const Vec3 center = (minB + maxB) * 0.5f;
+            const Vec3 halfExtents = (maxB - minB) * 0.5f;
+            const Vec3 local = point - center;
+            const Vec3 q(
+                std::fabs(local.x) - halfExtents.x,
+                std::fabs(local.y) - halfExtents.y,
+                std::fabs(local.z) - halfExtents.z);
+            const Vec3 outside(
+                std::max(q.x, 0.0f),
+                std::max(q.y, 0.0f),
+                std::max(q.z, 0.0f));
+            const float outsideDistance = Length(outside);
+            const float insideDistance = std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
+            return outsideDistance + insideDistance;
+        }
+
+        PenetrationResult ResolveAgainstPlane(const Vec3& point, const PlaneCollider& plane, float shellDistance)
+        {
+            PenetrationResult result = {};
+            result.correctedPoint = point;
+            const Vec3 normal = Normalize(plane.normal);
+            const Vec3 safeNormal = (Length(normal) > 1.0e-6f) ? normal : Vec3(0.0f, 1.0f, 0.0f);
+            const float signedDistance = Dot(point - plane.point, safeNormal);
+            if (signedDistance < shellDistance)
+            {
+                result.penetration = shellDistance - signedDistance;
+                result.correctedPoint = point + safeNormal * result.penetration;
+                result.corrected = true;
+            }
+            return result;
+        }
+
+        PenetrationResult ResolveAgainstAabb(const Vec3& point, const AabbCollider& box, float shellDistance)
+        {
+            PenetrationResult result = {};
+            result.correctedPoint = point;
+            const float signedDistance = SignedDistanceToAabb(point, box);
+            if (signedDistance >= shellDistance)
+            {
+                return result;
+            }
+
+            Vec3 closest = ClosestPointOnAabb(point, box);
+            Vec3 delta = point - closest;
+            Vec3 normal = Normalize(delta);
+            if (Length(normal) <= 1.0e-6f)
+            {
+                const Vec3 minB(
+                    std::min(box.minBounds.x, box.maxBounds.x),
+                    std::min(box.minBounds.y, box.maxBounds.y),
+                    std::min(box.minBounds.z, box.maxBounds.z));
+                const Vec3 maxB(
+                    std::max(box.minBounds.x, box.maxBounds.x),
+                    std::max(box.minBounds.y, box.maxBounds.y),
+                    std::max(box.minBounds.z, box.maxBounds.z));
+                const float dx = std::min(std::fabs(point.x - minB.x), std::fabs(maxB.x - point.x));
+                const float dy = std::min(std::fabs(point.y - minB.y), std::fabs(maxB.y - point.y));
+                const float dz = std::min(std::fabs(point.z - minB.z), std::fabs(maxB.z - point.z));
+                if (dx <= dy && dx <= dz)
+                {
+                    normal = Vec3((point.x - (minB.x + maxB.x) * 0.5f) >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
+                }
+                else if (dy <= dz)
+                {
+                    normal = Vec3(0.0f, (point.y - (minB.y + maxB.y) * 0.5f) >= 0.0f ? 1.0f : -1.0f, 0.0f);
+                }
+                else
+                {
+                    normal = Vec3(0.0f, 0.0f, (point.z - (minB.z + maxB.z) * 0.5f) >= 0.0f ? 1.0f : -1.0f);
+                }
+            }
+
+            result.penetration = shellDistance - signedDistance;
+            result.correctedPoint = point + normal * result.penetration;
+            result.corrected = true;
+            return result;
+        }
+
+        bool IsValidSdfGrid(const SdfGridCollider& grid)
+        {
+            return grid.resolutionX >= 2u &&
+                   grid.resolutionY >= 2u &&
+                   grid.resolutionZ >= 2u &&
+                   grid.values.size() == static_cast<size_t>(grid.resolutionX) * grid.resolutionY * grid.resolutionZ;
+        }
+
+        size_t SdfGridIndex(const SdfGridCollider& grid, uint32_t x, uint32_t y, uint32_t z)
+        {
+            return (static_cast<size_t>(z) * grid.resolutionY + y) * grid.resolutionX + x;
+        }
+
+        Vec3 SdfGridCellSize(const SdfGridCollider& grid)
+        {
+            return Vec3(
+                (grid.boundsMax.x - grid.boundsMin.x) / std::max(1u, grid.resolutionX - 1u),
+                (grid.boundsMax.y - grid.boundsMin.y) / std::max(1u, grid.resolutionY - 1u),
+                (grid.boundsMax.z - grid.boundsMin.z) / std::max(1u, grid.resolutionZ - 1u));
+        }
+
+        float SampleSdfGrid(const SdfGridCollider& grid, const Vec3& point)
+        {
+            if (!IsValidSdfGrid(grid))
+            {
+                return std::numeric_limits<float>::max();
+            }
+
+            const Vec3 cellSize = SdfGridCellSize(grid);
+            const float gx = Clamp((point.x - grid.boundsMin.x) / std::max(cellSize.x, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionX - 1u));
+            const float gy = Clamp((point.y - grid.boundsMin.y) / std::max(cellSize.y, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionY - 1u));
+            const float gz = Clamp((point.z - grid.boundsMin.z) / std::max(cellSize.z, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionZ - 1u));
+
+            const uint32_t x0 = static_cast<uint32_t>(std::floor(gx));
+            const uint32_t y0 = static_cast<uint32_t>(std::floor(gy));
+            const uint32_t z0 = static_cast<uint32_t>(std::floor(gz));
+            const uint32_t x1 = std::min(x0 + 1u, grid.resolutionX - 1u);
+            const uint32_t y1 = std::min(y0 + 1u, grid.resolutionY - 1u);
+            const uint32_t z1 = std::min(z0 + 1u, grid.resolutionZ - 1u);
+            const float tx = gx - static_cast<float>(x0);
+            const float ty = gy - static_cast<float>(y0);
+            const float tz = gz - static_cast<float>(z0);
+
+            auto at = [&](uint32_t x, uint32_t y, uint32_t z) -> float
+            {
+                return grid.values[SdfGridIndex(grid, x, y, z)];
+            };
+
+            const float c000 = at(x0, y0, z0);
+            const float c100 = at(x1, y0, z0);
+            const float c010 = at(x0, y1, z0);
+            const float c110 = at(x1, y1, z0);
+            const float c001 = at(x0, y0, z1);
+            const float c101 = at(x1, y0, z1);
+            const float c011 = at(x0, y1, z1);
+            const float c111 = at(x1, y1, z1);
+
+            const float c00 = Lerp(c000, c100, tx);
+            const float c10 = Lerp(c010, c110, tx);
+            const float c01 = Lerp(c001, c101, tx);
+            const float c11 = Lerp(c011, c111, tx);
+            const float c0 = Lerp(c00, c10, ty);
+            const float c1 = Lerp(c01, c11, ty);
+            return Lerp(c0, c1, tz);
+        }
+
+        Vec3 EstimateSdfGradient(const SdfGridCollider& grid, const Vec3& point)
+        {
+            const Vec3 cellSize = SdfGridCellSize(grid);
+            const float epsX = std::max(cellSize.x, 1.0e-4f);
+            const float epsY = std::max(cellSize.y, 1.0e-4f);
+            const float epsZ = std::max(cellSize.z, 1.0e-4f);
+            const float dx = SampleSdfGrid(grid, point + Vec3(epsX, 0.0f, 0.0f)) - SampleSdfGrid(grid, point - Vec3(epsX, 0.0f, 0.0f));
+            const float dy = SampleSdfGrid(grid, point + Vec3(0.0f, epsY, 0.0f)) - SampleSdfGrid(grid, point - Vec3(0.0f, epsY, 0.0f));
+            const float dz = SampleSdfGrid(grid, point + Vec3(0.0f, 0.0f, epsZ)) - SampleSdfGrid(grid, point - Vec3(0.0f, 0.0f, epsZ));
+            Vec3 gradient(dx, dy, dz);
+            gradient = Normalize(gradient);
+            return (Length(gradient) > 1.0e-6f) ? gradient : Vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        PenetrationResult ResolveAgainstSdfGrid(const Vec3& point, const SdfGridCollider& grid, float shellDistance)
+        {
+            PenetrationResult result = {};
+            result.correctedPoint = point;
+            const float signedDistance = SampleSdfGrid(grid, point);
+            if (signedDistance >= shellDistance || signedDistance == std::numeric_limits<float>::max())
+            {
+                return result;
+            }
+
+            const Vec3 normal = EstimateSdfGradient(grid, point);
+            result.penetration = shellDistance - signedDistance;
+            result.correctedPoint = point + normal * result.penetration;
+            result.corrected = true;
+            return result;
+        }
+
+        float ComputeContactScoreFromSignedDistance(float signedDistance, float shellDistance, float bandScale)
+        {
+            const float contactBand = std::max(shellDistance * bandScale, 1.0e-4f);
+            return Clamp((contactBand - signedDistance) / contactBand, 0.0f, 1.0f);
+        }
+
+        float ComputeColliderContactScore(const Vec3& point, const ColliderSet& colliders, float floorY, float shellDistance, bool includeFloor)
+        {
+            float bestScore = 0.0f;
+            if (includeFloor)
+            {
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(point.y - floorY, shellDistance, 2.0f));
+            }
+            for (const SphereCollider& sphere : colliders.spheres)
+            {
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SignedDistanceToSphere(point, sphere), shellDistance, 3.0f));
+            }
+            for (const CapsuleCollider& capsule : colliders.capsules)
+            {
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SignedDistanceToCapsule(point, capsule), shellDistance, 3.5f));
+            }
+            for (const PlaneCollider& plane : colliders.planes)
+            {
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SignedDistanceToPlane(point, plane), shellDistance, 2.0f));
+            }
+            for (const AabbCollider& box : colliders.aabbs)
+            {
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SignedDistanceToAabb(point, box), shellDistance, 3.0f));
+            }
+            for (const SdfGridCollider& grid : colliders.sdfGrids)
+            {
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SampleSdfGrid(grid, point), shellDistance, 3.0f));
+            }
+            return Clamp(bestScore, 0.0f, 1.0f);
+        }
+
+        PenetrationResult ResolveAgainstColliderSet(const Vec3& point,
+                                                    const ColliderSet& colliders,
+                                                    float shellDistance,
+                                                    bool affectFloor,
+                                                    float floorY)
+        {
+            PenetrationResult best = {};
+            best.correctedPoint = point;
+            if (affectFloor)
+            {
+                PenetrationResult floorResult = ResolveAgainstFloor(point, floorY, shellDistance);
+                if (floorResult.penetration > best.penetration)
+                {
+                    best = floorResult;
+                }
+            }
+            for (const SphereCollider& sphere : colliders.spheres)
+            {
+                PenetrationResult result = ResolveAgainstSphere(point, sphere, shellDistance);
+                if (result.penetration > best.penetration)
+                {
+                    best = result;
+                }
+            }
+            for (const CapsuleCollider& capsule : colliders.capsules)
+            {
+                PenetrationResult result = ResolveAgainstCapsule(point, capsule, shellDistance);
+                if (result.penetration > best.penetration)
+                {
+                    best = result;
+                }
+            }
+            for (const PlaneCollider& plane : colliders.planes)
+            {
+                PenetrationResult result = ResolveAgainstPlane(point, plane, shellDistance);
+                if (result.penetration > best.penetration)
+                {
+                    best = result;
+                }
+            }
+            for (const AabbCollider& box : colliders.aabbs)
+            {
+                PenetrationResult result = ResolveAgainstAabb(point, box, shellDistance);
+                if (result.penetration > best.penetration)
+                {
+                    best = result;
+                }
+            }
+            for (const SdfGridCollider& grid : colliders.sdfGrids)
+            {
+                PenetrationResult result = ResolveAgainstSdfGrid(point, grid, shellDistance);
+                if (result.penetration > best.penetration)
+                {
+                    best = result;
+                }
+            }
+            return best;
+        }
+
         ColliderSet BuildFallbackTeacherColliders(const HairAsset& asset)
         {
             ColliderSet colliders;
@@ -139,6 +462,16 @@ namespace hairgpu
             shoulder.radiusA = width * 0.16f;
             shoulder.radiusB = width * 0.16f;
             colliders.capsules.push_back(shoulder);
+
+            AabbCollider torso = {};
+            torso.minBounds = Vec3(center.x - width * 0.22f, minP.y + height * 0.02f, center.z - depth * 0.10f);
+            torso.maxBounds = Vec3(center.x + width * 0.22f, minP.y + height * 0.36f, center.z + depth * 0.16f);
+            colliders.aabbs.push_back(torso);
+
+            PlaneCollider floor = {};
+            floor.point = Vec3(0.0f, minP.y - std::max(height * 0.12f, 0.06f), 0.0f);
+            floor.normal = Vec3(0.0f, 1.0f, 0.0f);
+            colliders.planes.push_back(floor);
             return colliders;
         }
 
@@ -229,22 +562,38 @@ namespace hairgpu
                     {
                         continue;
                     }
-                    const Vec3 point = points[pointIndex];
-                    const float floorProximity = Clamp((shellDistance * 2.0f - (point.y - floorY)) / std::max(shellDistance * 2.0f, 1.0e-4f), 0.0f, 1.0f);
-                    bestScore = std::max(bestScore, floorProximity);
-                    for (const SphereCollider& sphere : colliders.spheres)
-                    {
-                        const float distance = Length(point - sphere.center) - sphere.radius;
-                        bestScore = std::max(bestScore, Clamp((shellDistance * 3.0f - distance) / std::max(shellDistance * 3.0f, 1.0e-4f), 0.0f, 1.0f));
-                    }
-                    for (const CapsuleCollider& capsule : colliders.capsules)
-                    {
-                        const Vec3 closest = ClosestPointOnSegment(capsule.pointA, capsule.pointB, point);
-                        const float distance = Length(point - closest) - std::max(capsule.radiusA, capsule.radiusB);
-                        bestScore = std::max(bestScore, Clamp((shellDistance * 3.5f - distance) / std::max(shellDistance * 3.5f, 1.0e-4f), 0.0f, 1.0f));
-                    }
+                    bestScore = std::max(bestScore,
+                                         ComputeColliderContactScore(points[pointIndex], colliders, floorY, shellDistance, true));
                 }
                 scores[guideIndex] = Clamp(bestScore, 0.0f, 1.0f);
+            }
+            return scores;
+        }
+
+        std::vector<float> BuildGuidePenetrationScores(const HairAsset& asset,
+                                                       const std::vector<Vec3>& points,
+                                                       const ColliderSet& colliders,
+                                                       float floorY,
+                                                       float shellDistance)
+        {
+            const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+            std::vector<float> scores(guideCount, 0.0f);
+            const float normalization = std::max(shellDistance * 2.5f, 1.0e-4f);
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                const StrandRange& strand = asset.strands[guideIndex];
+                float bestPenetration = 0.0f;
+                for (uint32_t localPoint = 0u; localPoint < strand.pointCount; ++localPoint)
+                {
+                    const uint32_t pointIndex = strand.pointOffset + localPoint;
+                    if (pointIndex >= points.size())
+                    {
+                        continue;
+                    }
+                    const PenetrationResult result = ResolveAgainstColliderSet(points[pointIndex], colliders, shellDistance, true, floorY);
+                    bestPenetration = std::max(bestPenetration, result.penetration);
+                }
+                scores[guideIndex] = Clamp(bestPenetration / normalization, 0.0f, 1.0f);
             }
             return scores;
         }
@@ -252,12 +601,19 @@ namespace hairgpu
         std::vector<float> BuildGuideUncertainty(const HairAsset& asset,
                                                  const std::vector<Vec3>& currentRoots,
                                                  const std::vector<Vec3>& previousRoots,
+                                                 const std::vector<float>& previousUncertainty,
                                                  const std::vector<float>& contactScores,
-                                                 float fixedTimeStep)
+                                                 const std::vector<float>& penetrationScores,
+                                                 const std::vector<float>& modelErrorScores,
+                                                 float fixedTimeStep,
+                                                 float temporalCoherenceGain,
+                                                 float smoothingAlpha)
         {
             const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
             std::vector<float> uncertainty(guideCount, 0.0f);
             const float safeDt = std::max(fixedTimeStep, 1.0e-4f);
+            const float alpha = Clamp(smoothingAlpha, 0.0f, 1.0f);
+            const float temporalGain = std::max(temporalCoherenceGain, 0.0f);
             for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
             {
                 const StrandRange& strand = asset.strands[guideIndex];
@@ -269,7 +625,21 @@ namespace hairgpu
                 const float motion = Clamp(Length(current - previous) / safeDt / 0.30f, 0.0f, 1.0f);
                 const float displacement = Clamp(Length(current - restRoot) / 0.030f, 0.0f, 1.0f);
                 const float contact = (guideIndex < contactScores.size()) ? contactScores[guideIndex] : 0.0f;
-                uncertainty[guideIndex] = Clamp(motion * 0.45f + displacement * 0.32f + contact * 0.23f, 0.0f, 1.0f);
+                const float penetration = (guideIndex < penetrationScores.size()) ? penetrationScores[guideIndex] : 0.0f;
+                const float modelError = (guideIndex < modelErrorScores.size()) ? modelErrorScores[guideIndex] : 0.0f;
+                const float previousValue = (guideIndex < previousUncertainty.size()) ? previousUncertainty[guideIndex] : 0.0f;
+                const float temporalResidual = Clamp(std::fabs(previousValue - contact) * 0.5f + std::fabs(previousValue - penetration) * 0.5f,
+                                                     0.0f,
+                                                     1.0f) * temporalGain;
+                const float instantaneous = Clamp(motion * 0.26f +
+                                                  displacement * 0.18f +
+                                                  contact * 0.18f +
+                                                  penetration * 0.20f +
+                                                  modelError * 0.18f +
+                                                  temporalResidual * 0.10f,
+                                                  0.0f,
+                                                  1.0f);
+                uncertainty[guideIndex] = Clamp(Lerp(previousValue, instantaneous, alpha), 0.0f, 1.0f);
             }
             return uncertainty;
         }
@@ -367,37 +737,12 @@ namespace hairgpu
                         continue;
                     }
 
-                    Vec3 point = inOutPoints[pointIndex];
-                    PenetrationResult best = {};
-                    best.correctedPoint = point;
-
-                    if (settings.affectFloor)
-                    {
-                        PenetrationResult floorResult = ResolveAgainstFloor(point, -1.05f, settings.shellDistance);
-                        if (floorResult.penetration > best.penetration)
-                        {
-                            best = floorResult;
-                        }
-                    }
-                    if (settings.affectExternalColliders)
-                    {
-                        for (const SphereCollider& sphere : colliders.spheres)
-                        {
-                            PenetrationResult result = ResolveAgainstSphere(point, sphere, settings.shellDistance);
-                            if (result.penetration > best.penetration)
-                            {
-                                best = result;
-                            }
-                        }
-                        for (const CapsuleCollider& capsule : colliders.capsules)
-                        {
-                            PenetrationResult result = ResolveAgainstCapsule(point, capsule, settings.shellDistance);
-                            if (result.penetration > best.penetration)
-                            {
-                                best = result;
-                            }
-                        }
-                    }
+                    const Vec3 point = inOutPoints[pointIndex];
+                    const PenetrationResult best = ResolveAgainstColliderSet(point,
+                                                                            settings.affectExternalColliders ? colliders : ColliderSet(),
+                                                                            settings.shellDistance,
+                                                                            settings.affectFloor,
+                                                                            -1.05f);
 
                     if (best.corrected)
                     {
@@ -445,6 +790,20 @@ namespace hairgpu
                             inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, Clamp(settings.bendBlend, 0.0f, 1.0f));
                         }
                     }
+
+                    const PenetrationResult postConstraint = ResolveAgainstColliderSet(inOutPoints[currIndex],
+                                                                                      settings.affectExternalColliders ? colliders : ColliderSet(),
+                                                                                      settings.shellDistance,
+                                                                                      settings.affectFloor,
+                                                                                      -1.05f);
+                    if (postConstraint.corrected)
+                    {
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
+                        strandCorrected = true;
+                        report.maxPenetration = std::max(report.maxPenetration, postConstraint.penetration);
+                        penetrationSum += postConstraint.penetration;
+                        ++penetrationSamples;
+                    }
                 }
 
                 if (strandCorrected)
@@ -489,7 +848,7 @@ namespace hairgpu
             return false;
         }
 
-        const ColliderSet runtimeColliders = (colliders.spheres.empty() && colliders.capsules.empty())
+        const ColliderSet runtimeColliders = !HasAnyCollider(colliders)
             ? BuildFallbackTeacherColliders(asset)
             : colliders;
 
@@ -514,10 +873,11 @@ namespace hairgpu
             outError = "Failed to open hybrid_teacher_frames.csv for writing.";
             return false;
         }
-        frameCsv << "frameIndex,timeSeconds,selectedClusters,selectedGuides,selectedStrands,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgLengthErrorBefore,avgLengthErrorAfter,estimatedSimulationMilliseconds\n";
+        frameCsv << "frameIndex,timeSeconds,selectedClusters,selectedGuides,selectedStrands,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgLengthErrorBefore,avgLengthErrorAfter,estimatedSimulationMilliseconds\n";
 
         std::vector<Vec3> previousGuideRoots;
         BuildGuideRootsFromPoints(asset, asset.restPoints, previousGuideRoots);
+        std::vector<float> previousGuideUncertainty(previousGuideRoots.size(), 0.0f);
 
         double selectedClusterSum = 0.0;
         double selectedGuideSum = 0.0;
@@ -546,11 +906,22 @@ namespace hairgpu
                                                                                   runtimeColliders,
                                                                                   -1.05f,
                                                                                   settings.correctiveSettings.shellDistance);
+            const std::vector<float> guidePenetrationScores = BuildGuidePenetrationScores(asset,
+                                                                                           framePoints,
+                                                                                           runtimeColliders,
+                                                                                           -1.05f,
+                                                                                           settings.correctiveSettings.shellDistance);
+            const std::vector<float> modelErrorScores(currentGuideRoots.size(), 0.0f);
             const std::vector<float> guideUncertainty = BuildGuideUncertainty(asset,
                                                                               currentGuideRoots,
                                                                               previousGuideRoots,
+                                                                              previousGuideUncertainty,
                                                                               guideContactScores,
-                                                                              1.0f / std::max(settings.frameRate, 1.0f));
+                                                                              guidePenetrationScores,
+                                                                              modelErrorScores,
+                                                                              1.0f / std::max(settings.frameRate, 1.0f),
+                                                                              1.0f,
+                                                                              0.45f);
 
             ActiveSetRuntimeInput runtimeInput = {};
             runtimeInput.currentGuideRoots = currentGuideRoots;
@@ -618,6 +989,10 @@ namespace hairgpu
                      << correctiveReport.correctedPointCount << ","
                      << correctiveReport.averagePenetration << ","
                      << correctiveReport.maxPenetration << ","
+                     << ComputeAverageScalar(guideContactScores) << ","
+                     << ComputeAverageScalar(guidePenetrationScores) << ","
+                     << ComputeAverageScalar(guideUncertainty) << ","
+                     << ComputeMaxScalar(guideUncertainty) << ","
                      << correctiveReport.averageLengthErrorBefore << ","
                      << correctiveReport.averageLengthErrorAfter << ","
                      << estimatedSimulationMilliseconds << "\n";
@@ -629,6 +1004,7 @@ namespace hairgpu
             correctedPointSum += static_cast<double>(correctiveReport.correctedPointCount);
             maxPenetration = std::max(maxPenetration, correctiveReport.maxPenetration);
             previousGuideRoots = currentGuideRoots;
+            previousGuideUncertainty = guideUncertainty;
         }
 
         if (!SaveHairCacheToFile(outputDirectory / "hybrid_teacher.haircache", hairCache, outError) ||
@@ -794,6 +1170,30 @@ namespace hairgpu
             return static_cast<float>(total / static_cast<double>(points.size()));
         }
 
+        float ComputeAverageScalar(const std::vector<float>& values)
+        {
+            if (values.empty())
+            {
+                return 0.0f;
+            }
+            double total = 0.0;
+            for (float v : values)
+            {
+                total += static_cast<double>(v);
+            }
+            return static_cast<float>(total / static_cast<double>(values.size()));
+        }
+
+        float ComputeMaxScalar(const std::vector<float>& values)
+        {
+            float best = 0.0f;
+            for (float v : values)
+            {
+                best = std::max(best, v);
+            }
+            return best;
+        }
+
         void BuildSmoothedPriorSequence(const ReducedModelTrainingSequence& teacherSequence,
                                         float smoothingAlpha,
                                         ReducedModelTrainingSequence& outSequence)
@@ -930,6 +1330,11 @@ namespace hairgpu
             out << "correctiveIterations=" << bundle.correctiveSettings.iterations << "\n";
             out << "uncertaintyGain=" << bundle.uncertaintyGain << "\n";
             out << "contactGain=" << bundle.contactGain << "\n";
+            out << "penetrationGain=" << bundle.penetrationGain << "\n";
+            out << "temporalCoherenceGain=" << bundle.temporalCoherenceGain << "\n";
+            out << "uncertaintySmoothingAlpha=" << bundle.uncertaintySmoothingAlpha << "\n";
+            out << "priorVelocityPredictionGain=" << bundle.priorVelocityPredictionGain << "\n";
+            out << "residualVelocityPredictionGain=" << bundle.residualVelocityPredictionGain << "\n";
             if (report)
             {
                 out << "reportPriorRms=" << report->priorEvaluation.rmsPositionError << "\n";
@@ -988,6 +1393,11 @@ namespace hairgpu
             else if (key == "correctiveIterations") ioBundle.correctiveSettings.iterations = toUInt(ioBundle.correctiveSettings.iterations);
             else if (key == "uncertaintyGain") ioBundle.uncertaintyGain = toFloat(ioBundle.uncertaintyGain);
             else if (key == "contactGain") ioBundle.contactGain = toFloat(ioBundle.contactGain);
+            else if (key == "penetrationGain") ioBundle.penetrationGain = toFloat(ioBundle.penetrationGain);
+            else if (key == "temporalCoherenceGain") ioBundle.temporalCoherenceGain = toFloat(ioBundle.temporalCoherenceGain);
+            else if (key == "uncertaintySmoothingAlpha") ioBundle.uncertaintySmoothingAlpha = toFloat(ioBundle.uncertaintySmoothingAlpha);
+            else if (key == "priorVelocityPredictionGain") ioBundle.priorVelocityPredictionGain = toFloat(ioBundle.priorVelocityPredictionGain);
+            else if (key == "residualVelocityPredictionGain") ioBundle.residualVelocityPredictionGain = toFloat(ioBundle.residualVelocityPredictionGain);
         }
 
         bool WriteHybridSummaryJson(const std::filesystem::path& filePath,
@@ -1010,7 +1420,9 @@ namespace hairgpu
             out << "  \"residualGuideGain\": " << bundle.trainingSettings.residualGuideGain << ",\n";
             out << "  \"residualBlend\": " << bundle.trainingSettings.residualBlend << ",\n";
             out << "  \"uncertaintyGain\": " << bundle.uncertaintyGain << ",\n";
-            out << "  \"contactGain\": " << bundle.contactGain;
+            out << "  \"contactGain\": " << bundle.contactGain << ",\n";
+            out << "  \"priorVelocityPredictionGain\": " << bundle.priorVelocityPredictionGain << ",\n";
+            out << "  \"residualVelocityPredictionGain\": " << bundle.residualVelocityPredictionGain;
             if (trainingReport)
             {
                 out << ",\n  \"priorRms\": " << trainingReport->priorEvaluation.rmsPositionError
@@ -1119,8 +1531,15 @@ namespace hairgpu
         outBundle.correctiveSettings.iterations = 2u;
         outBundle.uncertaintyGain = Clamp(1.0f + outReport.priorEvaluation.rmsPositionError * 25.0f, 0.8f, 2.5f);
         outBundle.contactGain = Clamp(1.0f + averageResidualMagnitude * 12.0f, 0.8f, 2.0f);
-
-        (void)colliders;
+        outBundle.penetrationGain = Clamp(1.0f + averageResidualMagnitude * 20.0f + (HasAnyCollider(colliders) ? 0.15f : 0.0f), 0.9f, 2.8f);
+        outBundle.temporalCoherenceGain = Clamp(1.0f + outReport.priorEvaluation.rmsPositionError * 10.0f, 0.8f, 1.8f);
+        outBundle.uncertaintySmoothingAlpha = Clamp(0.28f + outReport.residualEvaluation.rmsPositionError * 18.0f, 0.20f, 0.65f);
+        outBundle.priorVelocityPredictionGain = Clamp(0.10f + averageResidualMagnitude * 18.0f - settings.priorGuideSmoothingAlpha * 0.20f,
+                                                      0.0f,
+                                                      0.65f);
+        outBundle.residualVelocityPredictionGain = Clamp(0.18f + averageResidualMagnitude * 12.0f + outReport.residualEvaluation.rmsPositionError * 14.0f,
+                                                         0.0f,
+                                                         0.85f);
         return true;
     }
 
@@ -1189,6 +1608,10 @@ namespace hairgpu
            << " residualGuides=" << bundle.trainingSettings.residualGuideCount
            << " residualBlend=" << bundle.trainingSettings.residualBlend
            << " smoothingAlpha=" << bundle.trainingSettings.priorGuideSmoothingAlpha
+           << " uncertaintyAlpha=" << bundle.uncertaintySmoothingAlpha
+           << " penetrationGain=" << bundle.penetrationGain
+           << " priorVelPred=" << bundle.priorVelocityPredictionGain
+           << " residualVelPred=" << bundle.residualVelocityPredictionGain
            << " budgetClusters=" << bundle.budget.maxActiveClusters
            << " budgetGuides=" << bundle.budget.maxActiveGuides;
         if (report)
@@ -1224,7 +1647,7 @@ namespace hairgpu
             return false;
         }
 
-        const ColliderSet runtimeColliders = (colliders.spheres.empty() && colliders.capsules.empty())
+        const ColliderSet runtimeColliders = !HasAnyCollider(colliders)
             ? BuildFallbackTeacherColliders(teacherSequence.referenceAsset)
             : colliders;
         const std::vector<ActiveSetCluster> clusters = BuildActiveSetClusters(teacherSequence.referenceAsset, bundle.clusterSettings);
@@ -1249,14 +1672,21 @@ namespace hairgpu
             outError = "Failed to open full_hybrid_frames.csv for writing.";
             return false;
         }
-        frameCsv << "frameIndex,timeSeconds,priorRms,hybridRmsBeforeCorrection,hybridRmsAfterCorrection,selectedClusters,selectedGuides,selectedStrands,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration\n";
+        frameCsv << "frameIndex,timeSeconds,priorRms,hybridRmsBeforeCorrection,hybridRmsAfterCorrection,selectedClusters,selectedGuides,selectedStrands,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgGuideModelError\n";
 
         std::vector<Vec3> restPriorGuidePoints;
         std::vector<Vec3> smoothedPriorGuidePoints;
+        std::vector<Vec3> previousSmoothedPriorGuidePoints;
         BuildRestGuideFramePointsForModel(bundle.priorModel, restPriorGuidePoints);
         smoothedPriorGuidePoints = restPriorGuidePoints;
+        previousSmoothedPriorGuidePoints = smoothedPriorGuidePoints;
+
+        std::vector<Vec3> previousResidualGuidePoints;
+        BuildRestGuideFramePointsForModel(bundle.residualModel, previousResidualGuidePoints);
+
         std::vector<Vec3> previousHybridGuideRoots;
         BuildGuideRootsFromPoints(teacherSequence.referenceAsset, teacherSequence.referenceAsset.restPoints, previousHybridGuideRoots);
+        std::vector<float> previousGuideUncertainty(previousHybridGuideRoots.size(), 0.0f);
 
         double priorRmsSum = 0.0;
         double hybridBeforeRmsSum = 0.0;
@@ -1287,8 +1717,15 @@ namespace hairgpu
                                                    Clamp(bundle.trainingSettings.priorGuideSmoothingAlpha, 0.01f, 1.0f));
             }
 
+            std::vector<Vec3> predictedPriorGuidePoints = smoothedPriorGuidePoints;
+            for (uint32_t i = 0u; i < predictedPriorGuidePoints.size() && i < previousSmoothedPriorGuidePoints.size(); ++i)
+            {
+                predictedPriorGuidePoints[i] += (smoothedPriorGuidePoints[i] - previousSmoothedPriorGuidePoints[i]) *
+                                               Clamp(bundle.priorVelocityPredictionGain, 0.0f, 1.0f);
+            }
+
             HairAsset priorAsset;
-            if (!ReconstructReducedModelFrame(bundle.priorModel, smoothedPriorGuidePoints, priorAsset, outError))
+            if (!ReconstructReducedModelFrame(bundle.priorModel, predictedPriorGuidePoints, priorAsset, outError))
             {
                 return false;
             }
@@ -1303,6 +1740,11 @@ namespace hairgpu
             for (uint32_t i = 0u; i < residualGuideInput.size() && i < currentResidualGuidePoints.size() && i < priorResidualGuidePoints.size(); ++i)
             {
                 residualGuideInput[i] += (currentResidualGuidePoints[i] - priorResidualGuidePoints[i]) * bundle.trainingSettings.residualGuideGain;
+                if (i < previousResidualGuidePoints.size())
+                {
+                    residualGuideInput[i] += (currentResidualGuidePoints[i] - previousResidualGuidePoints[i]) *
+                                             Clamp(bundle.residualVelocityPredictionGain, 0.0f, 1.0f);
+                }
             }
 
             HairAsset residualAsset;
@@ -1320,27 +1762,46 @@ namespace hairgpu
 
             std::vector<Vec3> currentHybridGuideRoots;
             BuildGuideRootsFromPoints(teacherSequence.referenceAsset, hybridBeforeCorrection, currentHybridGuideRoots);
-            const std::vector<float> guideContactScores = BuildGuideContactScores(teacherSequence.referenceAsset,
-                                                                                  hybridBeforeCorrection,
-                                                                                  runtimeColliders,
-                                                                                  -1.05f,
-                                                                                  bundle.correctiveSettings.shellDistance);
-            std::vector<float> guideUncertainty = BuildGuideUncertainty(teacherSequence.referenceAsset,
-                                                                        currentHybridGuideRoots,
-                                                                        previousHybridGuideRoots,
-                                                                        guideContactScores,
-                                                                        1.0f / std::max(runtimeFrameRate, 1.0f));
+            std::vector<Vec3> teacherGuideRoots;
+            BuildGuideRootsFromPoints(teacherSequence.referenceAsset, teacherFrame, teacherGuideRoots);
+            std::vector<float> guideContactScores = BuildGuideContactScores(teacherSequence.referenceAsset,
+                                                                            hybridBeforeCorrection,
+                                                                            runtimeColliders,
+                                                                            -1.05f,
+                                                                            bundle.correctiveSettings.shellDistance);
+            std::vector<float> guidePenetrationScores = BuildGuidePenetrationScores(teacherSequence.referenceAsset,
+                                                                                     hybridBeforeCorrection,
+                                                                                     runtimeColliders,
+                                                                                     -1.05f,
+                                                                                     bundle.correctiveSettings.shellDistance);
             const uint32_t guideCount = std::min<uint32_t>(teacherSequence.referenceAsset.guideStrandCount, static_cast<uint32_t>(teacherSequence.referenceAsset.strands.size()));
+            std::vector<float> guideModelErrorScores(guideCount, 0.0f);
             for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
             {
+                const Vec3 teacherRoot = (guideIndex < teacherGuideRoots.size()) ? teacherGuideRoots[guideIndex] : Vec3(0.0f, 0.0f, 0.0f);
+                const Vec3 hybridRoot = (guideIndex < currentHybridGuideRoots.size()) ? currentHybridGuideRoots[guideIndex] : teacherRoot;
                 const StrandRange& strand = teacherSequence.referenceAsset.strands[guideIndex];
                 const uint32_t pointIndex = strand.pointOffset;
                 const float residualMagnitude = (pointIndex < residualAsset.restPoints.size() && pointIndex < teacherSequence.referenceAsset.restPoints.size())
                     ? Length(residualAsset.restPoints[pointIndex] - teacherSequence.referenceAsset.restPoints[pointIndex])
                     : 0.0f;
-                const float residualProxy = Clamp(residualMagnitude / 0.025f, 0.0f, 1.0f) * bundle.uncertaintyGain;
-                guideUncertainty[guideIndex] = Clamp(std::max(guideUncertainty[guideIndex], residualProxy) + guideContactScores[guideIndex] * (bundle.contactGain - 1.0f), 0.0f, 1.0f);
+                const float rootError = Clamp(Length(hybridRoot - teacherRoot) / 0.025f, 0.0f, 1.0f);
+                guideModelErrorScores[guideIndex] = Clamp(std::max(rootError, Clamp(residualMagnitude / 0.025f, 0.0f, 1.0f)) * bundle.uncertaintyGain,
+                                                          0.0f,
+                                                          1.0f);
+                guideContactScores[guideIndex] = Clamp(guideContactScores[guideIndex] * bundle.contactGain, 0.0f, 1.0f);
+                guidePenetrationScores[guideIndex] = Clamp(guidePenetrationScores[guideIndex] * bundle.penetrationGain, 0.0f, 1.0f);
             }
+            std::vector<float> guideUncertainty = BuildGuideUncertainty(teacherSequence.referenceAsset,
+                                                                        currentHybridGuideRoots,
+                                                                        previousHybridGuideRoots,
+                                                                        previousGuideUncertainty,
+                                                                        guideContactScores,
+                                                                        guidePenetrationScores,
+                                                                        guideModelErrorScores,
+                                                                        1.0f / std::max(runtimeFrameRate, 1.0f),
+                                                                        bundle.temporalCoherenceGain,
+                                                                        bundle.uncertaintySmoothingAlpha);
 
             ActiveSetRuntimeInput runtimeInput = {};
             runtimeInput.currentGuideRoots = currentHybridGuideRoots;
@@ -1404,7 +1865,12 @@ namespace hairgpu
                      << correctiveReport.correctedStrandCount << ","
                      << correctiveReport.correctedPointCount << ","
                      << correctiveReport.averagePenetration << ","
-                     << correctiveReport.maxPenetration << "\n";
+                     << correctiveReport.maxPenetration << ","
+                     << ComputeAverageScalar(guideContactScores) << ","
+                     << ComputeAverageScalar(guidePenetrationScores) << ","
+                     << ComputeAverageScalar(guideUncertainty) << ","
+                     << ComputeMaxScalar(guideUncertainty) << ","
+                     << ComputeAverageScalar(guideModelErrorScores) << "\n";
 
             if (settings.exportPerFrameHairBins)
             {
@@ -1416,6 +1882,49 @@ namespace hairgpu
                 {
                     return false;
                 }
+
+                ActiveSetDispatchPlan dispatchPlan = {};
+                if (!BuildActiveSetDispatchPlan(teacherSequence.referenceAsset, plan, dispatchPlan, outError))
+                {
+                    return false;
+                }
+
+                ActiveSetDispatchPack dispatchPack = {};
+                if (!BuildActiveSetDispatchPack(teacherSequence.referenceAsset, plan, dispatchPlan, dispatchPack, outError))
+                {
+                    return false;
+                }
+
+                std::ostringstream dispatchName;
+                dispatchName << "full_hybrid_dispatch_" << std::setw(4) << std::setfill('0') << frameIndex << ".json";
+                if (!WriteActiveSetDispatchPlanJson(outputDirectory / dispatchName.str(),
+                                                    teacherSequence.referenceAsset,
+                                                    plan,
+                                                    dispatchPlan,
+                                                    outError))
+                {
+                    return false;
+                }
+
+                std::ostringstream dispatchPackJsonName;
+                dispatchPackJsonName << "full_hybrid_dispatch_pack_" << std::setw(4) << std::setfill('0') << frameIndex << ".json";
+                if (!WriteActiveSetDispatchPackJson(outputDirectory / dispatchPackJsonName.str(),
+                                                    teacherSequence.referenceAsset,
+                                                    plan,
+                                                    dispatchPack,
+                                                    outError))
+                {
+                    return false;
+                }
+
+                std::ostringstream dispatchPackBinName;
+                dispatchPackBinName << "full_hybrid_dispatch_pack_" << std::setw(4) << std::setfill('0') << frameIndex << ".dispatchbin";
+                if (!SaveActiveSetDispatchPackToFile(outputDirectory / dispatchPackBinName.str(),
+                                                     dispatchPack,
+                                                     outError))
+                {
+                    return false;
+                }
             }
 
             previousFrameMilliseconds = 1.10f +
@@ -1423,7 +1932,10 @@ namespace hairgpu
                                         static_cast<float>(plan.summary.selectedGuideCount) * 0.012f +
                                         static_cast<float>(correctiveReport.correctedPointCount) * 0.0019f +
                                         static_cast<float>(plan.summary.recommendedSolverIterations) * 0.24f;
+            previousSmoothedPriorGuidePoints = smoothedPriorGuidePoints;
+            previousResidualGuidePoints = currentResidualGuidePoints;
             previousHybridGuideRoots = currentHybridGuideRoots;
+            previousGuideUncertainty = guideUncertainty;
 
             priorRmsSum += static_cast<double>(priorRms);
             hybridBeforeRmsSum += static_cast<double>(hybridBeforeRms);

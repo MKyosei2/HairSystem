@@ -1,0 +1,77 @@
+{
+  "threadsPerGroup": 64,
+  "clusterRanges": {
+    "file": "full_simulation_clusters.bin",
+    "recordStrideBytes": 20,
+    "recordCount": 1
+  },
+  "guideRecords": {
+    "file": "full_simulation_guides.bin",
+    "recordStrideBytes": 16,
+    "recordCount": 1,
+    "totalPointCount": 4,
+    "guideDispatchArgs": {"x": 1, "y": 1, "z": 1},
+    "guidePointDispatchArgs": {"x": 1, "y": 1, "z": 1}
+  },
+  "indirectArgs": {
+    "file": "dispatch_indirect_args.bin",
+    "recordStrideBytes": 12,
+    "recordCount": 12,
+    "layout": [
+      "guideDispatchArgs",
+      "guidePointDispatchArgs",
+      "fullSimulationStrandDispatchArgs",
+      "fullSimulationPointDispatchArgs",
+      "correctiveStrandDispatchArgs",
+      "correctivePointDispatchArgs",
+      "reducedSimulationStrandDispatchArgs",
+      "reducedSimulationPointDispatchArgs",
+      "frozenStrandDispatchArgs",
+      "frozenPointDispatchArgs",
+      "cachedStrandDispatchArgs",
+      "cachedPointDispatchArgs"
+    ]
+  },
+  "tiers": {
+    "fullSimulation": {
+      "file": "full_simulation_strands.bin",
+      "recordStrideBytes": 20,
+      "recordCount": 2,
+      "totalPointCount": 8,
+      "strandDispatchArgs": {"x": 1, "y": 1, "z": 1},
+      "pointDispatchArgs": {"x": 1, "y": 1, "z": 1}
+    },
+    "corrective": {
+      "file": "corrective_strands.bin",
+      "recordStrideBytes": 20,
+      "recordCount": 2,
+      "totalPointCount": 8,
+      "strandDispatchArgs": {"x": 1, "y": 1, "z": 1},
+      "pointDispatchArgs": {"x": 1, "y": 1, "z": 1}
+    },
+    "reducedSimulation": {
+      "file": "reduced_simulation_strands.bin",
+      "recordStrideBytes": 20,
+      "recordCount": 0,
+      "totalPointCount": 0,
+      "strandDispatchArgs": {"x": 0, "y": 1, "z": 1},
+      "pointDispatchArgs": {"x": 0, "y": 1, "z": 1}
+    },
+    "frozen": {
+      "file": "frozen_strands.bin",
+      "recordStrideBytes": 20,
+      "recordCount": 0,
+      "totalPointCount": 0,
+      "strandDispatchArgs": {"x": 0, "y": 1, "z": 1},
+      "pointDispatchArgs": {"x": 0, "y": 1, "z": 1}
+    },
+    "cached": {
+      "file": "cached_strands.bin",
+      "recordStrideBytes": 20,
+      "recordCount": 0,
+      "totalPointCount": 0,
+      "strandDispatchArgs": {"x": 0, "y": 1, "z": 1},
+      "pointDispatchArgs": {"x": 0, "y": 1, "z": 1}
+    }
+  }
+}

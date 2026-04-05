@@ -39,4 +39,14 @@ namespace hairgpu
                                  uint32_t resolution,
                                  float padding,
                                  std::string& outError);
+
+    bool BakeSdfGridFromScalpMesh(const ScalpMesh& scalpMesh,
+                                  uint32_t resolution,
+                                  float padding,
+                                  SdfGridCollider& outGrid,
+                                  std::string& outError);
+
+    bool ExportSdfGridColliderCsv(const SdfGridCollider& grid,
+                                  const std::filesystem::path& filePath,
+                                  std::string& outError);
 }

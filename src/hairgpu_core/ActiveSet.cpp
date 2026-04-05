@@ -1,6 +1,7 @@
 #include "hairgpu/ActiveSet.h"
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cmath>
 #include <fstream>
@@ -13,6 +14,151 @@ namespace hairgpu
 {
     namespace
     {
+
+        constexpr std::array<char, 8> kDispatchPackMagic = { 'H','D','S','P','A','C','K','1' };
+        constexpr uint32_t kDispatchPackVersion = 1u;
+
+        template <typename T>
+        bool WriteValue(std::ofstream& out, const T& value)
+        {
+            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+            return static_cast<bool>(out);
+        }
+
+        template <typename T>
+        bool ReadValue(std::ifstream& in, T& value)
+        {
+            in.read(reinterpret_cast<char*>(&value), sizeof(T));
+            return static_cast<bool>(in);
+        }
+
+        template <typename T>
+        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
+        {
+            const uint64_t count = static_cast<uint64_t>(values.size());
+            if (!WriteValue(out, count))
+            {
+                return false;
+            }
+            if (!values.empty())
+            {
+                out.write(reinterpret_cast<const char*>(values.data()),
+                          static_cast<std::streamsize>(sizeof(T) * values.size()));
+            }
+            return static_cast<bool>(out);
+        }
+
+        template <typename T>
+        bool ReadVector(std::ifstream& in, std::vector<T>& values)
+        {
+            uint64_t count = 0u;
+            if (!ReadValue(in, count))
+            {
+                return false;
+            }
+            if (count > (1ull << 31))
+            {
+                return false;
+            }
+            values.resize(static_cast<size_t>(count));
+            if (!values.empty())
+            {
+                in.read(reinterpret_cast<char*>(values.data()),
+                        static_cast<std::streamsize>(sizeof(T) * values.size()));
+            }
+            return static_cast<bool>(in);
+        }
+
+        template <typename T>
+        bool WriteRawVectorFile(const std::filesystem::path& filePath, const std::vector<T>& values)
+        {
+            std::ofstream out(filePath, std::ios::binary);
+            if (!out)
+            {
+                return false;
+            }
+            if (!values.empty())
+            {
+                out.write(reinterpret_cast<const char*>(values.data()),
+                          static_cast<std::streamsize>(sizeof(T) * values.size()));
+            }
+            return static_cast<bool>(out);
+        }
+
+        template <typename T, size_t N>
+        bool WriteRawArrayFile(const std::filesystem::path& filePath, const std::array<T, N>& values)
+        {
+            std::ofstream out(filePath, std::ios::binary);
+            if (!out)
+            {
+                return false;
+            }
+            if constexpr (N > 0)
+            {
+                out.write(reinterpret_cast<const char*>(values.data()),
+                          static_cast<std::streamsize>(sizeof(T) * values.size()));
+            }
+            return static_cast<bool>(out);
+        }
+
+        DispatchIndirectArgs BuildDispatchArgs(uint32_t itemCount, uint32_t threadsPerGroup)
+        {
+            DispatchIndirectArgs args = {};
+            args.threadGroupCountX = (threadsPerGroup > 0u)
+                ? ((itemCount + threadsPerGroup - 1u) / threadsPerGroup)
+                : 0u;
+            args.threadGroupCountY = 1u;
+            args.threadGroupCountZ = 1u;
+            return args;
+        }
+
+        ActiveSetCompactedStrandRecord BuildStrandRecord(const HairAsset& asset, uint32_t strandIndex)
+        {
+            ActiveSetCompactedStrandRecord record = {};
+            record.strandIndex = strandIndex;
+            if (strandIndex < asset.strands.size())
+            {
+                const StrandRange& strand = asset.strands[strandIndex];
+                record.pointOffset = strand.pointOffset;
+                record.pointCount = strand.pointCount;
+                record.groupId = strand.groupId;
+                record.flags = strand.flags;
+            }
+            return record;
+        }
+
+        ActiveSetCompactedGuideRecord BuildGuideRecord(const HairAsset& asset, uint32_t strandIndex)
+        {
+            ActiveSetCompactedGuideRecord record = {};
+            record.strandIndex = strandIndex;
+            if (strandIndex < asset.strands.size())
+            {
+                const StrandRange& strand = asset.strands[strandIndex];
+                record.pointOffset = strand.pointOffset;
+                record.pointCount = strand.pointCount;
+                record.groupId = strand.groupId;
+            }
+            return record;
+        }
+
+        void PopulateDispatchPackTier(const HairAsset& asset,
+                                      const std::vector<uint32_t>& strandIndices,
+                                      uint32_t threadsPerGroup,
+                                      ActiveSetDispatchPackTier& outTier)
+        {
+            outTier = {};
+            outTier.strands.reserve(strandIndices.size());
+            for (uint32_t strandIndex : strandIndices)
+            {
+                const ActiveSetCompactedStrandRecord record = BuildStrandRecord(asset, strandIndex);
+                outTier.strands.push_back(record);
+                outTier.totalPointCount += record.pointCount;
+            }
+            outTier.strandDispatchArgs = BuildDispatchArgs(static_cast<uint32_t>(outTier.strands.size()), threadsPerGroup);
+            outTier.pointDispatchArgs = BuildDispatchArgs(outTier.totalPointCount, threadsPerGroup);
+        }
+
+
         struct GuideDescriptor
         {
             uint32_t strandIndex = 0u;
@@ -620,6 +766,472 @@ namespace hairgpu
         return out.str();
     }
 
+    bool BuildActiveSetDispatchPlan(const HairAsset& asset,
+                                    const ActiveSetPlan& plan,
+                                    ActiveSetDispatchPlan& outDispatchPlan,
+                                    std::string& outError)
+    {
+        outError.clear();
+        outDispatchPlan = {};
+        if (plan.clusters.empty())
+        {
+            outError = "Active-set dispatch plan requires at least one cluster.";
+            return false;
+        }
+
+        outDispatchPlan.correctiveStrands = plan.selectedStrandIndices;
+
+        for (uint32_t selectedClusterIndex : plan.selectedClusterIndices)
+        {
+            if (selectedClusterIndex >= plan.clusters.size())
+            {
+                continue;
+            }
+            const ActiveSetCluster& cluster = plan.clusters[selectedClusterIndex];
+            ActiveSetDispatchRange range = {};
+            range.clusterIndex = selectedClusterIndex;
+            range.guideOffset = static_cast<uint32_t>(outDispatchPlan.fullSimulationGuides.size());
+            range.guideCount = static_cast<uint32_t>(cluster.guideStrandIndices.size());
+            range.strandOffset = static_cast<uint32_t>(outDispatchPlan.fullSimulationStrands.size());
+            range.strandCount = static_cast<uint32_t>(cluster.strandIndices.size());
+            outDispatchPlan.fullSimulationClusters.push_back(range);
+            outDispatchPlan.fullSimulationGuides.insert(outDispatchPlan.fullSimulationGuides.end(),
+                                                        cluster.guideStrandIndices.begin(),
+                                                        cluster.guideStrandIndices.end());
+            outDispatchPlan.fullSimulationStrands.insert(outDispatchPlan.fullSimulationStrands.end(),
+                                                         cluster.strandIndices.begin(),
+                                                         cluster.strandIndices.end());
+        }
+
+        std::sort(outDispatchPlan.correctiveStrands.begin(), outDispatchPlan.correctiveStrands.end());
+        outDispatchPlan.correctiveStrands.erase(std::unique(outDispatchPlan.correctiveStrands.begin(),
+                                                            outDispatchPlan.correctiveStrands.end()),
+                                                outDispatchPlan.correctiveStrands.end());
+
+        std::sort(outDispatchPlan.fullSimulationGuides.begin(), outDispatchPlan.fullSimulationGuides.end());
+        outDispatchPlan.fullSimulationGuides.erase(std::unique(outDispatchPlan.fullSimulationGuides.begin(),
+                                                               outDispatchPlan.fullSimulationGuides.end()),
+                                                   outDispatchPlan.fullSimulationGuides.end());
+
+        for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size() && strandIndex < plan.recommendedSimulationTiers.size(); ++strandIndex)
+        {
+            switch (plan.recommendedSimulationTiers[strandIndex])
+            {
+            case SimTier::Full:
+                break;
+            case SimTier::Frozen:
+                outDispatchPlan.frozenStrands.push_back(strandIndex);
+                break;
+            case SimTier::Cached:
+                outDispatchPlan.cachedStrands.push_back(strandIndex);
+                break;
+            case SimTier::Reduced:
+            default:
+                outDispatchPlan.reducedSimulationStrands.push_back(strandIndex);
+                break;
+            }
+        }
+        return true;
+    }
+
+    bool BuildActiveSetDispatchPack(const HairAsset& asset,
+                                    const ActiveSetPlan& plan,
+                                    const ActiveSetDispatchPlan& dispatchPlan,
+                                    ActiveSetDispatchPack& outDispatchPack,
+                                    std::string& outError)
+    {
+        outDispatchPack = {};
+        outDispatchPack.threadsPerGroup = 64u;
+        outDispatchPack.fullSimulationClusters = dispatchPlan.fullSimulationClusters;
+
+        outDispatchPack.fullSimulationGuides.reserve(dispatchPlan.fullSimulationGuides.size());
+        for (uint32_t guideIndex : dispatchPlan.fullSimulationGuides)
+        {
+            const ActiveSetCompactedGuideRecord record = BuildGuideRecord(asset, guideIndex);
+            outDispatchPack.fullSimulationGuides.push_back(record);
+            outDispatchPack.totalGuidePointCount += record.pointCount;
+        }
+        outDispatchPack.guideDispatchArgs = BuildDispatchArgs(static_cast<uint32_t>(outDispatchPack.fullSimulationGuides.size()),
+                                                             outDispatchPack.threadsPerGroup);
+        outDispatchPack.guidePointDispatchArgs = BuildDispatchArgs(outDispatchPack.totalGuidePointCount,
+                                                                  outDispatchPack.threadsPerGroup);
+
+        PopulateDispatchPackTier(asset,
+                                 dispatchPlan.fullSimulationStrands,
+                                 outDispatchPack.threadsPerGroup,
+                                 outDispatchPack.fullSimulation);
+        PopulateDispatchPackTier(asset,
+                                 dispatchPlan.correctiveStrands,
+                                 outDispatchPack.threadsPerGroup,
+                                 outDispatchPack.corrective);
+        PopulateDispatchPackTier(asset,
+                                 dispatchPlan.reducedSimulationStrands,
+                                 outDispatchPack.threadsPerGroup,
+                                 outDispatchPack.reducedSimulation);
+        PopulateDispatchPackTier(asset,
+                                 dispatchPlan.frozenStrands,
+                                 outDispatchPack.threadsPerGroup,
+                                 outDispatchPack.frozen);
+        PopulateDispatchPackTier(asset,
+                                 dispatchPlan.cachedStrands,
+                                 outDispatchPack.threadsPerGroup,
+                                 outDispatchPack.cached);
+
+        outError.clear();
+        return true;
+    }
+
+    bool WriteActiveSetDispatchPackJson(const std::filesystem::path& outputPath,
+                                        const HairAsset& asset,
+                                        const ActiveSetPlan& plan,
+                                        const ActiveSetDispatchPack& dispatchPack,
+                                        std::string& outError)
+    {
+        std::ofstream out(outputPath);
+        if (!out)
+        {
+            outError = "Failed to open active-set dispatch pack JSON output file.";
+            return false;
+        }
+
+        auto writeArgs = [&](const char* name, const DispatchIndirectArgs& args)
+        {
+            out << "  \"" << name << "\": {"
+                << "\"x\": " << args.threadGroupCountX
+                << ", \"y\": " << args.threadGroupCountY
+                << ", \"z\": " << args.threadGroupCountZ
+                << "}";
+        };
+
+        auto writeTier = [&](const char* name, const ActiveSetDispatchPackTier& tier, bool trailingComma)
+        {
+            out << "  \"" << name << "\": {\n";
+            out << "    \"strandCount\": " << tier.strands.size() << ",\n";
+            out << "    \"totalPointCount\": " << tier.totalPointCount << ",\n";
+            out << "    \"strandDispatchArgs\": {\"x\": " << tier.strandDispatchArgs.threadGroupCountX
+                << ", \"y\": " << tier.strandDispatchArgs.threadGroupCountY
+                << ", \"z\": " << tier.strandDispatchArgs.threadGroupCountZ << "},\n";
+            out << "    \"pointDispatchArgs\": {\"x\": " << tier.pointDispatchArgs.threadGroupCountX
+                << ", \"y\": " << tier.pointDispatchArgs.threadGroupCountY
+                << ", \"z\": " << tier.pointDispatchArgs.threadGroupCountZ << "},\n";
+            out << "    \"strands\": [\n";
+            for (size_t i = 0; i < tier.strands.size(); ++i)
+            {
+                const auto& s = tier.strands[i];
+                out << "      {\"strandIndex\": " << s.strandIndex
+                    << ", \"pointOffset\": " << s.pointOffset
+                    << ", \"pointCount\": " << s.pointCount
+                    << ", \"groupId\": " << s.groupId
+                    << ", \"flags\": " << s.flags << "}";
+                out << ((i + 1u < tier.strands.size()) ? "," : "") << "\n";
+            }
+            out << "    ]\n";
+            out << "  }" << (trailingComma ? "," : "") << "\n";
+        };
+
+        out << "{\n";
+        out << "  \"asset\": {\n";
+        out << "    \"strandCount\": " << asset.strands.size() << ",\n";
+        out << "    \"guideCount\": " << asset.guideStrandCount << ",\n";
+        out << "    \"followerCount\": " << asset.followerStrandCount << "\n";
+        out << "  },\n";
+        out << "  \"summary\": {\n";
+        out << "    \"selectedClusterCount\": " << plan.summary.selectedClusterCount << ",\n";
+        out << "    \"selectedGuideCount\": " << plan.summary.selectedGuideCount << ",\n";
+        out << "    \"selectedStrandCount\": " << plan.summary.selectedStrandCount << ",\n";
+        out << "    \"recommendedSolverIterations\": " << plan.summary.recommendedSolverIterations << "\n";
+        out << "  },\n";
+        out << "  \"threadsPerGroup\": " << dispatchPack.threadsPerGroup << ",\n";
+        out << "  \"totalGuidePointCount\": " << dispatchPack.totalGuidePointCount << ",\n";
+        writeArgs("guideDispatchArgs", dispatchPack.guideDispatchArgs); out << ",\n";
+        writeArgs("guidePointDispatchArgs", dispatchPack.guidePointDispatchArgs); out << ",\n";
+
+        out << "  \"fullSimulationClusters\": [\n";
+        for (size_t i = 0; i < dispatchPack.fullSimulationClusters.size(); ++i)
+        {
+            const auto& range = dispatchPack.fullSimulationClusters[i];
+            out << "    {\"clusterIndex\": " << range.clusterIndex
+                << ", \"guideOffset\": " << range.guideOffset
+                << ", \"guideCount\": " << range.guideCount
+                << ", \"strandOffset\": " << range.strandOffset
+                << ", \"strandCount\": " << range.strandCount << "}";
+            out << ((i + 1u < dispatchPack.fullSimulationClusters.size()) ? "," : "") << "\n";
+        }
+        out << "  ],\n";
+
+        out << "  \"fullSimulationGuides\": [\n";
+        for (size_t i = 0; i < dispatchPack.fullSimulationGuides.size(); ++i)
+        {
+            const auto& g = dispatchPack.fullSimulationGuides[i];
+            out << "    {\"strandIndex\": " << g.strandIndex
+                << ", \"pointOffset\": " << g.pointOffset
+                << ", \"pointCount\": " << g.pointCount
+                << ", \"groupId\": " << g.groupId << "}";
+            out << ((i + 1u < dispatchPack.fullSimulationGuides.size()) ? "," : "") << "\n";
+        }
+        out << "  ],\n";
+
+        writeTier("fullSimulation", dispatchPack.fullSimulation, true);
+        writeTier("corrective", dispatchPack.corrective, true);
+        writeTier("reducedSimulation", dispatchPack.reducedSimulation, true);
+        writeTier("frozen", dispatchPack.frozen, true);
+        writeTier("cached", dispatchPack.cached, false);
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
+    bool SaveActiveSetDispatchPackToFile(const std::filesystem::path& filePath,
+                                         const ActiveSetDispatchPack& dispatchPack,
+                                         std::string& outError)
+    {
+        std::ofstream out(filePath, std::ios::binary);
+        if (!out)
+        {
+            outError = "Failed to open active-set dispatch pack file.";
+            return false;
+        }
+
+        out.write(kDispatchPackMagic.data(), static_cast<std::streamsize>(kDispatchPackMagic.size()));
+        auto writeTier = [&](const ActiveSetDispatchPackTier& tier) -> bool
+        {
+            return WriteValue(out, tier.totalPointCount) &&
+                   WriteValue(out, tier.strandDispatchArgs) &&
+                   WriteValue(out, tier.pointDispatchArgs) &&
+                   WriteVector(out, tier.strands);
+        };
+
+        if (!out ||
+            !WriteValue(out, kDispatchPackVersion) ||
+            !WriteValue(out, dispatchPack.threadsPerGroup) ||
+            !WriteVector(out, dispatchPack.fullSimulationClusters) ||
+            !WriteVector(out, dispatchPack.fullSimulationGuides) ||
+            !WriteValue(out, dispatchPack.totalGuidePointCount) ||
+            !WriteValue(out, dispatchPack.guideDispatchArgs) ||
+            !WriteValue(out, dispatchPack.guidePointDispatchArgs) ||
+            !writeTier(dispatchPack.fullSimulation) ||
+            !writeTier(dispatchPack.corrective) ||
+            !writeTier(dispatchPack.reducedSimulation) ||
+            !writeTier(dispatchPack.frozen) ||
+            !writeTier(dispatchPack.cached))
+        {
+            outError = "Failed to write active-set dispatch pack.";
+            return false;
+        }
+
+        outError.clear();
+        return true;
+    }
+
+    bool SaveActiveSetDispatchPackGpuBuffers(const std::filesystem::path& outputDirectory,
+                                             const ActiveSetDispatchPack& dispatchPack,
+                                             std::string& outError)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(outputDirectory, ec);
+        if (ec)
+        {
+            outError = "Failed to create dispatch GPU buffer output directory.";
+            return false;
+        }
+
+        struct TierFileDesc
+        {
+            const char* name = nullptr;
+            const ActiveSetDispatchPackTier* tier = nullptr;
+        };
+
+        const std::array<DispatchIndirectArgs, 12> indirectArgs =
+        {{
+            dispatchPack.guideDispatchArgs,
+            dispatchPack.guidePointDispatchArgs,
+            dispatchPack.fullSimulation.strandDispatchArgs,
+            dispatchPack.fullSimulation.pointDispatchArgs,
+            dispatchPack.corrective.strandDispatchArgs,
+            dispatchPack.corrective.pointDispatchArgs,
+            dispatchPack.reducedSimulation.strandDispatchArgs,
+            dispatchPack.reducedSimulation.pointDispatchArgs,
+            dispatchPack.frozen.strandDispatchArgs,
+            dispatchPack.frozen.pointDispatchArgs,
+            dispatchPack.cached.strandDispatchArgs,
+            dispatchPack.cached.pointDispatchArgs
+        }};
+
+        if (!WriteRawVectorFile(outputDirectory / "full_simulation_clusters.bin", dispatchPack.fullSimulationClusters) ||
+            !WriteRawVectorFile(outputDirectory / "full_simulation_guides.bin", dispatchPack.fullSimulationGuides) ||
+            !WriteRawArrayFile(outputDirectory / "dispatch_indirect_args.bin", indirectArgs))
+        {
+            outError = "Failed to write dispatch GPU buffer files.";
+            return false;
+        }
+
+        const std::array<TierFileDesc, 5> tiers =
+        {{
+            { "full_simulation_strands.bin", &dispatchPack.fullSimulation },
+            { "corrective_strands.bin", &dispatchPack.corrective },
+            { "reduced_simulation_strands.bin", &dispatchPack.reducedSimulation },
+            { "frozen_strands.bin", &dispatchPack.frozen },
+            { "cached_strands.bin", &dispatchPack.cached }
+        }};
+        for (const TierFileDesc& tierDesc : tiers)
+        {
+            if (!WriteRawVectorFile(outputDirectory / tierDesc.name, tierDesc.tier->strands))
+            {
+                outError = "Failed to write tier GPU buffer file.";
+                return false;
+            }
+        }
+
+        std::ofstream manifest(outputDirectory / "dispatch_gpu_manifest.json");
+        if (!manifest)
+        {
+            outError = "Failed to write dispatch GPU buffer manifest.";
+            return false;
+        }
+
+        auto writeTierMeta = [&](const char* name, const char* fileName, const ActiveSetDispatchPackTier& tier, bool trailingComma)
+        {
+            manifest << "    \"" << name << "\": {\n";
+            manifest << "      \"file\": \"" << fileName << "\",\n";
+            manifest << "      \"recordStrideBytes\": " << sizeof(ActiveSetCompactedStrandRecord) << ",\n";
+            manifest << "      \"recordCount\": " << tier.strands.size() << ",\n";
+            manifest << "      \"totalPointCount\": " << tier.totalPointCount << ",\n";
+            manifest << "      \"strandDispatchArgs\": {\"x\": " << tier.strandDispatchArgs.threadGroupCountX
+                     << ", \"y\": " << tier.strandDispatchArgs.threadGroupCountY
+                     << ", \"z\": " << tier.strandDispatchArgs.threadGroupCountZ << "},\n";
+            manifest << "      \"pointDispatchArgs\": {\"x\": " << tier.pointDispatchArgs.threadGroupCountX
+                     << ", \"y\": " << tier.pointDispatchArgs.threadGroupCountY
+                     << ", \"z\": " << tier.pointDispatchArgs.threadGroupCountZ << "}\n";
+            manifest << "    }" << (trailingComma ? "," : "") << "\n";
+        };
+
+        manifest << "{\n";
+        manifest << "  \"threadsPerGroup\": " << dispatchPack.threadsPerGroup << ",\n";
+        manifest << "  \"clusterRanges\": {\n";
+        manifest << "    \"file\": \"full_simulation_clusters.bin\",\n";
+        manifest << "    \"recordStrideBytes\": " << sizeof(ActiveSetDispatchRange) << ",\n";
+        manifest << "    \"recordCount\": " << dispatchPack.fullSimulationClusters.size() << "\n";
+        manifest << "  },\n";
+        manifest << "  \"guideRecords\": {\n";
+        manifest << "    \"file\": \"full_simulation_guides.bin\",\n";
+        manifest << "    \"recordStrideBytes\": " << sizeof(ActiveSetCompactedGuideRecord) << ",\n";
+        manifest << "    \"recordCount\": " << dispatchPack.fullSimulationGuides.size() << ",\n";
+        manifest << "    \"totalPointCount\": " << dispatchPack.totalGuidePointCount << ",\n";
+        manifest << "    \"guideDispatchArgs\": {\"x\": " << dispatchPack.guideDispatchArgs.threadGroupCountX
+                 << ", \"y\": " << dispatchPack.guideDispatchArgs.threadGroupCountY
+                 << ", \"z\": " << dispatchPack.guideDispatchArgs.threadGroupCountZ << "},\n";
+        manifest << "    \"guidePointDispatchArgs\": {\"x\": " << dispatchPack.guidePointDispatchArgs.threadGroupCountX
+                 << ", \"y\": " << dispatchPack.guidePointDispatchArgs.threadGroupCountY
+                 << ", \"z\": " << dispatchPack.guidePointDispatchArgs.threadGroupCountZ << "}\n";
+        manifest << "  },\n";
+        manifest << "  \"indirectArgs\": {\n";
+        manifest << "    \"file\": \"dispatch_indirect_args.bin\",\n";
+        manifest << "    \"recordStrideBytes\": " << sizeof(DispatchIndirectArgs) << ",\n";
+        manifest << "    \"recordCount\": " << indirectArgs.size() << ",\n";
+        manifest << "    \"layout\": [\n";
+        const std::array<const char*, 12> argNames =
+        {{
+            "guideDispatchArgs",
+            "guidePointDispatchArgs",
+            "fullSimulationStrandDispatchArgs",
+            "fullSimulationPointDispatchArgs",
+            "correctiveStrandDispatchArgs",
+            "correctivePointDispatchArgs",
+            "reducedSimulationStrandDispatchArgs",
+            "reducedSimulationPointDispatchArgs",
+            "frozenStrandDispatchArgs",
+            "frozenPointDispatchArgs",
+            "cachedStrandDispatchArgs",
+            "cachedPointDispatchArgs"
+        }};
+        for (size_t i = 0; i < argNames.size(); ++i)
+        {
+            manifest << "      \"" << argNames[i] << "\"" << (i + 1u < argNames.size() ? "," : "") << "\n";
+        }
+        manifest << "    ]\n";
+        manifest << "  },\n";
+        manifest << "  \"tiers\": {\n";
+        writeTierMeta("fullSimulation", "full_simulation_strands.bin", dispatchPack.fullSimulation, true);
+        writeTierMeta("corrective", "corrective_strands.bin", dispatchPack.corrective, true);
+        writeTierMeta("reducedSimulation", "reduced_simulation_strands.bin", dispatchPack.reducedSimulation, true);
+        writeTierMeta("frozen", "frozen_strands.bin", dispatchPack.frozen, true);
+        writeTierMeta("cached", "cached_strands.bin", dispatchPack.cached, false);
+        manifest << "  }\n";
+        manifest << "}\n";
+
+        outError.clear();
+        return true;
+    }
+
+    bool LoadActiveSetDispatchPackFromFile(const std::filesystem::path& filePath,
+                                           ActiveSetDispatchPack& outDispatchPack,
+                                           std::string& outError)
+    {
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in)
+        {
+            outError = "Failed to open active-set dispatch pack file.";
+            return false;
+        }
+
+        std::array<char, 8> magic = {};
+        in.read(magic.data(), static_cast<std::streamsize>(magic.size()));
+        if (!in || magic != kDispatchPackMagic)
+        {
+            outError = "Invalid active-set dispatch pack magic.";
+            return false;
+        }
+
+        uint32_t version = 0u;
+        ActiveSetDispatchPack pack = {};
+        auto readTier = [&](ActiveSetDispatchPackTier& tier) -> bool
+        {
+            return ReadValue(in, tier.totalPointCount) &&
+                   ReadValue(in, tier.strandDispatchArgs) &&
+                   ReadValue(in, tier.pointDispatchArgs) &&
+                   ReadVector(in, tier.strands);
+        };
+
+        if (!ReadValue(in, version) ||
+            version != kDispatchPackVersion ||
+            !ReadValue(in, pack.threadsPerGroup) ||
+            !ReadVector(in, pack.fullSimulationClusters) ||
+            !ReadVector(in, pack.fullSimulationGuides) ||
+            !ReadValue(in, pack.totalGuidePointCount) ||
+            !ReadValue(in, pack.guideDispatchArgs) ||
+            !ReadValue(in, pack.guidePointDispatchArgs) ||
+            !readTier(pack.fullSimulation) ||
+            !readTier(pack.corrective) ||
+            !readTier(pack.reducedSimulation) ||
+            !readTier(pack.frozen) ||
+            !readTier(pack.cached))
+        {
+            outError = "Active-set dispatch pack is truncated or unsupported.";
+            return false;
+        }
+
+        outDispatchPack = std::move(pack);
+        outError.clear();
+        return true;
+    }
+
+    std::string BuildActiveSetDispatchPackSummary(const ActiveSetDispatchPack& dispatchPack)
+    {
+        std::ostringstream out;
+        out << "threadsPerGroup=" << dispatchPack.threadsPerGroup
+            << " guides=" << dispatchPack.fullSimulationGuides.size()
+            << " guidePoints=" << dispatchPack.totalGuidePointCount
+            << " full=" << dispatchPack.fullSimulation.strands.size()
+            << " reduced=" << dispatchPack.reducedSimulation.strands.size()
+            << " frozen=" << dispatchPack.frozen.strands.size()
+            << " cached=" << dispatchPack.cached.strands.size()
+            << " corrective=" << dispatchPack.corrective.strands.size()
+            << " fullDispatchGroups=" << dispatchPack.fullSimulation.strandDispatchArgs.threadGroupCountX
+            << " correctiveGroups=" << dispatchPack.corrective.strandDispatchArgs.threadGroupCountX;
+        return out.str();
+    }
+
+
     bool WriteActiveSetPlanJson(const std::filesystem::path& outputPath,
                                 const HairAsset& asset,
                                 const ActiveSetPlan& plan,
@@ -701,6 +1313,68 @@ namespace hairgpu
         }
         out << "  ]\n";
         out << "}\n";
+        outError.clear();
+        return true;
+    }
+
+    bool WriteActiveSetDispatchPlanJson(const std::filesystem::path& outputPath,
+                                        const HairAsset& asset,
+                                        const ActiveSetPlan& plan,
+                                        const ActiveSetDispatchPlan& dispatchPlan,
+                                        std::string& outError)
+    {
+        std::ofstream out(outputPath);
+        if (!out)
+        {
+            outError = "Failed to open active-set dispatch JSON output file.";
+            return false;
+        }
+
+        out << "{\n";
+        out << "  \"asset\": {\n";
+        out << "    \"strandCount\": " << asset.strands.size() << ",\n";
+        out << "    \"guideCount\": " << asset.guideStrandCount << ",\n";
+        out << "    \"followerCount\": " << asset.followerStrandCount << "\n";
+        out << "  },\n";
+        out << "  \"summary\": {\n";
+        out << "    \"selectedClusterCount\": " << plan.summary.selectedClusterCount << ",\n";
+        out << "    \"selectedGuideCount\": " << plan.summary.selectedGuideCount << ",\n";
+        out << "    \"selectedStrandCount\": " << plan.summary.selectedStrandCount << ",\n";
+        out << "    \"recommendedSolverIterations\": " << plan.summary.recommendedSolverIterations << "\n";
+        out << "  },\n";
+
+        out << "  \"fullSimulationClusters\": [\n";
+        for (size_t i = 0; i < dispatchPlan.fullSimulationClusters.size(); ++i)
+        {
+            const ActiveSetDispatchRange& range = dispatchPlan.fullSimulationClusters[i];
+            out << "    {\"clusterIndex\": " << range.clusterIndex
+                << ", \"guideOffset\": " << range.guideOffset
+                << ", \"guideCount\": " << range.guideCount
+                << ", \"strandOffset\": " << range.strandOffset
+                << ", \"strandCount\": " << range.strandCount << "}";
+            out << ((i + 1 < dispatchPlan.fullSimulationClusters.size()) ? "," : "") << "\n";
+        }
+        out << "  ],\n";
+
+        auto writeArray = [&](const char* name, const std::vector<uint32_t>& values)
+        {
+            out << "  \"" << name << "\": [";
+            for (size_t i = 0; i < values.size(); ++i)
+            {
+                if (i > 0) out << ", ";
+                out << values[i];
+            }
+            out << "]";
+        };
+
+        writeArray("fullSimulationGuides", dispatchPlan.fullSimulationGuides); out << ",\n";
+        writeArray("fullSimulationStrands", dispatchPlan.fullSimulationStrands); out << ",\n";
+        writeArray("correctiveStrands", dispatchPlan.correctiveStrands); out << ",\n";
+        writeArray("reducedSimulationStrands", dispatchPlan.reducedSimulationStrands); out << ",\n";
+        writeArray("frozenStrands", dispatchPlan.frozenStrands); out << ",\n";
+        writeArray("cachedStrands", dispatchPlan.cachedStrands); out << "\n";
+        out << "}\n";
+
         outError.clear();
         return true;
     }

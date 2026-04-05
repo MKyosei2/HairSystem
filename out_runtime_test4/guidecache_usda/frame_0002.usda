@@ -1,0 +1,56 @@
+#usda 1.0
+(
+    upAxis = "Y"
+)
+
+def Xform "HairScene"
+{
+    def BasisCurves "HairStrands"
+    {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points =         [
+            (0, 1.72117, 0),
+            (0.00349421, 1.60008, -0.0155329),
+            (0.0158885, 1.41975, -0.0457383),
+            (0.0268512, 1.17961, -0.0719039)
+        ]
+        float[] widths = [0.01, 0.009, 0.007, 0.005]
+        int[] primvars:guide = [1]
+        uniform token primvars:guide:interpolation = "uniform"
+        int[] primvars:groupId = [0]
+        uniform token primvars:groupId:interpolation = "uniform"
+    }
+    def Mesh "Scalp"
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5]
+        point3f[] points =         [
+            (0, 1.72, 0),
+            (0.0025, 1.72, 0),
+            (0, 1.72, 0.0025),
+            (0.03, 1.71, 0),
+            (0.0325, 1.71, 0),
+            (0.03, 1.71, 0.0025)
+        ]
+        normal3f[] normals =         [
+            (0, 1, 0),
+            (0, 1, 0),
+            (0, 1, 0),
+            (0, 1, 0),
+            (0, 1, 0),
+            (0, 1, 0)
+        ]
+        uniform token subdivisionScheme = "none"
+        texCoord2f[] primvars:st =         [
+            (0.5, 0.5),
+            (0.5, 0.5),
+            (0.5, 0.5),
+            (0.515, 0.5),
+            (0.515, 0.5),
+            (0.515, 0.5)
+        ]
+        uniform token primvars:st:interpolation = "vertex"
+    }
+}

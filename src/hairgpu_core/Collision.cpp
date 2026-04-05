@@ -200,7 +200,7 @@ namespace hairgpu
             };
         }
 
-        SdfGrid BuildScalpSdfGrid(const HairAsset& asset, uint32_t requestedResolution, float padding)
+        SdfGrid BuildSdfGridFromScalpMesh(const ScalpMesh& scalpMesh, uint32_t requestedResolution, float padding)
         {
             SdfGrid grid = {};
             const uint32_t resolution = std::max<uint32_t>(requestedResolution, 8u);
@@ -210,7 +210,7 @@ namespace hairgpu
 
             Vec3 boundsMin(FLT_MAX, FLT_MAX, FLT_MAX);
             Vec3 boundsMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-            for (const Vec3& p : asset.scalpMesh.positions)
+            for (const Vec3& p : scalpMesh.positions)
             {
                 boundsMin.x = std::min(boundsMin.x, p.x);
                 boundsMin.y = std::min(boundsMin.y, p.y);
@@ -231,7 +231,7 @@ namespace hairgpu
             };
             grid.values.resize(static_cast<size_t>(resolution) * resolution * resolution, 0.0f);
 
-            const Vec3 scalpCenter = ComputeScalpCenter(asset.scalpMesh);
+            const Vec3 scalpCenter = ComputeScalpCenter(scalpMesh);
             for (uint32_t z = 0u; z < resolution; ++z)
             {
                 for (uint32_t y = 0u; y < resolution; ++y)
@@ -239,9 +239,9 @@ namespace hairgpu
                     for (uint32_t x = 0u; x < resolution; ++x)
                     {
                         const Vec3 samplePos = GridPosition(grid, x, y, z);
-                        const ClosestTrianglePoint closest = FindClosestPointOnScalp(asset.scalpMesh, samplePos);
-                        const TriangleIndices& tri = asset.scalpMesh.triangles[closest.triangleIndex];
-                        const Vec3 normal = EvaluateSurfaceNormal(asset.scalpMesh, tri, closest.barycentric, scalpCenter);
+                        const ClosestTrianglePoint closest = FindClosestPointOnScalp(scalpMesh, samplePos);
+                        const TriangleIndices& tri = scalpMesh.triangles[closest.triangleIndex];
+                        const Vec3 normal = EvaluateSurfaceNormal(scalpMesh, tri, closest.barycentric, scalpCenter);
                         const float dist = std::sqrt(std::max(closest.distanceSq, 0.0f));
                         const float sign = (Dot(samplePos - closest.position, normal) >= 0.0f) ? 1.0f : -1.0f;
                         grid.values[GridIndex(grid, x, y, z)] = dist * sign;
@@ -249,6 +249,11 @@ namespace hairgpu
                 }
             }
             return grid;
+        }
+
+        SdfGrid BuildScalpSdfGrid(const HairAsset& asset, uint32_t requestedResolution, float padding)
+        {
+            return BuildSdfGridFromScalpMesh(asset.scalpMesh, requestedResolution, padding);
         }
 
         float SampleGridTrilinear(const SdfGrid& grid, const Vec3& point)
@@ -451,6 +456,61 @@ namespace hairgpu
                 }
             }
         }
+
+        outError.clear();
+        return true;
+    }
+
+    bool BakeSdfGridFromScalpMesh(const ScalpMesh& scalpMesh,
+                                  uint32_t resolution,
+                                  float padding,
+                                  SdfGridCollider& outGrid,
+                                  std::string& outError)
+    {
+        if (scalpMesh.positions.empty() || scalpMesh.triangles.empty())
+        {
+            outError = "Scalp mesh does not contain any triangle data.";
+            return false;
+        }
+        const SdfGrid grid = BuildSdfGridFromScalpMesh(scalpMesh, resolution, padding);
+        outGrid = {};
+        outGrid.resolutionX = grid.resolutionX;
+        outGrid.resolutionY = grid.resolutionY;
+        outGrid.resolutionZ = grid.resolutionZ;
+        outGrid.boundsMin = grid.boundsMin;
+        outGrid.boundsMax = grid.boundsMax;
+        outGrid.values = grid.values;
+        outError.clear();
+        return true;
+    }
+
+    bool ExportSdfGridColliderCsv(const SdfGridCollider& grid,
+                                  const std::filesystem::path& filePath,
+                                  std::string& outError)
+    {
+        const size_t expectedCount = static_cast<size_t>(grid.resolutionX) * grid.resolutionY * grid.resolutionZ;
+        if (grid.resolutionX < 2u || grid.resolutionY < 2u || grid.resolutionZ < 2u || grid.values.size() != expectedCount)
+        {
+            outError = "SDF grid collider is invalid or incomplete.";
+            return false;
+        }
+
+        std::ofstream out(filePath);
+        if (!out)
+        {
+            outError = "Failed to open output SDF collider CSV: " + filePath.string();
+            return false;
+        }
+
+        out << "resolution," << grid.resolutionX << ',' << grid.resolutionY << ',' << grid.resolutionZ << "\n";
+        out << "boundsMin," << grid.boundsMin.x << ',' << grid.boundsMin.y << ',' << grid.boundsMin.z << "\n";
+        out << "boundsMax," << grid.boundsMax.x << ',' << grid.boundsMax.y << ',' << grid.boundsMax.z << "\n";
+        out << "values";
+        for (float value : grid.values)
+        {
+            out << ',' << value;
+        }
+        out << "\n";
 
         outError.clear();
         return true;

@@ -1,0 +1,29 @@
+#usda 1.0
+(
+    upAxis = "Y"
+)
+
+def Xform "HairScene"
+{
+    def BasisCurves "HairStrands"
+    {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4, 4]
+        point3f[] points =         [
+            (0, 1.72117, 0),
+            (0.0023689, 1.60003, -0.015331),
+            (0.0143281, 1.41959, -0.0451083),
+            (0.0248297, 1.17935, -0.0702511),
+            (0.03, 1.71117, 0),
+            (0.0340819, 1.58045, -0.00651811),
+            (0.0461054, 1.39972, -0.0351093),
+            (0.0557103, 1.15969, -0.0638117)
+        ]
+        float[] widths = [0.01, 0.009, 0.007, 0.005, 0.01, 0.009, 0.007, 0.005]
+        int[] primvars:guide = [1, 0]
+        uniform token primvars:guide:interpolation = "uniform"
+        int[] primvars:groupId = [0, 0]
+        uniform token primvars:groupId:interpolation = "uniform"
+    }
+}

@@ -1,0 +1,21 @@
+{
+  "priorGuideCount": 4,
+  "residualGuideCount": 6,
+  "priorGuideSmoothingAlpha": 0.200000,
+  "residualGuideGain": 1.000000,
+  "residualBlend": 1.000000,
+  "uncertaintyGain": 2.500000,
+  "contactGain": 1.015168,
+  "priorVelocityPredictionGain": 0.000000,
+  "residualVelocityPredictionGain": 0.000000,
+  "runtimeFrameCount": 8,
+  "averagePriorRmsError": 0.142248,
+  "averageHybridRmsErrorBeforeCorrection": 0.000584,
+  "averageHybridRmsErrorAfterCorrection": 0.039727,
+  "maxHybridRmsErrorAfterCorrection": 0.039758,
+  "averageSelectedClusterCount": 1.000000,
+  "averageSelectedGuideCount": 1.000000,
+  "averageCorrectedPointCount": 4.000000,
+  "averagePenetration": 0.022101,
+  "maxPenetration": 0.070899
+}

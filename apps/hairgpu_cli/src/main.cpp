@@ -138,6 +138,249 @@ namespace
         return parts;
     }
 
+    std::string Trim(std::string value)
+    {
+        auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+        value.erase(value.begin(), std::find_if(value.begin(), value.end(), notSpace));
+        value.erase(std::find_if(value.rbegin(), value.rend(), notSpace).base(), value.end());
+        return value;
+    }
+
+    std::string ToLower(std::string value)
+    {
+        for (char& c : value)
+        {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return value;
+    }
+
+    bool TryParseFloatToken(const std::string& text, float& outValue)
+    {
+        try
+        {
+            outValue = std::stof(text);
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool TryParseUIntToken(const std::string& text, uint32_t& outValue)
+    {
+        try
+        {
+            outValue = static_cast<uint32_t>(std::stoul(text));
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool LoadSdfGridCsv(const std::filesystem::path& path, SdfGridCollider& outGrid, std::string& outError)
+    {
+        std::ifstream in(path);
+        if (!in)
+        {
+            outError = "Failed to open SDF grid CSV: " + path.string();
+            return false;
+        }
+
+        outGrid = {};
+        std::string line;
+        while (std::getline(in, line))
+        {
+            line = Trim(line);
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+            std::vector<std::string> tokens = SplitSimpleCsv(line);
+            for (std::string& token : tokens)
+            {
+                token = Trim(token);
+            }
+            if (tokens.empty())
+            {
+                continue;
+            }
+
+            const std::string key = ToLower(tokens[0]);
+            if ((key == "resolution" || key == "dims") && tokens.size() >= 4u)
+            {
+                if (!TryParseUIntToken(tokens[1], outGrid.resolutionX) ||
+                    !TryParseUIntToken(tokens[2], outGrid.resolutionY) ||
+                    !TryParseUIntToken(tokens[3], outGrid.resolutionZ))
+                {
+                    outError = "Malformed SDF resolution row in: " + path.string();
+                    return false;
+                }
+            }
+            else if ((key == "bounds_min" || key == "min") && tokens.size() >= 4u)
+            {
+                if (!TryParseFloatToken(tokens[1], outGrid.boundsMin.x) ||
+                    !TryParseFloatToken(tokens[2], outGrid.boundsMin.y) ||
+                    !TryParseFloatToken(tokens[3], outGrid.boundsMin.z))
+                {
+                    outError = "Malformed SDF min-bounds row in: " + path.string();
+                    return false;
+                }
+            }
+            else if ((key == "bounds_max" || key == "max") && tokens.size() >= 4u)
+            {
+                if (!TryParseFloatToken(tokens[1], outGrid.boundsMax.x) ||
+                    !TryParseFloatToken(tokens[2], outGrid.boundsMax.y) ||
+                    !TryParseFloatToken(tokens[3], outGrid.boundsMax.z))
+                {
+                    outError = "Malformed SDF max-bounds row in: " + path.string();
+                    return false;
+                }
+            }
+            else if (key == "data")
+            {
+                outGrid.values.clear();
+                outGrid.values.reserve(tokens.size() > 1u ? (tokens.size() - 1u) : 0u);
+                for (size_t i = 1u; i < tokens.size(); ++i)
+                {
+                    float value = 0.0f;
+                    if (!TryParseFloatToken(tokens[i], value))
+                    {
+                        outError = "Malformed SDF data value in: " + path.string();
+                        return false;
+                    }
+                    outGrid.values.push_back(value);
+                }
+            }
+        }
+
+        const size_t expectedCount = static_cast<size_t>(outGrid.resolutionX) * outGrid.resolutionY * outGrid.resolutionZ;
+        if (outGrid.resolutionX < 2u || outGrid.resolutionY < 2u || outGrid.resolutionZ < 2u || outGrid.values.size() != expectedCount)
+        {
+            outError = "SDF grid CSV is incomplete. Expected resolution>=2 and exactly resolutionX*resolutionY*resolutionZ samples.";
+            return false;
+        }
+        outError.clear();
+        return true;
+    }
+
+    bool LoadColliderSetFromFile(const std::filesystem::path& path, ColliderSet& outColliders, std::string& outError)
+    {
+        std::ifstream in(path);
+        if (!in)
+        {
+            outError = "Failed to open collider config: " + path.string();
+            return false;
+        }
+
+        outColliders = {};
+        std::string line;
+        uint32_t lineNumber = 0u;
+        while (std::getline(in, line))
+        {
+            ++lineNumber;
+            line = Trim(line);
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+            std::vector<std::string> tokens = SplitSimpleCsv(line);
+            for (std::string& token : tokens)
+            {
+                token = Trim(token);
+            }
+            if (tokens.empty())
+            {
+                continue;
+            }
+
+            const std::string type = ToLower(tokens[0]);
+            auto parseFloatAt = [&](size_t index, float& outValue) -> bool
+            {
+                return index < tokens.size() && TryParseFloatToken(tokens[index], outValue);
+            };
+
+            if (type == "sphere" && tokens.size() >= 5u)
+            {
+                SphereCollider sphere = {};
+                if (!parseFloatAt(1u, sphere.center.x) || !parseFloatAt(2u, sphere.center.y) || !parseFloatAt(3u, sphere.center.z) || !parseFloatAt(4u, sphere.radius))
+                {
+                    outError = "Malformed sphere collider row at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                outColliders.spheres.push_back(sphere);
+            }
+            else if (type == "capsule" && tokens.size() >= 9u)
+            {
+                CapsuleCollider capsule = {};
+                if (!parseFloatAt(1u, capsule.pointA.x) || !parseFloatAt(2u, capsule.pointA.y) || !parseFloatAt(3u, capsule.pointA.z) || !parseFloatAt(4u, capsule.radiusA) ||
+                    !parseFloatAt(5u, capsule.pointB.x) || !parseFloatAt(6u, capsule.pointB.y) || !parseFloatAt(7u, capsule.pointB.z) || !parseFloatAt(8u, capsule.radiusB))
+                {
+                    outError = "Malformed capsule collider row at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                outColliders.capsules.push_back(capsule);
+            }
+            else if (type == "plane" && tokens.size() >= 7u)
+            {
+                PlaneCollider plane = {};
+                if (!parseFloatAt(1u, plane.point.x) || !parseFloatAt(2u, plane.point.y) || !parseFloatAt(3u, plane.point.z) ||
+                    !parseFloatAt(4u, plane.normal.x) || !parseFloatAt(5u, plane.normal.y) || !parseFloatAt(6u, plane.normal.z))
+                {
+                    outError = "Malformed plane collider row at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                outColliders.planes.push_back(plane);
+            }
+            else if ((type == "aabb" || type == "box") && tokens.size() >= 7u)
+            {
+                AabbCollider box = {};
+                if (!parseFloatAt(1u, box.minBounds.x) || !parseFloatAt(2u, box.minBounds.y) || !parseFloatAt(3u, box.minBounds.z) ||
+                    !parseFloatAt(4u, box.maxBounds.x) || !parseFloatAt(5u, box.maxBounds.y) || !parseFloatAt(6u, box.maxBounds.z))
+                {
+                    outError = "Malformed AABB collider row at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                outColliders.aabbs.push_back(box);
+            }
+            else if (type == "sdf" && tokens.size() >= 2u)
+            {
+                SdfGridCollider grid = {};
+                const std::filesystem::path gridPath = path.parent_path() / tokens[1];
+                if (!LoadSdfGridCsv(gridPath, grid, outError))
+                {
+                    return false;
+                }
+                outColliders.sdfGrids.push_back(std::move(grid));
+            }
+            else
+            {
+                outError = "Unsupported collider row at line " + std::to_string(lineNumber) + ": " + line;
+                return false;
+            }
+        }
+
+        outError.clear();
+        return true;
+    }
+
+    bool LoadOptionalColliders(int argc, char** argv, ColliderSet& outColliders, std::string& outError)
+    {
+        for (int i = 2; i + 1 < argc; ++i)
+        {
+            if (std::string(argv[i]) == "--colliders")
+            {
+                return LoadColliderSetFromFile(argv[i + 1], outColliders, outError);
+            }
+        }
+        outColliders = {};
+        outError.clear();
+        return true;
+    }
+
     bool ParseBoneMatrixLine(const std::string& line, uint32_t& outBoneIndex, hairgpu::Mat4& outMatrix, bool& outHasExplicitIndex)
     {
         std::string normalized = line;
@@ -299,6 +542,113 @@ namespace
         return s;
     }
 
+    bool BuildGuideOnlyReferenceAsset(const HairAsset& referenceAsset, HairAsset& outAsset, std::string& outError)
+    {
+        if (referenceAsset.guideStrandCount == 0u || referenceAsset.guideStrandCount > referenceAsset.strands.size())
+        {
+            outError = "Reference asset does not contain a valid guide layout.";
+            return false;
+        }
+
+        HairAsset result = {};
+        result.guideStrandCount = referenceAsset.guideStrandCount;
+        result.followerStrandCount = 0u;
+        result.particlesPerStrand = referenceAsset.particlesPerStrand;
+        result.scalpMesh = referenceAsset.scalpMesh;
+        result.strands.reserve(referenceAsset.guideStrandCount);
+        result.materials.reserve(referenceAsset.guideStrandCount);
+        result.rootBindings.reserve(referenceAsset.guideStrandCount);
+        result.followData.reserve(referenceAsset.guideStrandCount);
+
+        for (uint32_t guideIndex = 0u; guideIndex < referenceAsset.guideStrandCount; ++guideIndex)
+        {
+            const StrandRange& srcStrand = referenceAsset.strands[guideIndex];
+            StrandRange dstStrand = srcStrand;
+            dstStrand.pointOffset = static_cast<uint32_t>(result.restPoints.size());
+            dstStrand.flags |= static_cast<uint32_t>(StrandFlags::Guide);
+            result.strands.push_back(dstStrand);
+            for (uint32_t p = 0u; p < srcStrand.pointCount; ++p)
+            {
+                const uint32_t srcPointIndex = srcStrand.pointOffset + p;
+                result.restPoints.push_back(referenceAsset.restPoints[srcPointIndex]);
+                result.pointWidths.push_back(srcPointIndex < referenceAsset.pointWidths.size() ? referenceAsset.pointWidths[srcPointIndex] : 0.004f);
+            }
+            result.materials.push_back(guideIndex < referenceAsset.materials.size() ? referenceAsset.materials[guideIndex] : StrandMaterial{});
+            result.rootBindings.push_back(guideIndex < referenceAsset.rootBindings.size() ? referenceAsset.rootBindings[guideIndex] : RootBinding{});
+            FollowData follow = {};
+            follow.parentGuide = -1;
+            result.followData.push_back(follow);
+        }
+
+        if (result.strands.empty())
+        {
+            outError = "Reference asset contains no guide strands to export.";
+            return false;
+        }
+
+        outAsset = std::move(result);
+        outError.clear();
+        return true;
+    }
+
+    bool BuildGuideFrameAsset(const GuideCache& cache,
+                              const HairAsset& referenceAsset,
+                              uint32_t frameIndex,
+                              HairAsset& outAsset,
+                              std::string& outError)
+    {
+        HairAsset guideAsset = {};
+        if (!BuildGuideOnlyReferenceAsset(referenceAsset, guideAsset, outError))
+        {
+            return false;
+        }
+        const uint32_t pointsPerFrame = cache.GuidePointCountPerFrame();
+        if (cache.FrameCount() == 0u || frameIndex >= cache.FrameCount())
+        {
+            outError = "Guide cache frame index is out of range.";
+            return false;
+        }
+        if (pointsPerFrame != guideAsset.restPoints.size())
+        {
+            outError = "Guide cache layout does not match the reference guide asset.";
+            return false;
+        }
+        const size_t base = static_cast<size_t>(frameIndex) * pointsPerFrame;
+        guideAsset.restPoints.assign(cache.frames.begin() + static_cast<std::ptrdiff_t>(base),
+                                     cache.frames.begin() + static_cast<std::ptrdiff_t>(base + pointsPerFrame));
+        outAsset = std::move(guideAsset);
+        outError.clear();
+        return true;
+    }
+
+    bool WriteUsdSequenceManifest(const std::filesystem::path& outputDirectory,
+                                  const char* sequenceName,
+                                  uint32_t frameCount,
+                                  float frameRate,
+                                  uint32_t strandCount,
+                                  bool guidesOnly,
+                                  uint32_t everyNth,
+                                  std::string& outError)
+    {
+        std::ofstream out(outputDirectory / "sequence_manifest.json");
+        if (!out)
+        {
+            outError = "Failed to write USDA sequence manifest.";
+            return false;
+        }
+        out << "{\n";
+        out << "  \"sequence\": \"" << sequenceName << "\",\n";
+        out << "  \"frameCount\": " << frameCount << ",\n";
+        out << "  \"frameRate\": " << frameRate << ",\n";
+        out << "  \"strandCount\": " << strandCount << ",\n";
+        out << "  \"guidesOnly\": " << (guidesOnly ? "true" : "false") << ",\n";
+        out << "  \"everyNth\": " << everyNth << ",\n";
+        out << "  \"pattern\": \"frame_%04d.usda\"\n";
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
     void PrintUsage()
     {
         std::cout << R"USAGE(hairgpu_cli usage:
@@ -308,13 +658,19 @@ namespace
   hairgpu_cli validate <input> [report.txt]
   hairgpu_cli metrics-json <input> <metrics.json>
   hairgpu_cli active-set-plan <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
+  hairgpu_cli active-set-dispatch <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
+  hairgpu_cli active-set-dispatch-pack <input> <output.dispatchbin> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [dumpJson=1]
+  hairgpu_cli dispatchpack-gpubuffers <input.dispatchbin> <output_dir>
   hairgpu_cli export-usda <input> <output.usda>
   hairgpu_cli export-cards <input> <output.obj>
   hairgpu_cli build-lods <input> <output_dir>
   hairgpu_cli guidecache-info <input.guidecache>
   hairgpu_cli guidecache-rest <input> <output.guidecache> [fps] [frames]
   hairgpu_cli haircache-info <input.haircache>
+  hairgpu_cli dispatchpack-info <input.dispatchbin>
   hairgpu_cli haircache-rest <input> <output.haircache> [fps] [frames]
+  hairgpu_cli haircache-export-usda-sequence <input.haircache> <referenceAsset> <output_dir> [everyNth=1] [includeScalp=1] [includeCards=0]
+  hairgpu_cli guidecache-export-usda-sequence <input.guidecache> <referenceAsset> <output_dir> [everyNth=1] [includeScalp=1]
   hairgpu_cli save-hairbin <input> <output.hairbin>
   hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
   hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
@@ -326,6 +682,8 @@ namespace
   hairgpu_cli collide-scalp-mesh <input> <output.hairbin> [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1]
   hairgpu_cli collide-scalp-sdf <input> <output.hairbin> [resolution] [shellDistance] [stiffness] [iterations] [affectRoots=0] [allPoints=1] [padding]
   hairgpu_cli export-scalp-sdf <input> <output.csv> [resolution] [padding]
+  hairgpu_cli export-scalp-sdf-collider <input> <output_grid.csv> [resolution] [padding]
+  hairgpu_cli bake-obj-sdf <scalp.obj> <output_grid.csv> [resolution] [padding]
   hairgpu_cli palette-region <input> <palette.csv> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [strength]
   hairgpu_cli export-scalp-obj <input> <output.obj>
   hairgpu_cli export-bone-template <input> <output.csv>
@@ -345,10 +703,10 @@ namespace
   hairgpu_cli reduced-reconstruct-sequence <input.reducedbin> <sequence_dir> <output_dir>
   hairgpu_cli reduced-eval <input.reducedbin> <sequence_dir> [report.txt]
   hairgpu_cli reduced-eval-json <input.reducedbin> <sequence_dir> <report.json>
-  hairgpu_cli hybrid-teacher-dataset <input> <output_dir> [frames] [fps] [swayAmplitude] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [maxSolverIterations]
-  hairgpu_cli hybrid-train-bundle <teacher_dir> <output_dir> [priorGuides] [residualGuides] [maxInfluences] [regularization] [validationStride] [smoothingAlpha] [residualGuideGain] [residualBlend]
+  hairgpu_cli hybrid-teacher-dataset <input> <output_dir> [frames] [fps] [swayAmplitude] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [maxSolverIterations] [--colliders colliders.csv]
+  hairgpu_cli hybrid-train-bundle <teacher_dir> <output_dir> [priorGuides] [residualGuides] [maxInfluences] [regularization] [validationStride] [smoothingAlpha] [residualGuideGain] [residualBlend] [--colliders colliders.csv]
   hairgpu_cli hybrid-bundle-info <bundle_dir>
-  hairgpu_cli hybrid-run-bundle <teacher_dir> <bundle_dir> <output_dir> [residualBlendOverride] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [exportPerFrameHairBins]
+  hairgpu_cli hybrid-run-bundle <teacher_dir> <bundle_dir> <output_dir> [residualBlendOverride] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [exportPerFrameHairBins] [--colliders colliders.csv]
 )USAGE";
     }
 
@@ -377,7 +735,7 @@ int main(int argc, char** argv)
     }
     if (command == "version")
     {
-        std::cout << "hairgpu_cli 0.2.0\n";
+        std::cout << "hairgpu_cli 0.2.1\n";
         return 0;
     }
 
@@ -427,6 +785,123 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    if (command == "active-set-dispatch")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 169);
+        }
+
+        ActiveSetClusterSettings clusterSettings = {};
+        clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 4, clusterSettings.targetGuideCountPerCluster);
+        clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 5, clusterSettings.maxGuideRootDistance);
+        const std::vector<ActiveSetCluster> clusters = BuildActiveSetClusters(asset, clusterSettings);
+        if (clusters.empty())
+        {
+            return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 169);
+        }
+
+        ActiveSetRuntimeInput runtimeInput = {};
+        runtimeInput.fixedTimeStep = 1.0f / 60.0f;
+        ActiveSetScoringSettings scoringSettings = {};
+        ActiveSetBudget budget = {};
+        budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
+        budget.maxActiveGuides = ArgToUInt(argc, argv, 7, budget.maxActiveGuides);
+        budget.promoteScoreThreshold = ArgToFloat(argc, argv, 8, budget.promoteScoreThreshold);
+
+        ActiveSetPlan plan;
+        if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
+        {
+            return PrintLoadFailure("Active-set evaluation failed", error, 170);
+        }
+
+        ActiveSetDispatchPlan dispatchPlan;
+        if (!BuildActiveSetDispatchPlan(asset, plan, dispatchPlan, error) ||
+            !WriteActiveSetDispatchPlanJson(argv[3], asset, plan, dispatchPlan, error))
+        {
+            return PrintLoadFailure("Active-set dispatch export failed", error, 171);
+        }
+
+        std::cout << BuildActiveSetPlanSummary(plan)
+                  << " fullDispatchStrands=" << dispatchPlan.fullSimulationStrands.size()
+                  << " reducedDispatchStrands=" << dispatchPlan.reducedSimulationStrands.size()
+                  << "\n";
+        return 0;
+    }
+
+
+    if (command == "active-set-dispatch-pack")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 173);
+        }
+
+        ActiveSetClusterSettings clusterSettings = {};
+        clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 4, clusterSettings.targetGuideCountPerCluster);
+        clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 5, clusterSettings.maxGuideRootDistance);
+        const std::vector<ActiveSetCluster> clusters = BuildActiveSetClusters(asset, clusterSettings);
+        if (clusters.empty())
+        {
+            return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 174);
+        }
+
+        ActiveSetRuntimeInput runtimeInput = {};
+        runtimeInput.fixedTimeStep = 1.0f / 60.0f;
+        ActiveSetScoringSettings scoringSettings = {};
+        ActiveSetBudget budget = {};
+        budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
+        budget.maxActiveGuides = ArgToUInt(argc, argv, 7, budget.maxActiveGuides);
+        budget.promoteScoreThreshold = ArgToFloat(argc, argv, 8, budget.promoteScoreThreshold);
+        const bool dumpJson = ArgToInt(argc, argv, 9, 1) != 0;
+
+        ActiveSetPlan plan;
+        if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
+        {
+            return PrintLoadFailure("Active-set evaluation failed", error, 175);
+        }
+
+        ActiveSetDispatchPlan dispatchPlan = {};
+        ActiveSetDispatchPack dispatchPack = {};
+        if (!BuildActiveSetDispatchPlan(asset, plan, dispatchPlan, error) ||
+            !BuildActiveSetDispatchPack(asset, plan, dispatchPlan, dispatchPack, error) ||
+            !SaveActiveSetDispatchPackToFile(argv[3], dispatchPack, error))
+        {
+            return PrintLoadFailure("Active-set dispatch pack export failed", error, 176);
+        }
+
+        if (dumpJson)
+        {
+            std::filesystem::path jsonPath(argv[3]);
+            jsonPath.replace_extension(".json");
+            if (!WriteActiveSetDispatchPackJson(jsonPath, asset, plan, dispatchPack, error))
+            {
+                return PrintLoadFailure("Active-set dispatch pack JSON export failed", error, 177);
+            }
+        }
+
+        std::cout << BuildActiveSetPlanSummary(plan)
+                  << " " << BuildActiveSetDispatchPackSummary(dispatchPack)
+                  << "\n";
+        return 0;
+    }
+
     if (command == "hybrid-teacher-dataset")
     {
         if (argc < 4)
@@ -454,6 +929,10 @@ int main(int argc, char** argv)
 
         HybridTeacherDatasetReport report;
         ColliderSet colliders = {};
+        if (!LoadOptionalColliders(argc, argv, colliders, error))
+        {
+            return PrintLoadFailure("Collider config load failed", error, 170);
+        }
         if (!GenerateHybridTeacherDataset(asset, colliders, settings, argv[3], report, error))
         {
             return PrintLoadFailure("Hybrid teacher dataset generation failed", error, 71);
@@ -496,6 +975,10 @@ int main(int argc, char** argv)
         HybridModelBundle bundle;
         HybridModelTrainingReport report;
         ColliderSet colliders = {};
+        if (!LoadOptionalColliders(argc, argv, colliders, error))
+        {
+            return PrintLoadFailure("Collider config load failed", error, 171);
+        }
         if (!TrainHybridModelBundle(teacherSequence, colliders, settings, bundle, report, error) ||
             !SaveHybridModelBundle(argv[3], bundle, &report, error))
         {
@@ -557,6 +1040,10 @@ int main(int argc, char** argv)
 
         FullHybridRuntimeReport report;
         ColliderSet colliders = {};
+        if (!LoadOptionalColliders(argc, argv, colliders, error))
+        {
+            return PrintLoadFailure("Collider config load failed", error, 172);
+        }
         if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, settings, argv[4], report, error))
         {
             return PrintLoadFailure("Full hybrid runtime failed", error, 77);
@@ -587,6 +1074,45 @@ int main(int argc, char** argv)
         std::cout << BuildGuideCacheSummary(cache) << "\n";
         return 0;
     }
+
+    if (command == "dispatchpack-info")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ActiveSetDispatchPack pack;
+        std::string error;
+        if (!LoadActiveSetDispatchPackFromFile(argv[2], pack, error))
+        {
+            return PrintLoadFailure("Dispatch pack load failed", error, 11);
+        }
+        std::cout << BuildActiveSetDispatchPackSummary(pack) << "\n";
+        return 0;
+    }
+
+    if (command == "dispatchpack-gpubuffers")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ActiveSetDispatchPack pack = {};
+        std::string error;
+        if (!LoadActiveSetDispatchPackFromFile(argv[2], pack, error))
+        {
+            return PrintLoadFailure("Dispatch pack load failed", error, 179);
+        }
+        if (!SaveActiveSetDispatchPackGpuBuffers(argv[3], pack, error))
+        {
+            return PrintLoadFailure("Dispatch GPU buffer export failed", error, 180);
+        }
+        std::cout << BuildActiveSetDispatchPackSummary(pack) << " outputDir=" << argv[3] << "\n";
+        return 0;
+    }
+
 
     if (command == "reduced-info")
     {
@@ -916,6 +1442,149 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Hair cache sample failed", error, 76);
         }
+        return 0;
+    }
+
+
+    if (command == "haircache-export-usda-sequence")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairCache cache = {};
+        HairAsset referenceAsset = {};
+        std::string error;
+        if (!LoadHairCacheFromFile(argv[2], cache, error))
+        {
+            return PrintLoadFailure("Hair cache load failed", error, 181);
+        }
+        if (!LoadHairAssetAny(argv[3], referenceAsset, error))
+        {
+            return PrintLoadFailure("Reference asset load failed", error, 182);
+        }
+        const uint32_t everyNth = std::max<uint32_t>(1u, ArgToUInt(argc, argv, 5, 1u));
+        const bool includeScalp = ArgToInt(argc, argv, 6, 1) != 0;
+        const bool includeCards = ArgToInt(argc, argv, 7, 0) != 0;
+        std::error_code ec;
+        std::filesystem::create_directories(argv[4], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Output directory creation failed", ec.message(), 183);
+        }
+        HairUsdExportSettings settings = {};
+        settings.includeScalp = includeScalp;
+        settings.includeCards = includeCards;
+        settings.cardSettings.cardsPerGuide = 1u;
+        settings.cardSettings.segmentsPerCard = std::max<uint32_t>(4u, referenceAsset.particlesPerStrand > 1u ? referenceAsset.particlesPerStrand - 1u : 4u);
+        uint32_t written = 0u;
+        for (uint32_t frameIndex = 0u; frameIndex < cache.FrameCount(); frameIndex += everyNth)
+        {
+            HairAsset frameAsset = referenceAsset;
+            const float timeSeconds = static_cast<float>(frameIndex) / std::max(cache.frameRate, 1.0f);
+            if (!BuildHairAssetFrameFromCache(cache, timeSeconds, false, frameAsset, error))
+            {
+                return PrintLoadFailure("Hair cache frame build failed", error, 184);
+            }
+            std::ostringstream name;
+            name << "frame_" << std::setw(4) << std::setfill('0') << frameIndex << ".usda";
+            if (!SaveHairAssetToUsda(std::filesystem::path(argv[4]) / name.str(), frameAsset, settings, error))
+            {
+                return PrintLoadFailure("Hair cache USDA export failed", error, 185);
+            }
+            ++written;
+        }
+        if (!WriteUsdSequenceManifest(argv[4], "haircache_usda_sequence", cache.FrameCount(), cache.frameRate, cache.strandCount, false, everyNth, error))
+        {
+            return PrintLoadFailure("USDA sequence manifest export failed", error, 186);
+        }
+        std::cout << "framesWritten=" << written << " sourceFrames=" << cache.FrameCount() << " outputDir=" << argv[4] << "\n";
+        return 0;
+    }
+
+    if (command == "guidecache-export-usda-sequence")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        GuideCache cache = {};
+        HairAsset referenceAsset = {};
+        std::string error;
+        if (!LoadGuideCacheFromFile(argv[2], cache, error))
+        {
+            return PrintLoadFailure("Guide cache load failed", error, 187);
+        }
+        if (!LoadHairAssetAny(argv[3], referenceAsset, error))
+        {
+            return PrintLoadFailure("Reference asset load failed", error, 188);
+        }
+        const uint32_t everyNth = std::max<uint32_t>(1u, ArgToUInt(argc, argv, 5, 1u));
+        const bool includeScalp = ArgToInt(argc, argv, 6, 1) != 0;
+        std::error_code ec;
+        std::filesystem::create_directories(argv[4], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Output directory creation failed", ec.message(), 189);
+        }
+        HairUsdExportSettings settings = {};
+        settings.includeScalp = includeScalp;
+        settings.includeCards = false;
+        HairAsset guideReference = {};
+        if (!BuildGuideOnlyReferenceAsset(referenceAsset, guideReference, error))
+        {
+            return PrintLoadFailure("Guide reference build failed", error, 190);
+        }
+        uint32_t written = 0u;
+        for (uint32_t frameIndex = 0u; frameIndex < cache.FrameCount(); frameIndex += everyNth)
+        {
+            HairAsset frameAsset = {};
+            if (!BuildGuideFrameAsset(cache, referenceAsset, frameIndex, frameAsset, error))
+            {
+                return PrintLoadFailure("Guide cache frame build failed", error, 191);
+            }
+            frameAsset.scalpMesh = includeScalp ? guideReference.scalpMesh : ScalpMesh{};
+            std::ostringstream name;
+            name << "frame_" << std::setw(4) << std::setfill('0') << frameIndex << ".usda";
+            if (!SaveHairAssetToUsda(std::filesystem::path(argv[4]) / name.str(), frameAsset, settings, error))
+            {
+                return PrintLoadFailure("Guide cache USDA export failed", error, 192);
+            }
+            ++written;
+        }
+        if (!WriteUsdSequenceManifest(argv[4], "guidecache_usda_sequence", cache.FrameCount(), cache.frameRate, static_cast<uint32_t>(guideReference.strands.size()), true, everyNth, error))
+        {
+            return PrintLoadFailure("USDA sequence manifest export failed", error, 193);
+        }
+        std::cout << "framesWritten=" << written << " sourceFrames=" << cache.FrameCount() << " outputDir=" << argv[4] << "\n";
+        return 0;
+    }
+
+    if (command == "bake-obj-sdf")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ScalpMesh scalpMesh;
+        std::string error;
+        if (!LoadScalpMeshFromObj(argv[2], scalpMesh, error))
+        {
+            return PrintLoadFailure("OBJ scalp load failed", error, 167);
+        }
+        const uint32_t resolution = ArgToUInt(argc, argv, 4, 28u);
+        const float padding = ArgToFloat(argc, argv, 5, 0.04f);
+        SdfGridCollider grid = {};
+        if (!BakeSdfGridFromScalpMesh(scalpMesh, resolution, padding, grid, error) ||
+            !ExportSdfGridColliderCsv(grid, argv[3], error))
+        {
+            return PrintLoadFailure("OBJ SDF bake failed", error, 168);
+        }
+        std::cout << "resolution=" << grid.resolutionX << "x" << grid.resolutionY << "x" << grid.resolutionZ
+                  << " values=" << grid.values.size() << "\n";
         return 0;
     }
 
@@ -1253,6 +1922,26 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Scalp SDF export failed", error, 165);
         }
+        return 0;
+    }
+
+    if (command == "export-scalp-sdf-collider")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        const uint32_t resolution = ArgToUInt(argc, argv, 4, 28u);
+        const float padding = ArgToFloat(argc, argv, 5, 0.04f);
+        SdfGridCollider grid = {};
+        if (!BakeSdfGridFromScalpMesh(asset.scalpMesh, resolution, padding, grid, error) ||
+            !ExportSdfGridColliderCsv(grid, argv[3], error))
+        {
+            return PrintLoadFailure("Scalp SDF collider export failed", error, 166);
+        }
+        std::cout << "resolution=" << grid.resolutionX << "x" << grid.resolutionY << "x" << grid.resolutionZ
+                  << " values=" << grid.values.size() << "\n";
         return 0;
     }
 

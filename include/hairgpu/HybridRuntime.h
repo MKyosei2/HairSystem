@@ -98,6 +98,11 @@ namespace hairgpu
         SparseCorrectiveSettings correctiveSettings = {};
         float uncertaintyGain = 1.0f;
         float contactGain = 1.0f;
+        float penetrationGain = 1.0f;
+        float temporalCoherenceGain = 1.0f;
+        float uncertaintySmoothingAlpha = 0.35f;
+        float priorVelocityPredictionGain = 0.0f;
+        float residualVelocityPredictionGain = 0.0f;
     };
 
     struct HybridModelTrainingReport

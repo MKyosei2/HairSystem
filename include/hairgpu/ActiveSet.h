@@ -114,6 +114,76 @@ namespace hairgpu
         ActiveSetPlanSummary summary = {};
     };
 
+    struct ActiveSetDispatchRange
+    {
+        uint32_t clusterIndex = UINT32_MAX;
+        uint32_t guideOffset = 0u;
+        uint32_t guideCount = 0u;
+        uint32_t strandOffset = 0u;
+        uint32_t strandCount = 0u;
+    };
+
+
+    struct DispatchIndirectArgs
+    {
+        uint32_t threadGroupCountX = 0u;
+        uint32_t threadGroupCountY = 1u;
+        uint32_t threadGroupCountZ = 1u;
+    };
+
+    struct ActiveSetCompactedStrandRecord
+    {
+        uint32_t strandIndex = UINT32_MAX;
+        uint32_t pointOffset = 0u;
+        uint32_t pointCount = 0u;
+        uint32_t groupId = 0u;
+        uint32_t flags = 0u;
+    };
+
+    struct ActiveSetCompactedGuideRecord
+    {
+        uint32_t strandIndex = UINT32_MAX;
+        uint32_t pointOffset = 0u;
+        uint32_t pointCount = 0u;
+        uint32_t groupId = 0u;
+    };
+
+    struct ActiveSetDispatchPackTier
+    {
+        std::vector<ActiveSetCompactedStrandRecord> strands;
+        uint32_t totalPointCount = 0u;
+        DispatchIndirectArgs strandDispatchArgs = {};
+        DispatchIndirectArgs pointDispatchArgs = {};
+    };
+
+    struct ActiveSetDispatchPack
+    {
+        uint32_t threadsPerGroup = 64u;
+        std::vector<ActiveSetDispatchRange> fullSimulationClusters;
+        std::vector<ActiveSetCompactedGuideRecord> fullSimulationGuides;
+        uint32_t totalGuidePointCount = 0u;
+        DispatchIndirectArgs guideDispatchArgs = {};
+        DispatchIndirectArgs guidePointDispatchArgs = {};
+        ActiveSetDispatchPackTier fullSimulation = {};
+        ActiveSetDispatchPackTier corrective = {};
+        ActiveSetDispatchPackTier reducedSimulation = {};
+        ActiveSetDispatchPackTier frozen = {};
+        ActiveSetDispatchPackTier cached = {};
+    };
+
+
+    struct ActiveSetDispatchPlan
+    {
+        std::vector<ActiveSetDispatchRange> fullSimulationClusters;
+        std::vector<uint32_t> fullSimulationGuides;
+        std::vector<uint32_t> fullSimulationStrands;
+        std::vector<uint32_t> correctiveStrands;
+        std::vector<uint32_t> reducedSimulationStrands;
+        std::vector<uint32_t> frozenStrands;
+        std::vector<uint32_t> cachedStrands;
+    };
+
+
     std::vector<ActiveSetCluster> BuildActiveSetClusters(const HairAsset& asset,
                                                          const ActiveSetClusterSettings& settings = {});
 
@@ -127,8 +197,46 @@ namespace hairgpu
 
     std::string BuildActiveSetPlanSummary(const ActiveSetPlan& plan);
 
+    bool BuildActiveSetDispatchPlan(const HairAsset& asset,
+                                    const ActiveSetPlan& plan,
+                                    ActiveSetDispatchPlan& outDispatchPlan,
+                                    std::string& outError);
+
     bool WriteActiveSetPlanJson(const std::filesystem::path& outputPath,
                                 const HairAsset& asset,
                                 const ActiveSetPlan& plan,
                                 std::string& outError);
+
+    bool WriteActiveSetDispatchPlanJson(const std::filesystem::path& outputPath,
+                                        const HairAsset& asset,
+                                        const ActiveSetPlan& plan,
+                                        const ActiveSetDispatchPlan& dispatchPlan,
+                                        std::string& outError);
+
+    bool BuildActiveSetDispatchPack(const HairAsset& asset,
+                                    const ActiveSetPlan& plan,
+                                    const ActiveSetDispatchPlan& dispatchPlan,
+                                    ActiveSetDispatchPack& outDispatchPack,
+                                    std::string& outError);
+
+    bool WriteActiveSetDispatchPackJson(const std::filesystem::path& outputPath,
+                                        const HairAsset& asset,
+                                        const ActiveSetPlan& plan,
+                                        const ActiveSetDispatchPack& dispatchPack,
+                                        std::string& outError);
+
+    bool SaveActiveSetDispatchPackToFile(const std::filesystem::path& filePath,
+                                         const ActiveSetDispatchPack& dispatchPack,
+                                         std::string& outError);
+
+    bool SaveActiveSetDispatchPackGpuBuffers(const std::filesystem::path& outputDirectory,
+                                             const ActiveSetDispatchPack& dispatchPack,
+                                             std::string& outError);
+
+    bool LoadActiveSetDispatchPackFromFile(const std::filesystem::path& filePath,
+                                           ActiveSetDispatchPack& outDispatchPack,
+                                           std::string& outError);
+
+    std::string BuildActiveSetDispatchPackSummary(const ActiveSetDispatchPack& dispatchPack);
+
 }
