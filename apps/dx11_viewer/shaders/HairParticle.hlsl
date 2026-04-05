@@ -74,7 +74,7 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
     output.center = Positions[vertexId].xyz;
     output.tangent = SafeNormalize(Positions[nextIndex].xyz - Positions[prevIndex].xyz);
     const float width = Widths[vertexId] * max(WidthScale, 0.05f);
-    output.radius = max(width * 0.60f, 0.0022f);
+    output.radius = max(width * 0.95f, 0.0065f);
     output.strandT = (safeParticlesPerStrand > 1u) ? (float(localIndex) / float(safeParticlesPerStrand - 1u)) : 0.0f;
     const float widthN = saturate((width - 0.0010f) / 0.0120f);
     output.color = ComputeHairColor(strandIndex, widthN, output.strandT);
@@ -166,7 +166,8 @@ float4 PSMain(GSOutput input) : SV_Target
 
     float alpha = saturate(1.0f - r2);
     alpha = alpha * alpha;
-    alpha *= lerp(0.95f, 0.55f, input.strandT);
+    alpha *= lerp(1.00f, 0.72f, input.strandT);
+    alpha = max(alpha, 0.22f);
 
     float3 viewDir = SafeNormalize(CameraPosition.xyz - input.worldPosition);
     float3 tangent = SafeNormalize(input.tangent);
@@ -174,6 +175,6 @@ float4 PSMain(GSOutput input) : SV_Target
     float3 L = SafeNormalize(-LightDirection.xyz);
     float diffuse = 0.28f + 0.72f * saturate(dot(fakeNormal, L));
     float rim = pow(1.0f - saturate(dot(fakeNormal, viewDir)), 2.2f) * 0.22f;
-    float3 color = input.color * diffuse + rim.xxx * 0.12f;
+    float3 color = input.color * diffuse + rim.xxx * 0.18f + float3(0.08f, 0.06f, 0.03f);
     return float4(color, alpha);
 }

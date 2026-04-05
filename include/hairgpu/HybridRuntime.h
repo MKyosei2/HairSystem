@@ -17,9 +17,6 @@ namespace hairgpu
         float contactBlend = 0.85f;
         float stretchBlend = 0.42f;
         float bendBlend = 0.18f;
-        float twistBlend = 0.12f;
-        float densityBlend = 0.08f;
-        float densityRadiusScale = 1.25f;
         uint32_t iterations = 2u;
         uint32_t preserveRootPointCount = 1u;
         bool affectFloor = true;
@@ -34,8 +31,6 @@ namespace hairgpu
         float maxPenetration = 0.0f;
         float averageLengthErrorBefore = 0.0f;
         float averageLengthErrorAfter = 0.0f;
-        float averageBendResidualBefore = 0.0f;
-        float averageBendResidualAfter = 0.0f;
     };
 
     bool ApplySparseCorrectivePhysics(const HairAsset& asset,
@@ -90,8 +85,6 @@ namespace hairgpu
         float residualGuideGain = 1.0f;
         float residualBlend = 1.0f;
         bool enableScalpCollision = true;
-        bool enableRuntimeRefinement = true;
-        uint32_t refinementPasses = 2u;
     };
 
     struct HybridModelBundle
@@ -113,10 +106,6 @@ namespace hairgpu
         ReducedModelEvaluationReport residualEvaluation = {};
         float averageResidualMagnitude = 0.0f;
         float maxResidualMagnitude = 0.0f;
-        float refinedResidualBlend = 0.0f;
-        float refinedUncertaintyGain = 0.0f;
-        float refinedContactGain = 0.0f;
-        float refinedValidationObjective = 0.0f;
     };
 
     struct FullHybridRuntimeSettings
@@ -140,39 +129,6 @@ namespace hairgpu
         float averageCorrectedPointCount = 0.0f;
         float averagePenetration = 0.0f;
         float maxPenetration = 0.0f;
-        float averageEstimatedFrameMilliseconds = 0.0f;
-        float p95EstimatedFrameMilliseconds = 0.0f;
-        float p99EstimatedFrameMilliseconds = 0.0f;
-        float peakEstimatedFrameMilliseconds = 0.0f;
-        float frameBudgetHitRate = 0.0f;
-        uint32_t budgetViolationCount = 0u;
-        uint32_t activeSetSaturationCount = 0u;
-        float averageAppliedResidualBlend = 0.0f;
-        float estimatedAverageMemoryMegabytes = 0.0f;
-        float estimatedPeakMemoryMegabytes = 0.0f;
-    };
-
-    struct HybridAblationCaseReport
-    {
-        std::string label;
-        float averageRmsError = 0.0f;
-        float maxRmsError = 0.0f;
-        float averagePenetration = 0.0f;
-        float maxPenetration = 0.0f;
-        float averageEstimatedFrameMilliseconds = 0.0f;
-        float p95EstimatedFrameMilliseconds = 0.0f;
-        float peakEstimatedFrameMilliseconds = 0.0f;
-        float frameBudgetHitRate = 0.0f;
-    };
-
-    struct HybridAblationReport
-    {
-        uint32_t frameCount = 0u;
-        float targetFrameMilliseconds = 0.0f;
-        HybridAblationCaseReport priorOnly = {};
-        HybridAblationCaseReport priorResidualOnly = {};
-        HybridAblationCaseReport activeSetCorrectiveOnly = {};
-        HybridAblationCaseReport fullHybrid = {};
     };
 
     bool LoadHybridTeacherSequenceFromDirectory(const std::filesystem::path& directoryPath,
@@ -200,11 +156,4 @@ namespace hairgpu
                               const std::filesystem::path& outputDirectory,
                               FullHybridRuntimeReport& outReport,
                               std::string& outError);
-    bool RunHybridAblationStudy(const ReducedModelTrainingSequence& teacherSequence,
-                                const ColliderSet& colliders,
-                                const HybridModelBundle& bundle,
-                                float targetFrameMilliseconds,
-                                const std::filesystem::path& outputJsonPath,
-                                HybridAblationReport& outReport,
-                                std::string& outError);
 }

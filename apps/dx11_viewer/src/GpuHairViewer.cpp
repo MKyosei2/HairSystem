@@ -612,6 +612,8 @@ namespace hairgpu::viewer
         }
 
         RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        AutoFrameCameraToAsset(true);
         ResetSimulation();
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
@@ -1361,6 +1363,8 @@ namespace hairgpu::viewer
         m_lastSimulationStepMilliseconds = 0.0f;
         m_performanceSamples.clear();
         RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        AutoFrameCameraToAsset(false);
         SyncControlsFromState();
         UpdateStatsLabel();
     }
@@ -1918,6 +1922,121 @@ namespace hairgpu::viewer
         m_cameraPosition = m_cameraTarget + offset;
     }
 
+    void GpuHairViewer::RecomputeAssetBounds()
+    {
+        bool initialized = false;
+        Vec3 minP(0.0f, 0.0f, 0.0f);
+        Vec3 maxP(0.0f, 0.0f, 0.0f);
+
+        auto accumulatePoint = [&](const Vec3& p)
+        {
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+            {
+                return;
+            }
+            if (!initialized)
+            {
+                minP = p;
+                maxP = p;
+                initialized = true;
+                return;
+            }
+            minP.x = std::min(minP.x, p.x);
+            minP.y = std::min(minP.y, p.y);
+            minP.z = std::min(minP.z, p.z);
+            maxP.x = std::max(maxP.x, p.x);
+            maxP.y = std::max(maxP.y, p.y);
+            maxP.z = std::max(maxP.z, p.z);
+        };
+
+        if (!m_initialParticles.empty())
+        {
+            for (const GpuParticle& p : m_initialParticles)
+            {
+                accumulatePoint(Vec3(p.x, p.y, p.z));
+            }
+        }
+        else
+        {
+            for (const Vec3& p : m_asset.restPoints)
+            {
+                accumulatePoint(p);
+            }
+        }
+
+        if (!initialized)
+        {
+            minP = Vec3(-0.5f, 1.0f, -0.5f);
+            maxP = Vec3(0.5f, 2.0f, 0.5f);
+        }
+
+        m_assetBoundsMin = minP;
+        m_assetBoundsMax = maxP;
+        m_assetBoundsCenter = (minP + maxP) * 0.5f;
+        const Vec3 extents = maxP - minP;
+        const float halfDiagonal = 0.5f * std::sqrt(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z);
+        m_assetBoundsRadius = std::max(halfDiagonal, 0.20f);
+    }
+
+    void GpuHairViewer::AutoFrameCameraToAsset(bool resetAngles)
+    {
+        RecomputeAssetBounds();
+
+        if (resetAngles)
+        {
+            m_cameraYaw = 0.45f;
+            m_cameraPitch = 0.22f;
+        }
+
+        m_cameraTarget = m_assetBoundsCenter;
+
+        RECT renderRect = GetRenderViewportRect();
+        const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
+        const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
+        const float aspectRatio = std::max(renderWidth / std::max(renderHeight, 1.0f), 0.6f);
+        constexpr float kFovY = 60.0f * 3.1415926535f / 180.0f;
+        const float fovX = 2.0f * std::atan(std::tan(kFovY * 0.5f) * aspectRatio);
+        const float limitingHalfFov = std::max(0.30f, std::min(kFovY, fovX) * 0.5f);
+        const float desiredDistance = (m_assetBoundsRadius / std::tan(limitingHalfFov)) * 1.35f;
+        m_cameraDistance = Clamp(desiredDistance, 0.80f, 18.0f);
+        UpdateCamera();
+    }
+
+    uint32_t GpuHairViewer::EstimateVisibleParticleCount(const std::vector<GpuParticle>& particles, float aspectRatio) const
+    {
+        if (particles.empty())
+        {
+            return 0u;
+        }
+
+        const size_t stride = std::max<size_t>(particles.size() / 2048u, 1u);
+        uint32_t visibleSamples = 0u;
+        uint32_t totalSamples = 0u;
+        for (size_t i = 0; i < particles.size(); i += stride)
+        {
+            const GpuParticle& p = particles[i];
+            Vec3 ndc;
+            if (!ProjectWorldToNdc(Vec3(p.x, p.y, p.z), m_cameraPosition, m_cameraTarget, aspectRatio, ndc))
+            {
+                continue;
+            }
+            ++totalSamples;
+            if (std::fabs(ndc.x) <= 1.10f && std::fabs(ndc.y) <= 1.10f && ndc.z >= 0.0f && ndc.z <= 1.0f)
+            {
+                ++visibleSamples;
+            }
+        }
+
+        if (totalSamples == 0u)
+        {
+            return 0u;
+        }
+
+        const double visibleRatio = static_cast<double>(visibleSamples) / static_cast<double>(totalSamples);
+        const double estimated = visibleRatio * static_cast<double>(particles.size());
+        return static_cast<uint32_t>(std::max(0.0, estimated));
+    }
+
     void GpuHairViewer::Render()
     {
         if (!m_swapChain || !m_rtv || !m_dsv)
@@ -1991,11 +2110,29 @@ namespace hairgpu::viewer
         m_lastTotalDrawCalls = 0u;
 
         bool drewCpuHairMesh = false;
+        m_lastUsedCpuVisibilityFallback = false;
         std::vector<GpuParticle> cpuMeshParticles;
         bool haveReadbackParticles = ReadBackCurrentParticlePositions(cpuMeshParticles);
         if (!haveReadbackParticles || !ParticleArrayLooksValid(reinterpret_cast<const float*>(cpuMeshParticles.data()), cpuMeshParticles.size(), m_asset))
         {
             cpuMeshParticles = m_initialParticles;
+        }
+
+        m_lastReadbackParticleCount = static_cast<uint32_t>(cpuMeshParticles.size());
+        m_lastEstimatedVisibleParticles = EstimateVisibleParticleCount(cpuMeshParticles, renderWidth / renderHeight);
+        const uint32_t minimumExpectedVisibleParticles = std::max<uint32_t>(32u, static_cast<uint32_t>(std::max<size_t>(cpuMeshParticles.size() / 160u, 1u)));
+        m_lastVisibilitySuspect = m_lastEstimatedVisibleParticles < minimumExpectedVisibleParticles;
+        if (m_lastVisibilitySuspect)
+        {
+            ++m_visibilityRecoveryCount;
+            AutoFrameCameraToAsset(true);
+            m_renderMode = RenderMode::ParticleBillboard;
+            m_widthScale = std::max(m_widthScale, 4.5f);
+            m_lastEstimatedVisibleParticles = EstimateVisibleParticleCount(cpuMeshParticles, renderWidth / renderHeight);
+        }
+        else
+        {
+            m_visibilityRecoveryCount = 0u;
         }
 
         if (!cpuMeshParticles.empty())
@@ -2028,6 +2165,11 @@ namespace hairgpu::viewer
                 }
             }
             BuildHairMeshVertices(cpuMeshParticles, renderWidth / renderHeight);
+            if (m_hairMeshVertices.empty() && !cpuMeshParticles.empty())
+            {
+                AutoFrameCameraToAsset(true);
+                BuildHairMeshVertices(cpuMeshParticles, renderWidth / renderHeight);
+            }
             if (!m_hairMeshVertices.empty() && EnsureHairMeshVertexCapacity(m_hairMeshVertices.size()) && m_hairMeshVertexBuffer && m_hairMeshInputLayout && m_hairMeshVS && m_hairMeshPS)
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -2049,6 +2191,7 @@ namespace hairgpu::viewer
                     m_context->PSSetShader(m_hairMeshPS.Get(), nullptr, 0);
                     m_context->Draw(static_cast<UINT>(m_hairMeshVertices.size()), 0);
                     drewCpuHairMesh = true;
+                    m_lastUsedCpuVisibilityFallback = true;
                     m_lastCurrentHairDrawCalls = 1u;
                     m_lastCurrentHairVertexCount = static_cast<uint64_t>(m_hairMeshVertices.size());
                     m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_hairMeshVertices.size() / 3u);
@@ -2196,7 +2339,7 @@ namespace hairgpu::viewer
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Base Viewer  |  preset=" << m_activePresetName
+        ss << L"Hair GPU Viewer VISFIX5  |  preset=" << m_activePresetName
            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
            << L"  guides=" << m_asset.guideStrandCount
            << L"  followers=" << m_asset.followerStrandCount
@@ -2204,6 +2347,10 @@ namespace hairgpu::viewer
            << L"  particles=" << m_asset.restPoints.size()
            << L"  render=" << (m_renderMode == RenderMode::ParticlePointSprite ? L"point" : L"billboard")
            << L"  gpuFrameMs=" << std::setprecision(2) << m_lastGpuFrameMilliseconds
+           << L"  vis=" << m_lastEstimatedVisibleParticles
+           << L"  suspect=" << (m_lastVisibilitySuspect ? L"yes" : L"no")
+           << L"  cpuFallback=" << (m_lastUsedCpuVisibilityFallback ? L"yes" : L"no")
+           << L"  recoveries=" << m_visibilityRecoveryCount
            << L"  widthScale=" << m_widthScale
            << L"  stretchCompliance=" << m_simConfig.stretchCompliance
            << L"  selfCollision=" << (m_enableSelfCollision ? L"density-grid" : L"off")
@@ -2883,6 +3030,8 @@ namespace hairgpu::viewer
             return false;
         }
         RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        AutoFrameCameraToAsset(true);
         RefreshAssetStatsText();
         ResetSimulation();
         SyncControlsFromState();
@@ -3429,6 +3578,8 @@ namespace hairgpu::viewer
         }
 
         RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        AutoFrameCameraToAsset(true);
         RefreshAssetStatsText();
         ResetSimulation();
         SyncControlsFromState();

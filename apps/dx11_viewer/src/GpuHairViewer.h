@@ -303,6 +303,9 @@ namespace hairgpu::viewer
         std::vector<hairgpu::Vec3> BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const;
         std::vector<float> BuildGuideContactScoresFromParticles(const std::vector<GpuParticle>& particles) const;
         void BuildHairMeshVertices(const std::vector<GpuParticle>& particles, float aspectRatio);
+        void RecomputeAssetBounds();
+        void AutoFrameCameraToAsset(bool resetAngles);
+        uint32_t EstimateVisibleParticleCount(const std::vector<GpuParticle>& particles, float aspectRatio) const;
         void RebuildGpuDebugLineEntries();
         bool EnsureHairMeshVertexCapacity(size_t vertexCount);
         bool EnsureGpuDebugLineCapacity(size_t lineCount);
@@ -358,6 +361,10 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_cameraPosition = { 0.0f, 0.0f, 0.0f };
         hairgpu::Vec3 m_scalpCenter = { 0.0f, 1.60f, 0.0f };
         hairgpu::Vec3 m_neckPivot = { 0.0f, 1.42f, -0.03f };
+        hairgpu::Vec3 m_assetBoundsMin = { -0.5f, 1.0f, -0.5f };
+        hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
+        hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
+        float m_assetBoundsRadius = 0.75f;
         float m_widthScale = 3.2f;
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
@@ -507,6 +514,11 @@ namespace hairgpu::viewer
         float m_lastGpuSimulationMilliseconds = 0.0f;
         float m_lastGpuHairDrawMilliseconds = 0.0f;
         float m_lastGpuDebugDrawMilliseconds = 0.0f;
+        uint32_t m_lastEstimatedVisibleParticles = 0u;
+        uint32_t m_lastReadbackParticleCount = 0u;
+        bool m_lastVisibilitySuspect = false;
+        bool m_lastUsedCpuVisibilityFallback = false;
+        uint32_t m_visibilityRecoveryCount = 0u;
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastHairPipelineStats = {};
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastDebugPipelineStats = {};
         std::array<GpuTimingFrame, 3> m_gpuTimingFrames = {};
