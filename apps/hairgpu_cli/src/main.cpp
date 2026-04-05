@@ -661,6 +661,7 @@ namespace
   hairgpu_cli active-set-dispatch <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
   hairgpu_cli active-set-dispatch-pack <input> <output.dispatchbin> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [dumpJson=1]
   hairgpu_cli dispatchpack-gpubuffers <input.dispatchbin> <output_dir>
+  hairgpu_cli asset-export-abc-compat <input> <output.abc>
   hairgpu_cli export-usda <input> <output.usda>
   hairgpu_cli export-cards <input> <output.obj>
   hairgpu_cli build-lods <input> <output_dir>
@@ -706,7 +707,14 @@ namespace
   hairgpu_cli hybrid-teacher-dataset <input> <output_dir> [frames] [fps] [swayAmplitude] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [maxSolverIterations] [--colliders colliders.csv]
   hairgpu_cli hybrid-train-bundle <teacher_dir> <output_dir> [priorGuides] [residualGuides] [maxInfluences] [regularization] [validationStride] [smoothingAlpha] [residualGuideGain] [residualBlend] [--colliders colliders.csv]
   hairgpu_cli hybrid-bundle-info <bundle_dir>
+  hairgpu_cli temporal-export-csv <input.temporalbin> <output_dir>
+  hairgpu_cli temporal-import-csv <input_dir> <output.temporalbin>
+  hairgpu_cli active-set-predictor-export-csv <input.predictorbin> <output_dir>
+  hairgpu_cli active-set-predictor-import-csv <input_dir> <output.predictorbin>
+  hairgpu_cli hybrid-bundle-export-interop <bundle_dir> <output_dir>
+  hairgpu_cli hybrid-bundle-import-interop <base_bundle_dir> <interop_dir> <output_bundle_dir>
   hairgpu_cli hybrid-run-bundle <teacher_dir> <bundle_dir> <output_dir> [residualBlendOverride] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [exportPerFrameHairBins] [--colliders colliders.csv]
+  hairgpu_cli hybrid-compare <teacher_dir> <bundle_dir> <output_dir> [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [--colliders colliders.csv]
 )USAGE";
     }
 
@@ -735,7 +743,7 @@ int main(int argc, char** argv)
     }
     if (command == "version")
     {
-        std::cout << "hairgpu_cli 0.2.1\n";
+        std::cout << "hairgpu_cli 0.2.2\n";
         return 0;
     }
 
@@ -902,6 +910,297 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    if (command == "hybrid-train-bundle")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        ReducedModelTrainingSequence teacherSequence;
+        std::string error;
+        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
+        {
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 172);
+        }
+
+        HybridModelTrainingSettings settings = {};
+        settings.priorGuideCount = ArgToUInt(argc, argv, 4, settings.priorGuideCount);
+        settings.residualGuideCount = ArgToUInt(argc, argv, 5, settings.residualGuideCount);
+        settings.maxInfluencesPerFollower = ArgToUInt(argc, argv, 6, settings.maxInfluencesPerFollower);
+        settings.regularization = ArgToFloat(argc, argv, 7, settings.regularization);
+        settings.validationStride = ArgToUInt(argc, argv, 8, settings.validationStride);
+        settings.priorGuideSmoothingAlpha = ArgToFloat(argc, argv, 9, settings.priorGuideSmoothingAlpha);
+        settings.residualGuideGain = ArgToFloat(argc, argv, 10, settings.residualGuideGain);
+        settings.residualBlend = ArgToFloat(argc, argv, 11, settings.residualBlend);
+
+        ColliderSet colliders = {};
+        if (!LoadOptionalColliders(argc, argv, colliders, error))
+        {
+            return PrintLoadFailure("Collider config load failed", error, 173);
+        }
+
+        HybridModelBundle bundle;
+        HybridModelTrainingReport report;
+        if (!TrainHybridModelBundle(teacherSequence, colliders, settings, bundle, report, error))
+        {
+            return PrintLoadFailure("Hybrid bundle training failed", error, 174);
+        }
+        if (!SaveHybridModelBundle(argv[3], bundle, &report, error))
+        {
+            return PrintLoadFailure("Hybrid bundle save failed", error, 175);
+        }
+
+        std::cout << BuildHybridModelBundleSummary(bundle, &report) << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-bundle-info")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HybridModelBundle bundle;
+        std::string error;
+        if (!LoadHybridModelBundle(argv[2], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 176);
+        }
+        std::cout << BuildHybridModelBundleSummary(bundle, nullptr) << "\n";
+        return 0;
+    }
+
+
+    if (command == "temporal-export-csv")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        TemporalGuideNetwork model = {};
+        std::string error;
+        if (!LoadTemporalGuideNetworkFromFile(argv[2], model, error))
+        {
+            return PrintLoadFailure("Temporal network load failed", error, 183);
+        }
+        if (!ExportTemporalGuideNetworkToCsvDirectory(argv[3], model, error))
+        {
+            return PrintLoadFailure("Temporal CSV export failed", error, 184);
+        }
+        std::cout << BuildTemporalGuideNetworkSummary(model, nullptr) << " outputDir=" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (command == "temporal-import-csv")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        TemporalGuideNetwork model = {};
+        std::string error;
+        if (!ImportTemporalGuideNetworkFromCsvDirectory(argv[2], model, error))
+        {
+            return PrintLoadFailure("Temporal CSV import failed", error, 185);
+        }
+        if (!SaveTemporalGuideNetworkToFile(argv[3], model, error))
+        {
+            return PrintLoadFailure("Temporal network save failed", error, 186);
+        }
+        std::cout << BuildTemporalGuideNetworkSummary(model, nullptr) << " output=" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (command == "active-set-predictor-export-csv")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ActiveSetPredictor predictor = {};
+        std::string error;
+        if (!LoadActiveSetPredictorFromFile(argv[2], predictor, error))
+        {
+            return PrintLoadFailure("Active-set predictor load failed", error, 187);
+        }
+        if (!ExportActiveSetPredictorToCsvDirectory(argv[3], predictor, error))
+        {
+            return PrintLoadFailure("Active-set predictor CSV export failed", error, 188);
+        }
+        std::cout << BuildActiveSetPredictorSummary(predictor, nullptr) << " outputDir=" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (command == "active-set-predictor-import-csv")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ActiveSetPredictor predictor = {};
+        std::string error;
+        if (!ImportActiveSetPredictorFromCsvDirectory(argv[2], predictor, error))
+        {
+            return PrintLoadFailure("Active-set predictor CSV import failed", error, 189);
+        }
+        if (!SaveActiveSetPredictorToFile(argv[3], predictor, error))
+        {
+            return PrintLoadFailure("Active-set predictor save failed", error, 190);
+        }
+        std::cout << BuildActiveSetPredictorSummary(predictor, nullptr) << " output=" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-bundle-export-interop")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HybridModelBundle bundle = {};
+        std::string error;
+        if (!LoadHybridModelBundle(argv[2], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 191);
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(argv[3], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Interop directory creation failed", ec.message(), 192);
+        }
+        if (!ExportTemporalGuideNetworkToCsvDirectory(std::filesystem::path(argv[3]) / "prior_temporal_csv", bundle.priorTemporalNetwork, error) ||
+            !ExportTemporalGuideNetworkToCsvDirectory(std::filesystem::path(argv[3]) / "residual_temporal_csv", bundle.residualTemporalNetwork, error) ||
+            !ExportActiveSetPredictorToCsvDirectory(std::filesystem::path(argv[3]) / "active_set_predictor_csv", bundle.activeSetPredictor, error))
+        {
+            return PrintLoadFailure("Hybrid bundle interop export failed", error, 193);
+        }
+        std::ofstream manifest(std::filesystem::path(argv[3]) / "interop_manifest.json");
+        if (!manifest)
+        {
+            return PrintLoadFailure("Hybrid bundle interop export failed", "Failed to write interop manifest.", 194);
+        }
+        manifest << "{\n";
+        manifest << "  \"type\": \"hybrid_bundle_interop\",\n";
+        manifest << "  \"priorTemporal\": \"prior_temporal_csv\",\n";
+        manifest << "  \"residualTemporal\": \"residual_temporal_csv\",\n";
+        manifest << "  \"activeSetPredictor\": \"active_set_predictor_csv\"\n";
+        manifest << "}\n";
+        std::cout << "interopDir=" << argv[3] << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-bundle-import-interop")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HybridModelBundle bundle = {};
+        std::string error;
+        if (!LoadHybridModelBundle(argv[2], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 195);
+        }
+        const std::filesystem::path interopDir(argv[3]);
+        const std::filesystem::path priorDir = interopDir / "prior_temporal_csv";
+        const std::filesystem::path residualDir = interopDir / "residual_temporal_csv";
+        const std::filesystem::path predictorDir = interopDir / "active_set_predictor_csv";
+        if (std::filesystem::exists(priorDir))
+        {
+            if (!ImportTemporalGuideNetworkFromCsvDirectory(priorDir, bundle.priorTemporalNetwork, error))
+            {
+                return PrintLoadFailure("Prior temporal import failed", error, 196);
+            }
+        }
+        if (std::filesystem::exists(residualDir))
+        {
+            if (!ImportTemporalGuideNetworkFromCsvDirectory(residualDir, bundle.residualTemporalNetwork, error))
+            {
+                return PrintLoadFailure("Residual temporal import failed", error, 197);
+            }
+        }
+        if (std::filesystem::exists(predictorDir))
+        {
+            if (!ImportActiveSetPredictorFromCsvDirectory(predictorDir, bundle.activeSetPredictor, error))
+            {
+                return PrintLoadFailure("Predictor import failed", error, 198);
+            }
+        }
+        if (!SaveHybridModelBundle(argv[4], bundle, nullptr, error))
+        {
+            return PrintLoadFailure("Hybrid bundle save failed", error, 199);
+        }
+        std::cout << BuildHybridModelBundleSummary(bundle, nullptr) << " outputDir=" << argv[4] << "\n";
+        return 0;
+    }
+
+    if (command == "hybrid-run-bundle")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        ReducedModelTrainingSequence teacherSequence;
+        HybridModelBundle bundle;
+        std::string error;
+        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
+        {
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 177);
+        }
+        if (!LoadHybridModelBundle(argv[3], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 178);
+        }
+
+        FullHybridRuntimeSettings settings = {};
+        settings.residualBlendOverride = ArgToFloat(argc, argv, 5, settings.residualBlendOverride);
+        settings.useBudgetOverride = argc >= 9;
+        if (settings.useBudgetOverride)
+        {
+            settings.budgetOverride = bundle.budget;
+            settings.budgetOverride.maxActiveClusters = ArgToUInt(argc, argv, 6, settings.budgetOverride.maxActiveClusters);
+            settings.budgetOverride.maxActiveGuides = ArgToUInt(argc, argv, 7, settings.budgetOverride.maxActiveGuides);
+            settings.budgetOverride.targetFrameMilliseconds = ArgToFloat(argc, argv, 8, settings.budgetOverride.targetFrameMilliseconds);
+        }
+        settings.exportPerFrameHairBins = ArgToInt(argc, argv, 9, 0) != 0;
+
+        ColliderSet colliders = {};
+        if (!LoadOptionalColliders(argc, argv, colliders, error))
+        {
+            return PrintLoadFailure("Collider config load failed", error, 179);
+        }
+
+        FullHybridRuntimeReport report;
+        if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, settings, argv[4], report, error))
+        {
+            return PrintLoadFailure("Full hybrid runtime failed", error, 180);
+        }
+
+        std::cout << "frames=" << report.frameCount
+                  << " avgPriorRms=" << report.averagePriorRmsError
+                  << " avgHybridRmsBefore=" << report.averageHybridRmsErrorBeforeCorrection
+                  << " avgHybridRmsAfter=" << report.averageHybridRmsErrorAfterCorrection
+                  << " avgSelectedClusters=" << report.averageSelectedClusterCount
+                  << " avgSelectedGuides=" << report.averageSelectedGuideCount
+                  << " avgPenetration=" << report.averagePenetration
+                  << " avgPredictorRisk=" << report.averageGuidePredictorRisk
+                  << " p95EstimatedMs=" << report.p95EstimatedFrameMilliseconds
+                  << " hit60=" << report.hitRate60Fps << "\n";
+        return 0;
+    }
+
     if (command == "hybrid-teacher-dataset")
     {
         if (argc < 4)
@@ -943,70 +1242,13 @@ int main(int argc, char** argv)
                   << " avgSelectedGuides=" << report.averageSelectedGuideCount
                   << " avgSelectedStrands=" << report.averageSelectedStrandCount
                   << " avgPenetration=" << report.averagePenetration
-                  << " peakEstimatedSimulationMs=" << report.peakEstimatedSimulationMilliseconds << "\n";
+                  << " maxPenetration=" << report.maxPenetration
+                  << " avgCorrectedPoints=" << report.averageCorrectedPointCount
+                  << " peakEstimatedMs=" << report.peakEstimatedSimulationMilliseconds << "\n";
         return 0;
     }
 
-    if (command == "hybrid-train-bundle")
-    {
-        if (argc < 4)
-        {
-            PrintUsage();
-            return 1;
-        }
-
-        ReducedModelTrainingSequence teacherSequence;
-        std::string error;
-        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
-        {
-            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 72);
-        }
-
-        HybridModelTrainingSettings settings = {};
-        settings.priorGuideCount = ArgToUInt(argc, argv, 4, settings.priorGuideCount);
-        settings.residualGuideCount = ArgToUInt(argc, argv, 5, settings.residualGuideCount);
-        settings.maxInfluencesPerFollower = ArgToUInt(argc, argv, 6, settings.maxInfluencesPerFollower);
-        settings.regularization = ArgToFloat(argc, argv, 7, settings.regularization);
-        settings.validationStride = ArgToUInt(argc, argv, 8, settings.validationStride);
-        settings.priorGuideSmoothingAlpha = ArgToFloat(argc, argv, 9, settings.priorGuideSmoothingAlpha);
-        settings.residualGuideGain = ArgToFloat(argc, argv, 10, settings.residualGuideGain);
-        settings.residualBlend = ArgToFloat(argc, argv, 11, settings.residualBlend);
-
-        HybridModelBundle bundle;
-        HybridModelTrainingReport report;
-        ColliderSet colliders = {};
-        if (!LoadOptionalColliders(argc, argv, colliders, error))
-        {
-            return PrintLoadFailure("Collider config load failed", error, 171);
-        }
-        if (!TrainHybridModelBundle(teacherSequence, colliders, settings, bundle, report, error) ||
-            !SaveHybridModelBundle(argv[3], bundle, &report, error))
-        {
-            return PrintLoadFailure("Hybrid bundle training failed", error, 73);
-        }
-
-        std::cout << BuildHybridModelBundleSummary(bundle, &report) << "\n";
-        return 0;
-    }
-
-    if (command == "hybrid-bundle-info")
-    {
-        if (argc < 3)
-        {
-            PrintUsage();
-            return 1;
-        }
-        HybridModelBundle bundle;
-        std::string error;
-        if (!LoadHybridModelBundle(argv[2], bundle, error))
-        {
-            return PrintLoadFailure("Hybrid bundle load failed", error, 74);
-        }
-        std::cout << BuildHybridModelBundleSummary(bundle, nullptr) << "\n";
-        return 0;
-    }
-
-    if (command == "hybrid-run-bundle")
+    if (command == "hybrid-compare")
     {
         if (argc < 5)
         {
@@ -1019,42 +1261,121 @@ int main(int argc, char** argv)
         std::string error;
         if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
         {
-            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 75);
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 181);
         }
         if (!LoadHybridModelBundle(argv[3], bundle, error))
         {
-            return PrintLoadFailure("Hybrid bundle load failed", error, 76);
+            return PrintLoadFailure("Hybrid bundle load failed", error, 182);
         }
 
-        FullHybridRuntimeSettings settings = {};
-        settings.residualBlendOverride = ArgToFloat(argc, argv, 5, settings.residualBlendOverride);
-        settings.useBudgetOverride = argc >= 9;
-        if (settings.useBudgetOverride)
+        FullHybridRuntimeSettings baseSettings = {};
+        baseSettings.useBudgetOverride = argc >= 8;
+        if (baseSettings.useBudgetOverride)
         {
-            settings.budgetOverride = bundle.budget;
-            settings.budgetOverride.maxActiveClusters = ArgToUInt(argc, argv, 6, settings.budgetOverride.maxActiveClusters);
-            settings.budgetOverride.maxActiveGuides = ArgToUInt(argc, argv, 7, settings.budgetOverride.maxActiveGuides);
-            settings.budgetOverride.targetFrameMilliseconds = ArgToFloat(argc, argv, 8, settings.budgetOverride.targetFrameMilliseconds);
+            baseSettings.budgetOverride = bundle.budget;
+            baseSettings.budgetOverride.maxActiveClusters = ArgToUInt(argc, argv, 5, baseSettings.budgetOverride.maxActiveClusters);
+            baseSettings.budgetOverride.maxActiveGuides = ArgToUInt(argc, argv, 6, baseSettings.budgetOverride.maxActiveGuides);
+            baseSettings.budgetOverride.targetFrameMilliseconds = ArgToFloat(argc, argv, 7, baseSettings.budgetOverride.targetFrameMilliseconds);
         }
-        settings.exportPerFrameHairBins = ArgToInt(argc, argv, 9, 0) != 0;
-
-        FullHybridRuntimeReport report;
         ColliderSet colliders = {};
         if (!LoadOptionalColliders(argc, argv, colliders, error))
         {
-            return PrintLoadFailure("Collider config load failed", error, 172);
+            return PrintLoadFailure("Collider config load failed", error, 183);
         }
-        if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, settings, argv[4], report, error))
+
+        struct VariantSpec
         {
-            return PrintLoadFailure("Full hybrid runtime failed", error, 77);
+            const char* code;
+            const char* label;
+            FullHybridRuntimeSettings settings;
+        };
+        std::vector<VariantSpec> variants;
+        {
+            VariantSpec spec = { "A", "pure_physics", baseSettings };
+            spec.settings.useTeacherPhysicsProxy = true;
+            spec.settings.enableResidualModel = false;
+            spec.settings.enableSparseCorrectivePhysics = false;
+            spec.settings.enableTemporalNetworks = false;
+            spec.settings.enableActiveSetPredictor = false;
+            variants.push_back(spec);
         }
-        std::cout << "frames=" << report.frameCount
-                  << " avgPriorRms=" << report.averagePriorRmsError
-                  << " avgHybridRmsBefore=" << report.averageHybridRmsErrorBeforeCorrection
-                  << " avgHybridRmsAfter=" << report.averageHybridRmsErrorAfterCorrection
-                  << " avgSelectedClusters=" << report.averageSelectedClusterCount
-                  << " avgSelectedGuides=" << report.averageSelectedGuideCount
-                  << " avgPenetration=" << report.averagePenetration << "\n";
+        {
+            VariantSpec spec = { "B", "prior_residual_only", baseSettings };
+            spec.settings.enableSparseCorrectivePhysics = false;
+            spec.settings.enableActiveSetPredictor = false;
+            variants.push_back(spec);
+        }
+        {
+            VariantSpec spec = { "C", "active_set_physics_only", baseSettings };
+            spec.settings.enableResidualModel = false;
+            spec.settings.enableTemporalNetworks = false;
+            spec.settings.enableActiveSetPredictor = false;
+            variants.push_back(spec);
+        }
+        {
+            VariantSpec spec = { "D", "full_hybrid", baseSettings };
+            variants.push_back(spec);
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(argv[4], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Compare output failed", "Failed to create comparison output directory.", 184);
+        }
+        std::ofstream csv(std::filesystem::path(argv[4]) / "hybrid_compare_summary.csv");
+        if (!csv)
+        {
+            return PrintLoadFailure("Compare output failed", "Failed to open hybrid_compare_summary.csv.", 185);
+        }
+        csv << "methodCode,methodLabel,frameCount,avgPriorRms,avgHybridRmsBefore,avgHybridRmsAfter,avgSelectedClusters,avgSelectedGuides,avgCorrectedPoints,avgPenetration,maxPenetration,avgPredictorRisk,p95EstimatedFrameMs,maxEstimatedFrameMs,hitRate60Fps\n";
+        std::ofstream json(std::filesystem::path(argv[4]) / "hybrid_compare_summary.json");
+        if (!json)
+        {
+            return PrintLoadFailure("Compare output failed", "Failed to open hybrid_compare_summary.json.", 186);
+        }
+        json << "{\n  \"variants\": [\n";
+        bool first = true;
+        for (const VariantSpec& variant : variants)
+        {
+            const std::filesystem::path variantDir = std::filesystem::path(argv[4]) / variant.label;
+            FullHybridRuntimeReport report;
+            if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, variant.settings, variantDir, report, error))
+            {
+                return PrintLoadFailure("Hybrid compare runtime failed", error, 187);
+            }
+            csv << variant.code << "," << variant.label << "," << report.frameCount << ","
+                << report.averagePriorRmsError << "," << report.averageHybridRmsErrorBeforeCorrection << ","
+                << report.averageHybridRmsErrorAfterCorrection << "," << report.averageSelectedClusterCount << ","
+                << report.averageSelectedGuideCount << "," << report.averageCorrectedPointCount << ","
+                << report.averagePenetration << "," << report.maxPenetration << ","
+                << report.averageGuidePredictorRisk << "," << report.p95EstimatedFrameMilliseconds << ","
+                << report.maxEstimatedFrameMilliseconds << "," << report.hitRate60Fps << "\n";
+            if (!first)
+            {
+                json << ",\n";
+            }
+            first = false;
+            json << "    {\n"
+                 << "      \"methodCode\": \"" << variant.code << "\",\n"
+                 << "      \"methodLabel\": \"" << variant.label << "\",\n"
+                 << "      \"frameCount\": " << report.frameCount << ",\n"
+                 << "      \"avgPriorRms\": " << report.averagePriorRmsError << ",\n"
+                 << "      \"avgHybridRmsBefore\": " << report.averageHybridRmsErrorBeforeCorrection << ",\n"
+                 << "      \"avgHybridRmsAfter\": " << report.averageHybridRmsErrorAfterCorrection << ",\n"
+                 << "      \"avgSelectedClusters\": " << report.averageSelectedClusterCount << ",\n"
+                 << "      \"avgSelectedGuides\": " << report.averageSelectedGuideCount << ",\n"
+                 << "      \"avgCorrectedPoints\": " << report.averageCorrectedPointCount << ",\n"
+                 << "      \"avgPenetration\": " << report.averagePenetration << ",\n"
+                 << "      \"maxPenetration\": " << report.maxPenetration << ",\n"
+                 << "      \"avgPredictorRisk\": " << report.averageGuidePredictorRisk << ",\n"
+                 << "      \"p95EstimatedFrameMs\": " << report.p95EstimatedFrameMilliseconds << ",\n"
+                 << "      \"maxEstimatedFrameMs\": " << report.maxEstimatedFrameMilliseconds << ",\n"
+                 << "      \"hitRate60Fps\": " << report.hitRate60Fps << "\n"
+                 << "    }";
+        }
+        json << "\n  ]\n}\n";
+        std::cout << "comparisonWritten=" << (std::filesystem::path(argv[4]) / "hybrid_compare_summary.csv").string() << "\n";
         return 0;
     }
 
@@ -1110,6 +1431,28 @@ int main(int argc, char** argv)
             return PrintLoadFailure("Dispatch GPU buffer export failed", error, 180);
         }
         std::cout << BuildActiveSetDispatchPackSummary(pack) << " outputDir=" << argv[3] << "\n";
+        return 0;
+    }
+
+
+    if (command == "asset-export-abc-compat")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset = {};
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 181);
+        }
+        if (!SaveHairAssetToAlembic(argv[3], asset, error))
+        {
+            return PrintLoadFailure("ABC compatibility export failed", error, 182);
+        }
+        std::cout << "abcCompat=" << argv[3] << "\n";
         return 0;
     }
 

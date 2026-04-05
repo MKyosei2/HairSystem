@@ -7,6 +7,7 @@
 
 #include "hairgpu/ActiveSet.h"
 #include "hairgpu/ReducedModel.h"
+#include "hairgpu/TemporalModel.h"
 #include "hairgpu/Types.h"
 
 namespace hairgpu
@@ -87,10 +88,38 @@ namespace hairgpu
         bool enableScalpCollision = true;
     };
 
+    struct ActiveSetPredictorSettings
+    {
+        uint32_t epochs = 120u;
+        float learningRate = 2.0e-2f;
+        float weightDecay = 1.0e-4f;
+    };
+
+    struct ActiveSetPredictorEvaluation
+    {
+        float rmsScoreError = 0.0f;
+        float classificationAccuracy = 0.0f;
+        float positiveRate = 0.0f;
+        uint32_t sampleCount = 0u;
+    };
+
+    struct ActiveSetPredictor
+    {
+        ActiveSetPredictorSettings settings = {};
+        uint32_t featureCount = 9u;
+        std::vector<float> featureMean;
+        std::vector<float> featureStd;
+        std::vector<float> weights;
+        float bias = 0.0f;
+    };
+
     struct HybridModelBundle
     {
         ReducedModel priorModel;
         ReducedModel residualModel;
+        TemporalGuideNetwork priorTemporalNetwork;
+        TemporalGuideNetwork residualTemporalNetwork;
+        ActiveSetPredictor activeSetPredictor;
         HybridModelTrainingSettings trainingSettings = {};
         ActiveSetClusterSettings clusterSettings = {};
         ActiveSetScoringSettings scoringSettings = {};
@@ -103,12 +132,25 @@ namespace hairgpu
         float uncertaintySmoothingAlpha = 0.35f;
         float priorVelocityPredictionGain = 0.0f;
         float residualVelocityPredictionGain = 0.0f;
+        float priorAccelerationPredictionGain = 0.0f;
+        float residualAccelerationPredictionGain = 0.0f;
+        float priorTemporalBlend = 0.65f;
+        float residualTemporalBlend = 0.70f;
+        float activeSetPredictorBlend = 0.55f;
+        float frozenStrandBlend = 0.92f;
+        float frozenRootFollow = 1.0f;
+        float cachedStrandBlend = 0.78f;
+        float cachedRootFollow = 0.95f;
+        uint32_t cachedFrameRefreshInterval = 3u;
     };
 
     struct HybridModelTrainingReport
     {
         ReducedModelEvaluationReport priorEvaluation = {};
         ReducedModelEvaluationReport residualEvaluation = {};
+        TemporalGuideNetworkEvaluation priorTemporalEvaluation = {};
+        TemporalGuideNetworkEvaluation residualTemporalEvaluation = {};
+        ActiveSetPredictorEvaluation activeSetPredictorEvaluation = {};
         float averageResidualMagnitude = 0.0f;
         float maxResidualMagnitude = 0.0f;
     };
@@ -117,9 +159,15 @@ namespace hairgpu
     {
         float frameRateOverride = 0.0f;
         float residualBlendOverride = -1.0f;
+        float activeSetPredictorBlendOverride = -1.0f;
         ActiveSetBudget budgetOverride = {};
         bool useBudgetOverride = false;
         bool exportPerFrameHairBins = false;
+        bool enableResidualModel = true;
+        bool enableSparseCorrectivePhysics = true;
+        bool enableTemporalNetworks = true;
+        bool enableActiveSetPredictor = true;
+        bool useTeacherPhysicsProxy = false;
     };
 
     struct FullHybridRuntimeReport
@@ -134,7 +182,29 @@ namespace hairgpu
         float averageCorrectedPointCount = 0.0f;
         float averagePenetration = 0.0f;
         float maxPenetration = 0.0f;
+        float averageGuidePredictorRisk = 0.0f;
+        float maxGuidePredictorRisk = 0.0f;
+        float averageEstimatedFrameMilliseconds = 0.0f;
+        float p95EstimatedFrameMilliseconds = 0.0f;
+        float maxEstimatedFrameMilliseconds = 0.0f;
+        float hitRate60Fps = 0.0f;
     };
+
+    [[nodiscard]] bool IsActiveSetPredictorReady(const ActiveSetPredictor& predictor);
+    bool SaveActiveSetPredictorToFile(const std::filesystem::path& filePath,
+                                      const ActiveSetPredictor& predictor,
+                                      std::string& outError);
+    bool LoadActiveSetPredictorFromFile(const std::filesystem::path& filePath,
+                                        ActiveSetPredictor& outPredictor,
+                                        std::string& outError);
+    std::string BuildActiveSetPredictorSummary(const ActiveSetPredictor& predictor,
+                                               const ActiveSetPredictorEvaluation* evaluation);
+    bool ExportActiveSetPredictorToCsvDirectory(const std::filesystem::path& directoryPath,
+                                                const ActiveSetPredictor& predictor,
+                                                std::string& outError);
+    bool ImportActiveSetPredictorFromCsvDirectory(const std::filesystem::path& directoryPath,
+                                                  ActiveSetPredictor& outPredictor,
+                                                  std::string& outError);
 
     bool LoadHybridTeacherSequenceFromDirectory(const std::filesystem::path& directoryPath,
                                                 ReducedModelTrainingSequence& outSequence,

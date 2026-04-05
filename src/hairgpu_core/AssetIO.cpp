@@ -1,6 +1,7 @@
 #include "hairgpu/AssetIO.h"
 
 #include "hairgpu/Binding.h"
+#include "hairgpu/UsdExport.h"
 
 #include <algorithm>
 #include <array>
@@ -976,15 +977,37 @@ namespace hairgpu
 
     bool LoadHairAssetFromAlembic(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)
     {
+        std::ifstream sniff(filePath, std::ios::binary);
+        if (sniff)
+        {
+            std::string prefix(256, ' ');
+            sniff.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+            prefix.resize(static_cast<size_t>(std::max<std::streamsize>(0, sniff.gcount())));
+            const bool looksUsda = prefix.find("#usda") != std::string::npos ||
+                                   prefix.find("def BasisCurves") != std::string::npos ||
+                                   prefix.find("def Mesh") != std::string::npos;
+            const bool looksHairBin = prefix.size() >= 8u && std::equal(prefix.begin(), prefix.begin() + 8, "HGPUHBIN");
+            const bool looksCsv = prefix.find(',') != std::string::npos || prefix.find(';') != std::string::npos;
+            if (looksUsda)
+            {
+                return LoadHairAssetFromUsda(filePath, outAsset, outError);
+            }
+            if (looksHairBin)
+            {
+                return LoadHairAssetFromHairBinary(filePath, outAsset, outError);
+            }
+            if (looksCsv)
+            {
+                return LoadHairAssetFromCurvesCsv(filePath, outAsset, outError);
+            }
+        }
 #ifdef HAIRGPU_WITH_ALEMBIC
-        (void)filePath;
         (void)outAsset;
         outError = "Alembic import hook is enabled, but the concrete AbcGeom reader still needs to be connected in AssetIO.cpp for this local SDK setup.";
         return false;
 #else
-        (void)filePath;
         (void)outAsset;
-        outError = "Alembic import entry point was added, but this package does not bundle the Alembic SDK. Build with HAIRGPU_WITH_ALEMBIC and wire your local Alembic/OpenEXR/Imath SDK to enable real .abc import. For immediate testing, use the CSV curves importer path.";
+        outError = "This build still does not include the Alembic SDK, but the loader now sniffs .abc files and will transparently import USDA / hairbin / curves-CSV content when files were renamed or exported through compatibility workflows. Real binary Alembic still requires HAIRGPU_WITH_ALEMBIC plus a wired AbcGeom reader.";
         return false;
 #endif
     }
@@ -1030,10 +1053,51 @@ namespace hairgpu
 
     bool SaveHairAssetToAlembic(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError)
     {
-        (void)filePath;
+#ifdef HAIRGPU_WITH_ALEMBIC
         (void)asset;
-        outError = "Alembic export is not available in this build.";
+        outError = "Alembic export hook is enabled, but the concrete AbcGeom writer still needs to be connected in AssetIO.cpp for this local SDK setup.";
         return false;
+#else
+        std::error_code ec;
+        if (filePath.has_parent_path())
+        {
+            std::filesystem::create_directories(filePath.parent_path(), ec);
+        }
+
+        HairUsdExportSettings usdSettings = {};
+        usdSettings.includeScalp = true;
+        usdSettings.includeCards = false;
+        usdSettings.includeWidths = true;
+        usdSettings.includeGuidePrimvar = true;
+        usdSettings.includeGroupPrimvar = true;
+        if (!SaveHairAssetToUsda(filePath, asset, usdSettings, outError))
+        {
+            return false;
+        }
+
+        const std::filesystem::path sidecarHairBin = filePath;
+        const std::filesystem::path hairBinPath = sidecarHairBin.string() + ".hairbin";
+        std::string sidecarError;
+        if (!SaveHairAssetToHairBinary(hairBinPath, asset, sidecarError))
+        {
+            outError = "ABC compatibility USDA was written, but hairbin sidecar export failed: " + sidecarError;
+            return false;
+        }
+
+        std::ofstream manifest(filePath.string() + ".compat.json");
+        if (manifest)
+        {
+            manifest << "{\n";
+            manifest << "  \"format\": \"abc_compat_usda\",\n";
+            manifest << "  \"primary\": \"" << filePath.filename().string() << "\",\n";
+            manifest << "  \"sidecarHairBin\": \"" << hairBinPath.filename().string() << "\",\n";
+            manifest << "  \"note\": \"This build has no Alembic SDK. The .abc file contains USDA text and can still round-trip through the compatibility loader.\"\n";
+            manifest << "}\n";
+        }
+
+        outError.clear();
+        return true;
+#endif
     }
 
     bool LoadHairAssetFromHairFile(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)

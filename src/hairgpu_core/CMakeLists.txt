@@ -19,6 +19,7 @@ add_library(hairgpu_core
     ReducedModel.cpp
     RenderData.cpp
     SampleAsset.cpp
+    TemporalModel.cpp
     UsdExport.cpp
     Validation.cpp
     Wig.cpp
