@@ -907,6 +907,44 @@ namespace hairgpu::viewer
         m_pointWidths = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(m_asset.pointWidths.size()), m_asset.pointWidths.data(), false);
         m_followBuffer = CreateStructuredBuffer(sizeof(FollowGpuData), static_cast<UINT>(m_followGpuData.size()), m_followGpuData.data(), false);
 
+        std::vector<uint32_t> initialFollowerTiers(std::max<UINT>(m_asset.followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+        for (uint32_t followerIndex = 0u; followerIndex < m_asset.followerStrandCount; ++followerIndex)
+        {
+            const uint32_t strandIndex = m_asset.guideStrandCount + followerIndex;
+            if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
+            {
+                initialFollowerTiers[followerIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
+            }
+        }
+        std::array<uint32_t, 4> initialCompactionCounters = { 0u, 0u, 0u, 0u };
+        std::vector<uint32_t> initialCompactedFollowerIndices(std::max<UINT>(m_asset.followerStrandCount, 1u), 0u);
+        m_followerTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialFollowerTiers.size()), initialFollowerTiers.data(), false);
+        m_compactedFollowerIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactedFollowerIndices.size()), initialCompactedFollowerIndices.data(), true);
+        m_compactedFollowerCounterBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactionCounters.size()), initialCompactionCounters.data(), true);
+
+        m_followDispatchArgsBuffer.Reset();
+        m_followDispatchArgsUav.Reset();
+        D3D11_BUFFER_DESC indirectArgsDesc = {};
+        indirectArgsDesc.ByteWidth = sizeof(UINT) * 4u;
+        indirectArgsDesc.Usage = D3D11_USAGE_DEFAULT;
+        indirectArgsDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        indirectArgsDesc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS | D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+        if (FAILED(m_device->CreateBuffer(&indirectArgsDesc, nullptr, &m_followDispatchArgsBuffer)))
+        {
+            return false;
+        }
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC indirectArgsUavDesc = {};
+        indirectArgsUavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        indirectArgsUavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        indirectArgsUavDesc.Buffer.FirstElement = 0;
+        indirectArgsUavDesc.Buffer.NumElements = indirectArgsDesc.ByteWidth / sizeof(UINT);
+        indirectArgsUavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+        if (FAILED(m_device->CreateUnorderedAccessView(m_followDispatchArgsBuffer.Get(), &indirectArgsUavDesc, &m_followDispatchArgsUav)))
+        {
+            return false;
+        }
+
         m_scalpPositions = CreateStructuredBuffer(sizeof(GpuParticle), static_cast<UINT>(m_animatedScalpParticles.size()), m_animatedScalpParticles.data(), false);
         m_scalpTrianglesBuffer = CreateStructuredBuffer(sizeof(TriangleGpuData), static_cast<UINT>(m_scalpTriangles.size()), m_scalpTriangles.data(), false);
         m_rootBindingsBuffer = CreateStructuredBuffer(sizeof(RootBindingGpuData), static_cast<UINT>(m_rootBindingGpuData.size()), m_rootBindingGpuData.data(), false);
@@ -1270,7 +1308,11 @@ namespace hairgpu::viewer
             !CompileShaderFromFile(L"HairSim.hlsl", "SelfCollisionCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_selfCollisionCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "FollowCS", "cs_5_0", &csBlob, errorText) ||
-            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_followCS)))
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_followCS)) ||
+            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "CompactFollowerDispatchCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_compactFollowerDispatchCS)) ||
+            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "BuildFollowDispatchArgsCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildFollowDispatchArgsCS)))
         {
             MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
             return false;
@@ -1725,6 +1767,10 @@ namespace hairgpu::viewer
                 constants->capsuleData[i * 8 + 6] = c.pointB.z;
                 constants->capsuleData[i * 8 + 7] = c.radiusB;
             }
+            constants->followerUpdateStride = 1u;
+            constants->followerUpdatePhase = 0u;
+            constants->useCompactedFollowerDispatch = 1u;
+            constants->compactedFollowerCount = 0u;
             m_context->Unmap(m_simConstants.Get(), 0);
         }
 
@@ -1888,15 +1934,87 @@ namespace hairgpu::viewer
 
         if (followerStrandCount > 0u)
         {
-            m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
-            m_context->Dispatch(followerGroups, 1, 1);
+            std::vector<uint32_t> followerTierAssignments(std::max<UINT>(followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+            for (uint32_t followerIndex = 0u; followerIndex < followerStrandCount; ++followerIndex)
+            {
+                const uint32_t strandIndex = guideStrandCount + followerIndex;
+                if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
+                {
+                    followerTierAssignments[followerIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
+                }
+            }
+            m_context->UpdateSubresource(m_followerTierAssignmentsBuffer.buffer.Get(), 0, nullptr, followerTierAssignments.data(), 0, 0);
+            const std::array<uint32_t, 4> zeroCompactionCounters = { 0u, 0u, 0u, 0u };
+            m_context->UpdateSubresource(m_compactedFollowerCounterBuffer.buffer.Get(), 0, nullptr, zeroCompactionCounters.data(), 0, 0);
+
+            if (m_compactFollowerDispatchCS &&
+                m_buildFollowDispatchArgsCS &&
+                m_followDispatchArgsBuffer &&
+                m_followDispatchArgsUav &&
+                m_followerTierAssignmentsBuffer.srv &&
+                m_compactedFollowerIndicesBuffer.uav &&
+                m_compactedFollowerCounterBuffer.uav)
+            {
+                ID3D11ShaderResourceView* compactSrvs[] = {
+                    m_followerTierAssignmentsBuffer.srv.Get()
+                };
+                ID3D11UnorderedAccessView* compactUavs[] = {
+                    m_compactedFollowerIndicesBuffer.uav.Get(),
+                    m_compactedFollowerCounterBuffer.uav.Get(),
+                    nullptr, nullptr, nullptr, nullptr,
+                    m_followDispatchArgsUav.Get()
+                };
+
+                m_context->CSSetShaderResources(0, 1, compactSrvs);
+                m_context->CSSetUnorderedAccessViews(0, 7, compactUavs, nullptr);
+                m_context->CSSetShader(m_compactFollowerDispatchCS.Get(), nullptr, 0);
+                m_context->Dispatch(followerGroups, 1, 1);
+
+                ID3D11UnorderedAccessView* nullCompactBuildUavs[7] = {};
+                m_context->CSSetUnorderedAccessViews(0, 7, nullCompactBuildUavs, nullptr);
+
+                ID3D11UnorderedAccessView* argsOnlyUav = m_followDispatchArgsUav.Get();
+                ID3D11ShaderResourceView* nullSrvSlot0 = nullptr;
+                ID3D11ShaderResourceView* counterSrv = m_compactedFollowerCounterBuffer.srv.Get();
+                m_context->CSSetShaderResources(0, 1, &nullSrvSlot0);
+                m_context->CSSetShaderResources(1, 1, &counterSrv);
+                m_context->CSSetUnorderedAccessViews(6, 1, &argsOnlyUav, nullptr);
+                m_context->CSSetShader(m_buildFollowDispatchArgsCS.Get(), nullptr, 0);
+                m_context->Dispatch(1, 1, 1);
+
+                ID3D11ShaderResourceView* followSrvs[] = {
+                    m_positions[m_currentBufferIndex].srv.Get(),
+                    m_previousPositions[m_currentBufferIndex].srv.Get(),
+                    m_restPositions.srv.Get(),
+                    m_followBuffer.srv.Get(),
+                    m_scalpPositions.srv.Get(),
+                    m_scalpTrianglesBuffer.srv.Get(),
+                    m_rootBindingsBuffer.srv.Get(),
+                    m_compactedFollowerIndicesBuffer.srv.Get(),
+                    m_compactedFollowerCounterBuffer.srv.Get()
+                };
+                m_context->CSSetShaderResources(0, 9, followSrvs);
+                m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
+
+                ID3D11ShaderResourceView* nullCompactSrvs[9] = {};
+                ID3D11UnorderedAccessView* nullCompactUavs[7] = {};
+                m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
+                m_context->DispatchIndirect(m_followDispatchArgsBuffer.Get(), 0u);
+                m_context->CSSetShaderResources(0, 9, nullCompactSrvs);
+                m_context->CSSetUnorderedAccessViews(0, 7, nullCompactUavs, nullptr);
+            }
+            else
+            {
+                m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
+                m_context->Dispatch(followerGroups, 1, 1);
+            }
         }
 
-        ID3D11ShaderResourceView* nullSrvs[7] = {};
+        ID3D11ShaderResourceView* nullSrvs[9] = {};
         ID3D11UnorderedAccessView* nullUavs[8] = {};
         ID3D11Buffer* nullCb = nullptr;
         m_context->CSSetShader(nullptr, nullptr, 0);
-        m_context->CSSetShaderResources(0, 7, nullSrvs);
+        m_context->CSSetShaderResources(0, 9, nullSrvs);
         m_context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
         m_context->CSSetConstantBuffers(1, 1, &nullCb);
 

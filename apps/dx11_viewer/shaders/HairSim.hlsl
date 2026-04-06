@@ -68,6 +68,11 @@ cbuffer SimConstants : register(b0)
 
     float SphereData[16];
     float CapsuleData[32];
+
+    uint FollowerUpdateStride;
+    uint FollowerUpdatePhase;
+    uint UseCompactedFollowerDispatch;
+    uint CompactedFollowerCount;
 };
 
 cbuffer BitonicConstants : register(b1)
@@ -109,6 +114,8 @@ StructuredBuffer<FollowData> FollowStrands : register(t3);
 StructuredBuffer<float4> ScalpPositions : register(t4);
 StructuredBuffer<TriangleData> ScalpTriangles : register(t5);
 StructuredBuffer<RootBindingData> RootBindings : register(t6);
+StructuredBuffer<uint> CompactedFollowerIndices : register(t7);
+StructuredBuffer<uint> CompactionCountersInSim : register(t8);
 
 RWStructuredBuffer<float4> OutputPositions : register(u0);
 RWStructuredBuffer<float4> OutputPreviousPositions : register(u1);
@@ -1184,8 +1191,17 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void FollowCS(uint3 id : SV_DispatchThreadID)
 {
-    uint followerIndex = id.x;
-    if (followerIndex >= FollowerStrandCount)
+    uint followerDispatchIndex = id.x;
+    uint followerIndex = followerDispatchIndex;
+    if (UseCompactedFollowerDispatch != 0u)
+    {
+        if (followerDispatchIndex >= CompactionCountersInSim[0])
+        {
+            return;
+        }
+        followerIndex = CompactedFollowerIndices[followerDispatchIndex];
+    }
+    else if (followerIndex >= FollowerStrandCount)
     {
         return;
     }

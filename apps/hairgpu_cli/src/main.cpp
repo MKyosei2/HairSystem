@@ -6,7 +6,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
 #include "hairgpu/ActiveSet.h"
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/Authoring.h"
@@ -15,6 +14,7 @@
 #include "hairgpu/Broadphase.h"
 #include "hairgpu/Cards.h"
 #include "hairgpu/Collision.h"
+#include "hairgpu/DccInterop.h"
 #include "hairgpu/GuideCache.h"
 #include "hairgpu/HybridRuntime.h"
 #include "hairgpu/HairCache.h"
@@ -25,11 +25,9 @@
 #include "hairgpu/ReducedModel.h"
 #include "hairgpu/UsdExport.h"
 #include "hairgpu/Validation.h"
-
 namespace
 {
     using namespace hairgpu;
-
     std::string LowerExt(const std::filesystem::path& path)
     {
         std::string ext = path.extension().string();
@@ -39,7 +37,6 @@ namespace
         }
         return ext;
     }
-
     bool LoadHairAssetAny(const std::filesystem::path& path, HairAsset& asset, std::string& error)
     {
         const std::string ext = LowerExt(path);
@@ -54,12 +51,10 @@ namespace
             error = "Unsupported input extension: " + ext;
             return false;
         }
-
         if (!loaded)
         {
             return false;
         }
-
         ParticleChainCanonicalizationSettings canonicalSettings = {};
         canonicalSettings.targetPointCount = asset.particlesPerStrand;
         canonicalSettings.snapRootsToScalp = true;
@@ -69,7 +64,6 @@ namespace
         }
         return true;
     }
-
     uint32_t ArgToUInt(int argc, char** argv, int index, uint32_t fallback)
     {
         if (index >= argc)
@@ -85,7 +79,6 @@ namespace
             return fallback;
         }
     }
-
     float ArgToFloat(int argc, char** argv, int index, float fallback)
     {
         if (index >= argc)
@@ -101,7 +94,6 @@ namespace
             return fallback;
         }
     }
-
     int ArgToInt(int argc, char** argv, int index, int fallback)
     {
         if (index >= argc)
@@ -117,7 +109,6 @@ namespace
             return fallback;
         }
     }
-
     std::vector<std::string> SplitSimpleCsv(const std::string& line)
     {
         std::vector<std::string> parts;
@@ -137,7 +128,6 @@ namespace
         parts.push_back(current);
         return parts;
     }
-
     std::string Trim(std::string value)
     {
         auto notSpace = [](unsigned char c) { return !std::isspace(c); };
@@ -145,7 +135,6 @@ namespace
         value.erase(std::find_if(value.rbegin(), value.rend(), notSpace).base(), value.end());
         return value;
     }
-
     std::string ToLower(std::string value)
     {
         for (char& c : value)
@@ -154,7 +143,6 @@ namespace
         }
         return value;
     }
-
     bool TryParseFloatToken(const std::string& text, float& outValue)
     {
         try
@@ -167,7 +155,6 @@ namespace
             return false;
         }
     }
-
     bool TryParseUIntToken(const std::string& text, uint32_t& outValue)
     {
         try
@@ -180,7 +167,6 @@ namespace
             return false;
         }
     }
-
     bool LoadSdfGridCsv(const std::filesystem::path& path, SdfGridCollider& outGrid, std::string& outError)
     {
         std::ifstream in(path);
@@ -189,7 +175,6 @@ namespace
             outError = "Failed to open SDF grid CSV: " + path.string();
             return false;
         }
-
         outGrid = {};
         std::string line;
         while (std::getline(in, line))
@@ -208,7 +193,6 @@ namespace
             {
                 continue;
             }
-
             const std::string key = ToLower(tokens[0]);
             if ((key == "resolution" || key == "dims") && tokens.size() >= 4u)
             {
@@ -256,7 +240,6 @@ namespace
                 }
             }
         }
-
         const size_t expectedCount = static_cast<size_t>(outGrid.resolutionX) * outGrid.resolutionY * outGrid.resolutionZ;
         if (outGrid.resolutionX < 2u || outGrid.resolutionY < 2u || outGrid.resolutionZ < 2u || outGrid.values.size() != expectedCount)
         {
@@ -266,7 +249,6 @@ namespace
         outError.clear();
         return true;
     }
-
     bool LoadColliderSetFromFile(const std::filesystem::path& path, ColliderSet& outColliders, std::string& outError)
     {
         std::ifstream in(path);
@@ -275,7 +257,6 @@ namespace
             outError = "Failed to open collider config: " + path.string();
             return false;
         }
-
         outColliders = {};
         std::string line;
         uint32_t lineNumber = 0u;
@@ -296,13 +277,11 @@ namespace
             {
                 continue;
             }
-
             const std::string type = ToLower(tokens[0]);
             auto parseFloatAt = [&](size_t index, float& outValue) -> bool
             {
                 return index < tokens.size() && TryParseFloatToken(tokens[index], outValue);
             };
-
             if (type == "sphere" && tokens.size() >= 5u)
             {
                 SphereCollider sphere = {};
@@ -362,11 +341,9 @@ namespace
                 return false;
             }
         }
-
         outError.clear();
         return true;
     }
-
     bool LoadOptionalColliders(int argc, char** argv, ColliderSet& outColliders, std::string& outError)
     {
         for (int i = 2; i + 1 < argc; ++i)
@@ -380,7 +357,6 @@ namespace
         outError.clear();
         return true;
     }
-
     bool ParseBoneMatrixLine(const std::string& line, uint32_t& outBoneIndex, hairgpu::Mat4& outMatrix, bool& outHasExplicitIndex)
     {
         std::string normalized = line;
@@ -391,7 +367,6 @@ namespace
                 c = ' ';
             }
         }
-
         std::stringstream ss(normalized);
         std::vector<float> values;
         float value = 0.0f;
@@ -399,7 +374,6 @@ namespace
         {
             values.push_back(value);
         }
-
         if (values.size() == 16u)
         {
             outHasExplicitIndex = false;
@@ -421,7 +395,6 @@ namespace
         }
         return false;
     }
-
     bool LoadBoneMatricesCsv(const std::filesystem::path& path, uint32_t expectedBoneCount, std::vector<hairgpu::Mat4>& outMatrices, std::string& outError)
     {
         std::ifstream in(path);
@@ -430,7 +403,6 @@ namespace
             outError = "Failed to open bone matrix CSV: " + path.string();
             return false;
         }
-
         outMatrices.assign(std::max<uint32_t>(1u, expectedBoneCount), hairgpu::Identity());
         std::string line;
         uint32_t sequentialIndex = 0u;
@@ -441,7 +413,6 @@ namespace
             {
                 continue;
             }
-
             uint32_t boneIndex = sequentialIndex;
             hairgpu::Mat4 matrix = hairgpu::Identity();
             bool hasExplicitIndex = false;
@@ -449,7 +420,6 @@ namespace
             {
                 continue;
             }
-
             if (!hasExplicitIndex)
             {
                 boneIndex = sequentialIndex;
@@ -462,7 +432,6 @@ namespace
             outMatrices[boneIndex] = matrix;
             anyLoaded = true;
         }
-
         if (!anyLoaded)
         {
             outError = "Bone matrix CSV did not contain any valid 4x4 matrices.";
@@ -471,7 +440,6 @@ namespace
         outError.clear();
         return true;
     }
-
     SelfCollisionBroadphaseMode ParseBroadphaseMode(const std::string& text)
     {
         std::string lowered = text;
@@ -493,7 +461,6 @@ namespace
         }
         return SelfCollisionBroadphaseMode::DenseGrid;
     }
-
     const char* BroadphaseModeName(SelfCollisionBroadphaseMode mode)
     {
         switch (mode)
@@ -504,7 +471,6 @@ namespace
         default: return "dense-grid";
         }
     }
-
     bool WriteBoneTemplateCsv(const std::filesystem::path& path, uint32_t boneCount, std::string& outError)
     {
         std::ofstream out(path);
@@ -513,7 +479,6 @@ namespace
             outError = "Failed to open output CSV: " + path.string();
             return false;
         }
-
         out << "# boneIndex,m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33\n";
         for (uint32_t boneIndex = 0u; boneIndex < std::max<uint32_t>(1u, boneCount); ++boneIndex)
         {
@@ -528,7 +493,6 @@ namespace
         outError.clear();
         return true;
     }
-
     RegionSelectionSettings ParseRegion(int argc, char** argv, int startIndex)
     {
         RegionSelectionSettings s;
@@ -541,7 +505,6 @@ namespace
         s.guidesOnly = ArgToInt(argc, argv, startIndex + 6, s.guidesOnly ? 1 : 0) != 0;
         return s;
     }
-
     bool BuildGuideOnlyReferenceAsset(const HairAsset& referenceAsset, HairAsset& outAsset, std::string& outError)
     {
         if (referenceAsset.guideStrandCount == 0u || referenceAsset.guideStrandCount > referenceAsset.strands.size())
@@ -549,7 +512,6 @@ namespace
             outError = "Reference asset does not contain a valid guide layout.";
             return false;
         }
-
         HairAsset result = {};
         result.guideStrandCount = referenceAsset.guideStrandCount;
         result.followerStrandCount = 0u;
@@ -559,7 +521,6 @@ namespace
         result.materials.reserve(referenceAsset.guideStrandCount);
         result.rootBindings.reserve(referenceAsset.guideStrandCount);
         result.followData.reserve(referenceAsset.guideStrandCount);
-
         for (uint32_t guideIndex = 0u; guideIndex < referenceAsset.guideStrandCount; ++guideIndex)
         {
             const StrandRange& srcStrand = referenceAsset.strands[guideIndex];
@@ -579,18 +540,15 @@ namespace
             follow.parentGuide = -1;
             result.followData.push_back(follow);
         }
-
         if (result.strands.empty())
         {
             outError = "Reference asset contains no guide strands to export.";
             return false;
         }
-
         outAsset = std::move(result);
         outError.clear();
         return true;
     }
-
     bool BuildGuideFrameAsset(const GuideCache& cache,
                               const HairAsset& referenceAsset,
                               uint32_t frameIndex,
@@ -620,7 +578,6 @@ namespace
         outError.clear();
         return true;
     }
-
     bool WriteUsdSequenceManifest(const std::filesystem::path& outputDirectory,
                                   const char* sequenceName,
                                   uint32_t frameCount,
@@ -648,7 +605,6 @@ namespace
         outError.clear();
         return true;
     }
-
     void PrintUsage()
     {
         std::cout << R"USAGE(hairgpu_cli usage:
@@ -662,9 +618,11 @@ namespace
   hairgpu_cli active-set-dispatch-pack <input> <output.dispatchbin> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [dumpJson=1]
   hairgpu_cli dispatchpack-gpubuffers <input.dispatchbin> <output_dir>
   hairgpu_cli asset-export-abc-compat <input> <output.abc>
+  hairgpu_cli alembic-roundtrip-selftest <input> <temp_output.abc> [report.txt]
   hairgpu_cli export-usda <input> <output.usda>
   hairgpu_cli export-cards <input> <output.obj>
-  hairgpu_cli build-lods <input> <output_dir>
+  hairgpu_cli build-lods <input> <output_dir> [levelCount=4]
+  hairgpu_cli export-dcc-json <input> <output.json> [flavor=blender|maya|houdini] [includeLods=1] [repairSkinning=1]
   hairgpu_cli guidecache-info <input.guidecache>
   hairgpu_cli guidecache-rest <input> <output.guidecache> [fps] [frames]
   hairgpu_cli haircache-info <input.haircache>
@@ -717,24 +675,20 @@ namespace
   hairgpu_cli hybrid-compare <teacher_dir> <bundle_dir> <output_dir> [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [--colliders colliders.csv]
 )USAGE";
     }
-
     int PrintLoadFailure(const std::string& context, const std::string& error, int code)
     {
         std::cerr << context << ": " << error << "\n";
         return code;
     }
 }
-
 int main(int argc, char** argv)
 {
     using namespace hairgpu;
-
     if (argc < 2)
     {
         PrintUsage();
         return 1;
     }
-
     const std::string command = argv[1];
     if (command == "help")
     {
@@ -746,7 +700,6 @@ int main(int argc, char** argv)
         std::cout << "hairgpu_cli 0.2.2\n";
         return 0;
     }
-
     if (command == "active-set-plan")
     {
         if (argc < 4)
@@ -754,14 +707,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         HairAsset asset;
         std::string error;
         if (!LoadHairAssetAny(argv[2], asset, error))
         {
             return PrintLoadFailure("Hair asset load failed", error, 63);
         }
-
         ActiveSetClusterSettings clusterSettings = {};
         clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 4, clusterSettings.targetGuideCountPerCluster);
         clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 5, clusterSettings.maxGuideRootDistance);
@@ -770,7 +721,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 64);
         }
-
         ActiveSetRuntimeInput runtimeInput = {};
         runtimeInput.fixedTimeStep = 1.0f / 60.0f;
         ActiveSetScoringSettings scoringSettings = {};
@@ -778,7 +728,6 @@ int main(int argc, char** argv)
         budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
         budget.maxActiveGuides = ArgToUInt(argc, argv, 7, budget.maxActiveGuides);
         budget.promoteScoreThreshold = ArgToFloat(argc, argv, 8, budget.promoteScoreThreshold);
-
         ActiveSetPlan plan;
         if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
         {
@@ -788,11 +737,9 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Active-set JSON export failed", error, 66);
         }
-
         std::cout << BuildActiveSetPlanSummary(plan) << "\n";
         return 0;
     }
-
     if (command == "active-set-dispatch")
     {
         if (argc < 4)
@@ -800,14 +747,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         HairAsset asset;
         std::string error;
         if (!LoadHairAssetAny(argv[2], asset, error))
         {
             return PrintLoadFailure("Hair asset load failed", error, 169);
         }
-
         ActiveSetClusterSettings clusterSettings = {};
         clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 4, clusterSettings.targetGuideCountPerCluster);
         clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 5, clusterSettings.maxGuideRootDistance);
@@ -816,7 +761,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 169);
         }
-
         ActiveSetRuntimeInput runtimeInput = {};
         runtimeInput.fixedTimeStep = 1.0f / 60.0f;
         ActiveSetScoringSettings scoringSettings = {};
@@ -824,28 +768,23 @@ int main(int argc, char** argv)
         budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
         budget.maxActiveGuides = ArgToUInt(argc, argv, 7, budget.maxActiveGuides);
         budget.promoteScoreThreshold = ArgToFloat(argc, argv, 8, budget.promoteScoreThreshold);
-
         ActiveSetPlan plan;
         if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
         {
             return PrintLoadFailure("Active-set evaluation failed", error, 170);
         }
-
         ActiveSetDispatchPlan dispatchPlan;
         if (!BuildActiveSetDispatchPlan(asset, plan, dispatchPlan, error) ||
             !WriteActiveSetDispatchPlanJson(argv[3], asset, plan, dispatchPlan, error))
         {
             return PrintLoadFailure("Active-set dispatch export failed", error, 171);
         }
-
         std::cout << BuildActiveSetPlanSummary(plan)
                   << " fullDispatchStrands=" << dispatchPlan.fullSimulationStrands.size()
                   << " reducedDispatchStrands=" << dispatchPlan.reducedSimulationStrands.size()
                   << "\n";
         return 0;
     }
-
-
     if (command == "active-set-dispatch-pack")
     {
         if (argc < 4)
@@ -853,14 +792,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         HairAsset asset;
         std::string error;
         if (!LoadHairAssetAny(argv[2], asset, error))
         {
             return PrintLoadFailure("Hair asset load failed", error, 173);
         }
-
         ActiveSetClusterSettings clusterSettings = {};
         clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 4, clusterSettings.targetGuideCountPerCluster);
         clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 5, clusterSettings.maxGuideRootDistance);
@@ -869,7 +806,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 174);
         }
-
         ActiveSetRuntimeInput runtimeInput = {};
         runtimeInput.fixedTimeStep = 1.0f / 60.0f;
         ActiveSetScoringSettings scoringSettings = {};
@@ -878,13 +814,11 @@ int main(int argc, char** argv)
         budget.maxActiveGuides = ArgToUInt(argc, argv, 7, budget.maxActiveGuides);
         budget.promoteScoreThreshold = ArgToFloat(argc, argv, 8, budget.promoteScoreThreshold);
         const bool dumpJson = ArgToInt(argc, argv, 9, 1) != 0;
-
         ActiveSetPlan plan;
         if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
         {
             return PrintLoadFailure("Active-set evaluation failed", error, 175);
         }
-
         ActiveSetDispatchPlan dispatchPlan = {};
         ActiveSetDispatchPack dispatchPack = {};
         if (!BuildActiveSetDispatchPlan(asset, plan, dispatchPlan, error) ||
@@ -893,7 +827,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Active-set dispatch pack export failed", error, 176);
         }
-
         if (dumpJson)
         {
             std::filesystem::path jsonPath(argv[3]);
@@ -903,13 +836,11 @@ int main(int argc, char** argv)
                 return PrintLoadFailure("Active-set dispatch pack JSON export failed", error, 177);
             }
         }
-
         std::cout << BuildActiveSetPlanSummary(plan)
                   << " " << BuildActiveSetDispatchPackSummary(dispatchPack)
                   << "\n";
         return 0;
     }
-
     if (command == "hybrid-train-bundle")
     {
         if (argc < 4)
@@ -917,14 +848,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         ReducedModelTrainingSequence teacherSequence;
         std::string error;
         if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
         {
             return PrintLoadFailure("Hybrid teacher sequence load failed", error, 172);
         }
-
         HybridModelTrainingSettings settings = {};
         settings.priorGuideCount = ArgToUInt(argc, argv, 4, settings.priorGuideCount);
         settings.residualGuideCount = ArgToUInt(argc, argv, 5, settings.residualGuideCount);
@@ -934,13 +863,11 @@ int main(int argc, char** argv)
         settings.priorGuideSmoothingAlpha = ArgToFloat(argc, argv, 9, settings.priorGuideSmoothingAlpha);
         settings.residualGuideGain = ArgToFloat(argc, argv, 10, settings.residualGuideGain);
         settings.residualBlend = ArgToFloat(argc, argv, 11, settings.residualBlend);
-
         ColliderSet colliders = {};
         if (!LoadOptionalColliders(argc, argv, colliders, error))
         {
             return PrintLoadFailure("Collider config load failed", error, 173);
         }
-
         HybridModelBundle bundle;
         HybridModelTrainingReport report;
         if (!TrainHybridModelBundle(teacherSequence, colliders, settings, bundle, report, error))
@@ -951,11 +878,9 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Hybrid bundle save failed", error, 175);
         }
-
         std::cout << BuildHybridModelBundleSummary(bundle, &report) << "\n";
         return 0;
     }
-
     if (command == "hybrid-bundle-info")
     {
         if (argc < 3)
@@ -972,8 +897,6 @@ int main(int argc, char** argv)
         std::cout << BuildHybridModelBundleSummary(bundle, nullptr) << "\n";
         return 0;
     }
-
-
     if (command == "temporal-export-csv")
     {
         if (argc < 4)
@@ -994,7 +917,6 @@ int main(int argc, char** argv)
         std::cout << BuildTemporalGuideNetworkSummary(model, nullptr) << " outputDir=" << argv[3] << "\n";
         return 0;
     }
-
     if (command == "temporal-import-csv")
     {
         if (argc < 4)
@@ -1015,7 +937,6 @@ int main(int argc, char** argv)
         std::cout << BuildTemporalGuideNetworkSummary(model, nullptr) << " output=" << argv[3] << "\n";
         return 0;
     }
-
     if (command == "active-set-predictor-export-csv")
     {
         if (argc < 4)
@@ -1036,7 +957,6 @@ int main(int argc, char** argv)
         std::cout << BuildActiveSetPredictorSummary(predictor, nullptr) << " outputDir=" << argv[3] << "\n";
         return 0;
     }
-
     if (command == "active-set-predictor-import-csv")
     {
         if (argc < 4)
@@ -1057,7 +977,6 @@ int main(int argc, char** argv)
         std::cout << BuildActiveSetPredictorSummary(predictor, nullptr) << " output=" << argv[3] << "\n";
         return 0;
     }
-
     if (command == "hybrid-bundle-export-interop")
     {
         if (argc < 4)
@@ -1097,7 +1016,6 @@ int main(int argc, char** argv)
         std::cout << "interopDir=" << argv[3] << "\n";
         return 0;
     }
-
     if (command == "hybrid-bundle-import-interop")
     {
         if (argc < 5)
@@ -1143,7 +1061,6 @@ int main(int argc, char** argv)
         std::cout << BuildHybridModelBundleSummary(bundle, nullptr) << " outputDir=" << argv[4] << "\n";
         return 0;
     }
-
     if (command == "hybrid-run-bundle")
     {
         if (argc < 5)
@@ -1151,7 +1068,6 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         ReducedModelTrainingSequence teacherSequence;
         HybridModelBundle bundle;
         std::string error;
@@ -1163,7 +1079,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Hybrid bundle load failed", error, 178);
         }
-
         FullHybridRuntimeSettings settings = {};
         settings.residualBlendOverride = ArgToFloat(argc, argv, 5, settings.residualBlendOverride);
         settings.useBudgetOverride = argc >= 9;
@@ -1175,19 +1090,16 @@ int main(int argc, char** argv)
             settings.budgetOverride.targetFrameMilliseconds = ArgToFloat(argc, argv, 8, settings.budgetOverride.targetFrameMilliseconds);
         }
         settings.exportPerFrameHairBins = ArgToInt(argc, argv, 9, 0) != 0;
-
         ColliderSet colliders = {};
         if (!LoadOptionalColliders(argc, argv, colliders, error))
         {
             return PrintLoadFailure("Collider config load failed", error, 179);
         }
-
         FullHybridRuntimeReport report;
         if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, settings, argv[4], report, error))
         {
             return PrintLoadFailure("Full hybrid runtime failed", error, 180);
         }
-
         std::cout << "frames=" << report.frameCount
                   << " avgPriorRms=" << report.averagePriorRmsError
                   << " avgHybridRmsBefore=" << report.averageHybridRmsErrorBeforeCorrection
@@ -1200,7 +1112,6 @@ int main(int argc, char** argv)
                   << " hit60=" << report.hitRate60Fps << "\n";
         return 0;
     }
-
     if (command == "hybrid-teacher-dataset")
     {
         if (argc < 4)
@@ -1208,14 +1119,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         HairAsset asset;
         std::string error;
         if (!LoadHairAssetAny(argv[2], asset, error))
         {
             return PrintLoadFailure("Hair asset load failed", error, 70);
         }
-
         HybridTeacherDatasetSettings settings = {};
         settings.frameCount = ArgToUInt(argc, argv, 4, settings.frameCount);
         settings.frameRate = ArgToFloat(argc, argv, 5, settings.frameRate);
@@ -1225,7 +1134,6 @@ int main(int argc, char** argv)
         settings.budget.targetFrameMilliseconds = ArgToFloat(argc, argv, 9, settings.budget.targetFrameMilliseconds);
         settings.budget.maxSolverIterations = ArgToUInt(argc, argv, 10, settings.budget.maxSolverIterations);
         settings.budget.minSolverIterations = std::min<uint32_t>(settings.budget.minSolverIterations, settings.budget.maxSolverIterations);
-
         HybridTeacherDatasetReport report;
         ColliderSet colliders = {};
         if (!LoadOptionalColliders(argc, argv, colliders, error))
@@ -1236,7 +1144,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Hybrid teacher dataset generation failed", error, 71);
         }
-
         std::cout << "frames=" << report.frameCount
                   << " avgSelectedClusters=" << report.averageSelectedClusterCount
                   << " avgSelectedGuides=" << report.averageSelectedGuideCount
@@ -1247,7 +1154,6 @@ int main(int argc, char** argv)
                   << " peakEstimatedMs=" << report.peakEstimatedSimulationMilliseconds << "\n";
         return 0;
     }
-
     if (command == "hybrid-compare")
     {
         if (argc < 5)
@@ -1255,7 +1161,6 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         ReducedModelTrainingSequence teacherSequence;
         HybridModelBundle bundle;
         std::string error;
@@ -1267,7 +1172,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Hybrid bundle load failed", error, 182);
         }
-
         FullHybridRuntimeSettings baseSettings = {};
         baseSettings.useBudgetOverride = argc >= 8;
         if (baseSettings.useBudgetOverride)
@@ -1282,7 +1186,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Collider config load failed", error, 183);
         }
-
         struct VariantSpec
         {
             const char* code;
@@ -1316,7 +1219,6 @@ int main(int argc, char** argv)
             VariantSpec spec = { "D", "full_hybrid", baseSettings };
             variants.push_back(spec);
         }
-
         std::error_code ec;
         std::filesystem::create_directories(argv[4], ec);
         if (ec)
@@ -1378,7 +1280,6 @@ int main(int argc, char** argv)
         std::cout << "comparisonWritten=" << (std::filesystem::path(argv[4]) / "hybrid_compare_summary.csv").string() << "\n";
         return 0;
     }
-
     if (command == "guidecache-info")
     {
         if (argc < 3)
@@ -1395,7 +1296,6 @@ int main(int argc, char** argv)
         std::cout << BuildGuideCacheSummary(cache) << "\n";
         return 0;
     }
-
     if (command == "dispatchpack-info")
     {
         if (argc < 3)
@@ -1412,7 +1312,6 @@ int main(int argc, char** argv)
         std::cout << BuildActiveSetDispatchPackSummary(pack) << "\n";
         return 0;
     }
-
     if (command == "dispatchpack-gpubuffers")
     {
         if (argc < 4)
@@ -1433,8 +1332,6 @@ int main(int argc, char** argv)
         std::cout << BuildActiveSetDispatchPackSummary(pack) << " outputDir=" << argv[3] << "\n";
         return 0;
     }
-
-
     if (command == "asset-export-abc-compat")
     {
         if (argc < 4)
@@ -1455,8 +1352,51 @@ int main(int argc, char** argv)
         std::cout << "abcCompat=" << argv[3] << "\n";
         return 0;
     }
-
-
+    if (command == "alembic-roundtrip-selftest")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset = {};
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 183);
+        }
+        HairAlembicSettings settings = {};
+        AlembicRoundTripReport report = {};
+        if (!RoundTripHairAssetThroughAlembic(asset, argv[3], settings, report, error))
+        {
+            return PrintLoadFailure("Alembic round-trip self-test failed", error, 184);
+        }
+        std::ostringstream summary;
+        summary.setf(std::ios::fixed);
+        summary.precision(6);
+        summary << "usedAlembicSdk=" << (report.usedAlembicSdk ? 1 : 0) << "\n"
+                << "sourceStrands=" << report.sourceStrandCount << "\n"
+                << "roundTripStrands=" << report.roundTripStrandCount << "\n"
+                << "sourcePoints=" << report.sourcePointCount << "\n"
+                << "roundTripPoints=" << report.roundTripPointCount << "\n"
+                << "rmsRestPointError=" << report.rmsRestPointError << "\n"
+                << "maxRestPointError=" << report.maxRestPointError << "\n"
+                << "rmsWidthError=" << report.rmsWidthError << "\n"
+                << "maxWidthError=" << report.maxWidthError << "\n"
+                << "scalpRoundTripOk=" << (report.scalpRoundTripOk ? 1 : 0) << "\n";
+        std::cout << summary.str();
+        if (argc >= 5)
+        {
+            std::ofstream out(argv[4]);
+            if (!out)
+            {
+                std::cerr << "Failed to write round-trip report.\n";
+                return 185;
+            }
+            out << summary.str();
+        }
+        return 0;
+    }
     if (command == "reduced-info")
     {
         if (argc < 3)
@@ -1473,7 +1413,6 @@ int main(int argc, char** argv)
         std::cout << BuildReducedModelSummary(model) << "\n";
         return 0;
     }
-
     if (command == "reduced-export-guidecache")
     {
         if (argc < 5)
@@ -1499,7 +1438,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "reduced-reconstruct-frame")
     {
         if (argc < 6)
@@ -1527,8 +1465,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
-
     if (command == "reduced-reconstruct-sequence")
     {
         if (argc < 5)
@@ -1553,7 +1489,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "reduced-eval-json")
     {
         if (argc < 5)
@@ -1579,7 +1514,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "reduced-autotune")
     {
         if (argc < 4)
@@ -1611,7 +1545,6 @@ int main(int argc, char** argv)
         std::cout << BuildReducedModelSummary(bestModel) << "\n";
         return 0;
     }
-
     if (command == "reduced-study")
     {
         if (argc < 4)
@@ -1646,7 +1579,6 @@ int main(int argc, char** argv)
         std::cout << BuildReducedModelSummary(bestModel) << "\n";
         return 0;
     }
-
     if (command == "reduced-eval")
     {
         if (argc < 4)
@@ -1691,7 +1623,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "reduced-train")
     {
         if (argc < 4)
@@ -1723,7 +1654,6 @@ int main(int argc, char** argv)
         std::cout << BuildReducedModelSummary(model) << "\n";
         return 0;
     }
-
     if (command == "synthesize-training-set")
     {
         if (argc < 4)
@@ -1746,7 +1676,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "haircache-info")
     {
         if (argc < 3)
@@ -1763,7 +1692,6 @@ int main(int argc, char** argv)
         std::cout << BuildHairCacheSummary(cache) << "\n";
         return 0;
     }
-
     if (command == "sample-haircache-frame")
     {
         if (argc < 5)
@@ -1787,8 +1715,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
-
     if (command == "haircache-export-usda-sequence")
     {
         if (argc < 5)
@@ -1845,7 +1771,6 @@ int main(int argc, char** argv)
         std::cout << "framesWritten=" << written << " sourceFrames=" << cache.FrameCount() << " outputDir=" << argv[4] << "\n";
         return 0;
     }
-
     if (command == "guidecache-export-usda-sequence")
     {
         if (argc < 5)
@@ -1904,7 +1829,6 @@ int main(int argc, char** argv)
         std::cout << "framesWritten=" << written << " sourceFrames=" << cache.FrameCount() << " outputDir=" << argv[4] << "\n";
         return 0;
     }
-
     if (command == "bake-obj-sdf")
     {
         if (argc < 4)
@@ -1930,13 +1854,11 @@ int main(int argc, char** argv)
                   << " values=" << grid.values.size() << "\n";
         return 0;
     }
-
     if (argc < 3)
     {
         PrintUsage();
         return 1;
     }
-
     const std::filesystem::path inputPath = argv[2];
     HairAsset asset;
     std::string error;
@@ -1944,7 +1866,6 @@ int main(int argc, char** argv)
     {
         return PrintLoadFailure("Load failed", error, 2);
     }
-
     if (command == "info")
     {
         const HairAssetMetrics metrics = ComputeHairAssetMetrics(asset);
@@ -1959,7 +1880,6 @@ int main(int argc, char** argv)
                   << "\n";
         return 0;
     }
-
     if (command == "validate")
     {
         const HairAssetValidationReport report = ValidateHairAsset(asset);
@@ -1977,7 +1897,6 @@ int main(int argc, char** argv)
         }
         return report.valid ? 0 : 4;
     }
-
     if (command == "metrics-json")
     {
         if (argc < 4)
@@ -1991,7 +1910,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "save-hairbin")
     {
         if (argc < 4)
@@ -2005,7 +1923,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "select-region")
     {
         RegionSelectionSettings region = ParseRegion(argc, argv, 3);
@@ -2013,7 +1930,6 @@ int main(int argc, char** argv)
         std::cout << "selected=" << result.strands.size() << "\n";
         return 0;
     }
-
     if (command == "edit-region")
     {
         if (argc < 4)
@@ -2038,7 +1954,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "constrain")
     {
         if (argc < 4)
@@ -2058,7 +1973,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "broadphase-stats")
     {
         if (argc < 3)
@@ -2066,14 +1980,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         HairAsset asset;
         std::string error;
         if (!LoadHairAssetAny(argv[2], asset, error))
         {
             return PrintLoadFailure("Failed to load asset", error, 2);
         }
-
         const float cellSize = ArgToFloat(argc, argv, 3, 0.085f);
         const SelfCollisionBroadphaseMode mode = (argc >= 5) ? ParseBroadphaseMode(argv[4]) : SelfCollisionBroadphaseMode::DenseGrid;
         uint32_t hashBucketCount = ArgToUInt(argc, argv, 5, 32768u);
@@ -2081,14 +1993,12 @@ int main(int argc, char** argv)
         {
             hashBucketCount = 0u;
         }
-
         BroadphaseStats stats;
         if (!EvaluateBroadphaseStats(asset, cellSize, mode, hashBucketCount, stats, error))
         {
             std::cerr << "Broadphase stats failed: " << error << "\n";
             return 30;
         }
-
         std::cout
             << "mode=" << BroadphaseModeName(stats.mode) << "\n"
             << "cellSize=" << stats.cellSize << "\n"
@@ -2105,7 +2015,6 @@ int main(int argc, char** argv)
             << "sortedCellRangeCount=" << stats.sortedCellRangeCount << "\n"
             << "activeAdaptiveLevels=" << stats.activeAdaptiveLevels << "\n"
             << "maxAdaptiveLevel=" << stats.maxAdaptiveLevel << "\n";
-
         if (stats.mode == SelfCollisionBroadphaseMode::SpatialHash || stats.mode == SelfCollisionBroadphaseMode::AdaptiveSpatialHash)
         {
             std::cout
@@ -2116,7 +2025,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "broadphase-export")
     {
         if (argc < 4)
@@ -2124,14 +2032,12 @@ int main(int argc, char** argv)
             PrintUsage();
             return 1;
         }
-
         HairAsset asset;
         std::string error;
         if (!LoadHairAssetAny(argv[2], asset, error))
         {
             return PrintLoadFailure("Failed to load asset", error, 2);
         }
-
         const float cellSize = ArgToFloat(argc, argv, 4, 0.085f);
         const SelfCollisionBroadphaseMode mode = (argc >= 6) ? ParseBroadphaseMode(argv[5]) : SelfCollisionBroadphaseMode::DenseGrid;
         uint32_t hashBucketCount = ArgToUInt(argc, argv, 6, 32768u);
@@ -2140,16 +2046,13 @@ int main(int argc, char** argv)
             hashBucketCount = 0u;
         }
         const uint32_t maxPairs = ArgToUInt(argc, argv, 7, 512u);
-
         if (!ExportBroadphaseDebugCsv(asset, cellSize, mode, hashBucketCount, argv[3], maxPairs, error))
         {
             return PrintLoadFailure("Broadphase export failed", error, 31);
         }
-
         std::cout << "Wrote " << argv[3] << " using mode=" << BroadphaseModeName(mode) << "\n";
         return 0;
     }
-
     if (command == "relax-angular-bend")
     {
         if (argc < 4)
@@ -2170,8 +2073,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
-
     if (command == "relax-angular-xpbd")
     {
         if (argc < 4)
@@ -2193,7 +2094,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "collide-scalp-mesh")
     {
         if (argc < 4)
@@ -2221,7 +2121,6 @@ int main(int argc, char** argv)
                   << " maxPenetration=" << report.maxPenetration << "\n";
         return 0;
     }
-
     if (command == "collide-scalp-sdf")
     {
         if (argc < 4)
@@ -2251,7 +2150,6 @@ int main(int argc, char** argv)
                   << " maxPenetration=" << report.maxPenetration << "\n";
         return 0;
     }
-
     if (command == "export-scalp-sdf")
     {
         if (argc < 4)
@@ -2267,7 +2165,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "export-scalp-sdf-collider")
     {
         if (argc < 4)
@@ -2287,7 +2184,6 @@ int main(int argc, char** argv)
                   << " values=" << grid.values.size() << "\n";
         return 0;
     }
-
     if (command == "palette-region")
     {
         if (argc < 5)
@@ -2309,7 +2205,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "export-usda")
     {
         if (argc < 4)
@@ -2328,7 +2223,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "export-cards")
     {
         if (argc < 4)
@@ -2346,7 +2240,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "build-lods")
     {
         if (argc < 4)
@@ -2362,7 +2255,9 @@ int main(int argc, char** argv)
             std::cerr << "Failed to create output directory: " << outDir.string() << "\n";
             return 7;
         }
-        const auto lods = BuildDefaultHairLodChain(asset);
+        HairLodBuildSettings lodSettings = {};
+        lodSettings.levelCount = ArgToUInt(argc, argv, 4, 4u);
+        const auto lods = BuildAdaptiveHairLodChain(asset, lodSettings);
         for (size_t i = 0u; i < lods.size(); ++i)
         {
             const std::filesystem::path outPath = outDir / ("lod" + std::to_string(i) + ".hairbin");
@@ -2373,7 +2268,37 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
+    if (command == "export-dcc-json")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset exportAsset = asset;
+        const bool repairSkinning = ArgToInt(argc, argv, 6, 1) != 0;
+        if (repairSkinning)
+        {
+            RootBindingQualityReport report = {};
+            RepairHairAssetSkinning(exportAsset, false, &report);
+        }
+        DccInteropExportSettings settings = {};
+        std::string flavorText = (argc > 4) ? argv[4] : std::string("blender");
+        if (!ParseDccInteropFlavor(flavorText, settings.flavor))
+        {
+            std::cerr << "Unknown DCC flavor: " << flavorText << "\n";
+            return 8;
+        }
+        settings.includeLods = ArgToInt(argc, argv, 5, 1) != 0;
+        settings.includeSkinning = true;
+        settings.includeRootBindings = true;
+        settings.lodCount = 4u;
+        if (!SaveHairAssetToDccInteropJson(argv[3], exportAsset, settings, error))
+        {
+            return PrintLoadFailure("DCC export failed", error, 8);
+        }
+        return 0;
+    }
     if (command == "guidecache-rest")
     {
         if (argc < 4)
@@ -2388,7 +2313,6 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Guide cache init failed", error, 11);
         }
-
         std::vector<Vec3> guidePoints;
         guidePoints.reserve(static_cast<size_t>(asset.guideStrandCount) * asset.particlesPerStrand);
         for (uint32_t guide = 0u; guide < asset.guideStrandCount; ++guide)
@@ -2399,7 +2323,6 @@ int main(int argc, char** argv)
                 guidePoints.push_back(asset.restPoints[strand.pointOffset + std::min<uint32_t>(i, strand.pointCount - 1u)]);
             }
         }
-
         for (uint32_t frame = 0u; frame < frameCount; ++frame)
         {
             if (!AppendGuideCacheGuidePoints(cache, guidePoints, error))
@@ -2413,7 +2336,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "haircache-rest")
     {
         if (argc < 4)
@@ -2441,7 +2363,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "export-scalp-obj")
     {
         if (argc < 4)
@@ -2455,7 +2376,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "export-bone-template")
     {
         if (argc < 4)
@@ -2470,7 +2390,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "export-bone-anim-template")
     {
         if (argc < 4)
@@ -2487,7 +2406,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "build-scalp-anim-cache")
     {
         if (argc < 5)
@@ -2522,7 +2440,6 @@ int main(int argc, char** argv)
         std::cout << BuildHairCacheSummary(cache) << "\n";
         return 0;
     }
-
     if (command == "apply-scalp-pose")
     {
         if (argc < 5)
@@ -2559,7 +2476,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "import-scalp-obj")
     {
         if (argc < 5)
@@ -2579,7 +2495,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-
     if (command == "rebind-roots")
     {
         if (argc < 5)
@@ -2606,7 +2521,6 @@ int main(int argc, char** argv)
                   << " invalidRoots=" << report.invalidStrandCount << "\n";
         return 0;
     }
-
     if (command == "scaffold-project")
     {
         if (argc < 4)
@@ -2625,7 +2539,6 @@ int main(int argc, char** argv)
         std::cout << "scaffold=" << std::filesystem::absolute(argv[3]).string() << "\n";
         return 0;
     }
-
     PrintUsage();
     return 1;
 }

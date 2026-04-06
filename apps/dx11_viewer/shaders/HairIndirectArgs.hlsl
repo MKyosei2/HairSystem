@@ -41,13 +41,38 @@ cbuffer SimConstants : register(b0)
     float3 GridOrigin;
     uint EnableGridSelfCollision;
 
-    uint FollowerUpdateStride;
-    uint FollowerUpdatePhase;
-    uint SimulationLodLevel;
-    uint _SimPadding0;
+    float LooseConstraintStiffness;
+    float LooseConstraintMaxDistance;
+    float SupportCollisionRadius;
+    float SupportCollisionStiffness;
+
+    float TangentialFriction;
+    float LateralFriction;
+    float FreezeBackThreshold;
+    float FreezeBlend;
+
+    uint BroadphaseMode;
+    uint BroadphaseHashBucketCount;
+    uint BroadphasePadding0;
+    uint BroadphasePadding1;
+
+    uint SortedPaddedEntryCount;
+    uint EnableRuntimeAngularBend;
+    uint RuntimePadding0;
+    uint RuntimePadding1;
+
+    float AngularBendRadians;
+    float AngularBendCompliance;
+    float AngularBendStiffness;
+    float AngularBendDamping;
 
     float SphereData[16];
     float CapsuleData[32];
+
+    uint FollowerUpdateStride;
+    uint FollowerUpdatePhase;
+    uint UseCompactedFollowerDispatch;
+    uint CompactedFollowerCount;
 };
 
 cbuffer RenderConstants : register(b0)
@@ -66,15 +91,63 @@ cbuffer RenderConstants : register(b0)
     uint _RenderPadding1;
 };
 
+
+StructuredBuffer<uint> FollowerTierAssignments : register(t0);
+StructuredBuffer<uint> CompactionCountersIn : register(t1);
+RWStructuredBuffer<uint> CompactedFollowerIndices : register(u0);
+RWStructuredBuffer<uint> CompactionCounters : register(u1);
 RWByteAddressBuffer IndirectArgs : register(u6);
+
+static const uint SIM_TIER_FULL = 0u;
+static const uint SIM_TIER_REDUCED = 1u;
+static const uint SIM_TIER_FROZEN = 2u;
+static const uint SIM_TIER_CACHED = 3u;
+
+[numthreads(64,1,1)]
+void CompactFollowerDispatchCS(uint3 tid : SV_DispatchThreadID)
+{
+    uint followerIndex = tid.x;
+    if (followerIndex >= FollowerStrandCount)
+    {
+        return;
+    }
+
+    uint tier = FollowerTierAssignments[followerIndex];
+    bool active = false;
+    if (tier == SIM_TIER_FULL)
+    {
+        active = true;
+    }
+    else if (tier == SIM_TIER_REDUCED)
+    {
+        uint stride = max(FollowerUpdateStride, 2u);
+        active = ((followerIndex + FollowerUpdatePhase) % stride) == 0u;
+    }
+    else if (tier == SIM_TIER_CACHED)
+    {
+        uint stride = max(FollowerUpdateStride, 4u);
+        active = ((followerIndex + FollowerUpdatePhase) % stride) == 0u;
+    }
+
+    if (!active)
+    {
+        return;
+    }
+
+    uint outIndex = 0u;
+    InterlockedAdd(CompactionCounters[0], 1u, outIndex);
+    CompactedFollowerIndices[outIndex] = followerIndex;
+}
+
 
 [numthreads(1,1,1)]
 void BuildFollowDispatchArgsCS(uint3 tid : SV_DispatchThreadID)
 {
-    uint updateStride = max(FollowerUpdateStride, 1u);
-    uint activeFollowerCount = (FollowerStrandCount <= FollowerUpdatePhase)
-        ? 0u
-        : ((FollowerStrandCount - 1u - FollowerUpdatePhase) / updateStride + 1u);
+    uint activeFollowerCount = UseCompactedFollowerDispatch != 0u
+        ? CompactionCountersIn[0]
+        : ((FollowerStrandCount <= FollowerUpdatePhase)
+            ? 0u
+            : ((FollowerStrandCount - 1u - FollowerUpdatePhase) / max(FollowerUpdateStride, 1u) + 1u));
     uint groupsX = (activeFollowerCount + 63u) / 64u;
     IndirectArgs.Store(0u, groupsX);
     IndirectArgs.Store(4u, 1u);

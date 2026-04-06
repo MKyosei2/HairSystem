@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <numeric>
+#include <random>
 #include <sstream>
 
 #include "hairgpu/AssetIO.h"
@@ -1530,13 +1532,41 @@ namespace hairgpu
                 return 0.0f;
             }
             const uint32_t featureCount = std::min<uint32_t>(predictor.featureCount, static_cast<uint32_t>(features.size()));
-            float sum = predictor.bias;
+            std::array<float, 9u> normalized = {};
             for (uint32_t featureIndex = 0u; featureIndex < featureCount; ++featureIndex)
             {
                 const float mean = (featureIndex < predictor.featureMean.size()) ? predictor.featureMean[featureIndex] : 0.0f;
                 const float stdDev = (featureIndex < predictor.featureStd.size()) ? std::max(predictor.featureStd[featureIndex], 1.0e-4f) : 1.0f;
+                normalized[featureIndex] = ((features[featureIndex] - mean) / stdDev);
+            }
+            if (predictor.hiddenWidth > 0u &&
+                predictor.hiddenWeights.size() == static_cast<size_t>(predictor.hiddenWidth) * predictor.featureCount &&
+                predictor.hiddenBias.size() == predictor.hiddenWidth &&
+                predictor.outputWeights.size() == predictor.hiddenWidth)
+            {
+                std::vector<float> hidden(predictor.hiddenWidth, 0.0f);
+                for (uint32_t h = 0u; h < predictor.hiddenWidth; ++h)
+                {
+                    float sum = predictor.hiddenBias[h];
+                    const size_t rowOffset = static_cast<size_t>(h) * predictor.featureCount;
+                    for (uint32_t i = 0u; i < featureCount; ++i)
+                    {
+                        sum += predictor.hiddenWeights[rowOffset + i] * normalized[i];
+                    }
+                    hidden[h] = std::tanh(sum);
+                }
+                float sum = predictor.outputBias;
+                for (uint32_t h = 0u; h < predictor.hiddenWidth; ++h)
+                {
+                    sum += predictor.outputWeights[h] * hidden[h];
+                }
+                return Clamp(SafeSigmoid(sum), 0.0f, 1.0f);
+            }
+            float sum = predictor.bias;
+            for (uint32_t featureIndex = 0u; featureIndex < featureCount; ++featureIndex)
+            {
                 const float weight = (featureIndex < predictor.weights.size()) ? predictor.weights[featureIndex] : 0.0f;
-                sum += ((features[featureIndex] - mean) / stdDev) * weight;
+                sum += normalized[featureIndex] * weight;
             }
             return Clamp(SafeSigmoid(sum), 0.0f, 1.0f);
         }
@@ -1720,10 +1750,14 @@ namespace hairgpu
             outPredictor = {};
             outPredictor.settings = settings;
             outPredictor.featureCount = 9u;
+            outPredictor.hiddenWidth = std::max<uint32_t>(4u, settings.hiddenWidth);
             outPredictor.featureMean.assign(outPredictor.featureCount, 0.0f);
             outPredictor.featureStd.assign(outPredictor.featureCount, 1.0f);
             outPredictor.weights.assign(outPredictor.featureCount, 0.0f);
-            outPredictor.bias = 0.0f;
+            outPredictor.hiddenWeights.assign(static_cast<size_t>(outPredictor.hiddenWidth) * outPredictor.featureCount, 0.0f);
+            outPredictor.hiddenBias.assign(outPredictor.hiddenWidth, 0.0f);
+            outPredictor.outputWeights.assign(outPredictor.hiddenWidth, 0.0f);
+            outPredictor.outputBias = 0.0f;
             if (featureRows.empty() || targets.empty())
             {
                 if (outEvaluation) *outEvaluation = {};
@@ -1747,47 +1781,46 @@ namespace hairgpu
                 outPredictor.featureStd[featureIndex] = static_cast<float>(std::sqrt(std::max(variance / static_cast<double>(sampleCount), 1.0e-8)));
             }
 
-            const float lr = std::max(settings.learningRate, 1.0e-5f);
+            std::mt19937 rng(4242u);
+            std::uniform_real_distribution<float> init(-0.08f, 0.08f);
+            for (float& value : outPredictor.hiddenWeights) value = init(rng);
+            for (float& value : outPredictor.outputWeights) value = init(rng);
+
             const float wd = std::max(settings.weightDecay, 0.0f);
-            for (uint32_t epoch = 0u; epoch < std::max<uint32_t>(1u, settings.epochs); ++epoch)
+            std::array<float, 9u> normalized = {};
+            std::vector<float> hidden(outPredictor.hiddenWidth, 0.0f);
+            std::vector<float> gradHidden(outPredictor.hiddenWidth, 0.0f);
+            std::vector<uint32_t> trainingOrder;
+            std::vector<uint32_t> validationOrder;
+            const uint32_t validationStride = std::max<uint32_t>(2u, settings.validationStride);
+            for (uint32_t sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
             {
-                std::vector<float> gradient(outPredictor.featureCount, 0.0f);
-                float biasGradient = 0.0f;
-                for (uint32_t sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
+                if ((sampleIndex % validationStride) == 0u)
                 {
-                    float sum = outPredictor.bias;
-                    std::array<float, 9u> normalized = {};
-                    for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
-                    {
-                        normalized[featureIndex] = (featureRows[sampleIndex][featureIndex] - outPredictor.featureMean[featureIndex]) /
-                                                   std::max(outPredictor.featureStd[featureIndex], 1.0e-4f);
-                        sum += normalized[featureIndex] * outPredictor.weights[featureIndex];
-                    }
-                    const float prediction = SafeSigmoid(sum);
-                    const float error = prediction - Clamp(targets[sampleIndex], 0.0f, 1.0f);
-                    biasGradient += error;
-                    for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
-                    {
-                        gradient[featureIndex] += error * normalized[featureIndex];
-                    }
+                    validationOrder.push_back(sampleIndex);
                 }
-                const float invCount = 1.0f / static_cast<float>(sampleCount);
-                outPredictor.bias -= biasGradient * invCount * lr;
-                for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
+                else
                 {
-                    gradient[featureIndex] = gradient[featureIndex] * invCount + outPredictor.weights[featureIndex] * wd;
-                    outPredictor.weights[featureIndex] -= gradient[featureIndex] * lr;
+                    trainingOrder.push_back(sampleIndex);
                 }
             }
-
-            if (outEvaluation)
+            if (trainingOrder.empty())
             {
-                *outEvaluation = {};
-                outEvaluation->sampleCount = sampleCount;
+                trainingOrder = validationOrder;
+                validationOrder.clear();
+            }
+            auto evaluatePredictor = [&](const std::vector<uint32_t>& evalOrder, ActiveSetPredictorEvaluation& outEval)
+            {
+                outEval = {};
+                outEval.sampleCount = static_cast<uint32_t>(evalOrder.size());
+                if (evalOrder.empty())
+                {
+                    return;
+                }
                 double sq = 0.0;
                 uint32_t correct = 0u;
                 uint32_t positives = 0u;
-                for (uint32_t sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
+                for (uint32_t sampleIndex : evalOrder)
                 {
                     const float prediction = PredictActiveSetRisk(outPredictor, featureRows[sampleIndex]);
                     const float target = Clamp(targets[sampleIndex], 0.0f, 1.0f);
@@ -1802,9 +1835,87 @@ namespace hairgpu
                         ++positives;
                     }
                 }
-                outEvaluation->rmsScoreError = static_cast<float>(std::sqrt(sq / static_cast<double>(sampleCount)));
-                outEvaluation->classificationAccuracy = static_cast<float>(correct) / static_cast<float>(std::max<uint32_t>(1u, sampleCount));
-                outEvaluation->positiveRate = static_cast<float>(positives) / static_cast<float>(std::max<uint32_t>(1u, sampleCount));
+                outEval.rmsScoreError = static_cast<float>(std::sqrt(sq / static_cast<double>(std::max<size_t>(1u, evalOrder.size()))));
+                outEval.classificationAccuracy = static_cast<float>(correct) / static_cast<float>(std::max<size_t>(1u, evalOrder.size()));
+                outEval.positiveRate = static_cast<float>(positives) / static_cast<float>(std::max<size_t>(1u, evalOrder.size()));
+            };
+
+            float lr = std::max(settings.learningRate, settings.minLearningRate);
+            float bestValidationRms = std::numeric_limits<float>::max();
+            uint32_t epochsWithoutImprovement = 0u;
+            ActiveSetPredictor bestPredictor = outPredictor;
+            for (uint32_t epoch = 0u; epoch < std::max<uint32_t>(1u, settings.epochs); ++epoch)
+            {
+                std::shuffle(trainingOrder.begin(), trainingOrder.end(), rng);
+                lr = std::max(settings.minLearningRate, lr * ((epoch == 0u) ? 1.0f : settings.learningRateDecay));
+                for (uint32_t sampleIndex : trainingOrder)
+                {
+                    for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
+                    {
+                        normalized[featureIndex] = (featureRows[sampleIndex][featureIndex] - outPredictor.featureMean[featureIndex]) /
+                                                   std::max(outPredictor.featureStd[featureIndex], 1.0e-4f);
+                    }
+                    for (uint32_t h = 0u; h < outPredictor.hiddenWidth; ++h)
+                    {
+                        float sum = outPredictor.hiddenBias[h];
+                        const size_t rowOffset = static_cast<size_t>(h) * outPredictor.featureCount;
+                        for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
+                        {
+                            sum += outPredictor.hiddenWeights[rowOffset + featureIndex] * normalized[featureIndex];
+                        }
+                        hidden[h] = std::tanh(sum);
+                    }
+                    float logit = outPredictor.outputBias;
+                    for (uint32_t h = 0u; h < outPredictor.hiddenWidth; ++h)
+                    {
+                        logit += outPredictor.outputWeights[h] * hidden[h];
+                    }
+                    const float prediction = SafeSigmoid(logit);
+                    const float target = Clamp(targets[sampleIndex], 0.0f, 1.0f);
+                    const float classWeight = (target >= 0.5f) ? std::max(settings.positiveClassWeight, 1.0f) : 1.0f;
+                    const float error = Clamp((prediction - target) * classWeight,
+                                              -settings.gradientClip,
+                                              settings.gradientClip);
+                    outPredictor.outputBias -= lr * error;
+                    for (uint32_t h = 0u; h < outPredictor.hiddenWidth; ++h)
+                    {
+                        gradHidden[h] = Clamp(error * outPredictor.outputWeights[h] * (1.0f - hidden[h] * hidden[h]),
+                                              -settings.gradientClip,
+                                              settings.gradientClip);
+                        outPredictor.outputWeights[h] -= lr * (error * hidden[h] + wd * outPredictor.outputWeights[h]);
+                    }
+                    for (uint32_t h = 0u; h < outPredictor.hiddenWidth; ++h)
+                    {
+                        const size_t rowOffset = static_cast<size_t>(h) * outPredictor.featureCount;
+                        outPredictor.hiddenBias[h] -= lr * gradHidden[h];
+                        for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
+                        {
+                            outPredictor.hiddenWeights[rowOffset + featureIndex] -= lr * (gradHidden[h] * normalized[featureIndex] + wd * outPredictor.hiddenWeights[rowOffset + featureIndex]);
+                        }
+                    }
+                }
+                ActiveSetPredictorEvaluation validationEval = {};
+                evaluatePredictor(validationOrder.empty() ? trainingOrder : validationOrder, validationEval);
+                if (validationEval.sampleCount > 0u && validationEval.rmsScoreError < bestValidationRms - 1.0e-6f)
+                {
+                    bestValidationRms = validationEval.rmsScoreError;
+                    bestPredictor = outPredictor;
+                    epochsWithoutImprovement = 0u;
+                }
+                else
+                {
+                    ++epochsWithoutImprovement;
+                }
+                if (!validationOrder.empty() && epochsWithoutImprovement >= std::max<uint32_t>(3u, settings.earlyStoppingPatience))
+                {
+                    break;
+                }
+            }
+            outPredictor = bestPredictor;
+
+            if (outEvaluation)
+            {
+                evaluatePredictor(validationOrder.empty() ? trainingOrder : validationOrder, *outEvaluation);
             }
         }
 
@@ -2109,10 +2220,19 @@ namespace hairgpu
 
     [[nodiscard]] bool IsActiveSetPredictorReady(const ActiveSetPredictor& predictor)
     {
-        return predictor.featureCount > 0u &&
-               predictor.featureMean.size() >= predictor.featureCount &&
-               predictor.featureStd.size() >= predictor.featureCount &&
-               predictor.weights.size() >= predictor.featureCount;
+        if (predictor.featureCount == 0u ||
+            predictor.featureMean.size() < predictor.featureCount ||
+            predictor.featureStd.size() < predictor.featureCount)
+        {
+            return false;
+        }
+        if (predictor.hiddenWidth > 0u)
+        {
+            return predictor.hiddenWeights.size() == static_cast<size_t>(predictor.hiddenWidth) * predictor.featureCount &&
+                   predictor.hiddenBias.size() == predictor.hiddenWidth &&
+                   predictor.outputWeights.size() == predictor.hiddenWidth;
+        }
+        return predictor.weights.size() >= predictor.featureCount;
     }
 
     bool SaveActiveSetPredictorToFile(const std::filesystem::path& filePath,
@@ -2126,13 +2246,21 @@ namespace hairgpu
             return false;
         }
         const uint32_t magic = 0x31505341u; // ASP1
-        const uint32_t version = 1u;
+        const uint32_t version = 3u;
         out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
         out.write(reinterpret_cast<const char*>(&version), sizeof(version));
         out.write(reinterpret_cast<const char*>(&predictor.featureCount), sizeof(predictor.featureCount));
+        out.write(reinterpret_cast<const char*>(&predictor.hiddenWidth), sizeof(predictor.hiddenWidth));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.hiddenWidth), sizeof(predictor.settings.hiddenWidth));
         out.write(reinterpret_cast<const char*>(&predictor.settings.epochs), sizeof(predictor.settings.epochs));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.validationStride), sizeof(predictor.settings.validationStride));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.earlyStoppingPatience), sizeof(predictor.settings.earlyStoppingPatience));
         out.write(reinterpret_cast<const char*>(&predictor.settings.learningRate), sizeof(predictor.settings.learningRate));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.learningRateDecay), sizeof(predictor.settings.learningRateDecay));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.minLearningRate), sizeof(predictor.settings.minLearningRate));
         out.write(reinterpret_cast<const char*>(&predictor.settings.weightDecay), sizeof(predictor.settings.weightDecay));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.gradientClip), sizeof(predictor.settings.gradientClip));
+        out.write(reinterpret_cast<const char*>(&predictor.settings.positiveClassWeight), sizeof(predictor.settings.positiveClassWeight));
         auto writeVector = [&](const std::vector<float>& values)
         {
             const uint32_t count = static_cast<uint32_t>(values.size());
@@ -2146,6 +2274,10 @@ namespace hairgpu
         writeVector(predictor.featureStd);
         writeVector(predictor.weights);
         out.write(reinterpret_cast<const char*>(&predictor.bias), sizeof(predictor.bias));
+        writeVector(predictor.hiddenWeights);
+        writeVector(predictor.hiddenBias);
+        writeVector(predictor.outputWeights);
+        out.write(reinterpret_cast<const char*>(&predictor.outputBias), sizeof(predictor.outputBias));
         if (!out)
         {
             outError = "Failed to serialize active-set predictor.";
@@ -2170,15 +2302,38 @@ namespace hairgpu
         uint32_t version = 0u;
         in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
         in.read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (magic != 0x31505341u || version != 1u)
+        if (magic != 0x31505341u || (version != 1u && version != 2u && version != 3u))
         {
             outError = "Active-set predictor file has an unsupported version.";
             return false;
         }
         in.read(reinterpret_cast<char*>(&outPredictor.featureCount), sizeof(outPredictor.featureCount));
+        if (version >= 2u)
+        {
+            in.read(reinterpret_cast<char*>(&outPredictor.hiddenWidth), sizeof(outPredictor.hiddenWidth));
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.hiddenWidth), sizeof(outPredictor.settings.hiddenWidth));
+        }
         in.read(reinterpret_cast<char*>(&outPredictor.settings.epochs), sizeof(outPredictor.settings.epochs));
+        if (version >= 3u)
+        {
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.validationStride), sizeof(outPredictor.settings.validationStride));
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.earlyStoppingPatience), sizeof(outPredictor.settings.earlyStoppingPatience));
+        }
         in.read(reinterpret_cast<char*>(&outPredictor.settings.learningRate), sizeof(outPredictor.settings.learningRate));
+        if (version >= 3u)
+        {
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.learningRateDecay), sizeof(outPredictor.settings.learningRateDecay));
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.minLearningRate), sizeof(outPredictor.settings.minLearningRate));
+        }
         in.read(reinterpret_cast<char*>(&outPredictor.settings.weightDecay), sizeof(outPredictor.settings.weightDecay));
+        if (version >= 2u)
+        {
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.gradientClip), sizeof(outPredictor.settings.gradientClip));
+        }
+        if (version >= 3u)
+        {
+            in.read(reinterpret_cast<char*>(&outPredictor.settings.positiveClassWeight), sizeof(outPredictor.settings.positiveClassWeight));
+        }
         auto readVector = [&](std::vector<float>& values)
         {
             uint32_t count = 0u;
@@ -2193,10 +2348,21 @@ namespace hairgpu
         readVector(outPredictor.featureStd);
         readVector(outPredictor.weights);
         in.read(reinterpret_cast<char*>(&outPredictor.bias), sizeof(outPredictor.bias));
+        if (version >= 2u)
+        {
+            readVector(outPredictor.hiddenWeights);
+            readVector(outPredictor.hiddenBias);
+            readVector(outPredictor.outputWeights);
+            in.read(reinterpret_cast<char*>(&outPredictor.outputBias), sizeof(outPredictor.outputBias));
+        }
         if (!in)
         {
             outError = "Failed to deserialize active-set predictor.";
             return false;
+        }
+        if (outPredictor.hiddenWidth == 0u)
+        {
+            outPredictor.hiddenWidth = outPredictor.settings.hiddenWidth;
         }
         outError.clear();
         return true;
@@ -2207,7 +2373,9 @@ namespace hairgpu
     {
         std::ostringstream ss;
         ss << std::fixed << std::setprecision(5);
-        ss << "activeSetPredictorFeatures=" << predictor.featureCount;
+        ss << "activeSetPredictorFeatures=" << predictor.featureCount << " hidden=" << predictor.hiddenWidth
+           << " valStride=" << predictor.settings.validationStride
+           << " patience=" << predictor.settings.earlyStoppingPatience;
         if (evaluation)
         {
             ss << " predictorRms=" << evaluation->rmsScoreError
@@ -2242,10 +2410,14 @@ namespace hairgpu
         }
         meta << "key,value\n";
         meta << "featureCount," << predictor.featureCount << "\n";
+        meta << "hiddenWidth," << predictor.hiddenWidth << "\n";
+        meta << "settings.hiddenWidth," << predictor.settings.hiddenWidth << "\n";
         meta << "settings.epochs," << predictor.settings.epochs << "\n";
         meta << "settings.learningRate," << predictor.settings.learningRate << "\n";
         meta << "settings.weightDecay," << predictor.settings.weightDecay << "\n";
+        meta << "settings.gradientClip," << predictor.settings.gradientClip << "\n";
         meta << "bias," << predictor.bias << "\n";
+        meta << "outputBias," << predictor.outputBias << "\n";
 
         std::ofstream weights(directoryPath / "weights.csv");
         if (!weights)
@@ -2263,12 +2435,41 @@ namespace hairgpu
             const float weight = (i < predictor.weights.size()) ? predictor.weights[i] : 0.0f;
             weights << i << ',' << mean << ',' << stdDev << ',' << weight << "\n";
         }
+        std::ofstream hiddenWeights(directoryPath / "hidden_weights.csv");
+        if (!hiddenWeights)
+        {
+            outError = "Failed to write predictor hidden weights CSV.";
+            return false;
+        }
+        hiddenWeights.setf(std::ios::fixed);
+        hiddenWeights.precision(9);
+        for (uint32_t h = 0u; h < predictor.hiddenWidth; ++h)
+        {
+            hiddenWeights << h;
+            const size_t rowOffset = static_cast<size_t>(h) * predictor.featureCount;
+            for (uint32_t i = 0u; i < predictor.featureCount; ++i)
+            {
+                hiddenWeights << ',' << predictor.hiddenWeights[rowOffset + i];
+            }
+            hiddenWeights << ',' << predictor.hiddenBias[h] << "\n";
+        }
+        std::ofstream outputWeights(directoryPath / "output_weights.csv");
+        if (!outputWeights)
+        {
+            outError = "Failed to write predictor output weights CSV.";
+            return false;
+        }
+        outputWeights << "hiddenIndex,weight\n";
+        for (uint32_t h = 0u; h < predictor.hiddenWidth; ++h)
+        {
+            outputWeights << h << ',' << predictor.outputWeights[h] << "\n";
+        }
 
         std::ofstream readme(directoryPath / "README.txt");
         if (readme)
         {
             readme << "Active-set predictor CSV interchange\n";
-            readme << "Edit weights.csv and metadata.csv, then re-import with active-set-predictor-import-csv.\n";
+            readme << "Edit weights.csv, hidden_weights.csv, output_weights.csv and metadata.csv, then re-import with active-set-predictor-import-csv.\n";
         }
         outError.clear();
         return true;
@@ -2335,10 +2536,19 @@ namespace hairgpu
             const std::string& key = tokens[0];
             const std::string& value = tokens[1];
             if (key == "featureCount") parseUInt(value, outPredictor.featureCount);
+            else if (key == "hiddenWidth") parseUInt(value, outPredictor.hiddenWidth);
+            else if (key == "settings.hiddenWidth") parseUInt(value, outPredictor.settings.hiddenWidth);
             else if (key == "settings.epochs") parseUInt(value, outPredictor.settings.epochs);
+            else if (key == "settings.validationStride") parseUInt(value, outPredictor.settings.validationStride);
+            else if (key == "settings.earlyStoppingPatience") parseUInt(value, outPredictor.settings.earlyStoppingPatience);
             else if (key == "settings.learningRate") parseFloat(value, outPredictor.settings.learningRate);
+            else if (key == "settings.learningRateDecay") parseFloat(value, outPredictor.settings.learningRateDecay);
+            else if (key == "settings.minLearningRate") parseFloat(value, outPredictor.settings.minLearningRate);
             else if (key == "settings.weightDecay") parseFloat(value, outPredictor.settings.weightDecay);
+            else if (key == "settings.gradientClip") parseFloat(value, outPredictor.settings.gradientClip);
+            else if (key == "settings.positiveClassWeight") parseFloat(value, outPredictor.settings.positiveClassWeight);
             else if (key == "bias") parseFloat(value, outPredictor.bias);
+            else if (key == "outputBias") parseFloat(value, outPredictor.outputBias);
         }
 
         std::ifstream weights(directoryPath / "weights.csv");
@@ -2381,6 +2591,62 @@ namespace hairgpu
         {
             outPredictor.featureCount = static_cast<uint32_t>(outPredictor.weights.size());
         }
+        if (outPredictor.hiddenWidth == 0u)
+        {
+            outPredictor.hiddenWidth = outPredictor.settings.hiddenWidth;
+        }
+        outPredictor.hiddenWeights.assign(static_cast<size_t>(outPredictor.hiddenWidth) * outPredictor.featureCount, 0.0f);
+        outPredictor.hiddenBias.assign(outPredictor.hiddenWidth, 0.0f);
+        outPredictor.outputWeights.assign(outPredictor.hiddenWidth, 0.0f);
+
+        std::ifstream hiddenIn(directoryPath / "hidden_weights.csv");
+        if (hiddenIn)
+        {
+            while (std::getline(hiddenIn, line))
+            {
+                line = trim(line);
+                if (line.empty()) continue;
+                const std::vector<std::string> tokens = splitCsv(line);
+                if (tokens.size() != outPredictor.featureCount + 2u)
+                {
+                    continue;
+                }
+                uint32_t row = 0u;
+                if (!parseUInt(tokens[0], row) || row >= outPredictor.hiddenWidth)
+                {
+                    continue;
+                }
+                const size_t rowOffset = static_cast<size_t>(row) * outPredictor.featureCount;
+                for (uint32_t i = 0u; i < outPredictor.featureCount; ++i)
+                {
+                    parseFloat(tokens[i + 1u], outPredictor.hiddenWeights[rowOffset + i]);
+                }
+                parseFloat(tokens.back(), outPredictor.hiddenBias[row]);
+            }
+        }
+
+        std::ifstream outputIn(directoryPath / "output_weights.csv");
+        if (outputIn)
+        {
+            std::getline(outputIn, line);
+            while (std::getline(outputIn, line))
+            {
+                line = trim(line);
+                if (line.empty()) continue;
+                const std::vector<std::string> tokens = splitCsv(line);
+                if (tokens.size() < 2u)
+                {
+                    continue;
+                }
+                uint32_t row = 0u;
+                if (!parseUInt(tokens[0], row) || row >= outPredictor.hiddenWidth)
+                {
+                    continue;
+                }
+                parseFloat(tokens[1], outPredictor.outputWeights[row]);
+            }
+        }
+
         if (!IsActiveSetPredictorReady(outPredictor))
         {
             outError = "Predictor CSV import is incomplete or inconsistent.";
@@ -2454,11 +2720,12 @@ namespace hairgpu
                                             priorTemporalInputFrames,
                                             priorTemporalTargetFrames);
         TemporalGuideNetworkSettings priorTemporalSettings = {};
-        priorTemporalSettings.hiddenWidth = std::max<uint32_t>(16u, settings.priorGuideCount * 2u);
-        priorTemporalSettings.epochs = std::max<uint32_t>(80u, 40u + settings.validationStride * 8u);
-        priorTemporalSettings.learningRate = 2.0e-3f;
+        priorTemporalSettings.hiddenWidth = std::max<uint32_t>(24u, settings.priorGuideCount * 2u);
+        priorTemporalSettings.hiddenWidth2 = std::max<uint32_t>(12u, settings.priorGuideCount);
+        priorTemporalSettings.epochs = std::max<uint32_t>(120u, 56u + settings.validationStride * 10u);
+        priorTemporalSettings.learningRate = 1.8e-3f;
         priorTemporalSettings.weightDecay = std::max(5.0e-6f, settings.regularization * 0.2f);
-        priorTemporalSettings.gradientClip = 0.30f;
+        priorTemporalSettings.gradientClip = 0.28f;
         priorTemporalSettings.lockRootPoints = true;
         std::vector<Vec3> restPriorGuidePoints;
         BuildRestGuideFramePointsForModel(outBundle.priorModel, restPriorGuidePoints);
@@ -2485,11 +2752,12 @@ namespace hairgpu
                                                residualTemporalInputFrames,
                                                residualTemporalTargetFrames);
         TemporalGuideNetworkSettings residualTemporalSettings = {};
-        residualTemporalSettings.hiddenWidth = std::max<uint32_t>(20u, settings.residualGuideCount * 2u);
-        residualTemporalSettings.epochs = std::max<uint32_t>(90u, 48u + settings.validationStride * 8u);
-        residualTemporalSettings.learningRate = 1.8e-3f;
+        residualTemporalSettings.hiddenWidth = std::max<uint32_t>(28u, settings.residualGuideCount * 2u);
+        residualTemporalSettings.hiddenWidth2 = std::max<uint32_t>(14u, settings.residualGuideCount);
+        residualTemporalSettings.epochs = std::max<uint32_t>(128u, 60u + settings.validationStride * 10u);
+        residualTemporalSettings.learningRate = 1.6e-3f;
         residualTemporalSettings.weightDecay = std::max(5.0e-6f, settings.regularization * 0.25f);
-        residualTemporalSettings.gradientClip = 0.35f;
+        residualTemporalSettings.gradientClip = 0.32f;
         residualTemporalSettings.lockRootPoints = true;
         std::vector<Vec3> restResidualGuidePoints;
         BuildRestGuideFramePointsForModel(outBundle.residualModel, restResidualGuidePoints);

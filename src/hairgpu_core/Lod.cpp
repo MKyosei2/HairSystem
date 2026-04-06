@@ -171,4 +171,59 @@ namespace hairgpu
         lods.push_back({ BuildReducedHairAsset(source, 0.25f, 0.55f), { "LOD2 Far", 0.25f, 0.55f, 3.6f } });
         return lods;
     }
+
+
+    std::vector<HairLodAsset> BuildAdaptiveHairLodChain(const HairAsset& source,
+                                                        const HairLodBuildSettings& settings)
+    {
+        if (source.strands.empty())
+        {
+            return {};
+        }
+
+        const uint32_t levelCount = std::max<uint32_t>(2u, settings.levelCount);
+        std::vector<HairLodAsset> lods;
+        lods.reserve(levelCount);
+        lods.push_back({ source, { "LOD0 Full", 1.0f, 1.0f, settings.nearSwitchDistance, 1.0f } });
+
+        auto addLevel = [&](uint32_t levelIndex, float strandFraction, float particleFraction, float switchDistance, float widthScale)
+        {
+            HairAsset asset = BuildReducedHairAsset(source, strandFraction, particleFraction);
+            for (StrandMaterial& material : asset.materials)
+            {
+                material.rootWidth *= widthScale;
+                material.tipWidth *= widthScale;
+            }
+            HairLodDescriptor descriptor = {};
+            descriptor.name = "LOD" + std::to_string(levelIndex);
+            descriptor.strandFraction = strandFraction;
+            descriptor.particleFraction = particleFraction;
+            descriptor.switchDistance = switchDistance;
+            descriptor.widthScale = widthScale;
+            lods.push_back({ std::move(asset), descriptor });
+        };
+
+        const float distances[4] = {
+            settings.nearSwitchDistance,
+            settings.midSwitchDistance,
+            settings.farSwitchDistance,
+            settings.extremeSwitchDistance,
+        };
+        for (uint32_t levelIndex = 1u; levelIndex < levelCount; ++levelIndex)
+        {
+            const float t = static_cast<float>(levelIndex) / static_cast<float>(std::max<uint32_t>(1u, levelCount - 1u));
+            float strandFraction = Lerp(0.62f, 0.08f, t);
+            float particleFraction = Lerp(0.82f, 0.32f, t);
+            if (settings.preserveAllGuidesUntilLastLevel && levelIndex + 1u < levelCount)
+            {
+                strandFraction = std::max(strandFraction, static_cast<float>(source.guideStrandCount) /
+                                                          std::max(1.0f, static_cast<float>(source.strands.size())));
+            }
+            const float widthScale = Lerp(1.0f, 1.55f, t);
+            const float switchDistance = distances[std::min<size_t>(levelIndex, 3u)];
+            addLevel(levelIndex, strandFraction, particleFraction, switchDistance, widthScale);
+        }
+        return lods;
+    }
+
 }

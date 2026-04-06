@@ -209,6 +209,11 @@ namespace hairgpu::viewer
 
             float sphereData[4 * 4] = {};
             float capsuleData[4 * 8] = {};
+
+            uint32_t followerUpdateStride = 1u;
+            uint32_t followerUpdatePhase = 0u;
+            uint32_t useCompactedFollowerDispatch = 1u;
+            uint32_t compactedFollowerCount = 0u;
         };
 
         struct alignas(16) BitonicConstants
@@ -462,6 +467,8 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildSortedRangesCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_selfCollisionCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactFollowerDispatchCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildFollowDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_scalpInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_hairMeshInputLayout;
@@ -471,6 +478,9 @@ namespace hairgpu::viewer
         StructuredBuffer m_restPositions;
         StructuredBuffer m_pointWidths;
         StructuredBuffer m_followBuffer;
+        StructuredBuffer m_followerTierAssignmentsBuffer;
+        StructuredBuffer m_compactedFollowerIndicesBuffer;
+        StructuredBuffer m_compactedFollowerCounterBuffer;
         StructuredBuffer m_scalpPositions;
         StructuredBuffer m_scalpTrianglesBuffer;
         StructuredBuffer m_rootBindingsBuffer;
@@ -492,6 +502,8 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_hairMeshVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_debugLineTemplateVertexBuffer;
         StructuredBuffer m_debugLineEntriesBuffer;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_followDispatchArgsBuffer;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_followDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpIndexBuffer;
         uint32_t m_scalpIndexCount = 0u;

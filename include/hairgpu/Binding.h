@@ -15,6 +15,8 @@ namespace hairgpu
     };
 
     bool GenerateRootBindingsFromScalp(HairAsset& asset, bool snapRootsToScalp, RootBindingQualityReport* outReport = nullptr);
+    void NormalizeScalpSkinWeights(ScalpMesh& scalpMesh, bool fillMissingWeights = true);
+    bool RepairHairAssetSkinning(HairAsset& asset, bool snapRootsToScalp, RootBindingQualityReport* outReport = nullptr);
     std::vector<Vec3> ComputeSkinnedScalpPositions(const ScalpMesh& scalpMesh, const std::vector<Mat4>& boneMatrices);
     void RebuildRootRestPositionsFromScalpPositions(HairAsset& asset, const std::vector<Vec3>& scalpPositions, bool translateEntireStrands);
 }

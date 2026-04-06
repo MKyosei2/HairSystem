@@ -16,7 +16,7 @@ namespace hairgpu
     namespace
     {
         constexpr std::array<char, 8> kTemporalMagic = { 'H', 'T', 'E', 'M', 'P', 'N', 'E', '1' };
-        constexpr uint32_t kTemporalVersion = 1u;
+        constexpr uint32_t kTemporalVersion = 3u;
         constexpr uint32_t kFeatureCount = 13u;
         constexpr uint32_t kTargetCount = 3u;
 
@@ -197,24 +197,56 @@ namespace hairgpu
                      std::array<float, kTargetCount>& output)
         {
             hidden.assign(model.hiddenWidth, 0.0f);
+            std::vector<float> hidden2(model.hiddenWidth2, 0.0f);
+            std::array<float, kFeatureCount> normalizedFeatures = {};
+            for (uint32_t i = 0u; i < model.featureCount; ++i)
+            {
+                normalizedFeatures[i] = NormalizeValue(features[i], model.inputMean[i], model.inputStd[i]);
+            }
             for (uint32_t h = 0u; h < model.hiddenWidth; ++h)
             {
                 float sum = model.hiddenBias[h];
                 const size_t rowOffset = static_cast<size_t>(h) * model.featureCount;
                 for (uint32_t i = 0u; i < model.featureCount; ++i)
                 {
-                    const float normalized = NormalizeValue(features[i], model.inputMean[i], model.inputStd[i]);
-                    sum += model.hiddenWeights[rowOffset + i] * normalized;
+                    sum += model.hiddenWeights[rowOffset + i] * normalizedFeatures[i];
                 }
                 hidden[h] = std::tanh(sum);
+            }
+            const bool useSecondLayer = model.hiddenWidth2 > 0u &&
+                                        model.hiddenWeights2.size() == static_cast<size_t>(model.hiddenWidth2) * model.hiddenWidth &&
+                                        model.hiddenBias2.size() == model.hiddenWidth2;
+            if (useSecondLayer)
+            {
+                for (uint32_t h = 0u; h < model.hiddenWidth2; ++h)
+                {
+                    float sum = model.hiddenBias2[h];
+                    const size_t rowOffset = static_cast<size_t>(h) * model.hiddenWidth;
+                    for (uint32_t i = 0u; i < model.hiddenWidth; ++i)
+                    {
+                        sum += model.hiddenWeights2[rowOffset + i] * hidden[i];
+                    }
+                    hidden2[h] = std::tanh(sum);
+                }
             }
             for (uint32_t o = 0u; o < kTargetCount; ++o)
             {
                 float sum = model.outputBias[o];
-                const size_t rowOffset = static_cast<size_t>(o) * model.hiddenWidth;
-                for (uint32_t h = 0u; h < model.hiddenWidth; ++h)
+                if (useSecondLayer)
                 {
-                    sum += model.outputWeights[rowOffset + h] * hidden[h];
+                    const size_t rowOffset = static_cast<size_t>(o) * model.hiddenWidth2;
+                    for (uint32_t h = 0u; h < model.hiddenWidth2; ++h)
+                    {
+                        sum += model.outputWeights[rowOffset + h] * hidden2[h];
+                    }
+                }
+                else
+                {
+                    const size_t rowOffset = static_cast<size_t>(o) * model.hiddenWidth;
+                    for (uint32_t h = 0u; h < model.hiddenWidth; ++h)
+                    {
+                        sum += model.outputWeights[rowOffset + h] * hidden[h];
+                    }
                 }
                 output[o] = sum;
             }
@@ -276,14 +308,25 @@ namespace hairgpu
 
     bool IsTemporalGuideNetworkReady(const TemporalGuideNetwork& model)
     {
-        return model.featureCount == kFeatureCount &&
-               model.hiddenWidth > 0u &&
-               !model.hiddenWeights.empty() &&
-               !model.outputWeights.empty() &&
-               model.inputMean.size() == kFeatureCount &&
-               model.inputStd.size() == kFeatureCount &&
-               model.targetMean.size() == kTargetCount &&
-               model.targetStd.size() == kTargetCount;
+        const bool hasBase = model.featureCount == kFeatureCount &&
+                             model.hiddenWidth > 0u &&
+                             !model.hiddenWeights.empty() &&
+                             !model.outputWeights.empty() &&
+                             model.inputMean.size() == kFeatureCount &&
+                             model.inputStd.size() == kFeatureCount &&
+                             model.targetMean.size() == kTargetCount &&
+                             model.targetStd.size() == kTargetCount;
+        if (!hasBase)
+        {
+            return false;
+        }
+        if (model.hiddenWidth2 == 0u)
+        {
+            return model.outputWeights.size() == static_cast<size_t>(kTargetCount) * model.hiddenWidth;
+        }
+        return model.hiddenWeights2.size() == static_cast<size_t>(model.hiddenWidth2) * model.hiddenWidth &&
+               model.hiddenBias2.size() == model.hiddenWidth2 &&
+               model.outputWeights.size() == static_cast<size_t>(kTargetCount) * model.hiddenWidth2;
     }
 
     bool SaveTemporalGuideNetworkToFile(const std::filesystem::path& filePath,
@@ -304,14 +347,20 @@ namespace hairgpu
         out.write(kTemporalMagic.data(), static_cast<std::streamsize>(kTemporalMagic.size()));
         if (!WriteValue(out, kTemporalVersion) ||
             !WriteValue(out, model.settings.hiddenWidth) ||
+            !WriteValue(out, model.settings.hiddenWidth2) ||
             !WriteValue(out, model.settings.epochs) ||
+            !WriteValue(out, model.settings.validationStride) ||
+            !WriteValue(out, model.settings.earlyStoppingPatience) ||
             !WriteValue(out, model.settings.learningRate) ||
+            !WriteValue(out, model.settings.learningRateDecay) ||
+            !WriteValue(out, model.settings.minLearningRate) ||
             !WriteValue(out, model.settings.weightDecay) ||
             !WriteValue(out, model.settings.gradientClip) ||
             !WriteValue(out, model.guideStrandCount) ||
             !WriteValue(out, model.particlesPerStrand) ||
             !WriteValue(out, model.featureCount) ||
             !WriteValue(out, model.hiddenWidth) ||
+            !WriteValue(out, model.hiddenWidth2) ||
             !WriteValue(out, model.settings.lockRootPoints) ||
             !WriteVector(out, model.inputMean) ||
             !WriteVector(out, model.inputStd) ||
@@ -319,6 +368,8 @@ namespace hairgpu
             !WriteVector(out, model.targetStd) ||
             !WriteVector(out, model.hiddenWeights) ||
             !WriteVector(out, model.hiddenBias) ||
+            !WriteVector(out, model.hiddenWeights2) ||
+            !WriteVector(out, model.hiddenBias2) ||
             !WriteVector(out, model.outputWeights) ||
             !WriteVector(out, model.outputBias))
         {
@@ -348,28 +399,69 @@ namespace hairgpu
             return false;
         }
         uint32_t version = 0u;
-        if (!ReadValue(in, version) || version != kTemporalVersion)
+        if (!ReadValue(in, version) || (version != 1u && version != 2u && version != kTemporalVersion))
         {
             outError = "Temporal network file has an unsupported version.";
             return false;
         }
-        if (!ReadValue(in, outModel.settings.hiddenWidth) ||
-            !ReadValue(in, outModel.settings.epochs) ||
+        if (!ReadValue(in, outModel.settings.hiddenWidth))
+        {
+            outError = "Failed to deserialize temporal guide network.";
+            return false;
+        }
+        if (version >= 2u)
+        {
+            if (!ReadValue(in, outModel.settings.hiddenWidth2))
+            {
+                outError = "Failed to deserialize temporal guide network.";
+                return false;
+            }
+        }
+        if (!ReadValue(in, outModel.settings.epochs) ||
+            !(version < 3u || ReadValue(in, outModel.settings.validationStride)) ||
+            !(version < 3u || ReadValue(in, outModel.settings.earlyStoppingPatience)) ||
             !ReadValue(in, outModel.settings.learningRate) ||
+            !(version < 3u || ReadValue(in, outModel.settings.learningRateDecay)) ||
+            !(version < 3u || ReadValue(in, outModel.settings.minLearningRate)) ||
             !ReadValue(in, outModel.settings.weightDecay) ||
             !ReadValue(in, outModel.settings.gradientClip) ||
             !ReadValue(in, outModel.guideStrandCount) ||
             !ReadValue(in, outModel.particlesPerStrand) ||
             !ReadValue(in, outModel.featureCount) ||
-            !ReadValue(in, outModel.hiddenWidth) ||
-            !ReadValue(in, outModel.settings.lockRootPoints) ||
+            !ReadValue(in, outModel.hiddenWidth))
+        {
+            outError = "Failed to deserialize temporal guide network.";
+            return false;
+        }
+        if (version >= 2u)
+        {
+            if (!ReadValue(in, outModel.hiddenWidth2))
+            {
+                outError = "Failed to deserialize temporal guide network.";
+                return false;
+            }
+        }
+        if (!ReadValue(in, outModel.settings.lockRootPoints) ||
             !ReadVector(in, outModel.inputMean) ||
             !ReadVector(in, outModel.inputStd) ||
             !ReadVector(in, outModel.targetMean) ||
             !ReadVector(in, outModel.targetStd) ||
             !ReadVector(in, outModel.hiddenWeights) ||
-            !ReadVector(in, outModel.hiddenBias) ||
-            !ReadVector(in, outModel.outputWeights) ||
+            !ReadVector(in, outModel.hiddenBias))
+        {
+            outError = "Failed to deserialize temporal guide network.";
+            return false;
+        }
+        if (version >= 2u)
+        {
+            if (!ReadVector(in, outModel.hiddenWeights2) ||
+                !ReadVector(in, outModel.hiddenBias2))
+            {
+                outError = "Failed to deserialize temporal guide network.";
+                return false;
+            }
+        }
+        if (!ReadVector(in, outModel.outputWeights) ||
             !ReadVector(in, outModel.outputBias))
         {
             outError = "Failed to deserialize temporal guide network.";
@@ -392,9 +484,15 @@ namespace hairgpu
         ss.precision(5);
         ss << "guides=" << model.guideStrandCount
            << " particles=" << model.particlesPerStrand
-           << " hidden=" << model.hiddenWidth
-           << " epochs=" << model.settings.epochs
-           << " lr=" << model.settings.learningRate;
+           << " hidden=" << model.hiddenWidth;
+        if (model.hiddenWidth2 > 0u)
+        {
+            ss << "x" << model.hiddenWidth2;
+        }
+        ss << " epochs=" << model.settings.epochs
+           << " lr=" << model.settings.learningRate
+           << " valStride=" << model.settings.validationStride
+           << " patience=" << model.settings.earlyStoppingPatience;
         if (evaluation)
         {
             ss << " rms=" << evaluation->rmsPositionError
@@ -446,7 +544,8 @@ namespace hairgpu
         outModel.guideStrandCount = guideStrandCount;
         outModel.particlesPerStrand = particlesPerStrand;
         outModel.featureCount = kFeatureCount;
-        outModel.hiddenWidth = std::max<uint32_t>(4u, settings.hiddenWidth);
+        outModel.hiddenWidth = std::max<uint32_t>(6u, settings.hiddenWidth);
+        outModel.hiddenWidth2 = std::max<uint32_t>(0u, settings.hiddenWidth2);
 
         std::array<double, kFeatureCount> inputSum = {};
         std::array<double, kFeatureCount> inputSqSum = {};
@@ -463,72 +562,110 @@ namespace hairgpu
 
         outModel.hiddenWeights.assign(static_cast<size_t>(outModel.hiddenWidth) * outModel.featureCount, 0.0f);
         outModel.hiddenBias.assign(outModel.hiddenWidth, 0.0f);
-        outModel.outputWeights.assign(static_cast<size_t>(kTargetCount) * outModel.hiddenWidth, 0.0f);
+        outModel.hiddenWeights2.assign(static_cast<size_t>(outModel.hiddenWidth2) * outModel.hiddenWidth, 0.0f);
+        outModel.hiddenBias2.assign(outModel.hiddenWidth2, 0.0f);
+        const uint32_t outputWidth = (outModel.hiddenWidth2 > 0u) ? outModel.hiddenWidth2 : outModel.hiddenWidth;
+        outModel.outputWeights.assign(static_cast<size_t>(kTargetCount) * outputWidth, 0.0f);
         outModel.outputBias.assign(kTargetCount, 0.0f);
 
         std::mt19937 rng(1337u);
-        std::uniform_real_distribution<float> dist(-0.08f, 0.08f);
+        std::uniform_real_distribution<float> dist(-0.07f, 0.07f);
         for (float& value : outModel.hiddenWeights) value = dist(rng);
+        for (float& value : outModel.hiddenWeights2) value = dist(rng);
         for (float& value : outModel.outputWeights) value = dist(rng);
 
         std::vector<size_t> order(samples.size());
         std::iota(order.begin(), order.end(), 0u);
-        std::vector<float> hidden;
+        std::vector<float> hidden1(outModel.hiddenWidth, 0.0f);
+        std::vector<float> hidden2(outModel.hiddenWidth2, 0.0f);
         std::array<float, kTargetCount> output = {};
-        std::vector<float> gradHidden(outModel.hiddenWidth, 0.0f);
+        std::array<float, kFeatureCount> normalizedFeatures = {};
+        std::array<float, kTargetCount> targetNorm = {};
+        std::vector<float> gradHidden1(outModel.hiddenWidth, 0.0f);
+        std::vector<float> gradHidden2(outModel.hiddenWidth2, 0.0f);
 
-        for (uint32_t epoch = 0u; epoch < std::max<uint32_t>(1u, settings.epochs); ++epoch)
+        auto forwardDetailed = [&](const TemporalTrainingSample& sample)
         {
-            std::shuffle(order.begin(), order.end(), rng);
-            const float lr = settings.learningRate * (0.65f + 0.35f * (1.0f - static_cast<float>(epoch) / std::max<float>(1.0f, static_cast<float>(settings.epochs))));
-            for (size_t orderedIndex : order)
+            for (uint32_t i = 0u; i < outModel.featureCount; ++i)
             {
-                const TemporalTrainingSample& sample = samples[orderedIndex];
-                Forward(outModel, sample.features, hidden, output);
-                std::array<float, kTargetCount> targetNorm = {};
-                for (uint32_t o = 0u; o < kTargetCount; ++o)
+                normalizedFeatures[i] = NormalizeValue(sample.features[i], outModel.inputMean[i], outModel.inputStd[i]);
+            }
+            for (uint32_t h = 0u; h < outModel.hiddenWidth; ++h)
+            {
+                float sum = outModel.hiddenBias[h];
+                const size_t rowOffset = static_cast<size_t>(h) * outModel.featureCount;
+                for (uint32_t i = 0u; i < outModel.featureCount; ++i)
                 {
-                    targetNorm[o] = NormalizeValue(sample.target[o], outModel.targetMean[o], outModel.targetStd[o]);
+                    sum += outModel.hiddenWeights[rowOffset + i] * normalizedFeatures[i];
                 }
-                if (sample.lockOutput)
+                hidden1[h] = std::tanh(sum);
+            }
+            for (uint32_t h = 0u; h < outModel.hiddenWidth2; ++h)
+            {
+                float sum = outModel.hiddenBias2[h];
+                const size_t rowOffset = static_cast<size_t>(h) * outModel.hiddenWidth;
+                for (uint32_t i = 0u; i < outModel.hiddenWidth; ++i)
                 {
-                    continue;
+                    sum += outModel.hiddenWeights2[rowOffset + i] * hidden1[i];
                 }
+                hidden2[h] = std::tanh(sum);
+            }
+            for (uint32_t o = 0u; o < kTargetCount; ++o)
+            {
+                float sum = outModel.outputBias[o];
+                const size_t rowOffset = static_cast<size_t>(o) * outputWidth;
+                if (outModel.hiddenWidth2 > 0u)
+                {
+                    for (uint32_t i = 0u; i < outModel.hiddenWidth2; ++i)
+                    {
+                        sum += outModel.outputWeights[rowOffset + i] * hidden2[i];
+                    }
+                }
+                else
+                {
+                    for (uint32_t i = 0u; i < outModel.hiddenWidth; ++i)
+                    {
+                        sum += outModel.outputWeights[rowOffset + i] * hidden1[i];
+                    }
+                }
+                output[o] = sum;
+                targetNorm[o] = NormalizeValue(sample.target[o], outModel.targetMean[o], outModel.targetStd[o]);
+            }
+        };
 
-                for (uint32_t h = 0u; h < outModel.hiddenWidth; ++h)
-                {
-                    float g = 0.0f;
-                    for (uint32_t o = 0u; o < kTargetCount; ++o)
-                    {
-                        const float error = output[o] - targetNorm[o];
-                        const size_t rowOffset = static_cast<size_t>(o) * outModel.hiddenWidth;
-                        g += error * outModel.outputWeights[rowOffset + h];
-                        outModel.outputWeights[rowOffset + h] -= lr * (error * hidden[h] + settings.weightDecay * outModel.outputWeights[rowOffset + h]);
-                        outModel.outputBias[o] -= lr * error;
-                    }
-                    gradHidden[h] = g * (1.0f - hidden[h] * hidden[h]);
-                }
-                for (uint32_t h = 0u; h < outModel.hiddenWidth; ++h)
-                {
-                    const float clipped = Clamp(gradHidden[h], -settings.gradientClip, settings.gradientClip);
-                    const size_t rowOffset = static_cast<size_t>(h) * outModel.featureCount;
-                    outModel.hiddenBias[h] -= lr * clipped;
-                    for (uint32_t i = 0u; i < outModel.featureCount; ++i)
-                    {
-                        const float normalized = NormalizeValue(sample.features[i], outModel.inputMean[i], outModel.inputStd[i]);
-                        outModel.hiddenWeights[rowOffset + i] -= lr * (clipped * normalized + settings.weightDecay * outModel.hiddenWeights[rowOffset + i]);
-                    }
-                }
+        std::vector<size_t> trainingIndices;
+        std::vector<size_t> validationIndices;
+        const uint32_t validationStride = std::max<uint32_t>(2u, settings.validationStride);
+        for (size_t sampleIndex = 0u; sampleIndex < samples.size(); ++sampleIndex)
+        {
+            if ((sampleIndex % validationStride) == 0u)
+            {
+                validationIndices.push_back(sampleIndex);
+            }
+            else
+            {
+                trainingIndices.push_back(sampleIndex);
             }
         }
-
-        if (outEvaluation)
+        if (trainingIndices.empty())
         {
-            *outEvaluation = {};
-            double sumSq = 0.0;
-            for (const TemporalTrainingSample& sample : samples)
+            trainingIndices = validationIndices;
+            validationIndices.clear();
+        }
+        order = trainingIndices;
+
+        auto evaluateIndices = [&](const std::vector<size_t>& indices, TemporalGuideNetworkEvaluation& outEval)
+        {
+            outEval = {};
+            if (indices.empty())
             {
-                Forward(outModel, sample.features, hidden, output);
+                return;
+            }
+            double sumSq = 0.0;
+            for (size_t sampleIndex : indices)
+            {
+                const TemporalTrainingSample& sample = samples[sampleIndex];
+                forwardDetailed(sample);
                 Vec3 predicted(
                     DenormalizeValue(output[0], outModel.targetMean[0], outModel.targetStd[0]),
                     DenormalizeValue(output[1], outModel.targetMean[1], outModel.targetStd[1]),
@@ -541,13 +678,127 @@ namespace hairgpu
                 const Vec3 error = predicted - target;
                 const float errorLength = Length(error);
                 sumSq += static_cast<double>(Dot(error, error));
-                outEvaluation->maxPositionError = std::max(outEvaluation->maxPositionError, errorLength);
-                ++outEvaluation->sampleCount;
+                outEval.maxPositionError = std::max(outEval.maxPositionError, errorLength);
+                ++outEval.sampleCount;
             }
-            if (outEvaluation->sampleCount > 0u)
+            if (outEval.sampleCount > 0u)
             {
-                outEvaluation->rmsPositionError = static_cast<float>(std::sqrt(sumSq / static_cast<double>(outEvaluation->sampleCount)));
+                outEval.rmsPositionError = static_cast<float>(std::sqrt(sumSq / static_cast<double>(outEval.sampleCount)));
             }
+        };
+
+        const uint32_t maxEpochs = std::max<uint32_t>(1u, settings.epochs);
+        float lr = std::max(settings.learningRate, settings.minLearningRate);
+        float bestValidationRms = std::numeric_limits<float>::max();
+        uint32_t epochsWithoutImprovement = 0u;
+        TemporalGuideNetwork bestModel = outModel;
+        for (uint32_t epoch = 0u; epoch < maxEpochs; ++epoch)
+        {
+            std::shuffle(order.begin(), order.end(), rng);
+            lr = std::max(settings.minLearningRate, lr * ((epoch == 0u) ? 1.0f : settings.learningRateDecay));
+            for (size_t orderedIndex : order)
+            {
+                const TemporalTrainingSample& sample = samples[orderedIndex];
+                if (sample.lockOutput)
+                {
+                    continue;
+                }
+                forwardDetailed(sample);
+
+                std::array<float, kTargetCount> outputError = {};
+                for (uint32_t o = 0u; o < kTargetCount; ++o)
+                {
+                    outputError[o] = Clamp(output[o] - targetNorm[o], -settings.gradientClip, settings.gradientClip);
+                }
+
+                if (outModel.hiddenWidth2 > 0u)
+                {
+                    std::fill(gradHidden2.begin(), gradHidden2.end(), 0.0f);
+                    for (uint32_t h = 0u; h < outModel.hiddenWidth2; ++h)
+                    {
+                        float g = 0.0f;
+                        for (uint32_t o = 0u; o < kTargetCount; ++o)
+                        {
+                            const size_t rowOffset = static_cast<size_t>(o) * outputWidth;
+                            g += outputError[o] * outModel.outputWeights[rowOffset + h];
+                            outModel.outputWeights[rowOffset + h] -= lr * (outputError[o] * hidden2[h] + settings.weightDecay * outModel.outputWeights[rowOffset + h]);
+                        }
+                        gradHidden2[h] = Clamp(g * (1.0f - hidden2[h] * hidden2[h]), -settings.gradientClip, settings.gradientClip);
+                    }
+                    for (uint32_t o = 0u; o < kTargetCount; ++o)
+                    {
+                        outModel.outputBias[o] -= lr * outputError[o];
+                    }
+                    std::fill(gradHidden1.begin(), gradHidden1.end(), 0.0f);
+                    for (uint32_t h = 0u; h < outModel.hiddenWidth2; ++h)
+                    {
+                        const size_t rowOffset = static_cast<size_t>(h) * outModel.hiddenWidth;
+                        outModel.hiddenBias2[h] -= lr * gradHidden2[h];
+                        for (uint32_t i = 0u; i < outModel.hiddenWidth; ++i)
+                        {
+                            gradHidden1[i] += gradHidden2[h] * outModel.hiddenWeights2[rowOffset + i];
+                            outModel.hiddenWeights2[rowOffset + i] -= lr * (gradHidden2[h] * hidden1[i] + settings.weightDecay * outModel.hiddenWeights2[rowOffset + i]);
+                        }
+                    }
+                    for (float& value : gradHidden1)
+                    {
+                        value = Clamp(value, -settings.gradientClip, settings.gradientClip);
+                    }
+                }
+                else
+                {
+                    std::fill(gradHidden1.begin(), gradHidden1.end(), 0.0f);
+                    for (uint32_t h = 0u; h < outModel.hiddenWidth; ++h)
+                    {
+                        float g = 0.0f;
+                        for (uint32_t o = 0u; o < kTargetCount; ++o)
+                        {
+                            const size_t rowOffset = static_cast<size_t>(o) * outputWidth;
+                            g += outputError[o] * outModel.outputWeights[rowOffset + h];
+                            outModel.outputWeights[rowOffset + h] -= lr * (outputError[o] * hidden1[h] + settings.weightDecay * outModel.outputWeights[rowOffset + h]);
+                        }
+                        gradHidden1[h] = Clamp(g, -settings.gradientClip, settings.gradientClip);
+                    }
+                    for (uint32_t o = 0u; o < kTargetCount; ++o)
+                    {
+                        outModel.outputBias[o] -= lr * outputError[o];
+                    }
+                }
+
+                for (uint32_t h = 0u; h < outModel.hiddenWidth; ++h)
+                {
+                    const float localGrad = Clamp(gradHidden1[h] * (1.0f - hidden1[h] * hidden1[h]), -settings.gradientClip, settings.gradientClip);
+                    const size_t rowOffset = static_cast<size_t>(h) * outModel.featureCount;
+                    outModel.hiddenBias[h] -= lr * localGrad;
+                    for (uint32_t i = 0u; i < outModel.featureCount; ++i)
+                    {
+                        outModel.hiddenWeights[rowOffset + i] -= lr * (localGrad * normalizedFeatures[i] + settings.weightDecay * outModel.hiddenWeights[rowOffset + i]);
+                    }
+                }
+            }
+
+            TemporalGuideNetworkEvaluation validationEval = {};
+            evaluateIndices(validationIndices.empty() ? trainingIndices : validationIndices, validationEval);
+            if (validationEval.sampleCount > 0u && validationEval.rmsPositionError < bestValidationRms - 1.0e-6f)
+            {
+                bestValidationRms = validationEval.rmsPositionError;
+                bestModel = outModel;
+                epochsWithoutImprovement = 0u;
+            }
+            else
+            {
+                ++epochsWithoutImprovement;
+            }
+            if (!validationIndices.empty() && epochsWithoutImprovement >= std::max<uint32_t>(3u, settings.earlyStoppingPatience))
+            {
+                break;
+            }
+        }
+        outModel = bestModel;
+
+        if (outEvaluation)
+        {
+            evaluateIndices(validationIndices.empty() ? trainingIndices : validationIndices, *outEvaluation);
         }
         return true;
     }
@@ -686,9 +937,11 @@ namespace hairgpu
             !writeScalarVector(directoryPath / "target_mean.csv", model.targetMean, outError) ||
             !writeScalarVector(directoryPath / "target_std.csv", model.targetStd, outError) ||
             !writeScalarVector(directoryPath / "hidden_bias.csv", model.hiddenBias, outError) ||
+            !writeScalarVector(directoryPath / "hidden_bias2.csv", model.hiddenBias2, outError) ||
             !writeScalarVector(directoryPath / "output_bias.csv", model.outputBias, outError) ||
             !writeMatrix(directoryPath / "hidden_weights.csv", model.hiddenWeights, model.hiddenWidth, model.featureCount, outError) ||
-            !writeMatrix(directoryPath / "output_weights.csv", model.outputWeights, kTargetCount, model.hiddenWidth, outError))
+            !writeMatrix(directoryPath / "hidden_weights2.csv", model.hiddenWeights2, model.hiddenWidth2, model.hiddenWidth, outError) ||
+            !writeMatrix(directoryPath / "output_weights.csv", model.outputWeights, kTargetCount, (model.hiddenWidth2 > 0u ? model.hiddenWidth2 : model.hiddenWidth), outError))
         {
             return false;
         }
@@ -774,6 +1027,11 @@ namespace hairgpu
         };
         auto parseMatrix = [&](const std::filesystem::path& path, std::vector<float>& outValues, uint32_t expectedRows, uint32_t expectedCols) -> bool
         {
+            if (expectedRows == 0u || expectedCols == 0u)
+            {
+                outValues.clear();
+                return true;
+            }
             std::ifstream in(path);
             if (!in)
             {
@@ -837,9 +1095,15 @@ namespace hairgpu
             else if (key == "particlesPerStrand") parseUInt(value, outModel.particlesPerStrand);
             else if (key == "featureCount") parseUInt(value, outModel.featureCount);
             else if (key == "hiddenWidth") parseUInt(value, outModel.hiddenWidth);
+            else if (key == "hiddenWidth2") parseUInt(value, outModel.hiddenWidth2);
             else if (key == "settings.hiddenWidth") parseUInt(value, outModel.settings.hiddenWidth);
+            else if (key == "settings.hiddenWidth2") parseUInt(value, outModel.settings.hiddenWidth2);
             else if (key == "settings.epochs") parseUInt(value, outModel.settings.epochs);
+            else if (key == "settings.validationStride") parseUInt(value, outModel.settings.validationStride);
+            else if (key == "settings.earlyStoppingPatience") parseUInt(value, outModel.settings.earlyStoppingPatience);
             else if (key == "settings.learningRate") parseFloat(value, outModel.settings.learningRate);
+            else if (key == "settings.learningRateDecay") parseFloat(value, outModel.settings.learningRateDecay);
+            else if (key == "settings.minLearningRate") parseFloat(value, outModel.settings.minLearningRate);
             else if (key == "settings.weightDecay") parseFloat(value, outModel.settings.weightDecay);
             else if (key == "settings.gradientClip") parseFloat(value, outModel.settings.gradientClip);
             else if (key == "settings.lockRootPoints")
@@ -850,15 +1114,18 @@ namespace hairgpu
         }
         if (outModel.featureCount == 0u) outModel.featureCount = kFeatureCount;
         if (outModel.hiddenWidth == 0u) outModel.hiddenWidth = outModel.settings.hiddenWidth;
+        if (outModel.hiddenWidth2 == 0u) outModel.hiddenWidth2 = outModel.settings.hiddenWidth2;
 
         if (!parseScalarVector(directoryPath / "input_mean.csv", outModel.inputMean) ||
             !parseScalarVector(directoryPath / "input_std.csv", outModel.inputStd) ||
             !parseScalarVector(directoryPath / "target_mean.csv", outModel.targetMean) ||
             !parseScalarVector(directoryPath / "target_std.csv", outModel.targetStd) ||
             !parseScalarVector(directoryPath / "hidden_bias.csv", outModel.hiddenBias) ||
+            !parseScalarVector(directoryPath / "hidden_bias2.csv", outModel.hiddenBias2) ||
             !parseScalarVector(directoryPath / "output_bias.csv", outModel.outputBias) ||
             !parseMatrix(directoryPath / "hidden_weights.csv", outModel.hiddenWeights, outModel.hiddenWidth, outModel.featureCount) ||
-            !parseMatrix(directoryPath / "output_weights.csv", outModel.outputWeights, kTargetCount, outModel.hiddenWidth))
+            !parseMatrix(directoryPath / "hidden_weights2.csv", outModel.hiddenWeights2, outModel.hiddenWidth2, outModel.hiddenWidth) ||
+            !parseMatrix(directoryPath / "output_weights.csv", outModel.outputWeights, kTargetCount, (outModel.hiddenWidth2 > 0u ? outModel.hiddenWidth2 : outModel.hiddenWidth)))
         {
             return false;
         }

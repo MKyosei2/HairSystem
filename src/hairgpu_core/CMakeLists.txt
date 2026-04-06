@@ -3,6 +3,7 @@ add_library(hairgpu_core
     AssetIO.cpp
     Broadphase.cpp
     Collision.cpp
+    DccInterop.cpp
     Adaptive.cpp
     Authoring.cpp
     Binding.cpp
@@ -36,7 +37,14 @@ target_include_directories(hairgpu_core
 target_compile_features(hairgpu_core PUBLIC cxx_std_17)
 
 if(HAIRGPU_WITH_ALEMBIC)
-    target_compile_definitions(hairgpu_core PUBLIC HAIRGPU_WITH_ALEMBIC=1)
+    find_package(Alembic QUIET)
+    if(ALEMBIC_FOUND)
+        target_compile_definitions(hairgpu_core PUBLIC HAIRGPU_WITH_ALEMBIC=1)
+        target_include_directories(hairgpu_core PRIVATE ${ALEMBIC_INCLUDE_DIRS})
+        target_link_libraries(hairgpu_core PRIVATE ${ALEMBIC_LIBRARIES})
+    else()
+        message(WARNING "HAIRGPU_WITH_ALEMBIC=ON but Alembic SDK was not found. Falling back to compatibility-only .abc support.")
+    endif()
 endif()
 
 set_target_properties(hairgpu_core PROPERTIES

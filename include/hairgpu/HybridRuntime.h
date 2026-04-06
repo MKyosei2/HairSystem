@@ -90,9 +90,16 @@ namespace hairgpu
 
     struct ActiveSetPredictorSettings
     {
-        uint32_t epochs = 120u;
-        float learningRate = 2.0e-2f;
+        uint32_t hiddenWidth = 20u;
+        uint32_t epochs = 160u;
+        uint32_t validationStride = 5u;
+        uint32_t earlyStoppingPatience = 20u;
+        float learningRate = 1.2e-2f;
+        float learningRateDecay = 0.985f;
+        float minLearningRate = 1.0e-3f;
         float weightDecay = 1.0e-4f;
+        float gradientClip = 0.45f;
+        float positiveClassWeight = 1.35f;
     };
 
     struct ActiveSetPredictorEvaluation
@@ -107,10 +114,15 @@ namespace hairgpu
     {
         ActiveSetPredictorSettings settings = {};
         uint32_t featureCount = 9u;
+        uint32_t hiddenWidth = 0u;
         std::vector<float> featureMean;
         std::vector<float> featureStd;
         std::vector<float> weights;
         float bias = 0.0f;
+        std::vector<float> hiddenWeights;
+        std::vector<float> hiddenBias;
+        std::vector<float> outputWeights;
+        float outputBias = 0.0f;
     };
 
     struct HybridModelBundle

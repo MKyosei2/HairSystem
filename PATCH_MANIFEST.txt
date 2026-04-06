@@ -1,0 +1,18 @@
+Priority patch contents (modified/added files only)
+
+Implemented/prioritized areas:
+- Alembic SDK integration hooks with CMake package discovery and SDK-backed load/save code paths
+- GPU indirect dispatch preparation in DX11 viewer (follow-pass indirect args build + DispatchIndirect path)
+- Stronger temporal / active-set predictor models (extra hidden layers / MLP serialization / CSV interop compatibility)
+- DCC / LOD / skinning completion work (adaptive LOD chain, skinning repair/normalization, DCC JSON export)
+
+Validation performed in this environment:
+- Linux CMake build succeeded for hairgpu_core + hairgpu_cli
+- CLI smoke tests succeeded:
+  * build-lods generated_scaffold/asset_normalized.hairbin ...
+  * export-dcc-json generated_scaffold/asset_normalized.hairbin ...
+  * asset-export-abc-compat generated_scaffold/asset_normalized.hairbin ...
+
+Not fully verifiable here:
+- Alembic SDK-backed path requires Alembic SDK present at configure/build time
+- DX11 indirect dispatch path requires Windows/DX11 runtime to compile and execute viewer

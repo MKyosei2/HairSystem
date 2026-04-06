@@ -11,11 +11,16 @@ namespace hairgpu
 {
     struct TemporalGuideNetworkSettings
     {
-        uint32_t hiddenWidth = 24u;
-        uint32_t epochs = 120u;
-        float learningRate = 2.5e-3f;
+        uint32_t hiddenWidth = 32u;
+        uint32_t hiddenWidth2 = 20u;
+        uint32_t epochs = 160u;
+        uint32_t validationStride = 6u;
+        uint32_t earlyStoppingPatience = 18u;
+        float learningRate = 2.0e-3f;
+        float learningRateDecay = 0.985f;
+        float minLearningRate = 2.5e-4f;
         float weightDecay = 1.0e-5f;
-        float gradientClip = 0.35f;
+        float gradientClip = 0.30f;
         bool lockRootPoints = true;
     };
 
@@ -33,12 +38,15 @@ namespace hairgpu
         uint32_t particlesPerStrand = 0u;
         uint32_t featureCount = 13u;
         uint32_t hiddenWidth = 0u;
+        uint32_t hiddenWidth2 = 0u;
         std::vector<float> inputMean;
         std::vector<float> inputStd;
         std::vector<float> targetMean;
         std::vector<float> targetStd;
         std::vector<float> hiddenWeights;
         std::vector<float> hiddenBias;
+        std::vector<float> hiddenWeights2;
+        std::vector<float> hiddenBias2;
         std::vector<float> outputWeights;
         std::vector<float> outputBias;
     };

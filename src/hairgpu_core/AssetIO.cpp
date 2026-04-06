@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <string_view>
@@ -19,6 +20,350 @@ namespace hairgpu
 {
     namespace
     {
+#ifdef HAIRGPU_WITH_ALEMBIC
+        namespace Abc = Alembic::Abc;
+        namespace AbcG = Alembic::AbcGeom;
+
+        bool BuildAssetFromAlembicCurves(const std::vector<Vec3>& positions,
+                                         const std::vector<int32_t>& curveCounts,
+                                         const std::vector<float>& widths,
+                                         HairAsset& outAsset,
+                                         std::string& outError)
+        {
+            if (positions.empty() || curveCounts.empty())
+            {
+                outError = "Alembic curves payload is empty.";
+                return false;
+            }
+            std::vector<ImportedStrand> strands;
+            strands.reserve(curveCounts.size());
+            size_t cursor = 0u;
+            for (size_t curveIndex = 0; curveIndex < curveCounts.size(); ++curveIndex)
+            {
+                const int32_t count = curveCounts[curveIndex];
+                if (count < 2 || cursor + static_cast<size_t>(count) > positions.size())
+                {
+                    outError = "Alembic curve topology is inconsistent.";
+                    return false;
+                }
+                ImportedStrand strand = {};
+                strand.originalStrandId = static_cast<uint32_t>(curveIndex);
+                strand.isGuide = true;
+                strand.parentGuideOriginal = static_cast<int32_t>(curveIndex);
+                strand.groupId = static_cast<uint32_t>(curveIndex);
+                strand.points.reserve(static_cast<size_t>(count));
+                for (int32_t pointIndex = 0; pointIndex < count; ++pointIndex)
+                {
+                    ImportedPoint point = {};
+                    point.pointIndex = static_cast<uint32_t>(pointIndex);
+                    point.position = positions[cursor];
+                    if (!widths.empty())
+                    {
+                        point.width = (widths.size() == positions.size()) ? widths[cursor] : widths[std::min<size_t>(curveIndex, widths.size() - 1u)];
+                    }
+                    else
+                    {
+                        point.width = 0.004f;
+                    }
+                    strand.points.push_back(point);
+                    ++cursor;
+                }
+                strands.push_back(std::move(strand));
+            }
+
+            HairAsset asset = {};
+            asset.guideStrandCount = static_cast<uint32_t>(strands.size());
+            asset.followerStrandCount = 0u;
+            uint32_t maxPointCount = 0u;
+            for (const ImportedStrand& strand : strands)
+            {
+                maxPointCount = std::max<uint32_t>(maxPointCount, static_cast<uint32_t>(strand.points.size()));
+            }
+            asset.particlesPerStrand = std::max<uint32_t>(4u, std::min<uint32_t>(64u, maxPointCount));
+            std::vector<Vec3> roots;
+            roots.reserve(strands.size());
+            for (size_t strandIndex = 0; strandIndex < strands.size(); ++strandIndex)
+            {
+                const ImportedStrand& imported = strands[strandIndex];
+                StrandRange range = {};
+                range.pointOffset = static_cast<uint32_t>(asset.restPoints.size());
+                range.pointCount = asset.particlesPerStrand;
+                range.groupId = imported.groupId;
+                range.flags = static_cast<uint32_t>(StrandFlags::Guide);
+                asset.strands.push_back(range);
+                asset.materials.push_back({});
+                asset.rootBindings.push_back({});
+                asset.followData.push_back({ static_cast<int32_t>(strandIndex), 1.0f, 0.0f, 0.0f });
+                for (uint32_t pointIndex = 0; pointIndex < asset.particlesPerStrand; ++pointIndex)
+                {
+                    const float t = (asset.particlesPerStrand > 1u) ? static_cast<float>(pointIndex) / static_cast<float>(asset.particlesPerStrand - 1u) : 0.0f;
+                    asset.restPoints.push_back(SamplePolylinePosition(imported.points, t));
+                    asset.pointWidths.push_back(std::max(0.0005f, SamplePolylineWidth(imported.points, t)));
+                }
+                roots.push_back(asset.restPoints[range.pointOffset]);
+            }
+            BuildSyntheticScalpForRoots(asset, roots);
+            outAsset = std::move(asset);
+            outError.clear();
+            return true;
+        }
+
+        bool LoadHairAssetFromAlembicSdk(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)
+        {
+            Alembic::AbcCoreFactory::IFactory factory;
+            Alembic::AbcCoreFactory::IFactory::CoreType coreType;
+            AbcG::IArchive archive = factory.getArchive(filePath.string(), coreType);
+            if (!archive.valid())
+            {
+                outError = "Alembic SDK failed to open archive: " + filePath.string();
+                return false;
+            }
+
+            std::vector<Vec3> curvePositions;
+            std::vector<int32_t> curveCounts;
+            std::vector<float> curveWidths;
+            ScalpMesh scalpMesh = {};
+
+            std::function<void(const Abc::IObject&)> visitObject;
+            visitObject = [&](const Abc::IObject& object)
+            {
+                if (AbcG::ICurves::matches(object.getHeader()) && curveCounts.empty())
+                {
+                    AbcG::ICurves curves(object, Abc::kWrapExisting);
+                    AbcG::ICurvesSchema::Sample sample;
+                    curves.getSchema().get(sample);
+                    auto positionsPtr = sample.getPositions();
+                    auto countsPtr = sample.getCurvesNumVertices();
+                    if (positionsPtr && countsPtr)
+                    {
+                        curvePositions.reserve(positionsPtr->size());
+                        for (size_t i = 0; i < positionsPtr->size(); ++i)
+                        {
+                            const auto& p = (*positionsPtr)[i];
+                            curvePositions.push_back({ p.x, p.y, p.z });
+                        }
+                        curveCounts.assign(countsPtr->get(), countsPtr->get() + countsPtr->size());
+                        if (curves.getSchema().getWidthsParam().valid())
+                        {
+                            AbcG::IFloatGeomParam::Sample widthSample;
+                            curves.getSchema().getWidthsParam().getExpanded(widthSample);
+                            auto widthPtr = widthSample.getVals();
+                            if (widthPtr)
+                            {
+                                curveWidths.assign(widthPtr->get(), widthPtr->get() + widthPtr->size());
+                            }
+                        }
+                    }
+                }
+                else if (AbcG::IPolyMesh::matches(object.getHeader()) && scalpMesh.positions.empty())
+                {
+                    AbcG::IPolyMesh mesh(object, Abc::kWrapExisting);
+                    AbcG::IPolyMeshSchema::Sample sample;
+                    mesh.getSchema().get(sample);
+                    auto positionsPtr = sample.getPositions();
+                    auto countsPtr = sample.getFaceCounts();
+                    auto indicesPtr = sample.getFaceIndices();
+                    if (positionsPtr)
+                    {
+                        scalpMesh.positions.reserve(positionsPtr->size());
+                        scalpMesh.normals.resize(positionsPtr->size(), {0.0f, 1.0f, 0.0f});
+                        scalpMesh.uvs.resize(positionsPtr->size(), {0.5f, 0.5f});
+                        scalpMesh.skinWeights.resize(positionsPtr->size(), { {0u,0u,0u,0u}, {1.0f,0.0f,0.0f,0.0f} });
+                        scalpMesh.boneCount = 1u;
+                        for (size_t i = 0; i < positionsPtr->size(); ++i)
+                        {
+                            const auto& p = (*positionsPtr)[i];
+                            scalpMesh.positions.push_back({ p.x, p.y, p.z });
+                        }
+                    }
+                    if (countsPtr && indicesPtr)
+                    {
+                        size_t cursor = 0u;
+                        for (size_t faceIndex = 0; faceIndex < countsPtr->size(); ++faceIndex)
+                        {
+                            const int32_t faceCount = (*countsPtr)[faceIndex];
+                            if (faceCount < 3)
+                            {
+                                cursor += static_cast<size_t>(std::max(faceCount, 0));
+                                continue;
+                            }
+                            const uint32_t first = static_cast<uint32_t>((*indicesPtr)[cursor]);
+                            for (int32_t tri = 1; tri + 1 < faceCount; ++tri)
+                            {
+                                scalpMesh.triangles.push_back({ first,
+                                                               static_cast<uint32_t>((*indicesPtr)[cursor + static_cast<size_t>(tri)]),
+                                                               static_cast<uint32_t>((*indicesPtr)[cursor + static_cast<size_t>(tri + 1)]) });
+                            }
+                            cursor += static_cast<size_t>(faceCount);
+                        }
+                    }
+                    Abc::ICompoundProperty meshUserProps = mesh.getSchema().getUserProperties();
+                    if (meshUserProps.valid())
+                    {
+                        std::vector<float> normalValues;
+                        std::vector<float> uvValues;
+                        std::vector<uint32_t> boneIndices;
+                        std::vector<float> boneWeights;
+                        uint32_t boneCount = 0u;
+                        readFloatArray(meshUserProps, "normals", normalValues);
+                        readFloatArray(meshUserProps, "uvs", uvValues);
+                        readUIntArray(meshUserProps, "skinBoneIndices", boneIndices);
+                        readFloatArray(meshUserProps, "skinBoneWeights", boneWeights);
+                        readUIntScalar(meshUserProps, "boneCount", boneCount);
+                        if (normalValues.size() == scalpMesh.positions.size() * 3u)
+                        {
+                            scalpMesh.normals.resize(scalpMesh.positions.size());
+                            for (size_t i = 0u; i < scalpMesh.positions.size(); ++i)
+                            {
+                                scalpMesh.normals[i] = { normalValues[i * 3u + 0u], normalValues[i * 3u + 1u], normalValues[i * 3u + 2u] };
+                            }
+                        }
+                        if (uvValues.size() == scalpMesh.positions.size() * 2u)
+                        {
+                            scalpMesh.uvs.resize(scalpMesh.positions.size());
+                            for (size_t i = 0u; i < scalpMesh.positions.size(); ++i)
+                            {
+                                scalpMesh.uvs[i] = { uvValues[i * 2u + 0u], uvValues[i * 2u + 1u] };
+                            }
+                        }
+                        if (boneIndices.size() == scalpMesh.positions.size() * 4u && boneWeights.size() == scalpMesh.positions.size() * 4u)
+                        {
+                            scalpMesh.skinWeights.resize(scalpMesh.positions.size());
+                            for (size_t i = 0u; i < scalpMesh.positions.size(); ++i)
+                            {
+                                for (size_t k = 0u; k < 4u; ++k)
+                                {
+                                    scalpMesh.skinWeights[i].boneIndices[k] = boneIndices[i * 4u + k];
+                                    scalpMesh.skinWeights[i].boneWeights[k] = boneWeights[i * 4u + k];
+                                }
+                            }
+                        }
+                        if (boneCount > 0u)
+                        {
+                            scalpMesh.boneCount = boneCount;
+                        }
+                    }
+                }
+                for (size_t childIndex = 0u; childIndex < object.getNumChildren(); ++childIndex)
+                {
+                    visitObject(object.getChild(childIndex));
+                }
+            };
+            visitObject(archive.getTop());
+
+            if (!BuildAssetFromAlembicCurves(curvePositions, curveCounts, curveWidths, outAsset, outError))
+            {
+                return false;
+            }
+            if (!scalpMesh.positions.empty() && !scalpMesh.triangles.empty())
+            {
+                outAsset.scalpMesh = std::move(scalpMesh);
+                RepairHairAssetSkinning(outAsset, false, nullptr);
+            }
+            return true;
+        }
+
+        bool SaveHairAssetToAlembicSdk(const std::filesystem::path& filePath,
+                                       const HairAsset& asset,
+                                       const HairAlembicSettings& settings,
+                                       std::string& outError)
+        {
+            AbcG::OArchive archive(Alembic::AbcCoreOgawa::WriteArchive(), filePath.string());
+            Abc::OObject top = archive.getTop();
+            AbcG::OCurves curves(top, "hair");
+            std::vector<AbcG::V3f> positions;
+            std::vector<Abc::int32_t> counts;
+            std::vector<float> widths;
+            for (const StrandRange& strand : asset.strands)
+            {
+                counts.push_back(static_cast<Abc::int32_t>(strand.pointCount));
+                for (uint32_t pointIndex = 0u; pointIndex < strand.pointCount; ++pointIndex)
+                {
+                    const Vec3 p = asset.restPoints[strand.pointOffset + pointIndex];
+                    positions.emplace_back(p.x, p.y, p.z);
+                    widths.push_back(settings.includeWidths && strand.pointOffset + pointIndex < asset.pointWidths.size() ? asset.pointWidths[strand.pointOffset + pointIndex] : 0.004f);
+                }
+            }
+            AbcG::OCurvesSchema::Sample sample(Abc::V3fArraySample(positions), Abc::Int32ArraySample(counts), AbcG::kNoBasis, AbcG::kNonPeriodic, AbcG::kLinear);
+            curves.getSchema().set(sample);
+            if (settings.includeWidths)
+            {
+                AbcG::OFloatGeomParam::Sample widthSample(Abc::FloatArraySample(widths), AbcG::kVertexScope);
+                curves.getSchema().getWidthsParam().set(widthSample);
+            }
+            if (settings.includeScalp && !asset.scalpMesh.positions.empty() && !asset.scalpMesh.triangles.empty())
+            {
+                AbcG::OPolyMesh scalp(top, "scalp");
+                std::vector<AbcG::V3f> scalpPositions;
+                scalpPositions.reserve(asset.scalpMesh.positions.size());
+                for (const Vec3& p : asset.scalpMesh.positions)
+                {
+                    scalpPositions.emplace_back(p.x, p.y, p.z);
+                }
+                std::vector<Abc::int32_t> faceCounts(asset.scalpMesh.triangles.size(), 3);
+                std::vector<Abc::int32_t> faceIndices;
+                faceIndices.reserve(asset.scalpMesh.triangles.size() * 3u);
+                for (const TriangleIndices& tri : asset.scalpMesh.triangles)
+                {
+                    faceIndices.push_back(static_cast<Abc::int32_t>(tri.a));
+                    faceIndices.push_back(static_cast<Abc::int32_t>(tri.b));
+                    faceIndices.push_back(static_cast<Abc::int32_t>(tri.c));
+                }
+                AbcG::OPolyMeshSchema::Sample scalpSample(Abc::V3fArraySample(scalpPositions),
+                                                          Abc::Int32ArraySample(faceIndices),
+                                                          Abc::Int32ArraySample(faceCounts));
+                scalp.getSchema().set(scalpSample);
+
+                std::vector<float> normalValues;
+                std::vector<float> uvValues;
+                std::vector<Abc::uint32_t> boneIndices;
+                std::vector<float> boneWeights;
+                normalValues.reserve(asset.scalpMesh.normals.size() * 3u);
+                uvValues.reserve(asset.scalpMesh.uvs.size() * 2u);
+                boneIndices.reserve(asset.scalpMesh.skinWeights.size() * 4u);
+                boneWeights.reserve(asset.scalpMesh.skinWeights.size() * 4u);
+                for (const Vec3& n : asset.scalpMesh.normals)
+                {
+                    normalValues.push_back(n.x);
+                    normalValues.push_back(n.y);
+                    normalValues.push_back(n.z);
+                }
+                for (const Vec2& uv : asset.scalpMesh.uvs)
+                {
+                    uvValues.push_back(uv.x);
+                    uvValues.push_back(uv.y);
+                }
+                for (const SkinWeight4& sw : asset.scalpMesh.skinWeights)
+                {
+                    for (size_t k = 0u; k < 4u; ++k)
+                    {
+                        boneIndices.push_back(static_cast<Abc::uint32_t>(sw.boneIndices[k]));
+                        boneWeights.push_back(sw.boneWeights[k]);
+                    }
+                }
+                Abc::OCompoundProperty scalpUserProps = scalp.getSchema().getUserProperties();
+                if (!normalValues.empty())
+                {
+                    Abc::OFloatArrayProperty(scalpUserProps, "normals").set(Abc::FloatArraySample(normalValues));
+                }
+                if (!uvValues.empty())
+                {
+                    Abc::OFloatArrayProperty(scalpUserProps, "uvs").set(Abc::FloatArraySample(uvValues));
+                }
+                if (!boneIndices.empty())
+                {
+                    Abc::OUInt32ArrayProperty(scalpUserProps, "skinBoneIndices").set(Abc::UInt32ArraySample(boneIndices));
+                }
+                if (!boneWeights.empty())
+                {
+                    Abc::OFloatArrayProperty(scalpUserProps, "skinBoneWeights").set(Abc::FloatArraySample(boneWeights));
+                }
+                Abc::OUInt32Property(scalpUserProps, "boneCount").set(static_cast<Abc::uint32_t>(asset.scalpMesh.boneCount));
+            }
+            outError.clear();
+            return true;
+        }
+#endif
         struct ImportedPoint
         {
             uint32_t pointIndex = 0;
@@ -980,7 +1325,7 @@ namespace hairgpu
         std::ifstream sniff(filePath, std::ios::binary);
         if (sniff)
         {
-            std::string prefix(256, ' ');
+            std::string prefix(256, '\0');
             sniff.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
             prefix.resize(static_cast<size_t>(std::max<std::streamsize>(0, sniff.gcount())));
             const bool looksUsda = prefix.find("#usda") != std::string::npos ||
@@ -1002,9 +1347,7 @@ namespace hairgpu
             }
         }
 #ifdef HAIRGPU_WITH_ALEMBIC
-        (void)outAsset;
-        outError = "Alembic import hook is enabled, but the concrete AbcGeom reader still needs to be connected in AssetIO.cpp for this local SDK setup.";
-        return false;
+        return LoadHairAssetFromAlembicSdk(filePath, outAsset, outError);
 #else
         (void)outAsset;
         outError = "This build still does not include the Alembic SDK, but the loader now sniffs .abc files and will transparently import USDA / hairbin / curves-CSV content when files were renamed or exported through compatibility workflows. Real binary Alembic still requires HAIRGPU_WITH_ALEMBIC plus a wired AbcGeom reader.";
@@ -1017,6 +1360,258 @@ namespace hairgpu
 {
     namespace
     {
+#ifdef HAIRGPU_WITH_ALEMBIC
+        namespace Abc = Alembic::Abc;
+        namespace AbcG = Alembic::AbcGeom;
+
+        bool BuildAssetFromAlembicCurves(const std::vector<Vec3>& positions,
+                                         const std::vector<int32_t>& curveCounts,
+                                         const std::vector<float>& widths,
+                                         HairAsset& outAsset,
+                                         std::string& outError)
+        {
+            if (positions.empty() || curveCounts.empty())
+            {
+                outError = "Alembic curves payload is empty.";
+                return false;
+            }
+            std::vector<ImportedStrand> strands;
+            strands.reserve(curveCounts.size());
+            size_t cursor = 0u;
+            for (size_t curveIndex = 0; curveIndex < curveCounts.size(); ++curveIndex)
+            {
+                const int32_t count = curveCounts[curveIndex];
+                if (count < 2 || cursor + static_cast<size_t>(count) > positions.size())
+                {
+                    outError = "Alembic curve topology is inconsistent.";
+                    return false;
+                }
+                ImportedStrand strand = {};
+                strand.originalStrandId = static_cast<uint32_t>(curveIndex);
+                strand.isGuide = true;
+                strand.parentGuideOriginal = static_cast<int32_t>(curveIndex);
+                strand.groupId = static_cast<uint32_t>(curveIndex);
+                strand.points.reserve(static_cast<size_t>(count));
+                for (int32_t pointIndex = 0; pointIndex < count; ++pointIndex)
+                {
+                    ImportedPoint point = {};
+                    point.pointIndex = static_cast<uint32_t>(pointIndex);
+                    point.position = positions[cursor];
+                    if (!widths.empty())
+                    {
+                        point.width = (widths.size() == positions.size()) ? widths[cursor] : widths[std::min<size_t>(curveIndex, widths.size() - 1u)];
+                    }
+                    else
+                    {
+                        point.width = 0.004f;
+                    }
+                    strand.points.push_back(point);
+                    ++cursor;
+                }
+                strands.push_back(std::move(strand));
+            }
+
+            HairAsset asset = {};
+            asset.guideStrandCount = static_cast<uint32_t>(strands.size());
+            asset.followerStrandCount = 0u;
+            uint32_t maxPointCount = 0u;
+            for (const ImportedStrand& strand : strands)
+            {
+                maxPointCount = std::max<uint32_t>(maxPointCount, static_cast<uint32_t>(strand.points.size()));
+            }
+            asset.particlesPerStrand = std::max<uint32_t>(4u, std::min<uint32_t>(64u, maxPointCount));
+            std::vector<Vec3> roots;
+            roots.reserve(strands.size());
+            for (size_t strandIndex = 0; strandIndex < strands.size(); ++strandIndex)
+            {
+                const ImportedStrand& imported = strands[strandIndex];
+                StrandRange range = {};
+                range.pointOffset = static_cast<uint32_t>(asset.restPoints.size());
+                range.pointCount = asset.particlesPerStrand;
+                range.groupId = imported.groupId;
+                range.flags = static_cast<uint32_t>(StrandFlags::Guide);
+                asset.strands.push_back(range);
+                asset.materials.push_back({});
+                asset.rootBindings.push_back({});
+                asset.followData.push_back({ static_cast<int32_t>(strandIndex), 1.0f, 0.0f, 0.0f });
+                for (uint32_t pointIndex = 0; pointIndex < asset.particlesPerStrand; ++pointIndex)
+                {
+                    const float t = (asset.particlesPerStrand > 1u) ? static_cast<float>(pointIndex) / static_cast<float>(asset.particlesPerStrand - 1u) : 0.0f;
+                    asset.restPoints.push_back(SamplePolylinePosition(imported.points, t));
+                    asset.pointWidths.push_back(std::max(0.0005f, SamplePolylineWidth(imported.points, t)));
+                }
+                roots.push_back(asset.restPoints[range.pointOffset]);
+            }
+            BuildSyntheticScalpForRoots(asset, roots);
+            outAsset = std::move(asset);
+            outError.clear();
+            return true;
+        }
+
+        bool LoadHairAssetFromAlembicSdk(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)
+        {
+            Alembic::AbcCoreFactory::IFactory factory;
+            Alembic::AbcCoreFactory::IFactory::CoreType coreType;
+            AbcG::IArchive archive = factory.getArchive(filePath.string(), coreType);
+            if (!archive.valid())
+            {
+                outError = "Alembic SDK failed to open archive: " + filePath.string();
+                return false;
+            }
+
+            std::vector<Vec3> curvePositions;
+            std::vector<int32_t> curveCounts;
+            std::vector<float> curveWidths;
+            ScalpMesh scalpMesh = {};
+
+            std::function<void(const Abc::IObject&)> visitObject;
+            visitObject = [&](const Abc::IObject& object)
+            {
+                if (AbcG::ICurves::matches(object.getHeader()) && curveCounts.empty())
+                {
+                    AbcG::ICurves curves(object, Abc::kWrapExisting);
+                    AbcG::ICurvesSchema::Sample sample;
+                    curves.getSchema().get(sample);
+                    auto positionsPtr = sample.getPositions();
+                    auto countsPtr = sample.getCurvesNumVertices();
+                    if (positionsPtr && countsPtr)
+                    {
+                        curvePositions.reserve(positionsPtr->size());
+                        for (size_t i = 0; i < positionsPtr->size(); ++i)
+                        {
+                            const auto& p = (*positionsPtr)[i];
+                            curvePositions.push_back({ p.x, p.y, p.z });
+                        }
+                        curveCounts.assign(countsPtr->get(), countsPtr->get() + countsPtr->size());
+                        if (curves.getSchema().getWidthsParam().valid())
+                        {
+                            AbcG::IFloatGeomParam::Sample widthSample;
+                            curves.getSchema().getWidthsParam().getExpanded(widthSample);
+                            auto widthPtr = widthSample.getVals();
+                            if (widthPtr)
+                            {
+                                curveWidths.assign(widthPtr->get(), widthPtr->get() + widthPtr->size());
+                            }
+                        }
+                    }
+                }
+                else if (AbcG::IPolyMesh::matches(object.getHeader()) && scalpMesh.positions.empty())
+                {
+                    AbcG::IPolyMesh mesh(object, Abc::kWrapExisting);
+                    AbcG::IPolyMeshSchema::Sample sample;
+                    mesh.getSchema().get(sample);
+                    auto positionsPtr = sample.getPositions();
+                    auto countsPtr = sample.getFaceCounts();
+                    auto indicesPtr = sample.getFaceIndices();
+                    if (positionsPtr)
+                    {
+                        scalpMesh.positions.reserve(positionsPtr->size());
+                        scalpMesh.normals.resize(positionsPtr->size(), {0.0f, 1.0f, 0.0f});
+                        scalpMesh.uvs.resize(positionsPtr->size(), {0.5f, 0.5f});
+                        scalpMesh.skinWeights.resize(positionsPtr->size(), { {0u,0u,0u,0u}, {1.0f,0.0f,0.0f,0.0f} });
+                        scalpMesh.boneCount = 1u;
+                        for (size_t i = 0; i < positionsPtr->size(); ++i)
+                        {
+                            const auto& p = (*positionsPtr)[i];
+                            scalpMesh.positions.push_back({ p.x, p.y, p.z });
+                        }
+                    }
+                    if (countsPtr && indicesPtr)
+                    {
+                        size_t cursor = 0u;
+                        for (size_t faceIndex = 0; faceIndex < countsPtr->size(); ++faceIndex)
+                        {
+                            const int32_t faceCount = (*countsPtr)[faceIndex];
+                            if (faceCount < 3)
+                            {
+                                cursor += static_cast<size_t>(std::max(faceCount, 0));
+                                continue;
+                            }
+                            const uint32_t first = static_cast<uint32_t>((*indicesPtr)[cursor]);
+                            for (int32_t tri = 1; tri + 1 < faceCount; ++tri)
+                            {
+                                scalpMesh.triangles.push_back({ first,
+                                                               static_cast<uint32_t>((*indicesPtr)[cursor + static_cast<size_t>(tri)]),
+                                                               static_cast<uint32_t>((*indicesPtr)[cursor + static_cast<size_t>(tri + 1)]) });
+                            }
+                            cursor += static_cast<size_t>(faceCount);
+                        }
+                    }
+                }
+                for (size_t childIndex = 0u; childIndex < object.getNumChildren(); ++childIndex)
+                {
+                    visitObject(object.getChild(childIndex));
+                }
+            };
+            visitObject(archive.getTop());
+
+            if (!BuildAssetFromAlembicCurves(curvePositions, curveCounts, curveWidths, outAsset, outError))
+            {
+                return false;
+            }
+            if (!scalpMesh.positions.empty() && !scalpMesh.triangles.empty())
+            {
+                outAsset.scalpMesh = std::move(scalpMesh);
+                RepairHairAssetSkinning(outAsset, false, nullptr);
+            }
+            return true;
+        }
+
+        bool SaveHairAssetToAlembicSdk(const std::filesystem::path& filePath,
+                                       const HairAsset& asset,
+                                       const HairAlembicSettings& settings,
+                                       std::string& outError)
+        {
+            AbcG::OArchive archive(Alembic::AbcCoreOgawa::WriteArchive(), filePath.string());
+            Abc::OObject top = archive.getTop();
+            AbcG::OCurves curves(top, "hair");
+            std::vector<AbcG::V3f> positions;
+            std::vector<Abc::int32_t> counts;
+            std::vector<float> widths;
+            for (const StrandRange& strand : asset.strands)
+            {
+                counts.push_back(static_cast<Abc::int32_t>(strand.pointCount));
+                for (uint32_t pointIndex = 0u; pointIndex < strand.pointCount; ++pointIndex)
+                {
+                    const Vec3 p = asset.restPoints[strand.pointOffset + pointIndex];
+                    positions.emplace_back(p.x, p.y, p.z);
+                    widths.push_back(settings.includeWidths && strand.pointOffset + pointIndex < asset.pointWidths.size() ? asset.pointWidths[strand.pointOffset + pointIndex] : 0.004f);
+                }
+            }
+            AbcG::OCurvesSchema::Sample sample(Abc::V3fArraySample(positions), Abc::Int32ArraySample(counts), AbcG::kNoBasis, AbcG::kNonPeriodic, AbcG::kLinear);
+            curves.getSchema().set(sample);
+            if (settings.includeWidths)
+            {
+                AbcG::OFloatGeomParam::Sample widthSample(Abc::FloatArraySample(widths), AbcG::kVertexScope);
+                curves.getSchema().getWidthsParam().set(widthSample);
+            }
+            if (settings.includeScalp && !asset.scalpMesh.positions.empty() && !asset.scalpMesh.triangles.empty())
+            {
+                AbcG::OPolyMesh scalp(top, "scalp");
+                std::vector<AbcG::V3f> scalpPositions;
+                scalpPositions.reserve(asset.scalpMesh.positions.size());
+                for (const Vec3& p : asset.scalpMesh.positions)
+                {
+                    scalpPositions.emplace_back(p.x, p.y, p.z);
+                }
+                std::vector<Abc::int32_t> faceCounts(asset.scalpMesh.triangles.size(), 3);
+                std::vector<Abc::int32_t> faceIndices;
+                faceIndices.reserve(asset.scalpMesh.triangles.size() * 3u);
+                for (const TriangleIndices& tri : asset.scalpMesh.triangles)
+                {
+                    faceIndices.push_back(static_cast<Abc::int32_t>(tri.a));
+                    faceIndices.push_back(static_cast<Abc::int32_t>(tri.b));
+                    faceIndices.push_back(static_cast<Abc::int32_t>(tri.c));
+                }
+                AbcG::OPolyMeshSchema::Sample scalpSample(Abc::V3fArraySample(scalpPositions),
+                                                          Abc::Int32ArraySample(faceIndices),
+                                                          Abc::Int32ArraySample(faceCounts));
+                scalp.getSchema().set(scalpSample);
+            }
+            outError.clear();
+            return true;
+        }
+#endif
         template <typename T>
         bool WriteRaw(std::ofstream& out, const T& value)
         {
@@ -1051,12 +1646,13 @@ namespace hairgpu
         }
     }
 
-    bool SaveHairAssetToAlembic(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError)
+    bool SaveHairAssetToAlembic(const std::filesystem::path& filePath,
+                                const HairAsset& asset,
+                                const HairAlembicSettings& settings,
+                                std::string& outError)
     {
 #ifdef HAIRGPU_WITH_ALEMBIC
-        (void)asset;
-        outError = "Alembic export hook is enabled, but the concrete AbcGeom writer still needs to be connected in AssetIO.cpp for this local SDK setup.";
-        return false;
+        return SaveHairAssetToAlembicSdk(filePath, asset, settings, outError);
 #else
         std::error_code ec;
         if (filePath.has_parent_path())
@@ -1065,18 +1661,17 @@ namespace hairgpu
         }
 
         HairUsdExportSettings usdSettings = {};
-        usdSettings.includeScalp = true;
+        usdSettings.includeScalp = settings.includeScalp;
         usdSettings.includeCards = false;
-        usdSettings.includeWidths = true;
-        usdSettings.includeGuidePrimvar = true;
-        usdSettings.includeGroupPrimvar = true;
+        usdSettings.includeWidths = settings.includeWidths;
+        usdSettings.includeGuidePrimvar = settings.includeGuidePrimvar;
+        usdSettings.includeGroupPrimvar = settings.includeGroupPrimvar;
         if (!SaveHairAssetToUsda(filePath, asset, usdSettings, outError))
         {
             return false;
         }
 
-        const std::filesystem::path sidecarHairBin = filePath;
-        const std::filesystem::path hairBinPath = sidecarHairBin.string() + ".hairbin";
+        const std::filesystem::path hairBinPath = filePath.string() + ".hairbin";
         std::string sidecarError;
         if (!SaveHairAssetToHairBinary(hairBinPath, asset, sidecarError))
         {
@@ -1091,6 +1686,12 @@ namespace hairgpu
             manifest << "  \"format\": \"abc_compat_usda\",\n";
             manifest << "  \"primary\": \"" << filePath.filename().string() << "\",\n";
             manifest << "  \"sidecarHairBin\": \"" << hairBinPath.filename().string() << "\",\n";
+            manifest << "  \"settings\": {\n";
+            manifest << "    \"writeScalpMesh\": " << (settings.includeScalp ? "true" : "false") << ",\n";
+            manifest << "    \"writeVelocities\": " << (settings.includeGuidePrimvar ? "true" : "false") << ",\n";
+            manifest << "    \"writeGroups\": " << (settings.includeGroupPrimvar ? "true" : "false") << ",\n";
+            manifest << "    \"writeWidths\": " << (settings.includeWidths ? "true" : "false") << "\n";
+            manifest << "  },\n";
             manifest << "  \"note\": \"This build has no Alembic SDK. The .abc file contains USDA text and can still round-trip through the compatibility loader.\"\n";
             manifest << "}\n";
         }
@@ -1098,6 +1699,71 @@ namespace hairgpu
         outError.clear();
         return true;
 #endif
+    }
+
+    bool SaveHairAssetToAlembic(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError)
+    {
+        HairAlembicSettings defaultSettings = {};
+        return SaveHairAssetToAlembic(filePath, asset, defaultSettings, outError);
+    }
+
+    bool RoundTripHairAssetThroughAlembic(const HairAsset& asset,
+                                        const std::filesystem::path& filePath,
+                                        const HairAlembicSettings& settings,
+                                        AlembicRoundTripReport& outReport,
+                                        std::string& outError)
+    {
+        outReport = {};
+        outReport.usedAlembicSdk = false;
+#ifdef HAIRGPU_WITH_ALEMBIC
+        outReport.usedAlembicSdk = true;
+#endif
+        outReport.sourceStrandCount = static_cast<uint32_t>(asset.strands.size());
+        outReport.sourcePointCount = static_cast<uint32_t>(asset.restPoints.size());
+        if (!SaveHairAssetToAlembic(filePath, asset, settings, outError))
+        {
+            return false;
+        }
+        HairAsset reloaded = {};
+        if (!LoadHairAssetFromAlembic(filePath, reloaded, outError))
+        {
+            return false;
+        }
+        outReport.roundTripStrandCount = static_cast<uint32_t>(reloaded.strands.size());
+        outReport.roundTripPointCount = static_cast<uint32_t>(reloaded.restPoints.size());
+        const size_t pointCount = std::min(asset.restPoints.size(), reloaded.restPoints.size());
+        double pointSq = 0.0;
+        float pointMax = 0.0f;
+        for (size_t i = 0u; i < pointCount; ++i)
+        {
+            const float err = Length(asset.restPoints[i] - reloaded.restPoints[i]);
+            pointSq += static_cast<double>(err) * static_cast<double>(err);
+            pointMax = std::max(pointMax, err);
+        }
+        if (pointCount > 0u)
+        {
+            outReport.rmsRestPointError = static_cast<float>(std::sqrt(pointSq / static_cast<double>(pointCount)));
+            outReport.maxRestPointError = pointMax;
+        }
+        const size_t widthCount = std::min(asset.pointWidths.size(), reloaded.pointWidths.size());
+        double widthSq = 0.0;
+        float widthMax = 0.0f;
+        for (size_t i = 0u; i < widthCount; ++i)
+        {
+            const float err = std::fabs(asset.pointWidths[i] - reloaded.pointWidths[i]);
+            widthSq += static_cast<double>(err) * static_cast<double>(err);
+            widthMax = std::max(widthMax, err);
+        }
+        if (widthCount > 0u)
+        {
+            outReport.rmsWidthError = static_cast<float>(std::sqrt(widthSq / static_cast<double>(widthCount)));
+            outReport.maxWidthError = widthMax;
+        }
+        outReport.scalpRoundTripOk = asset.scalpMesh.positions.size() == reloaded.scalpMesh.positions.size() &&
+                                     asset.scalpMesh.triangles.size() == reloaded.scalpMesh.triangles.size() &&
+                                     asset.scalpMesh.skinWeights.size() == reloaded.scalpMesh.skinWeights.size();
+        outError.clear();
+        return true;
     }
 
     bool LoadHairAssetFromHairFile(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)

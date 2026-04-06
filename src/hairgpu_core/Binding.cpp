@@ -151,6 +151,54 @@ namespace hairgpu
         return true;
     }
 
+
+    void NormalizeScalpSkinWeights(ScalpMesh& scalpMesh, bool fillMissingWeights)
+    {
+        scalpMesh.skinWeights.resize(scalpMesh.positions.size());
+        for (SkinWeight4& weights : scalpMesh.skinWeights)
+        {
+            float sum = 0.0f;
+            for (float value : weights.boneWeights)
+            {
+                sum += std::max(value, 0.0f);
+            }
+            if (sum <= 1.0e-6f)
+            {
+                if (fillMissingWeights)
+                {
+                    weights.boneIndices = { 0u, 0u, 0u, 0u };
+                    weights.boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+                }
+                continue;
+            }
+
+            std::array<std::pair<float, uint32_t>, 4> packed = {};
+            for (size_t i = 0; i < 4; ++i)
+            {
+                packed[i] = { std::max(weights.boneWeights[i], 0.0f), weights.boneIndices[i] };
+            }
+            std::sort(packed.begin(), packed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            float renorm = 0.0f;
+            for (size_t i = 0; i < 4; ++i)
+            {
+                weights.boneWeights[i] = packed[i].first;
+                weights.boneIndices[i] = packed[i].second;
+                renorm += weights.boneWeights[i];
+            }
+            renorm = std::max(renorm, 1.0e-6f);
+            for (float& value : weights.boneWeights)
+            {
+                value /= renorm;
+            }
+        }
+    }
+
+    bool RepairHairAssetSkinning(HairAsset& asset, bool snapRootsToScalp, RootBindingQualityReport* outReport)
+    {
+        NormalizeScalpSkinWeights(asset.scalpMesh, true);
+        return GenerateRootBindingsFromScalp(asset, snapRootsToScalp, outReport);
+    }
+
     std::vector<Vec3> ComputeSkinnedScalpPositions(const ScalpMesh& scalpMesh, const std::vector<Mat4>& boneMatrices)
     {
         std::vector<Vec3> result;
