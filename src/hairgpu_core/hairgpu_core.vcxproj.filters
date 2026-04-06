@@ -20,6 +20,7 @@
     <ClCompile Include="Broadphase.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Cards.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Collision.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="DccInterop.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="GuideCache.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="HairCache.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="HairMath.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -31,6 +32,7 @@
     <ClCompile Include="ReducedModel.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="RenderData.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="SampleAsset.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="TemporalModel.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="UsdExport.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Validation.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Wig.cpp"><Filter>Source Files</Filter></ClCompile>
@@ -45,6 +47,7 @@
     <ClInclude Include="..\..\include\hairgpu\Broadphase.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Cards.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Collision.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\..\include\hairgpu\DccInterop.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\GuideCache.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\HairCache.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\HybridRuntime.h"><Filter>Header Files</Filter></ClInclude>
@@ -55,6 +58,7 @@
     <ClInclude Include="..\..\include\hairgpu\Pipeline.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\ReducedModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\RenderData.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\..\include\hairgpu\TemporalModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Types.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\UsdExport.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\..\include\hairgpu\Validation.h"><Filter>Header Files</Filter></ClInclude>

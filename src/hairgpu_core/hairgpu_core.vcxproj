@@ -91,6 +91,7 @@
     <ClCompile Include="Broadphase.cpp" />
     <ClCompile Include="Cards.cpp" />
     <ClCompile Include="Collision.cpp" />
+    <ClCompile Include="DccInterop.cpp" />
     <ClCompile Include="GuideCache.cpp" />
     <ClCompile Include="HairCache.cpp" />
     <ClCompile Include="HairMath.cpp" />
@@ -102,6 +103,7 @@
     <ClCompile Include="ReducedModel.cpp" />
     <ClCompile Include="RenderData.cpp" />
     <ClCompile Include="SampleAsset.cpp" />
+    <ClCompile Include="TemporalModel.cpp" />
     <ClCompile Include="UsdExport.cpp" />
     <ClCompile Include="Validation.cpp" />
     <ClCompile Include="Wig.cpp" />
@@ -116,6 +118,7 @@
     <ClInclude Include="..\..\include\hairgpu\Broadphase.h" />
     <ClInclude Include="..\..\include\hairgpu\Cards.h" />
     <ClInclude Include="..\..\include\hairgpu\Collision.h" />
+    <ClInclude Include="..\..\include\hairgpu\DccInterop.h" />
     <ClInclude Include="..\..\include\hairgpu\GuideCache.h" />
     <ClInclude Include="..\..\include\hairgpu\HairCache.h" />
     <ClInclude Include="..\..\include\hairgpu\HybridRuntime.h" />
@@ -126,6 +129,7 @@
     <ClInclude Include="..\..\include\hairgpu\Pipeline.h" />
     <ClInclude Include="..\..\include\hairgpu\ReducedModel.h" />
     <ClInclude Include="..\..\include\hairgpu\RenderData.h" />
+    <ClInclude Include="..\..\include\hairgpu\TemporalModel.h" />
     <ClInclude Include="..\..\include\hairgpu\Types.h" />
     <ClInclude Include="..\..\include\hairgpu\UsdExport.h" />
     <ClInclude Include="..\..\include\hairgpu\Validation.h" />

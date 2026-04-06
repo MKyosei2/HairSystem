@@ -495,6 +495,26 @@ namespace hairgpu::viewer
             return wide;
         }
 
+        std::string WideToUtf8(const std::wstring& text)
+        {
+            if (text.empty())
+            {
+                return {};
+            }
+            const int length = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            if (length <= 0)
+            {
+                return std::string(text.begin(), text.end());
+            }
+            std::string utf8(static_cast<size_t>(length), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, utf8.data(), length, nullptr, nullptr);
+            if (!utf8.empty() && utf8.back() == '\0')
+            {
+                utf8.pop_back();
+            }
+            return utf8;
+        }
+
         std::wstring NormalizePathExtensionLower(const std::filesystem::path& path)
         {
             std::wstring ext = path.extension().wstring();
@@ -3232,7 +3252,7 @@ namespace hairgpu::viewer
         {
             return false;
         }
-        out << "preset=" << std::string(m_activePresetName.begin(), m_activePresetName.end()) << "\n";
+        out << "preset=" << WideToUtf8(m_activePresetName) << "\n";
         out << "guides=" << m_builderGuideCount << "\n";
         out << "followersPerGuide=" << m_builderFollowersPerGuide << "\n";
         out << "particlesPerStrand=" << m_builderParticlesPerStrand << "\n";
@@ -3270,8 +3290,8 @@ namespace hairgpu::viewer
         out << "debugColorMode=" << static_cast<uint32_t>(m_debugColorMode) << "\n";
         out << "maskSourceMode=" << static_cast<uint32_t>(m_maskSourceMode) << "\n";
         out << "maskOverlayMode=" << static_cast<uint32_t>(m_maskOverlayMode) << "\n";
-        out << "partingMaskPath=" << std::string(m_partingMaskPath.begin(), m_partingMaskPath.end()) << "\n";
-        out << "regionMaskPath=" << std::string(m_regionMaskPath.begin(), m_regionMaskPath.end()) << "\n";
+        out << "partingMaskPath=" << WideToUtf8(m_partingMaskPath) << "\n";
+        out << "regionMaskPath=" << WideToUtf8(m_regionMaskPath) << "\n";
         return true;
     }
 
@@ -3313,7 +3333,7 @@ namespace hairgpu::viewer
 
         if (auto it = values.find("preset"); it != values.end())
         {
-            m_activePresetName.assign(it->second.begin(), it->second.end());
+            m_activePresetName = Utf8ToWide(it->second);
         }
         m_builderGuideCount = getUInt("guides", m_builderGuideCount);
         m_builderFollowersPerGuide = getUInt("followersPerGuide", m_builderFollowersPerGuide);
@@ -3351,8 +3371,8 @@ namespace hairgpu::viewer
         { const int renderModeValue = static_cast<int>(getUInt("renderMode", static_cast<unsigned>(m_renderMode == RenderMode::ParticlePointSprite ? 0 : 1)));
           m_renderMode = (renderModeValue == 0) ? RenderMode::ParticlePointSprite : RenderMode::ParticleBillboard; }
         m_debugColorMode = static_cast<DebugColorMode>(std::min<uint32_t>(getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)), 2u));
-        if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath.assign(it->second.begin(), it->second.end());
-        if (auto it = values.find("regionMaskPath"); it != values.end()) m_regionMaskPath.assign(it->second.begin(), it->second.end());
+        if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath = Utf8ToWide(it->second);
+        if (auto it = values.find("regionMaskPath"); it != values.end()) m_regionMaskPath = Utf8ToWide(it->second);
         m_maskSourceMode = static_cast<MaskSourceMode>(std::min<uint32_t>(getUInt("maskSourceMode", static_cast<uint32_t>(m_maskSourceMode)), 2u));
         m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 2u));
 
@@ -3390,8 +3410,8 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplySampleMaskOverrides()
     {
-        std::string parting(m_partingMaskPath.begin(), m_partingMaskPath.end());
-        std::string region(m_regionMaskPath.begin(), m_regionMaskPath.end());
+        std::string parting = WideToUtf8(m_partingMaskPath);
+        std::string region = WideToUtf8(m_regionMaskPath);
         hairgpu::SetSampleMaskOverridePaths(parting.empty() ? nullptr : parting.c_str(), region.empty() ? nullptr : region.c_str());
         hairgpu::SetSampleMaskSourceMode(static_cast<hairgpu::SampleMaskSourceMode>(m_maskSourceMode));
     }
