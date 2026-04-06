@@ -1,9 +1,0 @@
-{
-  "sequence": "guidecache_usda_sequence",
-  "frameCount": 8,
-  "frameRate": 60,
-  "strandCount": 1,
-  "guidesOnly": true,
-  "everyNth": 2,
-  "pattern": "frame_%04d.usda"
-}

@@ -1,0 +1,194 @@
+# Consolidated Final Text Notes
+
+This file consolidates the text files found in the current workspace and the uploaded PATCH_MANIFEST.zip.
+
+Policy used for consolidation:
+- identical-content duplicates were merged
+- original filenames were preserved in each section header
+- file bodies were kept as-is except for section separators
+
+Included source files
+=====================
+
+- PATCH_MANIFEST.txt (duplicates merged: PATCH_MANIFEST.txt)
+- PATCH_STARTUP_AND_SHADER_CHECKLIST.txt
+- LOCAL_TEST_RUN_FIRST.txt
+- CMakeLists.txt (duplicates merged: CMakeLists.txt)
+- asset_compat_info.txt
+- bundle_roundtrip_summary.txt
+- stage10_roundtrip_report.txt (duplicates merged: stage10_roundtrip_stdout.txt)
+- test.txt
+
+================================================================
+Source: PATCH_MANIFEST.txt
+Merged duplicates: PATCH_MANIFEST.txt
+================================================================
+
+Priority patch contents (modified/added files only)
+
+Implemented/prioritized areas:
+- Alembic SDK integration hooks with CMake package discovery and SDK-backed load/save code paths
+- GPU indirect dispatch preparation in DX11 viewer (follow-pass indirect args build + DispatchIndirect path)
+- Stronger temporal / active-set predictor models (extra hidden layers / MLP serialization / CSV interop compatibility)
+- DCC / LOD / skinning completion work (adaptive LOD chain, skinning repair/normalization, DCC JSON export)
+
+Validation performed in this environment:
+- Linux CMake build succeeded for hairgpu_core + hairgpu_cli
+- CLI smoke tests succeeded:
+  * build-lods generated_scaffold/asset_normalized.hairbin ...
+  * export-dcc-json generated_scaffold/asset_normalized.hairbin ...
+  * asset-export-abc-compat generated_scaffold/asset_normalized.hairbin ...
+
+Not fully verifiable here:
+- Alembic SDK-backed path requires Alembic SDK present at configure/build time
+- DX11 indirect dispatch path requires Windows/DX11 runtime to compile and execute viewer
+
+
+================================================================
+Source: PATCH_STARTUP_AND_SHADER_CHECKLIST.txt
+================================================================
+
+HairSystem DX11 Viewer patch checklist
+=====================================
+
+Applied fixes
+-------------
+1. apps/dx11_viewer/hairgpu_dx11_viewer.vcxproj
+   - Visual Studio debugger working directory is now $(ProjectDir).
+   - Post-build now copies all .hlsl files to $(OutDir)\shaders\.
+   - Key startup shaders are also copied to $(OutDir) root for backward compatibility.
+
+2. apps/dx11_viewer/src/GpuHairViewer.cpp
+   - Shader search now also checks repo-root/apps/dx11_viewer/shaders.
+   - Missing-file errors are distinguished from HLSL compile errors.
+   - Startup dialog now lists concrete checks instead of only "Unknown shader compilation error".
+
+What to verify in Visual Studio
+-------------------------------
+1. Open HairSystem.sln.
+2. Right-click hairgpu_dx11_viewer -> Set as Startup Project.
+3. Use Debug | x64 or Release | x64.
+4. Delete stale output folders before the first rebuild if needed:
+   - .vs
+   - bin
+   - bin-int
+5. Rebuild the solution.
+
+What to verify after build
+--------------------------
+1. Confirm these paths now exist:
+   - bin\Debug\hairgpu_dx11_viewer\shaders\HairParticle.hlsl
+   - bin\Debug\hairgpu_dx11_viewer\shaders\HairSim.hlsl
+   - bin\Debug\hairgpu_dx11_viewer\shaders\DebugLine.hlsl
+   - bin\Debug\hairgpu_dx11_viewer\shaders\ScalpMesh.hlsl
+2. If you run under the debugger, the working directory should be apps\dx11_viewer.
+3. If startup still fails, the dialog should now say whether the shader file is missing or the HLSL itself failed to compile.
+
+
+================================================================
+Source: LOCAL_TEST_RUN_FIRST.txt
+================================================================
+
+HairSystem local test quick steps
+================================
+
+1. Run build_scripts\Setup_Local_Test_Signing.cmd once on each test PC.
+2. Build hairgpu_dx11_viewer in Visual Studio.
+3. The post-build step will copy shaders and auto-sign the output when the test certificate exists.
+4. To make a signed handoff ZIP, run build_scripts\Create_Signed_Test_Bundle.cmd.
+
+Notes:
+- ScalpSim.hlsl is now included and copied to the output directory.
+- If ScalpSim.hlsl is missing at runtime, the viewer falls back to an embedded shader or CPU scalp animation instead of aborting startup.
+- Very strict managed App Control / AppLocker / WDAC devices can still require the administrator to allow the signer or app.
+
+
+================================================================
+Source: CMakeLists.txt
+Merged duplicates: CMakeLists.txt
+================================================================
+
+cmake_minimum_required(VERSION 3.20)
+project(HairSystemGPUBase VERSION 0.2.0 LANGUAGES CXX)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(HAIRGPU_BUILD_DX11_VIEWER "Build the Windows DX11 sample viewer" ON)
+option(HAIRGPU_WITH_ALEMBIC "Enable Alembic SDK integration points" OFF)
+option(HAIRGPU_INSTALL "Enable install/export targets" ON)
+
+add_subdirectory(src/hairgpu_core)
+
+if(WIN32 AND HAIRGPU_BUILD_DX11_VIEWER)
+    add_subdirectory(apps/dx11_viewer)
+endif()
+
+add_subdirectory(apps/hairgpu_cli)
+
+if(HAIRGPU_INSTALL)
+    include(CMakePackageConfigHelpers)
+
+    install(DIRECTORY include/ DESTINATION include)
+
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/HairGpuConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/HairGpuConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/HairGpuConfig.cmake"
+        INSTALL_DESTINATION lib/cmake/HairGpu
+    )
+
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/HairGpuConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/HairGpuConfigVersion.cmake"
+        DESTINATION lib/cmake/HairGpu
+    )
+endif()
+
+
+================================================================
+Source: asset_compat_info.txt
+================================================================
+
+strands=2 guides=1 followers=1 points=8 pps=4 avgLen=0.549608 maxLen=0.553973 avgWidth=0.00775
+
+
+================================================================
+Source: bundle_roundtrip_summary.txt
+================================================================
+
+priorGuides=8 residualGuides=12 residualBlend=1.00000 smoothingAlpha=0.18000 uncertaintyAlpha=0.28000 penetrationGain=1.04325 priorVelPred=0.10292 residualVelPred=0.20595 priorAccelPred=0.34401 residualAccelPred=0.05767 priorTemporalBlend=0.46206 residualTemporalBlend=0.54881 predictorBlend=0.81473 frozenBlend=0.98000 cachedBlend=0.73297 budgetClusters=6 budgetGuides=32
+
+
+================================================================
+Source: stage10_roundtrip_report.txt
+Merged duplicates: stage10_roundtrip_stdout.txt
+================================================================
+
+usedAlembicSdk=0
+sourceStrands=2
+roundTripStrands=2
+sourcePoints=8
+roundTripPoints=8
+rmsRestPointError=0.000000
+maxRestPointError=0.000000
+rmsWidthError=0.000000
+maxWidthError=0.000000
+scalpRoundTripOk=0
+
+
+================================================================
+Source: test.txt
+================================================================
+
+test
+
+

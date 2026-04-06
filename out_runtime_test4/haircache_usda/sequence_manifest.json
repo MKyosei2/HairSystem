@@ -1,9 +1,0 @@
-{
-  "sequence": "haircache_usda_sequence",
-  "frameCount": 8,
-  "frameRate": 60,
-  "strandCount": 2,
-  "guidesOnly": false,
-  "everyNth": 2,
-  "pattern": "frame_%04d.usda"
-}

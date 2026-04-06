@@ -1,1 +1,0 @@
-threadsPerGroup=64 guides=1 guidePoints=4 full=2 reduced=0 frozen=0 cached=0 corrective=2 fullDispatchGroups=1 correctiveGroups=1
