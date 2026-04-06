@@ -69,6 +69,8 @@ cbuffer SimConstants : register(b0)
     float SphereData[16];
     float CapsuleData[32];
 
+    uint UseCompactedGuideDispatch;
+    uint CompactedGuideCount;
     uint FollowerUpdateStride;
     uint FollowerUpdatePhase;
     uint UseCompactedFollowerDispatch;
@@ -116,6 +118,8 @@ StructuredBuffer<TriangleData> ScalpTriangles : register(t5);
 StructuredBuffer<RootBindingData> RootBindings : register(t6);
 StructuredBuffer<uint> CompactedFollowerIndices : register(t7);
 StructuredBuffer<uint> CompactionCountersInSim : register(t8);
+StructuredBuffer<uint> CompactedGuideIndices : register(t9);
+StructuredBuffer<uint> GuideCompactionCountersInSim : register(t10);
 
 RWStructuredBuffer<float4> OutputPositions : register(u0);
 RWStructuredBuffer<float4> OutputPreviousPositions : register(u1);
@@ -135,6 +139,19 @@ float3 SafeNormalize(float3 v)
 uint TotalGuideParticles()
 {
     return GuideStrandCount * ParticlesPerStrand;
+}
+
+uint ResolveGuideStrandIndex(uint dispatchIndex)
+{
+    if (UseCompactedGuideDispatch != 0u)
+    {
+        if (dispatchIndex >= GuideCompactionCountersInSim[0])
+        {
+            return 0xFFFFFFFFu;
+        }
+        return CompactedGuideIndices[dispatchIndex];
+    }
+    return dispatchIndex;
 }
 
 uint TotalGridCells()
@@ -472,8 +489,8 @@ void IntegrateCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void DistanceCS(uint3 id : SV_DispatchThreadID)
 {
-    uint strandIndex = id.x;
-    if (strandIndex >= GuideStrandCount)
+    uint strandIndex = ResolveGuideStrandIndex(id.x);
+    if (strandIndex == 0xFFFFFFFFu || strandIndex >= GuideStrandCount)
     {
         return;
     }
@@ -518,8 +535,8 @@ void DistanceCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BendCS(uint3 id : SV_DispatchThreadID)
 {
-    uint strandIndex = id.x;
-    if (strandIndex >= GuideStrandCount || ParticlesPerStrand < 3)
+    uint strandIndex = ResolveGuideStrandIndex(id.x);
+    if (strandIndex == 0xFFFFFFFFu || strandIndex >= GuideStrandCount || ParticlesPerStrand < 3)
     {
         return;
     }
