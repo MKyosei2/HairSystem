@@ -1812,9 +1812,11 @@ namespace hairgpu::viewer
                 constants->capsuleData[i * 8 + 6] = c.pointB.z;
                 constants->capsuleData[i * 8 + 7] = c.radiusB;
             }
+            constants->useCompactedGuideDispatch = 0u;
+            constants->compactedGuideCount = 0u;
             constants->followerUpdateStride = 1u;
             constants->followerUpdatePhase = 0u;
-            constants->useCompactedFollowerDispatch = 1u;
+            constants->useCompactedFollowerDispatch = 0u;
             constants->compactedFollowerCount = 0u;
             m_context->Unmap(m_simConstants.Get(), 0);
         }
@@ -1979,80 +1981,21 @@ namespace hairgpu::viewer
 
         if (followerStrandCount > 0u)
         {
-            std::vector<uint32_t> followerTierAssignments(std::max<UINT>(followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
-            for (uint32_t followerIndex = 0u; followerIndex < followerStrandCount; ++followerIndex)
-            {
-                const uint32_t strandIndex = guideStrandCount + followerIndex;
-                if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
-                {
-                    followerTierAssignments[followerIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
-                }
-            }
-            m_context->UpdateSubresource(m_followerTierAssignmentsBuffer.buffer.Get(), 0, nullptr, followerTierAssignments.data(), 0, 0);
-            const std::array<uint32_t, 4> zeroCompactionCounters = { 0u, 0u, 0u, 0u };
-            m_context->UpdateSubresource(m_compactedFollowerCounterBuffer.buffer.Get(), 0, nullptr, zeroCompactionCounters.data(), 0, 0);
-
-            if (m_compactFollowerDispatchCS &&
-                m_buildFollowDispatchArgsCS &&
-                m_followDispatchArgsBuffer &&
-                m_followDispatchArgsUav &&
-                m_followerTierAssignmentsBuffer.srv &&
-                m_compactedFollowerIndicesBuffer.uav &&
-                m_compactedFollowerCounterBuffer.uav)
-            {
-                ID3D11ShaderResourceView* compactSrvs[] = {
-                    m_followerTierAssignmentsBuffer.srv.Get()
-                };
-                ID3D11UnorderedAccessView* compactUavs[] = {
-                    m_compactedFollowerIndicesBuffer.uav.Get(),
-                    m_compactedFollowerCounterBuffer.uav.Get(),
-                    nullptr, nullptr, nullptr, nullptr,
-                    m_followDispatchArgsUav.Get()
-                };
-
-                m_context->CSSetShaderResources(0, 1, compactSrvs);
-                m_context->CSSetUnorderedAccessViews(0, 7, compactUavs, nullptr);
-                m_context->CSSetShader(m_compactFollowerDispatchCS.Get(), nullptr, 0);
-                m_context->Dispatch(followerGroups, 1, 1);
-
-                ID3D11UnorderedAccessView* nullCompactBuildUavs[7] = {};
-                m_context->CSSetUnorderedAccessViews(0, 7, nullCompactBuildUavs, nullptr);
-
-                ID3D11UnorderedAccessView* argsOnlyUav = m_followDispatchArgsUav.Get();
-                ID3D11ShaderResourceView* nullSrvSlot0 = nullptr;
-                ID3D11ShaderResourceView* counterSrv = m_compactedFollowerCounterBuffer.srv.Get();
-                m_context->CSSetShaderResources(0, 1, &nullSrvSlot0);
-                m_context->CSSetShaderResources(1, 1, &counterSrv);
-                m_context->CSSetUnorderedAccessViews(6, 1, &argsOnlyUav, nullptr);
-                m_context->CSSetShader(m_buildFollowDispatchArgsCS.Get(), nullptr, 0);
-                m_context->Dispatch(1, 1, 1);
-
-                ID3D11ShaderResourceView* followSrvs[] = {
-                    m_positions[m_currentBufferIndex].srv.Get(),
-                    m_previousPositions[m_currentBufferIndex].srv.Get(),
-                    m_restPositions.srv.Get(),
-                    m_followBuffer.srv.Get(),
-                    m_scalpPositions.srv.Get(),
-                    m_scalpTrianglesBuffer.srv.Get(),
-                    m_rootBindingsBuffer.srv.Get(),
-                    m_compactedFollowerIndicesBuffer.srv.Get(),
-                    m_compactedFollowerCounterBuffer.srv.Get()
-                };
-                m_context->CSSetShaderResources(0, 9, followSrvs);
-                m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
-
-                ID3D11ShaderResourceView* nullCompactSrvs[9] = {};
-                ID3D11UnorderedAccessView* nullCompactUavs[7] = {};
-                m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
-                m_context->DispatchIndirect(m_followDispatchArgsBuffer.Get(), 0u);
-                m_context->CSSetShaderResources(0, 9, nullCompactSrvs);
-                m_context->CSSetUnorderedAccessViews(0, 7, nullCompactUavs, nullptr);
-            }
-            else
-            {
-                m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
-                m_context->Dispatch(followerGroups, 1, 1);
-            }
+            ID3D11ShaderResourceView* followSrvs[] = {
+                m_positions[m_currentBufferIndex].srv.Get(),
+                m_previousPositions[m_currentBufferIndex].srv.Get(),
+                m_restPositions.srv.Get(),
+                m_followBuffer.srv.Get(),
+                m_scalpPositions.srv.Get(),
+                m_scalpTrianglesBuffer.srv.Get(),
+                m_rootBindingsBuffer.srv.Get(),
+                nullptr,
+                nullptr
+            };
+            m_context->CSSetShaderResources(0, 9, followSrvs);
+            m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
+            m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
+            m_context->Dispatch(followerGroups, 1, 1);
         }
 
         ID3D11ShaderResourceView* nullSrvs[9] = {};
@@ -2598,7 +2541,7 @@ namespace hairgpu::viewer
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer ActiveSet Runtime [VISREC_GPU_RESTORE_2_MATRIXFIX]  |  preset=" << m_activePresetName
+        ss << L"Hair GPU Viewer ActiveSet Runtime [GPU_LAYOUT_FIX_V3_NO_COMPACTION]  |  preset=" << m_activePresetName
            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
            << L"  guides=" << m_asset.guideStrandCount
            << L"  followers=" << m_asset.followerStrandCount

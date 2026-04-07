@@ -210,9 +210,11 @@ namespace hairgpu::viewer
             float sphereData[4 * 4] = {};
             float capsuleData[4 * 8] = {};
 
+            uint32_t useCompactedGuideDispatch = 0u;
+            uint32_t compactedGuideCount = 0u;
             uint32_t followerUpdateStride = 1u;
             uint32_t followerUpdatePhase = 0u;
-            uint32_t useCompactedFollowerDispatch = 1u;
+            uint32_t useCompactedFollowerDispatch = 0u;
             uint32_t compactedFollowerCount = 0u;
         };
 

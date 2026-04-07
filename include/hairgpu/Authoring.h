@@ -14,6 +14,7 @@ namespace hairgpu
         All = 0,
         Ellipse = 1,
         Rectangle = 2,
+        Sector = 3,
     };
 
     struct RegionSelectionSettings
@@ -21,6 +22,10 @@ namespace hairgpu
         RegionSelectMode mode = RegionSelectMode::All;
         Vec2 centerUv = {0.5f, 0.5f};
         Vec2 radiusUv = {0.2f, 0.2f};
+        float innerRadius = 0.0f;
+        float angleCenterRadians = 0.0f;
+        float angleHalfExtentRadians = 3.14159265f;
+        float feather = 0.20f;
         uint32_t groupId = UINT32_MAX;
         bool guidesOnly = false;
     };
@@ -45,6 +50,30 @@ namespace hairgpu
         float sideOffset = 0.0f;
         float yawRadians = 0.0f;
         float followerInfluence = 1.0f;
+    };
+
+    struct EditLayer
+    {
+        std::string name;
+        RegionSelectionSettings region = {};
+        EditSettings edit = {};
+        float layerWeight = 1.0f;
+        bool enabled = true;
+    };
+
+    struct EditStack
+    {
+        std::vector<EditLayer> layers;
+        float boundarySmoothing = 0.42f;
+        float boundaryRadiusUv = 0.10f;
+    };
+
+    struct RuntimeEditState
+    {
+        std::vector<float> guideInfluence;
+        std::vector<float> strandInfluence;
+        float maxGuideInfluence = 0.0f;
+        uint32_t activeGuideCount = 0u;
     };
 
     struct ConstraintSettings
@@ -95,6 +124,12 @@ namespace hairgpu
 
     RegionSelectionResult SelectRegion(const HairAsset& asset, const RegionSelectionSettings& settings);
     bool ApplyEditToRegion(HairAsset& asset, const RegionSelectionResult& selection, const EditSettings& settings, std::string& outError);
+    RuntimeEditState BuildRuntimeEditState(const HairAsset& asset, const EditStack& stack);
+    bool ApplyEditStackToAsset(HairAsset& asset,
+                               const HairAsset& baseAsset,
+                               const EditStack& stack,
+                               RuntimeEditState* outState,
+                               std::string& outError);
     void ApplyConstraints(HairAsset& asset, const ConstraintSettings& settings);
     void ApplyAngularBendRelaxation(HairAsset& asset, const AngularBendRelaxationSettings& settings);
     void ApplyAngularXpbdBendRelaxation(HairAsset& asset, const AngularXpbdBendSettings& settings);

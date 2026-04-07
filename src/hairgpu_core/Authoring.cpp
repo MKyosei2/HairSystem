@@ -12,10 +12,24 @@ namespace hairgpu
     namespace
     {
         constexpr float kEpsilon = 1.0e-6f;
+        constexpr float kPi = 3.1415926535f;
 
         float Clamp01(float v)
         {
             return std::clamp(v, 0.0f, 1.0f);
+        }
+
+        float WrapAngleRadians(float radians)
+        {
+            while (radians > kPi)
+            {
+                radians -= 2.0f * kPi;
+            }
+            while (radians < -kPi)
+            {
+                radians += 2.0f * kPi;
+            }
+            return radians;
         }
 
         Vec3 RotateYaw(const Vec3& p, float radians)
@@ -45,6 +59,19 @@ namespace hairgpu
             return {0.5f + 0.5f * root.x, 0.5f + 0.5f * root.z};
         }
 
+        float ComputeFeatheredWeight(float normalizedDistance, float feather)
+        {
+            normalizedDistance = Clamp01(normalizedDistance);
+            const float safeFeather = std::max(feather, 1.0e-4f);
+            const float start = Clamp01(1.0f - safeFeather);
+            if (normalizedDistance <= start)
+            {
+                return 1.0f;
+            }
+            const float t = Clamp01((normalizedDistance - start) / safeFeather);
+            return 1.0f - t * t * (3.0f - 2.0f * t);
+        }
+
         bool StrandMatchesRegion(const HairAsset& asset, uint32_t strandIndex, const RegionSelectionSettings& settings, float& outWeight)
         {
             const StrandRange& strand = asset.strands[strandIndex];
@@ -68,31 +95,200 @@ namespace hairgpu
             const float dy = uv.y - settings.centerUv.y;
             const float rx = std::max(settings.radiusUv.x, 1.0e-4f);
             const float ry = std::max(settings.radiusUv.y, 1.0e-4f);
+            const float feather = Clamp01(settings.feather);
 
             if (settings.mode == RegionSelectMode::Ellipse)
             {
-                const float d = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
+                const float d = std::sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
                 if (d > 1.0f)
                 {
                     return false;
                 }
-                outWeight = 1.0f - std::sqrt(std::max(0.0f, d));
+                outWeight = ComputeFeatheredWeight(d, feather);
                 return true;
             }
 
             if (settings.mode == RegionSelectMode::Rectangle)
             {
-                if (std::abs(dx) > rx || std::abs(dy) > ry)
+                const float nx = std::abs(dx) / rx;
+                const float ny = std::abs(dy) / ry;
+                const float d = std::max(nx, ny);
+                if (d > 1.0f)
                 {
                     return false;
                 }
-                const float wx = 1.0f - std::abs(dx) / rx;
-                const float wy = 1.0f - std::abs(dy) / ry;
-                outWeight = std::min(wx, wy);
+                outWeight = ComputeFeatheredWeight(d, feather);
+                return true;
+            }
+
+            if (settings.mode == RegionSelectMode::Sector)
+            {
+                const float radial = std::sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+                if (radial > 1.0f || radial < std::max(settings.innerRadius, 0.0f))
+                {
+                    return false;
+                }
+                const float angle = std::atan2(dy, dx);
+                const float delta = std::abs(WrapAngleRadians(angle - settings.angleCenterRadians));
+                const float halfExtent = std::max(settings.angleHalfExtentRadians, 1.0e-4f);
+                if (delta > halfExtent)
+                {
+                    return false;
+                }
+                const float radialWeight = ComputeFeatheredWeight(radial, feather);
+                const float angularWeight = ComputeFeatheredWeight(delta / halfExtent, feather);
+                outWeight = std::sqrt(std::max(radialWeight * angularWeight, 0.0f));
                 return true;
             }
 
             return false;
+        }
+
+        RegionSelectionResult ScaleSelectionWeights(const RegionSelectionResult& selection, float scale)
+        {
+            RegionSelectionResult scaled = selection;
+            for (SelectedStrand& strand : scaled.strands)
+            {
+                strand.weight = Clamp01(strand.weight * scale);
+            }
+            scaled.strands.erase(std::remove_if(scaled.strands.begin(), scaled.strands.end(), [](const SelectedStrand& strand)
+            {
+                return strand.weight <= 1.0e-4f;
+            }), scaled.strands.end());
+            return scaled;
+        }
+
+        void AccumulateSelectionWeights(std::vector<float>& inOutWeights,
+                                        const HairAsset& asset,
+                                        const RegionSelectionResult& selection,
+                                        float layerWeight)
+        {
+            if (inOutWeights.size() != asset.strands.size())
+            {
+                inOutWeights.assign(asset.strands.size(), 0.0f);
+            }
+            for (const SelectedStrand& strand : selection.strands)
+            {
+                if (strand.strandIndex >= inOutWeights.size())
+                {
+                    continue;
+                }
+                inOutWeights[strand.strandIndex] = std::max(inOutWeights[strand.strandIndex], Clamp01(strand.weight * layerWeight));
+            }
+        }
+
+        void ApplyBoundarySmoothing(HairAsset& asset,
+                                    const std::vector<float>& strandInfluence,
+                                    float radiusUv,
+                                    float smoothingStrength)
+        {
+            const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+            if (guideCount == 0u || strandInfluence.size() < guideCount || smoothingStrength <= 1.0e-4f)
+            {
+                return;
+            }
+
+            const float safeRadius = std::max(radiusUv, 1.0e-4f);
+            std::vector<Vec2> guideUvs(guideCount);
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                guideUvs[guideIndex] = GetRootUv(asset, guideIndex);
+            }
+
+            std::vector<Vec3> smoothedPoints = asset.restPoints;
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                const StrandRange& strand = asset.strands[guideIndex];
+                if (strand.pointCount < 2u)
+                {
+                    continue;
+                }
+
+                const float influence = Clamp01(strandInfluence[guideIndex]);
+                const float boundary = Clamp01(1.0f - std::abs(influence - 0.5f) * 2.0f);
+                if (boundary <= 1.0e-3f)
+                {
+                    continue;
+                }
+                const Vec2 uv = guideUvs[guideIndex];
+                std::vector<std::pair<float, uint32_t>> neighbors;
+                for (uint32_t otherGuide = 0u; otherGuide < guideCount; ++otherGuide)
+                {
+                    if (otherGuide == guideIndex)
+                    {
+                        continue;
+                    }
+                    if (asset.strands[otherGuide].groupId != asset.strands[guideIndex].groupId)
+                    {
+                        continue;
+                    }
+                    const float du = guideUvs[otherGuide].x - uv.x;
+                    const float dv = guideUvs[otherGuide].y - uv.y;
+                    const float distance = std::sqrt(du * du + dv * dv);
+                    if (distance > safeRadius)
+                    {
+                        continue;
+                    }
+                    neighbors.emplace_back(distance, otherGuide);
+                }
+                if (neighbors.empty())
+                {
+                    continue;
+                }
+                std::sort(neighbors.begin(), neighbors.end(), [](const auto& a, const auto& b)
+                {
+                    return a.first < b.first;
+                });
+                if (neighbors.size() > 6u)
+                {
+                    neighbors.resize(6u);
+                }
+
+                for (uint32_t localIndex = 1u; localIndex < strand.pointCount; ++localIndex)
+                {
+                    const float u = static_cast<float>(localIndex) / static_cast<float>(std::max<uint32_t>(strand.pointCount - 1u, 1u));
+                    Vec3 weightedAverage = asset.restPoints[strand.pointOffset + localIndex];
+                    float totalWeight = 1.0f;
+                    for (const auto& [distance, otherGuide] : neighbors)
+                    {
+                        const StrandRange& neighborStrand = asset.strands[otherGuide];
+                        const uint32_t neighborLocalIndex = std::min<uint32_t>(localIndex, neighborStrand.pointCount - 1u);
+                        const float neighborWeight = Clamp01(1.0f - distance / safeRadius);
+                        weightedAverage += asset.restPoints[neighborStrand.pointOffset + neighborLocalIndex] * neighborWeight;
+                        totalWeight += neighborWeight;
+                    }
+                    weightedAverage = weightedAverage / std::max(totalWeight, 1.0e-4f);
+                    const float blend = Clamp01(smoothingStrength * boundary * (0.20f + 0.80f * u));
+                    smoothedPoints[strand.pointOffset + localIndex] = Lerp(asset.restPoints[strand.pointOffset + localIndex], weightedAverage, blend);
+                }
+            }
+
+            asset.restPoints.swap(smoothedPoints);
+
+            for (uint32_t strandIndex = guideCount; strandIndex < asset.strands.size(); ++strandIndex)
+            {
+                if (strandIndex >= asset.followData.size())
+                {
+                    continue;
+                }
+                const FollowData& follow = asset.followData[strandIndex];
+                if (follow.parentGuide < 0 || static_cast<uint32_t>(follow.parentGuide) >= guideCount)
+                {
+                    continue;
+                }
+                const StrandRange& guide = asset.strands[static_cast<uint32_t>(follow.parentGuide)];
+                const StrandRange& follower = asset.strands[strandIndex];
+                const uint32_t pointCount = std::min(guide.pointCount, follower.pointCount);
+                const float parentInfluence = Clamp01(strandInfluence[static_cast<uint32_t>(follow.parentGuide)]);
+                const float boundary = Clamp01(1.0f - std::abs(parentInfluence - 0.5f) * 2.0f);
+                const float blend = Clamp01((0.25f + 0.55f * boundary) * std::clamp(follow.followWeight, 0.0f, 1.0f));
+                for (uint32_t localIndex = 0u; localIndex < pointCount; ++localIndex)
+                {
+                    const uint32_t gi = guide.pointOffset + localIndex;
+                    const uint32_t si = follower.pointOffset + localIndex;
+                    asset.restPoints[si] = Lerp(asset.restPoints[si], asset.restPoints[gi], blend);
+                }
+            }
         }
 
         Vec3 SamplePalette(const Palette& palette, float u, float& outWidthScale)
@@ -208,6 +404,98 @@ namespace hairgpu
                     asset.pointWidths[si] = Lerp(asset.pointWidths[si], asset.pointWidths[gi], appliedWeight);
                 }
             }
+        }
+        return true;
+    }
+
+    RuntimeEditState BuildRuntimeEditState(const HairAsset& asset, const EditStack& stack)
+    {
+        RuntimeEditState state = {};
+        state.strandInfluence.assign(asset.strands.size(), 0.0f);
+        for (const EditLayer& layer : stack.layers)
+        {
+            if (!layer.enabled || layer.layerWeight <= 1.0e-4f)
+            {
+                continue;
+            }
+            const RegionSelectionResult selection = SelectRegion(asset, layer.region);
+            AccumulateSelectionWeights(state.strandInfluence, asset, selection, layer.layerWeight);
+        }
+
+        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+        state.guideInfluence.assign(guideCount, 0.0f);
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            state.guideInfluence[guideIndex] = state.strandInfluence[guideIndex];
+            state.maxGuideInfluence = std::max(state.maxGuideInfluence, state.guideInfluence[guideIndex]);
+            if (state.guideInfluence[guideIndex] > 1.0e-4f)
+            {
+                ++state.activeGuideCount;
+            }
+        }
+
+        for (uint32_t strandIndex = guideCount; strandIndex < asset.strands.size(); ++strandIndex)
+        {
+            if (strandIndex < asset.followData.size())
+            {
+                const FollowData& follow = asset.followData[strandIndex];
+                if (follow.parentGuide >= 0 && static_cast<uint32_t>(follow.parentGuide) < guideCount)
+                {
+                    state.strandInfluence[strandIndex] = std::max(state.strandInfluence[strandIndex], state.guideInfluence[static_cast<uint32_t>(follow.parentGuide)]);
+                }
+            }
+        }
+        return state;
+    }
+
+    bool ApplyEditStackToAsset(HairAsset& asset,
+                               const HairAsset& baseAsset,
+                               const EditStack& stack,
+                               RuntimeEditState* outState,
+                               std::string& outError)
+    {
+        outError.clear();
+        asset = baseAsset;
+        if (stack.layers.empty())
+        {
+            if (outState)
+            {
+                *outState = RuntimeEditState{};
+                outState->strandInfluence.assign(asset.strands.size(), 0.0f);
+                outState->guideInfluence.assign(std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size())), 0.0f);
+            }
+            return true;
+        }
+
+        bool appliedAnyLayer = false;
+        for (const EditLayer& layer : stack.layers)
+        {
+            if (!layer.enabled || layer.layerWeight <= 1.0e-4f)
+            {
+                continue;
+            }
+            RegionSelectionResult selection = SelectRegion(asset, layer.region);
+            selection = ScaleSelectionWeights(selection, layer.layerWeight);
+            if (selection.strands.empty())
+            {
+                continue;
+            }
+            if (!ApplyEditToRegion(asset, selection, layer.edit, outError))
+            {
+                return false;
+            }
+            appliedAnyLayer = true;
+        }
+
+        RuntimeEditState state = BuildRuntimeEditState(baseAsset, stack);
+        if (appliedAnyLayer)
+        {
+            ApplyBoundarySmoothing(asset, state.strandInfluence, stack.boundaryRadiusUv, stack.boundarySmoothing);
+        }
+
+        if (outState)
+        {
+            *outState = std::move(state);
         }
         return true;
     }

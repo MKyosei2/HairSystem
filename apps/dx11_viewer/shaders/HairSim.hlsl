@@ -145,7 +145,7 @@ uint ResolveGuideStrandIndex(uint dispatchIndex)
 {
     if (UseCompactedGuideDispatch != 0u)
     {
-        if (dispatchIndex >= GuideCompactionCountersInSim[0])
+        if (dispatchIndex >= CompactedGuideCount)
         {
             return 0xFFFFFFFFu;
         }
@@ -1212,7 +1212,7 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     uint followerIndex = followerDispatchIndex;
     if (UseCompactedFollowerDispatch != 0u)
     {
-        if (followerDispatchIndex >= CompactionCountersInSim[0])
+        if (followerDispatchIndex >= CompactedFollowerCount)
         {
             return;
         }

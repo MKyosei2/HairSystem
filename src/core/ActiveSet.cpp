@@ -503,6 +503,7 @@ namespace hairgpu
             uint32_t clusterIndex = 0u;
             float finalScore = 0.0f;
             float visibility = 0.0f;
+            float editScore = 0.0f;
             uint32_t guideCount = 0u;
             uint32_t strandCount = 0u;
         };
@@ -536,6 +537,9 @@ namespace hairgpu
             const float contact = (runtimeInput.guideContactScores.size() == guideCount)
                 ? Clamp(AverageScalar(runtimeInput.guideContactScores, cluster.guideStrandIndices), 0.0f, 1.0f)
                 : 0.0f;
+            const float edit = (runtimeInput.guideEditScores.size() == guideCount)
+                ? Clamp(AverageScalar(runtimeInput.guideEditScores, cluster.guideStrandIndices), 0.0f, 1.0f)
+                : 0.0f;
             const float clusterSizeScore = Clamp(static_cast<float>(cluster.strandIndices.size()) / maxClusterStrands, 0.0f, 1.0f);
 
             const float finalScore = Clamp(
@@ -545,6 +549,7 @@ namespace hairgpu
                 silhouette * scoringSettings.silhouetteWeight +
                 uncertainty * scoringSettings.uncertaintyWeight +
                 contact * scoringSettings.contactWeight +
+                edit * scoringSettings.editWeight +
                 clusterSizeScore * scoringSettings.clusterSizeWeight,
                 0.0f, 1.0f);
 
@@ -556,6 +561,7 @@ namespace hairgpu
             score.silhouetteScore = silhouette;
             score.uncertaintyScore = uncertainty;
             score.contactScore = contact;
+            score.editScore = edit;
             score.clusterSizeScore = clusterSizeScore;
             score.finalScore = finalScore;
             outPlan.scores.push_back(score);
@@ -563,6 +569,7 @@ namespace hairgpu
             ranked.push_back({ cluster.clusterIndex,
                                finalScore,
                                visibility,
+                               edit,
                                static_cast<uint32_t>(cluster.guideStrandIndices.size()),
                                static_cast<uint32_t>(cluster.strandIndices.size()) });
             highestScore = std::max(highestScore, finalScore);
@@ -594,11 +601,32 @@ namespace hairgpu
         float selectedScoreSum = 0.0f;
         float lowestSelectedScore = 0.0f;
         const float budgetScale = ComputeBudgetScale(budget);
-        const uint32_t effectiveMaxActiveClusters = std::max<uint32_t>(budget.minActiveClusters,
-            static_cast<uint32_t>(std::round(static_cast<float>(std::max<uint32_t>(budget.maxActiveClusters, budget.minActiveClusters)) * budgetScale)));
-        const uint32_t maxActiveClusters = std::min<uint32_t>(std::max<uint32_t>(budget.minActiveClusters, budget.maxActiveClusters), effectiveMaxActiveClusters);
+        const uint32_t configuredMinActiveClusters = budget.minActiveClusters;
+        const uint32_t effectiveMaxActiveClusters = std::max<uint32_t>(configuredMinActiveClusters,
+            static_cast<uint32_t>(std::round(static_cast<float>(std::max<uint32_t>(budget.maxActiveClusters, configuredMinActiveClusters)) * budgetScale)));
+        uint32_t maxActiveClusters = std::min<uint32_t>(std::max<uint32_t>(configuredMinActiveClusters, budget.maxActiveClusters), effectiveMaxActiveClusters);
+        uint32_t hardMaxActiveClusters = UINT32_MAX;
+        if (budget.enableHardBudgetClamp)
+        {
+            const float availableBudget = budget.frameBudgetMilliseconds - budget.estimatedFixedCostMilliseconds;
+            if (availableBudget <= 0.0f)
+            {
+                hardMaxActiveClusters = 0u;
+            }
+            else if (budget.estimatedClusterCostMilliseconds > 1.0e-4f)
+            {
+                hardMaxActiveClusters = static_cast<uint32_t>(std::floor(availableBudget / budget.estimatedClusterCostMilliseconds));
+            }
+        }
+        if (hardMaxActiveClusters != UINT32_MAX)
+        {
+            maxActiveClusters = std::min<uint32_t>(maxActiveClusters, hardMaxActiveClusters);
+        }
+        const uint32_t minActiveClusters = (hardMaxActiveClusters == 0u) ? 0u : configuredMinActiveClusters;
         const uint32_t maxActiveGuides = (budget.maxActiveGuides > 0u)
-            ? std::max<uint32_t>(budget.minActiveClusters, static_cast<uint32_t>(std::round(static_cast<float>(budget.maxActiveGuides) * budgetScale)))
+            ? ((minActiveClusters > 0u)
+                ? std::max<uint32_t>(minActiveClusters, static_cast<uint32_t>(std::round(static_cast<float>(budget.maxActiveGuides) * budgetScale)))
+                : static_cast<uint32_t>(std::round(static_cast<float>(budget.maxActiveGuides) * budgetScale)))
             : 0u;
 
         for (size_t rankedIndex = 0u; rankedIndex < ranked.size(); ++rankedIndex)
@@ -609,7 +637,7 @@ namespace hairgpu
                 continue;
             }
 
-            const bool requiredByMinimum = rankedIndex < budget.minActiveClusters;
+            const bool requiredByMinimum = rankedIndex < minActiveClusters;
             const bool passesThreshold = candidate.finalScore >= budget.promoteScoreThreshold;
             if (!requiredByMinimum && !passesThreshold)
             {
@@ -734,6 +762,21 @@ namespace hairgpu
             ? 0.0f
             : (selectedScoreSum / static_cast<float>(outPlan.selectedClusterIndices.size()));
         outPlan.summary.budgetScale = budgetScale;
+        outPlan.summary.pendingClusterCount = 0u;
+        for (const RankedCluster& candidate : ranked)
+        {
+            const bool passesThreshold = candidate.finalScore >= budget.promoteScoreThreshold;
+            const bool selected = std::find(outPlan.selectedClusterIndices.begin(), outPlan.selectedClusterIndices.end(), candidate.clusterIndex) != outPlan.selectedClusterIndices.end();
+            if (passesThreshold && !selected)
+            {
+                ++outPlan.summary.pendingClusterCount;
+            }
+        }
+        outPlan.summary.hardMaxActiveClusters = (hardMaxActiveClusters == UINT32_MAX) ? maxActiveClusters : hardMaxActiveClusters;
+        outPlan.summary.estimatedFixedCostMilliseconds = budget.estimatedFixedCostMilliseconds;
+        outPlan.summary.estimatedClusterCostMilliseconds = budget.estimatedClusterCostMilliseconds;
+        outPlan.summary.estimatedFrameMilliseconds = budget.estimatedFixedCostMilliseconds +
+            static_cast<float>(outPlan.summary.selectedClusterCount) * budget.estimatedClusterCostMilliseconds;
         outPlan.summary.recommendedSolverIterations = RecommendSolverIterations(budget, budgetScale);
         outPlan.summary.fullTierCount = fullTierCount;
         outPlan.summary.reducedTierCount = reducedTierCount;
@@ -760,6 +803,9 @@ namespace hairgpu
             << " averageSelectedScore=" << plan.summary.averageSelectedScore
             << " lowestSelectedScore=" << plan.summary.lowestSelectedScore
             << " budgetScale=" << plan.summary.budgetScale
+            << " pendingClusters=" << plan.summary.pendingClusterCount
+            << " hardMaxClusters=" << plan.summary.hardMaxActiveClusters
+            << " estFrameMs=" << plan.summary.estimatedFrameMilliseconds
             << " recommendedSolverIterations=" << plan.summary.recommendedSolverIterations
             << " tierCounts=" << plan.summary.fullTierCount << "/" << plan.summary.reducedTierCount << "/"
             << plan.summary.frozenTierCount << "/" << plan.summary.cachedTierCount;

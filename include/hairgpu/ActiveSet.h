@@ -34,6 +34,7 @@ namespace hairgpu
         std::vector<float> guideUncertainty;
         std::vector<float> guideContactScores;
         std::vector<float> guideVisibilityScores;
+        std::vector<float> guideEditScores;
         Vec3 cameraPosition = { 0.0f, 1.6f, -1.8f };
         Vec3 cameraForward = { 0.0f, 0.0f, 1.0f };
         float fixedTimeStep = 1.0f / 60.0f;
@@ -47,6 +48,7 @@ namespace hairgpu
         float silhouetteWeight = 0.14f;
         float uncertaintyWeight = 0.10f;
         float contactWeight = 0.14f;
+        float editWeight = 0.16f;
         float clusterSizeWeight = 0.06f;
         float velocitySoftRange = 0.35f;
         float displacementSoftRange = 0.030f;
@@ -69,6 +71,10 @@ namespace hairgpu
         float budgetStep = 0.18f;
         uint32_t minSolverIterations = 3u;
         uint32_t maxSolverIterations = 8u;
+        bool enableHardBudgetClamp = true;
+        float frameBudgetMilliseconds = 16.67f;
+        float estimatedFixedCostMilliseconds = 6.0f;
+        float estimatedClusterCostMilliseconds = 0.85f;
     };
 
     struct ActiveSetClusterScore
@@ -80,6 +86,7 @@ namespace hairgpu
         float silhouetteScore = 0.0f;
         float uncertaintyScore = 0.0f;
         float contactScore = 0.0f;
+        float editScore = 0.0f;
         float clusterSizeScore = 0.0f;
         float finalScore = 0.0f;
         bool selected = false;
@@ -95,6 +102,11 @@ namespace hairgpu
         float lowestSelectedScore = 0.0f;
         float averageSelectedScore = 0.0f;
         float budgetScale = 1.0f;
+        uint32_t pendingClusterCount = 0u;
+        uint32_t hardMaxActiveClusters = 0u;
+        float estimatedFixedCostMilliseconds = 0.0f;
+        float estimatedClusterCostMilliseconds = 0.0f;
+        float estimatedFrameMilliseconds = 0.0f;
         uint32_t recommendedSolverIterations = 0u;
         uint32_t fullTierCount = 0u;
         uint32_t reducedTierCount = 0u;

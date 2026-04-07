@@ -9,12 +9,17 @@ cbuffer RenderConstants : register(b0)
     uint ParticlesPerStrand;
     uint TotalStrandCount;
     uint TubeRingSides;
-    uint _RenderPadding0;
-    uint _RenderPadding1;
+    uint RenderFollowerStride;
+    uint RenderGuideOnlyAboveTier;
+    float RenderReducedWidthBoost;
+    float RenderHiddenWidthThreshold;
+    float RenderStrandAlpha;
+    float _RenderPadding0;
 };
 
 StructuredBuffer<float4> Positions : register(t0);
 StructuredBuffer<float> Widths : register(t1);
+StructuredBuffer<uint> StrandTiers : register(t2);
 
 struct VSOutput
 {
@@ -41,7 +46,15 @@ float3 SafeNormalize(float3 v)
     return (lenSq > 1.0e-8f) ? (v * rsqrt(lenSq)) : float3(0.0f, 1.0f, 0.0f);
 }
 
-float3 ComputeHairColor(uint strandIndex, float widthN, float strandT)
+float3 TierColor(uint tier)
+{
+    if (tier == 0u) return float3(0.18f, 0.95f, 0.85f);
+    if (tier == 1u) return float3(0.98f, 0.75f, 0.20f);
+    if (tier == 2u) return float3(0.86f, 0.36f, 1.00f);
+    return float3(0.58f, 0.62f, 0.70f);
+}
+
+float3 ComputeHairColor(uint strandIndex, float widthN, float strandT, uint strandTier)
 {
     const float strandBand = frac((float)strandIndex * 0.61803398875f);
     const float3 rootColor = float3(1.00f, 0.88f, 0.38f);
@@ -57,6 +70,10 @@ float3 ComputeHairColor(uint strandIndex, float widthN, float strandT)
     {
         return lerp(float3(0.12f, 0.35f, 1.0f), float3(1.0f, 0.20f, 0.10f), widthN);
     }
+    if (DebugColorMode == 3)
+    {
+        return TierColor(strandTier);
+    }
     return naturalColor;
 }
 
@@ -70,14 +87,29 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
     const uint strandBase = strandIndex * safeParticlesPerStrand;
     const uint prevIndex = strandBase + ((localIndex > 0u) ? (localIndex - 1u) : localIndex);
     const uint nextIndex = strandBase + min(localIndex + 1u, safeParticlesPerStrand - 1u);
+    const uint strandTier = StrandTiers[strandIndex];
 
     output.center = Positions[vertexId].xyz;
     output.tangent = SafeNormalize(Positions[nextIndex].xyz - Positions[prevIndex].xyz);
-    const float width = Widths[vertexId] * max(WidthScale, 0.05f);
-    output.radius = max(width * 0.95f, 0.0065f);
+    float width = Widths[vertexId] * max(WidthScale, 0.05f);
+    const bool isGuide = strandIndex < GuideStrandCount;
+    if (!isGuide)
+    {
+        const uint followerLocal = strandIndex - GuideStrandCount;
+        const uint followerStride = max(RenderFollowerStride, 1u);
+        if ((strandTier >= RenderGuideOnlyAboveTier) || ((followerLocal % followerStride) != 0u))
+        {
+            width = 0.0f;
+        }
+    }
+    if (strandTier == 1u)
+    {
+        width *= RenderReducedWidthBoost;
+    }
+    output.radius = max(width * 0.95f, 0.0f);
     output.strandT = (safeParticlesPerStrand > 1u) ? (float(localIndex) / float(safeParticlesPerStrand - 1u)) : 0.0f;
     const float widthN = saturate((width - 0.0010f) / 0.0120f);
-    output.color = ComputeHairColor(strandIndex, widthN, output.strandT);
+    output.color = ComputeHairColor(strandIndex, widthN, output.strandT, strandTier);
     return output;
 }
 
@@ -85,11 +117,16 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
 void GSPointMain(point VSOutput input[1], inout TriangleStream<GSOutput> stream)
 {
     VSOutput v = input[0];
+    if (v.radius <= RenderHiddenWidthThreshold)
+    {
+        return;
+    }
+
     float3 viewDir = SafeNormalize(CameraPosition.xyz - v.center);
     float3 upRef = (abs(viewDir.y) > 0.96f) ? float3(1.0f, 0.0f, 0.0f) : float3(0.0f, 1.0f, 0.0f);
     float3 right = SafeNormalize(cross(viewDir, upRef));
     float3 up = SafeNormalize(cross(right, viewDir));
-    float size = v.radius * 1.15f;
+    float size = max(v.radius * 1.15f, 0.0065f);
 
     const float2 uv[4] = {
         float2(-1.0f, -1.0f),
@@ -118,6 +155,11 @@ void GSPointMain(point VSOutput input[1], inout TriangleStream<GSOutput> stream)
 void GSBillboardMain(point VSOutput input[1], inout TriangleStream<GSOutput> stream)
 {
     VSOutput v = input[0];
+    if (v.radius <= RenderHiddenWidthThreshold)
+    {
+        return;
+    }
+
     float3 viewDir = SafeNormalize(CameraPosition.xyz - v.center);
     float3 tangent = SafeNormalize(v.tangent);
     float3 side = SafeNormalize(cross(viewDir, tangent));
@@ -129,8 +171,8 @@ void GSBillboardMain(point VSOutput input[1], inout TriangleStream<GSOutput> str
 
     float alongScale = lerp(0.9f, 1.9f, v.strandT);
     float sideScale = lerp(1.0f, 0.55f, v.strandT);
-    float3 along = tangent * (v.radius * alongScale);
-    float3 lateral = side * (v.radius * sideScale);
+    float3 along = tangent * max(v.radius * alongScale, 0.0060f);
+    float3 lateral = side * max(v.radius * sideScale, 0.0040f);
 
     const float2 uv[4] = {
         float2(-1.0f, -1.0f),
@@ -167,7 +209,7 @@ float4 PSMain(GSOutput input) : SV_Target
     float alpha = saturate(1.0f - r2);
     alpha = alpha * alpha;
     alpha *= lerp(1.00f, 0.72f, input.strandT);
-    alpha = max(alpha, 0.22f);
+    alpha = max(alpha, 0.22f) * RenderStrandAlpha;
 
     float3 viewDir = SafeNormalize(CameraPosition.xyz - input.worldPosition);
     float3 tangent = SafeNormalize(input.tangent);

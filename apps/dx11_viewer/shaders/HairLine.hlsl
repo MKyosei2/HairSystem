@@ -6,11 +6,15 @@ cbuffer RenderConstants : register(b0)
     float WidthScale;
     uint DebugColorMode;
     uint GuideStrandCount;
+    uint ParticlesPerStrand;
+    uint TotalStrandCount;
+    uint TubeRingSides;
     uint RenderFollowerStride;
     uint RenderGuideOnlyAboveTier;
-    uint RenderTubeSides;
     float RenderReducedWidthBoost;
     float RenderHiddenWidthThreshold;
+    float RenderStrandAlpha;
+    float _RenderPadding0;
 };
 
 StructuredBuffer<float4> Positions : register(t0);
@@ -29,7 +33,15 @@ struct VSOutput
     float4 color : COLOR0;
 };
 
-float3 ComputeHairColor(uint strandIndex, float widthN)
+float3 TierColor(uint tier)
+{
+    if (tier == 0u) return float3(0.18f, 0.95f, 0.85f);
+    if (tier == 1u) return float3(0.98f, 0.75f, 0.20f);
+    if (tier == 2u) return float3(0.86f, 0.36f, 1.00f);
+    return float3(0.58f, 0.62f, 0.70f);
+}
+
+float3 ComputeHairColor(uint strandIndex, float widthN, uint strandTier)
 {
     const float strandBand = frac((float)strandIndex * 0.61803398875f);
     const float3 rootColor = float3(1.00f, 0.88f, 0.38f);
@@ -44,6 +56,10 @@ float3 ComputeHairColor(uint strandIndex, float widthN)
     if (DebugColorMode == 2)
     {
         return lerp(float3(0.12f, 0.35f, 1.0f), float3(1.0f, 0.20f, 0.10f), widthN);
+    }
+    if (DebugColorMode == 3)
+    {
+        return TierColor(strandTier);
     }
     return naturalColor;
 }
@@ -73,8 +89,8 @@ VSOutput VSMain(VSInput input)
 
     const float widthN = saturate((width - 0.0010f) / 0.0120f);
     output.position = mul(float4(worldPosition, 1.0f), ViewProjection);
-    float alpha = (width > RenderHiddenWidthThreshold) ? 1.0f : 0.0f;
-    output.color = float4(ComputeHairColor(input.strandIndex, widthN), alpha);
+    const float alpha = (width > RenderHiddenWidthThreshold) ? RenderStrandAlpha : 0.0f;
+    output.color = float4(ComputeHairColor(input.strandIndex, widthN, strandTier), alpha);
     return output;
 }
 
