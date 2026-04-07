@@ -510,13 +510,14 @@ namespace hairgpu
                 + p3 * (tt * t);
         }
 
-        float ComputeGuideLength(const Vec3& root, const Vec3& scalpCenter, const Vec2& uv, const WigParameters& parameters)
+
+        float ComputeGuideLength(const Vec3& root, const Vec3& scalpCenter, const Vec2& uv, float baseLength, const WigParameters& parameters)
         {
             const Vec3 rel = root - scalpCenter;
-            const float lowerRing = Clamp((1.0f - Clamp((root.y - (scalpCenter.y - 0.03f)) / 0.24f, 0.0f, 1.0f)), 0.0f, 1.0f);
-            const float sideBoost = Clamp(std::fabs(rel.x) / 0.22f, 0.0f, 1.0f) * 0.06f;
-            const float crownReduction = Clamp((uv.y - 0.35f) / 0.65f, 0.0f, 1.0f) * 0.08f;
-            return parameters.overallLength * (1.0f + parameters.lowerRingLengthBias * lowerRing + sideBoost - crownReduction);
+            const float lowerRing = Clamp((1.0f - Clamp((root.y - (scalpCenter.y - 0.02f)) / 0.26f, 0.0f, 1.0f)), 0.0f, 1.0f);
+            const float sideBoost = Clamp(std::fabs(rel.x) / 0.22f, 0.0f, 1.0f) * 0.03f;
+            const float crownReduction = Clamp((uv.y - 0.38f) / 0.62f, 0.0f, 1.0f) * 0.04f;
+            return baseLength * parameters.overallLength * (1.0f + parameters.lowerRingLengthBias * lowerRing + sideBoost - crownReduction);
         }
 
         void AppendStaticWigStrand(
@@ -529,6 +530,7 @@ namespace hairgpu
             uint32_t groupId,
             uint32_t flags,
             uint32_t seed,
+            float segmentLength,
             const WigParameters& parameters,
             const Vec3& rootOffset)
         {
@@ -537,42 +539,50 @@ namespace hairgpu
             const Vec2 uv = EvaluateTriangleUv(asset.scalpMesh, binding);
             const Vec3 rel = root - scalpCenter;
             const Vec3 radial = SafeNormalizeXZ(rel);
-            const Vec3 up(0.0f, 1.0f, 0.0f);
 
             const float partLineX = parameters.partingOffset;
             const float centeredX = root.x - (scalpCenter.x + partLineX);
             const float sideSign = (centeredX >= 0.0f) ? 1.0f : -1.0f;
-            const Vec3 sideBias = Normalize(Vec3(sideSign, 0.0f, 0.0f) + radial * 0.35f);
-            Vec3 tangent = sideBias - normal * Dot(sideBias, normal);
-            tangent = Normalize(tangent);
-            if (Length(tangent) <= 1.0e-6f)
+
+            Vec3 lateral = Normalize(Vec3(sideSign, 0.0f, 0.0f) + radial * 0.22f);
+            lateral = lateral - normal * Dot(lateral, normal);
+            lateral = Normalize(lateral);
+            if (Length(lateral) <= 1.0e-6f)
             {
-                tangent = Vec3(sideSign, 0.0f, 0.0f);
+                lateral = Vec3(sideSign, 0.0f, 0.0f);
             }
+
+            Vec3 capFlow = Vec3(0.0f, -1.0f, 0.0f) - normal * Dot(Vec3(0.0f, -1.0f, 0.0f), normal) * 0.25f;
+            if (Length(capFlow) <= 1.0e-6f)
+            {
+                capFlow = Vec3(0.0f, -1.0f, 0.0f);
+            }
+            capFlow = Normalize(capFlow * 0.92f + radial * 0.08f);
 
             const float partDistance = std::fabs(centeredX);
             const float partInfluence = 1.0f - Clamp(partDistance / std::max(parameters.partWidth, 1.0e-4f), 0.0f, 1.0f);
             const float horizontalRadius = Clamp(std::sqrt(rel.x * rel.x + rel.z * rel.z) / 0.23f, 0.0f, 1.0f);
-            const float length = ComputeGuideLength(root, scalpCenter, uv, parameters) * Lerp(0.88f, 1.0f, 1.0f - 0.45f * partInfluence);
-
-            const float conformDistance = length * (0.12f + parameters.scalpConform * 0.18f);
-            const float partPush = partInfluence * (parameters.partWidth * 1.7f + 0.016f);
-            const float shellWidth = parameters.silhouetteWidth * (0.45f + 0.55f * horizontalRadius);
-            const float shellVolume = parameters.sideVolume * (0.35f + 0.65f * horizontalRadius);
+            const float baseChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), segmentLength);
+            const float length = ComputeGuideLength(root, scalpCenter, uv, baseChainLength, parameters);
+            const float partPush = partInfluence * (parameters.partWidth * 0.45f + 0.004f);
+            const float curtainWidth = parameters.silhouetteWidth * (0.18f + 0.22f * horizontalRadius);
 
             const Vec3 p0 = root;
             const Vec3 p1 = root
-                + tangent * conformDistance
-                + normal * (parameters.rootLift + horizontalRadius * 0.008f)
-                + Vec3(sideSign * partPush, 0.0f, 0.0f);
+                + normal * (parameters.rootLift + horizontalRadius * 0.003f)
+                + lateral * (partPush * 0.65f)
+                + capFlow * (length * (0.16f + parameters.scalpConform * 0.08f));
 
-            const Vec3 middleShell = radial * shellVolume + tangent * (shellWidth * 0.55f) + Vec3(sideSign * partPush * 1.8f, -length * 0.32f, 0.0f);
-            const Vec3 p2 = root + middleShell;
+            const Vec3 p2 = root
+                + normal * (parameters.rootLift * 0.20f)
+                + lateral * (curtainWidth * 0.55f + partPush * 0.60f)
+                + capFlow * (length * 0.56f);
 
             Vec3 tipTarget = root
-                + radial * parameters.backVolume
-                + Vec3(sideSign * (shellWidth * 0.45f + partPush), -length, 0.0f);
-            tipTarget.x -= sideSign * parameters.tipInward * (0.35f + 0.65f * horizontalRadius);
+                + lateral * (curtainWidth * 0.35f + partPush * 0.35f)
+                + radial * parameters.backVolume * 0.18f
+                + capFlow * length;
+            tipTarget.x -= sideSign * parameters.tipInward * (0.18f + 0.22f * horizontalRadius);
             const Vec3 p3 = tipTarget;
 
             StrandRange range;
@@ -585,21 +595,21 @@ namespace hairgpu
             asset.rootBindings.push_back(binding);
             asset.followData.push_back(follow);
 
-            const Vec3 orthoA = Normalize(Cross(normal, tangent));
-            const Vec3 orthoB = Normalize(Cross(tangent, orthoA));
+            const Vec3 orthoA = Normalize(Cross(normal, lateral));
+            const Vec3 orthoB = Normalize(Cross(lateral, orthoA));
 
             for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
             {
                 const float t = static_cast<float>(pointIndex) / static_cast<float>(std::max(pointCount - 1u, 1u));
                 Vec3 p = CubicBezier(p0, p1, p2, p3, t);
 
-                if (pointIndex > 1)
+                if (pointIndex > 2)
                 {
-                    const float atten = parameters.strandNoise * (0.15f + 0.85f * t) * (1.0f - 0.55f * partInfluence);
-                    const float noiseA = std::sin((t * 5.1f + Hash01(seed + pointIndex * 11u) * 0.9f) * kTau);
-                    const float noiseB = std::cos((t * 3.4f + Hash01(seed + pointIndex * 13u) * 0.9f) * kTau);
-                    p += orthoA * (noiseA * atten * 0.55f);
-                    p += orthoB * (noiseB * atten * 0.30f);
+                    const float atten = parameters.strandNoise * (0.08f + 0.32f * t) * (1.0f - 0.65f * partInfluence);
+                    const float noiseA = std::sin((t * 4.1f + Hash01(seed + pointIndex * 11u) * 0.8f) * kTau);
+                    const float noiseB = std::cos((t * 2.7f + Hash01(seed + pointIndex * 13u) * 0.8f) * kTau);
+                    p += orthoA * (noiseA * atten * 0.30f);
+                    p += orthoB * (noiseB * atten * 0.18f);
                 }
 
                 asset.restPoints.push_back(p);
@@ -711,18 +721,18 @@ namespace hairgpu
     WigParameters DefaultWigParameters()
     {
         WigParameters parameters;
-        parameters.overallLength = 0.92f;
-        parameters.partingOffset = -0.020f;
-        parameters.partWidth = 0.020f;
-        parameters.scalpConform = 0.88f;
-        parameters.rootLift = 0.026f;
-        parameters.silhouetteWidth = 0.082f;
-        parameters.sideVolume = 0.060f;
-        parameters.backVolume = 0.070f;
-        parameters.lowerRingLengthBias = 0.28f;
-        parameters.strandNoise = 0.018f;
-        parameters.followerSpread = 0.010f;
-        parameters.tipInward = 0.020f;
+        parameters.overallLength = 1.02f;
+        parameters.partingOffset = -0.008f;
+        parameters.partWidth = 0.014f;
+        parameters.scalpConform = 0.78f;
+        parameters.rootLift = 0.010f;
+        parameters.silhouetteWidth = 0.020f;
+        parameters.sideVolume = 0.008f;
+        parameters.backVolume = 0.014f;
+        parameters.lowerRingLengthBias = 0.10f;
+        parameters.strandNoise = 0.004f;
+        parameters.followerSpread = 0.0030f;
+        parameters.tipInward = 0.006f;
         return parameters;
     }
 
@@ -782,8 +792,8 @@ namespace hairgpu
             StrandMaterial material;
             material.rootWidth = 0.0092f;
             material.tipWidth = 0.00125f;
-            material.stiffness = 0.80f;
-            material.damping = 0.026f;
+            material.stiffness = 0.92f;
+            material.damping = 0.040f;
 
             FollowData guideFollow;
             guideFollow.parentGuide = static_cast<int32_t>(guideIndex);
@@ -801,6 +811,7 @@ namespace hairgpu
                 0,
                 static_cast<uint32_t>(StrandFlags::Guide),
                 guideIndex + 1u,
+                segmentLength,
                 parameters,
                 Vec3(0.0f, 0.0f, 0.0f));
 
@@ -820,7 +831,7 @@ namespace hairgpu
             {
                 const uint32_t seed = guideIndex * 97u + followerIndex * 17u + 13u;
                 const float spreadSeed = Hash01(seed + 5u);
-                const float ring = parameters.followerSpread * (0.06f + 0.30f * spreadSeed);
+                const float ring = parameters.followerSpread * (0.45f + 0.55f * spreadSeed);
                 const Vec3 bindingRootPosition = EvaluateRootBindingPosition(asset.scalpMesh, binding);
                 const float asymGuideSide = (bindingRootPosition.x >= scalpCenter.x) ? 1.0f : -1.0f;
                 const float angle = (Hash01(seed + 9u) * 0.37f + 0.07f * std::sin(float(guideIndex) * 0.37f) + 0.16f * asymGuideSide + 0.04f * binding.rootUv.y) * kTau;
@@ -828,9 +839,9 @@ namespace hairgpu
                 const float outwardBias = 0.62f + 0.28f * Hash01(seed + 27u);
                 const float verticalBias = (Hash01(seed + 31u) - 0.5f) * 0.07f + asymGuideSide * 0.02f;
                 const Vec3 rootOffset =
-                    tangent * ((std::cos(angle) * outwardBias + sideSkew) * ring) +
-                    binormal * (std::sin(angle) * ring * (0.08f + 0.07f * Hash01(seed + 37u))) +
-                    normal * (verticalBias * ring);
+                    tangent * ((std::cos(angle) * outwardBias + sideSkew * 0.20f) * ring) +
+                    binormal * (std::sin(angle) * ring * (0.02f + 0.03f * Hash01(seed + 37u))) +
+                    normal * (verticalBias * ring * 0.18f);
 
                 StrandMaterial followerMaterial = material;
                 followerMaterial.rootWidth *= 0.86f;
@@ -838,9 +849,9 @@ namespace hairgpu
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.97f + Hash01(seed + 7u) * 0.02f;
-                followerFollow.clumpWeight = 0.90f + Hash01(seed + 19u) * 0.08f;
-                followerFollow.noiseWeight = 0.03f + Hash01(seed + 23u) * 0.05f;
+                followerFollow.followWeight = 0.992f + Hash01(seed + 7u) * 0.006f;
+                followerFollow.clumpWeight = 0.975f + Hash01(seed + 19u) * 0.020f;
+                followerFollow.noiseWeight = 0.002f + Hash01(seed + 23u) * 0.008f;
 
                 AppendStaticWigStrand(
                     asset,
@@ -852,6 +863,7 @@ namespace hairgpu
                     1,
                     static_cast<uint32_t>(StrandFlags::None),
                     seed,
+                    segmentLength,
                     parameters,
                     rootOffset);
             }
@@ -860,12 +872,12 @@ namespace hairgpu
         RebuildRootRestPositionsFromScalp(asset);
 
         WigStyleSettings wigSettings;
-        wigSettings.strength = 0.92f;
-        wigSettings.capRegion = 0.38f;
-        wigSettings.shellOffset = 0.0035f;
-        wigSettings.flowBlend = 0.86f;
-        wigSettings.outwardBlend = 0.22f;
-        wigSettings.restoreOriginalTowardsTip = 0.58f;
+        wigSettings.strength = 0.42f;
+        wigSettings.capRegion = 0.26f;
+        wigSettings.shellOffset = 0.0012f;
+        wigSettings.flowBlend = 1.0f;
+        wigSettings.outwardBlend = 0.02f;
+        wigSettings.restoreOriginalTowardsTip = 0.08f;
         StyleAssetToScalpWig(asset, wigSettings);
         return asset;
     }

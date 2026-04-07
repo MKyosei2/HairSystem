@@ -75,8 +75,6 @@ cbuffer SimConstants : register(b0)
     uint FollowerUpdatePhase;
     uint UseCompactedFollowerDispatch;
     uint CompactedFollowerCount;
-    uint SimPadding0;
-    uint SimPadding1;
 };
 
 cbuffer BitonicConstants : register(b1)
@@ -119,7 +117,7 @@ StructuredBuffer<float4> ScalpPositions : register(t4);
 StructuredBuffer<TriangleData> ScalpTriangles : register(t5);
 StructuredBuffer<RootBindingData> RootBindings : register(t6);
 StructuredBuffer<uint> CompactedFollowerIndices : register(t7);
-StructuredBuffer<uint> CompactionCountersInSim : register(t8);
+StructuredBuffer<uint> FollowerTierAssignments : register(t8);
 StructuredBuffer<uint> CompactedGuideIndices : register(t9);
 StructuredBuffer<uint> GuideCompactionCountersInSim : register(t10);
 
@@ -1226,6 +1224,28 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     else if (followerIndex >= FollowerStrandCount)
     {
         return;
+    }
+
+    uint tier = FollowerTierAssignments[followerIndex];
+    if (tier == 1u)
+    {
+        uint reducedStride = max(FollowerUpdateStride, 2u);
+        if (((followerIndex + FollowerUpdatePhase) % reducedStride) != 0u)
+        {
+            return;
+        }
+    }
+    else if (tier == 2u)
+    {
+        return;
+    }
+    else if (tier == 3u)
+    {
+        uint cachedStride = max(FollowerUpdateStride, 4u);
+        if (((followerIndex + FollowerUpdatePhase) % cachedStride) != 0u)
+        {
+            return;
+        }
     }
 
     uint strandIndex = GuideStrandCount + followerIndex;

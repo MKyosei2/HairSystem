@@ -75,7 +75,7 @@ namespace hairgpu
                 outward = Vec3(0.0f, 0.0f, 1.0f);
             }
 
-            return Normalize(projectedDown * 0.82f + Normalize(outward) * 0.18f);
+            return Normalize(projectedDown * 0.94f + Normalize(outward) * 0.06f);
         }
     }
 

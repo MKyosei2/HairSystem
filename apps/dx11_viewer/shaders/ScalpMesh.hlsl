@@ -9,9 +9,12 @@ cbuffer RenderConstants : register(b0)
     uint ParticlesPerStrand;
     uint TotalStrandCount;
     uint TubeRingSides;
-    uint _Padding0;
-    uint _Padding1;
-    uint _Padding2;
+    uint RenderFollowerStride;
+    uint RenderGuideOnlyAboveTier;
+    float RenderReducedWidthBoost;
+    float RenderHiddenWidthThreshold;
+    float RenderStrandAlpha;
+    float _RenderPadding0;
 };
 
 StructuredBuffer<float4> ScalpPositions : register(t0);

@@ -6,7 +6,15 @@ cbuffer RenderConstants : register(b0)
     float WidthScale;
     uint DebugColorMode;
     uint GuideStrandCount;
-    uint _Padding0;
+    uint ParticlesPerStrand;
+    uint TotalStrandCount;
+    uint TubeRingSides;
+    uint RenderFollowerStride;
+    uint RenderGuideOnlyAboveTier;
+    float RenderReducedWidthBoost;
+    float RenderHiddenWidthThreshold;
+    float RenderStrandAlpha;
+    float _RenderPadding0;
 };
 
 StructuredBuffer<float4> Positions : register(t0);

@@ -75,8 +75,6 @@ cbuffer SimConstants : register(b0)
     uint FollowerUpdatePhase;
     uint UseCompactedFollowerDispatch;
     uint CompactedFollowerCount;
-    uint SimPadding0;
-    uint SimPadding1;
 };
 
 cbuffer RenderConstants : register(b0)

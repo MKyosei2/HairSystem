@@ -139,7 +139,15 @@ namespace hairgpu::viewer
             float correctiveAverageLengthErrorAfter = 0.0f;
         };
 
-        struct alignas(16) SimConstants
+        struct Float4
+        {
+            float x = 0.0f;
+            float y = 0.0f;
+            float z = 0.0f;
+            float w = 0.0f;
+        };
+
+        struct alignas(16) SimConstantsHair
         {
             uint32_t totalStrandCount = 0;
             uint32_t guideStrandCount = 0;
@@ -194,21 +202,21 @@ namespace hairgpu::viewer
 
             uint32_t broadphaseMode = 0u;
             uint32_t broadphaseHashBucketCount = 32768u;
-            uint32_t _broadphasePadding0 = 0u;
-            uint32_t _broadphasePadding1 = 0u;
+            uint32_t broadphasePadding0 = 0u;
+            uint32_t broadphasePadding1 = 0u;
 
             uint32_t sortedPaddedEntryCount = 1u;
             uint32_t enableRuntimeAngularBend = 1u;
-            uint32_t _runtimePadding0 = 0u;
-            uint32_t _runtimePadding1 = 0u;
+            uint32_t runtimePadding0 = 0u;
+            uint32_t runtimePadding1 = 0u;
 
             float angularBendRadians = 0.18f;
             float angularBendCompliance = 5.0e-6f;
             float angularBendStiffness = 0.35f;
             float angularBendDamping = 0.08f;
 
-            float sphereData[4 * 4] = {};
-            float capsuleData[4 * 8] = {};
+            Float4 sphereData[4] = {};
+            Float4 capsuleData[8] = {};
 
             uint32_t useCompactedGuideDispatch = 0u;
             uint32_t compactedGuideCount = 0u;
@@ -216,8 +224,160 @@ namespace hairgpu::viewer
             uint32_t followerUpdatePhase = 0u;
             uint32_t useCompactedFollowerDispatch = 0u;
             uint32_t compactedFollowerCount = 0u;
-            uint32_t _dispatchPadding0 = 0u;
-            uint32_t _dispatchPadding1 = 0u;
+            uint32_t dispatchPadding0 = 0u;
+            uint32_t dispatchPadding1 = 0u;
+        };
+
+        struct alignas(16) SimConstantsActiveSet
+        {
+            uint32_t totalStrandCount = 0;
+            uint32_t guideStrandCount = 0;
+            uint32_t followerStrandCount = 0;
+            uint32_t particlesPerStrand = 0;
+
+            uint32_t solverIterations = 0;
+            uint32_t sphereColliderCount = 0;
+            uint32_t capsuleColliderCount = 0;
+            uint32_t enableSelfCollision = 0;
+
+            float deltaTime = 0.0f;
+            float gravity = 9.81f;
+            float damping = 0.03f;
+            float segmentLength = 0.035f;
+
+            float bendStiffness = 0.12f;
+            float followStiffness = 0.92f;
+            float windStrength = 0.0f;
+            float floorY = -1.2f;
+
+            float elapsedTime = 0.0f;
+            float selfCollisionRadius = 0.012f;
+            float selfCollisionStiffness = 0.35f;
+            float scalpMotionBlend = 1.0f;
+
+            float stretchCompliance = 2.0e-7f;
+            float bendCompliance = 1.0e-5f;
+            float rootStiffness = 0.18f;
+            float velocityShockPropagation = 0.72f;
+
+            float windDirection[3] = { 1.0f, 0.0f, 0.0f };
+            float gridCellSize = 0.085f;
+
+            uint32_t gridDimX = 18;
+            uint32_t gridDimY = 18;
+            uint32_t gridDimZ = 18;
+            uint32_t gridCellCapacity = 24;
+
+            float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
+            uint32_t enableGridSelfCollision = 1;
+
+            float looseConstraintStiffness = 0.12f;
+            float looseConstraintMaxDistance = 0.085f;
+            float supportCollisionRadius = 0.030f;
+            float supportCollisionStiffness = 0.26f;
+
+            float tangentialFriction = 0.06f;
+            float lateralFriction = 0.78f;
+            float freezeBackThreshold = -0.045f;
+            float freezeBlend = 0.82f;
+
+            uint32_t broadphaseMode = 0u;
+            uint32_t broadphaseHashBucketCount = 32768u;
+            uint32_t broadphasePadding0 = 0u;
+            uint32_t broadphasePadding1 = 0u;
+
+            uint32_t sortedPaddedEntryCount = 1u;
+            uint32_t enableRuntimeAngularBend = 1u;
+            uint32_t runtimePadding0 = 0u;
+            uint32_t runtimePadding1 = 0u;
+
+            float angularBendRadians = 0.18f;
+            float angularBendCompliance = 5.0e-6f;
+            float angularBendStiffness = 0.35f;
+            float angularBendDamping = 0.08f;
+
+            Float4 sphereData[4] = {};
+            Float4 capsuleData[8] = {};
+
+            uint32_t followerUpdateStride = 1u;
+            uint32_t followerUpdatePhase = 0u;
+            uint32_t useCompactedFollowerDispatch = 0u;
+            uint32_t compactedFollowerCount = 0u;
+        };
+
+        struct alignas(16) SimConstantsScalp
+        {
+            uint32_t totalStrandCount = 0;
+            uint32_t guideStrandCount = 0;
+            uint32_t followerStrandCount = 0;
+            uint32_t particlesPerStrand = 0;
+
+            uint32_t solverIterations = 0;
+            uint32_t sphereColliderCount = 0;
+            uint32_t capsuleColliderCount = 0;
+            uint32_t enableSelfCollision = 0;
+
+            float deltaTime = 0.0f;
+            float gravity = 9.81f;
+            float damping = 0.03f;
+            float segmentLength = 0.035f;
+
+            float bendStiffness = 0.12f;
+            float followStiffness = 0.92f;
+            float windStrength = 0.0f;
+            float floorY = -1.2f;
+
+            float elapsedTime = 0.0f;
+            float selfCollisionRadius = 0.012f;
+            float selfCollisionStiffness = 0.35f;
+            float scalpMotionBlend = 1.0f;
+
+            float scalpCenter[4] = {};
+            float neckPivot[4] = {};
+
+            float stretchCompliance = 2.0e-7f;
+            float bendCompliance = 1.0e-5f;
+            float rootStiffness = 0.18f;
+            float velocityShockPropagation = 0.72f;
+
+            float windDirection[3] = { 1.0f, 0.0f, 0.0f };
+            float gridCellSize = 0.085f;
+
+            uint32_t gridDimX = 18;
+            uint32_t gridDimY = 18;
+            uint32_t gridDimZ = 18;
+            uint32_t gridCellCapacity = 24;
+
+            float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
+            uint32_t enableGridSelfCollision = 1;
+
+            float looseConstraintStiffness = 0.12f;
+            float looseConstraintMaxDistance = 0.085f;
+            float supportCollisionRadius = 0.030f;
+            float supportCollisionStiffness = 0.26f;
+
+            float tangentialFriction = 0.06f;
+            float lateralFriction = 0.78f;
+            float freezeBackThreshold = -0.045f;
+            float freezeBlend = 0.82f;
+
+            uint32_t broadphaseMode = 0u;
+            uint32_t broadphaseHashBucketCount = 32768u;
+            uint32_t broadphasePadding0 = 0u;
+            uint32_t broadphasePadding1 = 0u;
+
+            uint32_t sortedPaddedEntryCount = 1u;
+            uint32_t enableRuntimeAngularBend = 1u;
+            uint32_t runtimePadding0 = 0u;
+            uint32_t runtimePadding1 = 0u;
+
+            float angularBendRadians = 0.18f;
+            float angularBendCompliance = 5.0e-6f;
+            float angularBendStiffness = 0.35f;
+            float angularBendDamping = 0.08f;
+
+            Float4 sphereData[4] = {};
+            Float4 capsuleData[8] = {};
         };
 
         struct alignas(16) BitonicConstants
@@ -274,7 +434,9 @@ namespace hairgpu::viewer
             float renderPadding0 = 0.0f;
         };
 
-        static_assert(sizeof(SimConstants) == 448u, "SimConstants must stay in sync with packed HLSL SimConstants");
+        static_assert(sizeof(SimConstantsHair) % 16u == 0u, "SimConstantsHair must stay 16-byte aligned");
+        static_assert(sizeof(SimConstantsActiveSet) % 16u == 0u, "SimConstantsActiveSet must stay 16-byte aligned");
+        static_assert(sizeof(SimConstantsScalp) % 16u == 0u, "SimConstantsScalp must stay 16-byte aligned");
         static_assert(sizeof(RenderConstants) == 144u, "RenderConstants must stay in sync with HLSL render constant buffers");
 
         struct StructuredBuffer
@@ -322,6 +484,11 @@ namespace hairgpu::viewer
         void Shutdown();
         void UpdateAnimatedScalp(float elapsedSeconds);
         void RebuildActiveSetFoundation();
+        void SyncActiveSetGpuBuffers();
+        void FillHairSimConstants(SimConstantsHair& constants, float dt) const;
+        void FillActiveSetSimConstants(SimConstantsActiveSet& constants, float dt) const;
+        void FillScalpSimConstants(SimConstantsScalp& constants, float dt) const;
+        void FillRenderConstants(RenderConstants& constants, const Mat4& viewProjection) const;
         void UpdateActiveSetRuntimeFromParticles(const std::vector<GpuParticle>& particles);
         std::vector<hairgpu::Vec3> BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const;
         std::vector<float> BuildGuideContactScoresFromParticles(const std::vector<GpuParticle>& particles) const;
@@ -392,7 +559,7 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
         hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
         float m_assetBoundsRadius = 0.75f;
-        float m_widthScale = 3.8f;
+        float m_widthScale = 3.2f;
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
@@ -407,7 +574,7 @@ namespace hairgpu::viewer
         uint32_t m_builderGuideCount = 2500;
         uint32_t m_builderFollowersPerGuide = 9;
         uint32_t m_builderParticlesPerStrand = 11;
-        std::wstring m_activePresetName = L"25K Strand Preview";
+        std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
         enum class MaskSourceMode : uint32_t
@@ -500,9 +667,13 @@ namespace hairgpu::viewer
         StructuredBuffer m_restPositions;
         StructuredBuffer m_pointWidths;
         StructuredBuffer m_followBuffer;
-        StructuredBuffer m_strandTierAssignmentsBuffer;
+        StructuredBuffer m_renderStrandTiersBuffer;
+        StructuredBuffer m_guideTierAssignmentsBuffer;
+        StructuredBuffer m_followerTierAssignmentsBuffer;
         StructuredBuffer m_compactedFollowerIndicesBuffer;
         StructuredBuffer m_compactedFollowerCounterBuffer;
+        StructuredBuffer m_compactedGuideIndicesBuffer;
+        StructuredBuffer m_compactedGuideCounterBuffer;
         StructuredBuffer m_scalpPositions;
         StructuredBuffer m_scalpTrianglesBuffer;
         StructuredBuffer m_rootBindingsBuffer;
@@ -529,7 +700,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpIndexBuffer;
         uint32_t m_scalpIndexCount = 0u;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstants;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstantsHair;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstantsActiveSet;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstantsScalp;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_bitonicConstants;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_renderConstants;
         Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
@@ -560,6 +733,7 @@ namespace hairgpu::viewer
         bool m_visibilityRecoveryPending = true;
         uint32_t m_consecutiveInvisibleFrames = 0u;
         uint32_t m_framesSinceVisibilityCheck = 0u;
+        uint32_t m_runtimeFollowerUpdatePhase = 0u;
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastHairPipelineStats = {};
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastDebugPipelineStats = {};
         std::array<GpuTimingFrame, 3> m_gpuTimingFrames = {};

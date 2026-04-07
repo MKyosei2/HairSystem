@@ -9,8 +9,12 @@ cbuffer RenderConstants : register(b0)
     uint ParticlesPerStrand;
     uint TotalStrandCount;
     uint TubeRingSides;
-    uint _RenderPadding0;
-    uint _RenderPadding1;
+    uint RenderFollowerStride;
+    uint RenderGuideOnlyAboveTier;
+    float RenderReducedWidthBoost;
+    float RenderHiddenWidthThreshold;
+    float RenderStrandAlpha;
+    float _RenderPadding0;
 };
 
 struct DebugLineEntry
