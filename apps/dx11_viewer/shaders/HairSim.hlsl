@@ -66,8 +66,8 @@ cbuffer SimConstants : register(b0)
     float AngularBendStiffness;
     float AngularBendDamping;
 
-    float SphereData[16];
-    float CapsuleData[32];
+    float4 SphereData[4];
+    float4 CapsuleData[8];
 
     uint UseCompactedGuideDispatch;
     uint CompactedGuideCount;
@@ -75,6 +75,8 @@ cbuffer SimConstants : register(b0)
     uint FollowerUpdatePhase;
     uint UseCompactedFollowerDispatch;
     uint CompactedFollowerCount;
+    uint SimPadding0;
+    uint SimPadding1;
 };
 
 cbuffer BitonicConstants : register(b1)
@@ -615,8 +617,9 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
     [loop]
     for (uint i = 0; i < SphereColliderCount; ++i)
     {
-        float3 center = float3(SphereData[i * 4 + 0], SphereData[i * 4 + 1], SphereData[i * 4 + 2]);
-        float radius = SphereData[i * 4 + 3];
+        float4 sphere = SphereData[i];
+        float3 center = sphere.xyz;
+        float radius = sphere.w;
         float3 toPoint = p - center;
         float distSq = max(dot(toPoint, toPoint), 1.0e-8f);
         float distValue = sqrt(distSq);
@@ -630,10 +633,12 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
     [loop]
     for (uint i = 0; i < CapsuleColliderCount; ++i)
     {
-        float3 a = float3(CapsuleData[i * 8 + 0], CapsuleData[i * 8 + 1], CapsuleData[i * 8 + 2]);
-        float ra = CapsuleData[i * 8 + 3];
-        float3 b = float3(CapsuleData[i * 8 + 4], CapsuleData[i * 8 + 5], CapsuleData[i * 8 + 6]);
-        float rb = CapsuleData[i * 8 + 7];
+        float4 capsuleA = CapsuleData[i * 2 + 0];
+        float4 capsuleB = CapsuleData[i * 2 + 1];
+        float3 a = capsuleA.xyz;
+        float ra = capsuleA.w;
+        float3 b = capsuleB.xyz;
+        float rb = capsuleB.w;
         float3 resolved = ResolveCapsule(p, a, ra, b, rb);
         touchedSurface = touchedSurface || (length(resolved - p) > 1.0e-6f);
         p = resolved;

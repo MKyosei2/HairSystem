@@ -216,6 +216,8 @@ namespace hairgpu::viewer
             uint32_t followerUpdatePhase = 0u;
             uint32_t useCompactedFollowerDispatch = 0u;
             uint32_t compactedFollowerCount = 0u;
+            uint32_t _dispatchPadding0 = 0u;
+            uint32_t _dispatchPadding1 = 0u;
         };
 
         struct alignas(16) BitonicConstants
@@ -265,13 +267,15 @@ namespace hairgpu::viewer
             uint32_t totalStrandCount = 0;
             uint32_t tubeRingSides = 0;
             uint32_t renderFollowerStride = 1u;
-            uint32_t renderGuideOnlyAboveTier = 0xFFFFFFFFu;
-            float renderReducedWidthBoost = 1.0f;
+            uint32_t renderGuideOnlyAboveTier = 4u;
+            float renderReducedWidthBoost = 0.82f;
             float renderHiddenWidthThreshold = 0.0f;
             float renderStrandAlpha = 1.0f;
             float renderPadding0 = 0.0f;
         };
-        static_assert(sizeof(RenderConstants) == 144, "RenderConstants must match HLSL cbuffer layout");
+
+        static_assert(sizeof(SimConstants) == 448u, "SimConstants must stay in sync with packed HLSL SimConstants");
+        static_assert(sizeof(RenderConstants) == 144u, "RenderConstants must stay in sync with HLSL render constant buffers");
 
         struct StructuredBuffer
         {
@@ -388,7 +392,7 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
         hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
         float m_assetBoundsRadius = 0.75f;
-        float m_widthScale = 3.2f;
+        float m_widthScale = 3.8f;
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
@@ -400,10 +404,10 @@ namespace hairgpu::viewer
         float m_runtimeAngularBendDamping = 0.08f;
         uint32_t m_sortedBroadphasePaddedCount = 1u;
 
-        uint32_t m_builderGuideCount = 320;
-        uint32_t m_builderFollowersPerGuide = 10;
-        uint32_t m_builderParticlesPerStrand = 16;
-        std::wstring m_activePresetName = L"Rapunzel Preview";
+        uint32_t m_builderGuideCount = 2500;
+        uint32_t m_builderFollowersPerGuide = 9;
+        uint32_t m_builderParticlesPerStrand = 11;
+        std::wstring m_activePresetName = L"25K Strand Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
         enum class MaskSourceMode : uint32_t
@@ -496,7 +500,7 @@ namespace hairgpu::viewer
         StructuredBuffer m_restPositions;
         StructuredBuffer m_pointWidths;
         StructuredBuffer m_followBuffer;
-        StructuredBuffer m_followerTierAssignmentsBuffer;
+        StructuredBuffer m_strandTierAssignmentsBuffer;
         StructuredBuffer m_compactedFollowerIndicesBuffer;
         StructuredBuffer m_compactedFollowerCounterBuffer;
         StructuredBuffer m_scalpPositions;

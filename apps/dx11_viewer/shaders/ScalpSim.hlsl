@@ -71,8 +71,8 @@ cbuffer SimConstants : register(b0)
     float AngularBendStiffness;
     float AngularBendDamping;
 
-    float SphereData[16];
-    float CapsuleData[32];
+    float4 SphereData[4];
+    float4 CapsuleData[8];
 };
 
 struct SkinWeightData

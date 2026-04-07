@@ -66,8 +66,8 @@ cbuffer SimConstants : register(b0)
     float AngularBendStiffness;
     float AngularBendDamping;
 
-    float SphereData[16];
-    float CapsuleData[32];
+    float4 SphereData[4];
+    float4 CapsuleData[8];
 
     uint FollowerUpdateStride;
     uint FollowerUpdatePhase;
@@ -97,8 +97,9 @@ float ComputeGuideContactProxy(float3 p)
             break;
         }
 
-        float3 center = float3(SphereData[i * 4u + 0u], SphereData[i * 4u + 1u], SphereData[i * 4u + 2u]);
-        float radius = SphereData[i * 4u + 3u];
+        float4 sphere = SphereData[i];
+        float3 center = sphere.xyz;
+        float radius = sphere.w;
         float surfaceDistance = length(p - center) - radius;
         bestScore = max(bestScore, saturate((0.040f - surfaceDistance) / 0.040f));
     }
@@ -111,10 +112,12 @@ float ComputeGuideContactProxy(float3 p)
             break;
         }
 
-        float3 a = float3(CapsuleData[i * 8u + 0u], CapsuleData[i * 8u + 1u], CapsuleData[i * 8u + 2u]);
-        float ra = CapsuleData[i * 8u + 3u];
-        float3 b = float3(CapsuleData[i * 8u + 4u], CapsuleData[i * 8u + 5u], CapsuleData[i * 8u + 6u]);
-        float rb = CapsuleData[i * 8u + 7u];
+        float4 capsuleA = CapsuleData[i * 2u + 0u];
+        float4 capsuleB = CapsuleData[i * 2u + 1u];
+        float3 a = capsuleA.xyz;
+        float ra = capsuleA.w;
+        float3 b = capsuleB.xyz;
+        float rb = capsuleB.w;
         float3 ab = b - a;
         float denom = max(dot(ab, ab), 1.0e-8f);
         float t = saturate(dot(p - a, ab) / denom);

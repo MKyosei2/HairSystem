@@ -543,7 +543,7 @@ namespace hairgpu::viewer
         icc.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
         InitCommonControlsEx(&icc);
 
-        m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.040f);
+        m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.035f);
         {
             WigStyleSettings wig;
             wig.strength = 1.0f;
@@ -563,7 +563,7 @@ namespace hairgpu::viewer
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 19.0f;
         m_simConfig.globalDamping = 0.035f;
-        m_simConfig.segmentLength = 0.040f;
+        m_simConfig.segmentLength = 0.035f;
         m_simConfig.bendStiffness = 0.14f;
         m_simConfig.followStiffness = 0.965f;
         m_simConfig.windStrength = 0.42f;
@@ -588,7 +588,7 @@ namespace hairgpu::viewer
         m_runtimeAngularBendCompliance = 5.0e-6f;
         m_runtimeAngularBendStiffness = 0.36f;
         m_runtimeAngularBendDamping = 0.08f;
-        m_widthScale = 3.2f;
+        m_widthScale = 3.8f;
         m_renderMode = RenderMode::ParticleBillboard;
         m_showScalpMesh = true;
         m_showScalpWireframe = false;
@@ -940,15 +940,21 @@ namespace hairgpu::viewer
         m_pointWidths = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(m_asset.pointWidths.size()), m_asset.pointWidths.data(), false);
         m_followBuffer = CreateStructuredBuffer(sizeof(FollowGpuData), static_cast<UINT>(m_followGpuData.size()), m_followGpuData.data(), false);
 
-        std::vector<uint32_t> initialStrandTiers(std::max<size_t>(m_asset.strands.size(), size_t(1)), static_cast<uint32_t>(hairgpu::SimTier::Full));
-        const size_t initialTierCount = std::min(m_asset.strands.size(), m_activeSetPlan.recommendedSimulationTiers.size());
-        for (size_t strandIndex = 0; strandIndex < initialTierCount; ++strandIndex)
+        std::vector<uint32_t> initialStrandTiers(std::max<UINT>(static_cast<UINT>(m_asset.strands.size()), 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+        for (uint32_t strandIndex = 0u; strandIndex < m_asset.guideStrandCount && strandIndex < initialStrandTiers.size(); ++strandIndex)
         {
-            initialStrandTiers[strandIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
+            initialStrandTiers[strandIndex] = static_cast<uint32_t>(hairgpu::SimTier::Full);
+        }
+        if (m_activeSetPlan.recommendedSimulationTiers.size() == m_asset.strands.size())
+        {
+            for (uint32_t strandIndex = 0u; strandIndex < static_cast<uint32_t>(m_asset.strands.size()); ++strandIndex)
+            {
+                initialStrandTiers[strandIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
+            }
         }
         std::array<uint32_t, 4> initialCompactionCounters = { 0u, 0u, 0u, 0u };
         std::vector<uint32_t> initialCompactedFollowerIndices(std::max<UINT>(m_asset.followerStrandCount, 1u), 0u);
-        m_followerTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialStrandTiers.size()), initialStrandTiers.data(), false);
+        m_strandTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialStrandTiers.size()), initialStrandTiers.data(), false);
         m_compactedFollowerIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactedFollowerIndices.size()), initialCompactedFollowerIndices.data(), true);
         m_compactedFollowerCounterBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactionCounters.size()), initialCompactionCounters.data(), true);
 
@@ -1090,6 +1096,8 @@ namespace hairgpu::viewer
         }
 
         cbDesc.ByteWidth = sizeof(RenderConstants);
+        cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+        cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         if (FAILED(m_device->CreateBuffer(&cbDesc, nullptr, &m_renderConstants)))
         {
             return false;
@@ -1694,6 +1702,16 @@ namespace hairgpu::viewer
             {
                 m_simConfig.solverIterations = std::max<uint32_t>(1u, m_activeSetPlan.summary.recommendedSolverIterations);
             }
+            if (m_strandTierAssignmentsBuffer.buffer &&
+                m_activeSetPlan.recommendedSimulationTiers.size() == m_asset.strands.size())
+            {
+                std::vector<uint32_t> gpuTierAssignments(m_activeSetPlan.recommendedSimulationTiers.size(), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+                for (size_t strandIndex = 0; strandIndex < m_activeSetPlan.recommendedSimulationTiers.size(); ++strandIndex)
+                {
+                    gpuTierAssignments[strandIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
+                }
+                m_context->UpdateSubresource(m_strandTierAssignmentsBuffer.buffer.Get(), 0, nullptr, gpuTierAssignments.data(), 0, 0);
+            }
             std::wstringstream ss;
             ss << L"OK  clusters=" << m_activeSetPlan.summary.selectedClusterCount
                << L" guides=" << m_activeSetPlan.summary.selectedGuideCount
@@ -1706,17 +1724,6 @@ namespace hairgpu::viewer
         {
             m_activeSetPlan = std::move(plan);
             m_activeSetLastStatus = Utf8ToWide(error);
-        }
-
-        if (m_followerTierAssignmentsBuffer.buffer)
-        {
-            std::vector<uint32_t> strandTiers(std::max<size_t>(m_asset.strands.size(), size_t(1)), static_cast<uint32_t>(hairgpu::SimTier::Full));
-            const size_t tierCount = std::min(m_asset.strands.size(), m_activeSetPlan.recommendedSimulationTiers.size());
-            for (size_t strandIndex = 0; strandIndex < tierCount; ++strandIndex)
-            {
-                strandTiers[strandIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
-            }
-            m_context->UpdateSubresource(m_followerTierAssignmentsBuffer.buffer.Get(), 0, nullptr, strandTiers.data(), 0, 0);
         }
 
         m_activeSetPreviousGuideRoots = currentGuideRoots;
@@ -2287,11 +2294,16 @@ namespace hairgpu::viewer
         rc.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
         rc.tubeRingSides = m_strandTubeRingSides;
         rc.renderFollowerStride = 1u;
-        rc.renderGuideOnlyAboveTier = 0xFFFFFFFFu;
-        rc.renderReducedWidthBoost = 1.0f;
+        rc.renderGuideOnlyAboveTier = 4u;
+        rc.renderReducedWidthBoost = 0.84f;
         rc.renderHiddenWidthThreshold = 0.0f;
         rc.renderStrandAlpha = 1.0f;
-        m_context->UpdateSubresource(m_renderConstants.Get(), 0, nullptr, &rc, 0, 0);
+        D3D11_MAPPED_SUBRESOURCE renderCbMapped = {};
+        if (SUCCEEDED(m_context->Map(m_renderConstants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &renderCbMapped)))
+        {
+            *reinterpret_cast<RenderConstants*>(renderCbMapped.pData) = rc;
+            m_context->Unmap(m_renderConstants.Get(), 0);
+        }
 
         const float clearColor[4] = { 0.10f, 0.12f, 0.16f, 1.0f };
         m_context->ClearRenderTargetView(m_rtv.Get(), clearColor);
@@ -2319,7 +2331,7 @@ namespace hairgpu::viewer
         ID3D11ShaderResourceView* hairSrvs[] = {
             m_positions[m_currentBufferIndex].srv.Get(),
             m_pointWidths.srv.Get(),
-            m_followerTierAssignmentsBuffer.srv.Get()
+            m_strandTierAssignmentsBuffer.srv.Get()
         };
 
         GpuTimingFrame* gpuTimingFrame = (m_activeGpuTimingFrameIndex >= 0 && static_cast<size_t>(m_activeGpuTimingFrameIndex) < m_gpuTimingFrames.size())
@@ -2442,7 +2454,7 @@ namespace hairgpu::viewer
             m_context->Begin(gpuTimingFrame->hairPipelineStats.Get());
         }
 
-        if (!drewCpuHairMesh && m_particleVS && m_particlePS && m_positions[m_currentBufferIndex].srv && m_pointWidths.srv && !m_asset.restPoints.empty())
+        if (!drewCpuHairMesh && m_particleVS && m_particlePS && m_positions[m_currentBufferIndex].srv && m_pointWidths.srv && m_strandTierAssignmentsBuffer.srv && !m_asset.restPoints.empty())
         {
             m_context->IASetInputLayout(nullptr);
             m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
@@ -2554,7 +2566,7 @@ namespace hairgpu::viewer
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer ActiveSet Runtime [GPU_LAYOUT_FIX_V3_NO_COMPACTION]  |  preset=" << m_activePresetName
+        ss << L"Hair GPU Viewer ActiveSet Runtime [25K_LAYOUT_FIX]  |  preset=" << m_activePresetName
            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
            << L"  guides=" << m_asset.guideStrandCount
            << L"  followers=" << m_asset.followerStrandCount
@@ -3109,11 +3121,11 @@ namespace hairgpu::viewer
 
         BOOL ok = FALSE;
         UINT value = GetDlgItemInt(m_hwnd, IDC_EDIT_GUIDES, &ok, FALSE);
-        if (ok) { m_builderGuideCount = std::max<UINT>(32u, std::min<UINT>(value, 2000u)); }
+        if (ok) { m_builderGuideCount = std::max<UINT>(256u, std::min<UINT>(value, 10000u)); }
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_FOLLOWERS, &ok, FALSE);
         if (ok) { m_builderFollowersPerGuide = std::min<UINT>(value, 64u); }
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, &ok, FALSE);
-        if (ok) { m_builderParticlesPerStrand = std::max<UINT>(4u, std::min<UINT>(value, 64u)); }
+        if (ok) { m_builderParticlesPerStrand = std::max<UINT>(9u, std::min<UINT>(value, 13u)); }
 
         m_gpuDebugLinesDirty = true;
         SyncControlsFromState();
@@ -3133,11 +3145,11 @@ namespace hairgpu::viewer
         {
         default:
         case 0:
-            m_activePresetName = L"Rapunzel Preview";
-            m_builderGuideCount = 320;
-            m_builderFollowersPerGuide = 10;
-            m_builderParticlesPerStrand = 16;
-            m_widthScale = 3.2f;
+            m_activePresetName = L"25K Strand Preview";
+            m_builderGuideCount = 2500;
+            m_builderFollowersPerGuide = 9;
+            m_builderParticlesPerStrand = 11;
+            m_widthScale = 3.8f;
             m_simConfig.gravity = 19.0f;
             m_simConfig.globalDamping = 0.035f;
             m_simConfig.windStrength = 0.42f;
@@ -3150,11 +3162,11 @@ namespace hairgpu::viewer
             m_simConfig.bendCompliance = 1.5e-5f;
             break;
         case 1:
-            m_activePresetName = L"Calm Studio";
-            m_builderGuideCount = 280;
-            m_builderFollowersPerGuide = 8;
-            m_builderParticlesPerStrand = 16;
-            m_widthScale = 3.0f;
+            m_activePresetName = L"25K Calm Studio";
+            m_builderGuideCount = 3125;
+            m_builderFollowersPerGuide = 7;
+            m_builderParticlesPerStrand = 11;
+            m_widthScale = 3.6f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
             m_simConfig.windStrength = 0.08f;
@@ -3167,11 +3179,11 @@ namespace hairgpu::viewer
             m_simConfig.bendCompliance = 1.0e-5f;
             break;
         case 2:
-            m_activePresetName = L"Windy Demo";
-            m_builderGuideCount = 320;
-            m_builderFollowersPerGuide = 10;
-            m_builderParticlesPerStrand = 16;
-            m_widthScale = 3.4f;
+            m_activePresetName = L"25K Windy Demo";
+            m_builderGuideCount = 2500;
+            m_builderFollowersPerGuide = 9;
+            m_builderParticlesPerStrand = 12;
+            m_widthScale = 4.0f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.030f;
             m_simConfig.windStrength = 1.30f;
@@ -3184,11 +3196,11 @@ namespace hairgpu::viewer
             m_simConfig.bendCompliance = 1.8e-5f;
             break;
         case 3:
-            m_activePresetName = L"Heavy Grounded";
-            m_builderGuideCount = 360;
-            m_builderFollowersPerGuide = 12;
-            m_builderParticlesPerStrand = 18;
-            m_widthScale = 2.8f;
+            m_activePresetName = L"25K Heavy Grounded";
+            m_builderGuideCount = 2273;
+            m_builderFollowersPerGuide = 10;
+            m_builderParticlesPerStrand = 13;
+            m_widthScale = 3.3f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
             m_simConfig.windStrength = 0.10f;
@@ -3201,11 +3213,11 @@ namespace hairgpu::viewer
             m_simConfig.bendCompliance = 6.0e-6f;
             break;
         case 4:
-            m_activePresetName = L"Game-ish LOD";
-            m_builderGuideCount = 160;
-            m_builderFollowersPerGuide = 4;
-            m_builderParticlesPerStrand = 12;
-            m_widthScale = 2.2f;
+            m_activePresetName = L"25K Game-ish LOD";
+            m_builderGuideCount = 2500;
+            m_builderFollowersPerGuide = 9;
+            m_builderParticlesPerStrand = 9;
+            m_widthScale = 3.0f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
             m_simConfig.windStrength = 0.25f;
