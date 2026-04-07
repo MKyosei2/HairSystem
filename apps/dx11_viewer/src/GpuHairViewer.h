@@ -392,6 +392,7 @@ namespace hairgpu::viewer
         {
             ParticlePointSprite = 0,
             ParticleBillboard = 1,
+            StrandRibbon = 2,
         };
 
         enum class DebugColorMode : uint32_t
@@ -559,7 +560,7 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
         hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
         float m_assetBoundsRadius = 0.75f;
-        float m_widthScale = 3.2f;
+        float m_widthScale = 0.56f;
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
@@ -635,6 +636,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particlePointGS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particleBillboardGS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_particlePS;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_ribbonVS;
+        Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_ribbonGS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ribbonPS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_debugLineVS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_debugLinePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_scalpVS;
@@ -658,6 +662,7 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactFollowerDispatchCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildFollowDispatchArgsCS;
+        Microsoft::WRL::ComPtr<ID3D11InputLayout> m_segmentInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_scalpInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_hairMeshInputLayout;
@@ -740,7 +745,7 @@ namespace hairgpu::viewer
         uint32_t m_gpuTimingWriteIndex = 0u;
         int32_t m_activeGpuTimingFrameIndex = -1;
 
-        RenderMode m_renderMode = RenderMode::ParticleBillboard;
+        RenderMode m_renderMode = RenderMode::StrandRibbon;
         DebugColorMode m_debugColorMode = DebugColorMode::Natural;
 
         LARGE_INTEGER m_qpcFrequency = {};

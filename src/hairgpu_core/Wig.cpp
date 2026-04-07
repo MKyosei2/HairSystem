@@ -61,6 +61,7 @@ namespace hairgpu
             return Vec3(0.0f, 1.0f, 0.0f);
         }
 
+        
         Vec3 ComputeCapFlowDirection(const Vec3& rootNormal, const Vec3& rootPosition, const Vec3& scalpCenter, const Vec3& fallbackDirection)
         {
             Vec3 projectedDown = ProjectOntoPlane(Vec3(0.0f, -1.0f, 0.0f), rootNormal);
@@ -69,14 +70,16 @@ namespace hairgpu
                 projectedDown = fallbackDirection;
             }
 
-            Vec3 outward = ProjectOntoPlane(rootPosition - scalpCenter, rootNormal);
-            if (Length(outward) <= 1.0e-6f)
+            Vec3 frontBias(0.0f, 0.0f, 0.0f);
+            const Vec3 relative = rootPosition - scalpCenter;
+            if (relative.z > 0.0f)
             {
-                outward = Vec3(0.0f, 0.0f, 1.0f);
+                frontBias = Vec3(0.0f, 0.0f, 1.0f) * Clamp(relative.z / 0.18f, 0.0f, 1.0f) * 0.04f;
             }
 
-            return Normalize(projectedDown * 0.94f + Normalize(outward) * 0.06f);
+            return Normalize(projectedDown * 0.985f + frontBias);
         }
+
     }
 
     bool StyleAssetToScalpWig(HairAsset& asset, const WigStyleSettings& settings)
@@ -128,7 +131,7 @@ namespace hairgpu
             asset.restPoints[offset] = Lerp(originalPoints[0], styledRoot, clampedStrength);
 
             Vec3 chainPoint = asset.restPoints[offset];
-            Vec3 prevDir = Normalize(Lerp(originalFirstDir, Normalize(capFlow * flowBlend + ProjectOntoPlane(root - scalpCenter, rootNormal) * outwardBlend + rootNormal * 0.10f), clampedStrength));
+            Vec3 prevDir = Normalize(Lerp(originalFirstDir, Normalize(capFlow * flowBlend + ProjectOntoPlane(root - scalpCenter, rootNormal) * outwardBlend + rootNormal * 0.02f), clampedStrength));
             if (Length(prevDir) <= 1.0e-6f)
             {
                 prevDir = capFlow;
@@ -144,7 +147,7 @@ namespace hairgpu
                 const Vec3 originalDir = Normalize(originalCurrent - originalPrev);
                 const float segmentLength = std::max(Length(originalCurrent - originalPrev), 1.0e-4f);
 
-                Vec3 preferredDir = Normalize(capFlow * flowBlend + ProjectOntoPlane(root - scalpCenter, rootNormal) * outwardBlend + rootNormal * 0.08f);
+                Vec3 preferredDir = Normalize(capFlow * flowBlend + ProjectOntoPlane(root - scalpCenter, rootNormal) * outwardBlend + rootNormal * 0.015f);
                 if (Length(preferredDir) <= 1.0e-6f)
                 {
                     preferredDir = capFlow;
@@ -156,13 +159,13 @@ namespace hairgpu
                 }
 
                 Vec3 shapedPoint = chainPoint + stepDir * segmentLength;
-                shapedPoint += rootNormal * (shellOffset * 0.65f * capWeight);
+                shapedPoint += rootNormal * (shellOffset * 0.35f * capWeight);
 
                 const Vec3 originalTarget = styledRoot + (originalCurrent - originalPoints[0]);
                 const float restoreWeight = Clamp((t - capRegion * 0.55f) / std::max(1.0f - capRegion * 0.55f, 1.0e-5f), 0.0f, 1.0f) * tipRestore;
                 shapedPoint = Lerp(shapedPoint, originalTarget, restoreWeight);
 
-                const float localBlend = clampedStrength * Clamp((0.88f - t) / 0.88f, 0.18f, 1.0f);
+                const float localBlend = clampedStrength * Clamp((0.40f - t) / 0.40f, 0.0f, 1.0f);
                 asset.restPoints[offset + i] = Lerp(originalCurrent, shapedPoint, localBlend);
                 chainPoint = asset.restPoints[offset + i];
                 prevDir = stepDir;

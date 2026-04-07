@@ -546,12 +546,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.040f);
         {
             WigStyleSettings wig;
-            wig.strength = 0.20f;
-            wig.capRegion = 0.18f;
-            wig.shellOffset = 0.0008f;
+            wig.strength = 0.02f;
+            wig.capRegion = 0.08f;
+            wig.shellOffset = 0.00015f;
             wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.01f;
-            wig.restoreOriginalTowardsTip = 0.02f;
+            wig.outwardBlend = 0.0f;
+            wig.restoreOriginalTowardsTip = 0.0f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -588,8 +588,8 @@ namespace hairgpu::viewer
         m_runtimeAngularBendCompliance = 5.0e-6f;
         m_runtimeAngularBendStiffness = 0.36f;
         m_runtimeAngularBendDamping = 0.08f;
-        m_widthScale = 1.7f;
-        m_renderMode = RenderMode::ParticleBillboard;
+        m_widthScale = 0.56f;
+        m_renderMode = RenderMode::StrandRibbon;
         m_showScalpMesh = true;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
@@ -1313,6 +1313,20 @@ namespace hairgpu::viewer
             return false;
         }
 
+        if (!CompileShaderFromFile(L"HairRibbon.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairRibbon.hlsl", "GSMain", "gs_5_0", &gsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairRibbon.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_ribbonVS)) ||
+            FAILED(m_device->CreateGeometryShader(gsBlob->GetBufferPointer(), gsBlob->GetBufferSize(), nullptr, &m_ribbonGS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_ribbonPS)))
+        {
+            return false;
+        }
+
         // Particle-only runtime:
         // keep startup dependencies limited to the shaders that are still used by the viewer.
         if (!CompileShaderFromFile(L"DebugLine.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
@@ -1407,6 +1421,21 @@ namespace hairgpu::viewer
             return false;
         }
 
+        ComPtr<ID3DBlob> ribbonVsBlob;
+        if (!CompileShaderFromFile(L"HairRibbon.hlsl", "VSMain", "vs_5_0", &ribbonVsBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        const D3D11_INPUT_ELEMENT_DESC segmentLayout[] = {
+            { "PARTICLE_INDEX", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(SegmentRenderVertex, particleIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "STRAND_INDEX", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(SegmentRenderVertex, strandIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        if (FAILED(m_device->CreateInputLayout(segmentLayout, 2, ribbonVsBlob->GetBufferPointer(), ribbonVsBlob->GetBufferSize(), &m_segmentInputLayout)))
+        {
+            return false;
+        }
+
         ComPtr<ID3DBlob> scalpVsBlob;
         if (!CompileShaderFromFile(L"ScalpMesh.hlsl", "VSMain", "vs_5_0", &scalpVsBlob, errorText))
         {
@@ -1492,8 +1521,8 @@ namespace hairgpu::viewer
         m_visibilityReadbackFailureCount = 0u;
         m_consecutiveInvisibleFrames = 0u;
         m_visibilityRecoveryCount = 0u;
-        m_renderMode = RenderMode::ParticleBillboard;
-        m_widthScale = std::max(m_widthScale, 3.2f);
+        m_renderMode = RenderMode::StrandRibbon;
+        m_widthScale = std::max(m_widthScale, 0.65f);
         QueueVisibilityRecovery();
         SyncControlsFromState();
         UpdateStatsLabel();
@@ -2430,8 +2459,8 @@ namespace hairgpu::viewer
 
         if (resetAngles)
         {
-            m_cameraYaw = 0.45f;
-            m_cameraPitch = 0.22f;
+            m_cameraYaw = 0.0f;
+            m_cameraPitch = 0.05f;
         }
 
         m_cameraTarget = m_assetBoundsCenter;
@@ -2526,8 +2555,8 @@ namespace hairgpu::viewer
         {
             ++m_visibilityRecoveryCount;
             AutoFrameCameraToAsset(true);
-            m_renderMode = RenderMode::ParticleBillboard;
-            m_widthScale = std::max(m_widthScale, 4.5f);
+            m_renderMode = RenderMode::StrandRibbon;
+            m_widthScale = std::max(m_widthScale, 0.78f);
 
             if (!readbackValid)
             {
@@ -2757,24 +2786,44 @@ namespace hairgpu::viewer
             m_context->Begin(gpuTimingFrame->hairPipelineStats.Get());
         }
 
-        if (!drewCpuHairMesh && m_particleVS && m_particlePS && m_positions[m_currentBufferIndex].srv && m_pointWidths.srv && m_renderStrandTiersBuffer.srv && !m_asset.restPoints.empty())
+        if (!drewCpuHairMesh && m_positions[m_currentBufferIndex].srv && m_pointWidths.srv && m_renderStrandTiersBuffer.srv && !m_asset.restPoints.empty())
         {
-            m_context->IASetInputLayout(nullptr);
-            m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
-            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
             m_context->VSSetConstantBuffers(0, 1, &renderCb);
             m_context->GSSetConstantBuffers(0, 1, &renderCb);
             m_context->PSSetConstantBuffers(0, 1, &renderCb);
             m_context->VSSetShaderResources(0, 3, hairSrvs);
-            m_context->VSSetShader(m_particleVS.Get(), nullptr, 0);
-            m_context->GSSetShader((m_renderMode == RenderMode::ParticlePointSprite) ? m_particlePointGS.Get() : m_particleBillboardGS.Get(), nullptr, 0);
-            m_context->PSSetShader(m_particlePS.Get(), nullptr, 0);
-            const UINT particleCount = static_cast<UINT>(m_asset.restPoints.size());
-            m_context->Draw(particleCount, 0);
-            m_lastCurrentHairDrawCalls = 1u;
-            m_lastCurrentHairVertexCount = static_cast<uint64_t>(particleCount);
-            m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(particleCount) * 2ull;
-            m_lastCurrentHairInstanceCount = 1u;
+
+            if (m_renderMode == RenderMode::StrandRibbon && m_ribbonVS && m_ribbonGS && m_ribbonPS && m_segmentInputLayout && hairVB && !m_renderData.segmentVertices.empty())
+            {
+                m_context->IASetInputLayout(m_segmentInputLayout.Get());
+                m_context->IASetVertexBuffers(0, 1, &hairVB, &hairStride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
+                m_context->GSSetShader(m_ribbonGS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
+                const UINT vertexCount = static_cast<UINT>(m_renderData.segmentVertices.size());
+                m_context->Draw(vertexCount, 0);
+                m_lastCurrentHairDrawCalls = 1u;
+                m_lastCurrentHairVertexCount = static_cast<uint64_t>(vertexCount);
+                m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_renderData.segmentCount) * 2ull;
+                m_lastCurrentHairInstanceCount = 1u;
+            }
+            else if (m_particleVS && m_particlePS)
+            {
+                m_context->IASetInputLayout(nullptr);
+                m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+                m_context->VSSetShader(m_particleVS.Get(), nullptr, 0);
+                m_context->GSSetShader((m_renderMode == RenderMode::ParticlePointSprite) ? m_particlePointGS.Get() : m_particleBillboardGS.Get(), nullptr, 0);
+                m_context->PSSetShader(m_particlePS.Get(), nullptr, 0);
+                const UINT particleCount = static_cast<UINT>(m_asset.restPoints.size());
+                m_context->Draw(particleCount, 0);
+                m_lastCurrentHairDrawCalls = 1u;
+                m_lastCurrentHairVertexCount = static_cast<uint64_t>(particleCount);
+                m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(particleCount) * 2ull;
+                m_lastCurrentHairInstanceCount = 1u;
+            }
+
             ID3D11ShaderResourceView* nullHairSrvs[3] = {};
             m_context->VSSetShaderResources(0, 3, nullHairSrvs);
         }
@@ -2875,7 +2924,7 @@ namespace hairgpu::viewer
            << L"  followers=" << m_asset.followerStrandCount
            << L"  totalStrands=" << m_asset.strands.size()
            << L"  particles=" << m_asset.restPoints.size()
-           << L"  render=" << (m_renderMode == RenderMode::ParticlePointSprite ? L"point" : L"billboard")
+           << L"  render=" << (m_renderMode == RenderMode::ParticlePointSprite ? L"point" : (m_renderMode == RenderMode::ParticleBillboard ? L"billboard" : L"ribbon"))
            << L"  gpuFrameMs=" << std::setprecision(2) << m_lastGpuFrameMilliseconds
            << L"  vis=" << m_lastEstimatedVisibleParticles
            << L"  suspect=" << (m_lastVisibilitySuspect ? L"yes" : L"no")
@@ -3102,7 +3151,8 @@ namespace hairgpu::viewer
         m_comboRenderMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_RENDER_MODE);
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Particle Point Sprite"));
         SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Particle Billboard"));
-        SendMessageW(m_comboRenderMode, CB_SETCURSEL, 1, 0);
+        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Strand Ribbon"));
+        SendMessageW(m_comboRenderMode, CB_SETCURSEL, 2, 0);
 
         createControl(0, L"STATIC", L"Color Debug", SS_LEFT, 0);
         m_comboDebugColor = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_DEBUG_COLOR);
@@ -3333,7 +3383,9 @@ namespace hairgpu::viewer
             (m_activePresetName == L"Windy Demo") ? 2 :
             (m_activePresetName == L"Heavy Grounded") ? 3 :
             (m_activePresetName == L"Game-ish LOD") ? 4 : 0, 0);
-        SendMessageW(m_comboRenderMode, CB_SETCURSEL, m_renderMode == RenderMode::ParticlePointSprite ? 0 : 1, 0);
+        SendMessageW(m_comboRenderMode, CB_SETCURSEL,
+            (m_renderMode == RenderMode::ParticlePointSprite) ? 0 :
+            (m_renderMode == RenderMode::ParticleBillboard) ? 1 : 2, 0);
         SendMessageW(m_comboDebugColor, CB_SETCURSEL, static_cast<WPARAM>(m_debugColorMode), 0);
         SendMessageW(m_comboMaskSource, CB_SETCURSEL, static_cast<WPARAM>(m_maskSourceMode), 0);
         SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, static_cast<WPARAM>(m_maskOverlayMode), 0);
@@ -3404,7 +3456,7 @@ namespace hairgpu::viewer
         m_showFollowLinks = (SendMessageW(m_checkShowLinks, BM_GETCHECK, 0, 0) == BST_CHECKED);
         {
             const LRESULT renderSel = SendMessageW(m_comboRenderMode, CB_GETCURSEL, 0, 0);
-            m_renderMode = (renderSel == 0) ? RenderMode::ParticlePointSprite : RenderMode::ParticleBillboard;
+            m_renderMode = (renderSel <= 0) ? RenderMode::ParticlePointSprite : ((renderSel == 1) ? RenderMode::ParticleBillboard : RenderMode::StrandRibbon);
         }
         m_debugColorMode = static_cast<DebugColorMode>(std::max<LRESULT>(0, SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0)));
 
@@ -3436,7 +3488,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
     {
-        m_renderMode = RenderMode::ParticleBillboard;
+        m_renderMode = RenderMode::StrandRibbon;
         m_showScalpMesh = true;
         m_showGuideSkeleton = false;
         m_showFollowerSkeleton = false;
@@ -3451,8 +3503,8 @@ namespace hairgpu::viewer
             m_activePresetName = L"Rapunzel Preview";
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
-            m_builderParticlesPerStrand = 11;
-            m_widthScale = 1.7f;
+            m_builderParticlesPerStrand = 13;
+            m_widthScale = 0.56f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.085f;
             m_simConfig.windStrength = 0.03f;
@@ -3468,8 +3520,8 @@ namespace hairgpu::viewer
             m_activePresetName = L"Calm Studio";
             m_builderGuideCount = 2200;
             m_builderFollowersPerGuide = 10;
-            m_builderParticlesPerStrand = 9;
-            m_widthScale = 3.0f;
+            m_builderParticlesPerStrand = 11;
+            m_widthScale = 0.60f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
             m_simConfig.windStrength = 0.08f;
@@ -3485,8 +3537,8 @@ namespace hairgpu::viewer
             m_activePresetName = L"Windy Demo";
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
-            m_builderParticlesPerStrand = 11;
-            m_widthScale = 3.4f;
+            m_builderParticlesPerStrand = 13;
+            m_widthScale = 0.58f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.030f;
             m_simConfig.windStrength = 1.30f;
@@ -3503,7 +3555,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2800;
             m_builderFollowersPerGuide = 8;
             m_builderParticlesPerStrand = 13;
-            m_widthScale = 2.8f;
+            m_widthScale = 0.62f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
             m_simConfig.windStrength = 0.10f;
@@ -3519,8 +3571,8 @@ namespace hairgpu::viewer
             m_activePresetName = L"Game-ish LOD";
             m_builderGuideCount = 1800;
             m_builderFollowersPerGuide = 6;
-            m_builderParticlesPerStrand = 9;
-            m_widthScale = 2.2f;
+            m_builderParticlesPerStrand = 11;
+            m_widthScale = 0.54f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
             m_simConfig.windStrength = 0.25f;
@@ -3549,12 +3601,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, particlesPerStrand, m_simConfig.segmentLength);
         {
             WigStyleSettings wig;
-            wig.strength = 0.20f;
-            wig.capRegion = 0.18f;
-            wig.shellOffset = 0.0008f;
+            wig.strength = 0.02f;
+            wig.capRegion = 0.08f;
+            wig.shellOffset = 0.00015f;
             wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.01f;
-            wig.restoreOriginalTowardsTip = 0.02f;
+            wig.outwardBlend = 0.0f;
+            wig.restoreOriginalTowardsTip = 0.0f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -3602,7 +3654,7 @@ namespace hairgpu::viewer
            << L"  GPU Debug: " << m_lastGpuDebugDrawMilliseconds << L" ms\n"
            << L"Avg Frame: " << avgFrameMs << L" ms"
            << L"  Draws: " << m_lastTotalDrawCalls << L"\n"
-           << L"Mode: " << (m_renderMode == RenderMode::ParticlePointSprite ? L"Particle Point Sprite" : L"Particle Billboard")
+           << L"Mode: " << (m_renderMode == RenderMode::ParticlePointSprite ? L"Particle Point Sprite" : (m_renderMode == RenderMode::ParticleBillboard ? L"Particle Billboard" : L"Strand Ribbon"))
            << L"  Quads: " << totalParticles
            << L"  HairPrims: " << m_lastCurrentHairPrimitiveCount << L"\n"
            << L"Guide particles: " << guideParticles
@@ -3684,7 +3736,7 @@ namespace hairgpu::viewer
         out << "showFollowerSkeleton=" << (m_showFollowerSkeleton ? 1 : 0) << "\n";
         out << "showRootMarkers=" << (m_showRootMarkers ? 1 : 0) << "\n";
         out << "showFollowLinks=" << (m_showFollowLinks ? 1 : 0) << "\n";
-        out << "renderMode=" << (m_renderMode == RenderMode::ParticlePointSprite ? 0 : 1) << "\n";
+        out << "renderMode=" << (m_renderMode == RenderMode::ParticlePointSprite ? 0 : (m_renderMode == RenderMode::ParticleBillboard ? 1 : 2)) << "\n";
         out << "debugColorMode=" << static_cast<uint32_t>(m_debugColorMode) << "\n";
         out << "maskSourceMode=" << static_cast<uint32_t>(m_maskSourceMode) << "\n";
         out << "maskOverlayMode=" << static_cast<uint32_t>(m_maskOverlayMode) << "\n";
@@ -3766,8 +3818,8 @@ namespace hairgpu::viewer
         m_showFollowerSkeleton = getBool("showFollowerSkeleton", m_showFollowerSkeleton);
         m_showRootMarkers = getBool("showRootMarkers", m_showRootMarkers);
         m_showFollowLinks = getBool("showFollowLinks", m_showFollowLinks);
-        { const int renderModeValue = static_cast<int>(getUInt("renderMode", static_cast<unsigned>(m_renderMode == RenderMode::ParticlePointSprite ? 0 : 1)));
-          m_renderMode = (renderModeValue == 0) ? RenderMode::ParticlePointSprite : RenderMode::ParticleBillboard; }
+        { const int renderModeValue = static_cast<int>(getUInt("renderMode", static_cast<unsigned>(m_renderMode == RenderMode::ParticlePointSprite ? 0 : (m_renderMode == RenderMode::ParticleBillboard ? 1 : 2))));
+          m_renderMode = (renderModeValue <= 0) ? RenderMode::ParticlePointSprite : ((renderModeValue == 1) ? RenderMode::ParticleBillboard : RenderMode::StrandRibbon); }
         m_debugColorMode = static_cast<DebugColorMode>(std::min<uint32_t>(getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)), 2u));
         if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath = Utf8ToWide(it->second);
         if (auto it = values.find("regionMaskPath"); it != values.end()) m_regionMaskPath = Utf8ToWide(it->second);
@@ -5091,7 +5143,9 @@ namespace hairgpu::viewer
                 SyncControlsFromState();
                 return 0;
             case 'T':
-                m_renderMode = (m_renderMode == RenderMode::ParticlePointSprite) ? RenderMode::ParticleBillboard : RenderMode::ParticlePointSprite;
+                m_renderMode = (m_renderMode == RenderMode::ParticlePointSprite) ? RenderMode::ParticleBillboard :
+                               (m_renderMode == RenderMode::ParticleBillboard) ? RenderMode::StrandRibbon :
+                               RenderMode::ParticlePointSprite;
                 SyncControlsFromState();
                 return 0;
             case VK_OEM_MINUS:
