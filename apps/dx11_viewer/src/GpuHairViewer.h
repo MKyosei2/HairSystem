@@ -264,9 +264,14 @@ namespace hairgpu::viewer
             uint32_t particlesPerStrand = 0;
             uint32_t totalStrandCount = 0;
             uint32_t tubeRingSides = 0;
-            uint32_t _padding1 = 0;
-            uint32_t _padding2 = 0;
+            uint32_t renderFollowerStride = 1u;
+            uint32_t renderGuideOnlyAboveTier = 0xFFFFFFFFu;
+            float renderReducedWidthBoost = 1.0f;
+            float renderHiddenWidthThreshold = 0.0f;
+            float renderStrandAlpha = 1.0f;
+            float renderPadding0 = 0.0f;
         };
+        static_assert(sizeof(RenderConstants) == 144, "RenderConstants must match HLSL cbuffer layout");
 
         struct StructuredBuffer
         {

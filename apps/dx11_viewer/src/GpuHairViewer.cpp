@@ -940,18 +940,15 @@ namespace hairgpu::viewer
         m_pointWidths = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(m_asset.pointWidths.size()), m_asset.pointWidths.data(), false);
         m_followBuffer = CreateStructuredBuffer(sizeof(FollowGpuData), static_cast<UINT>(m_followGpuData.size()), m_followGpuData.data(), false);
 
-        std::vector<uint32_t> initialFollowerTiers(std::max<UINT>(m_asset.followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
-        for (uint32_t followerIndex = 0u; followerIndex < m_asset.followerStrandCount; ++followerIndex)
+        std::vector<uint32_t> initialStrandTiers(std::max<size_t>(m_asset.strands.size(), size_t(1)), static_cast<uint32_t>(hairgpu::SimTier::Full));
+        const size_t initialTierCount = std::min(m_asset.strands.size(), m_activeSetPlan.recommendedSimulationTiers.size());
+        for (size_t strandIndex = 0; strandIndex < initialTierCount; ++strandIndex)
         {
-            const uint32_t strandIndex = m_asset.guideStrandCount + followerIndex;
-            if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
-            {
-                initialFollowerTiers[followerIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
-            }
+            initialStrandTiers[strandIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
         }
         std::array<uint32_t, 4> initialCompactionCounters = { 0u, 0u, 0u, 0u };
         std::vector<uint32_t> initialCompactedFollowerIndices(std::max<UINT>(m_asset.followerStrandCount, 1u), 0u);
-        m_followerTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialFollowerTiers.size()), initialFollowerTiers.data(), false);
+        m_followerTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialStrandTiers.size()), initialStrandTiers.data(), false);
         m_compactedFollowerIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactedFollowerIndices.size()), initialCompactedFollowerIndices.data(), true);
         m_compactedFollowerCounterBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactionCounters.size()), initialCompactionCounters.data(), true);
 
@@ -1711,6 +1708,17 @@ namespace hairgpu::viewer
             m_activeSetLastStatus = Utf8ToWide(error);
         }
 
+        if (m_followerTierAssignmentsBuffer.buffer)
+        {
+            std::vector<uint32_t> strandTiers(std::max<size_t>(m_asset.strands.size(), size_t(1)), static_cast<uint32_t>(hairgpu::SimTier::Full));
+            const size_t tierCount = std::min(m_asset.strands.size(), m_activeSetPlan.recommendedSimulationTiers.size());
+            for (size_t strandIndex = 0; strandIndex < tierCount; ++strandIndex)
+            {
+                strandTiers[strandIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
+            }
+            m_context->UpdateSubresource(m_followerTierAssignmentsBuffer.buffer.Get(), 0, nullptr, strandTiers.data(), 0, 0);
+        }
+
         m_activeSetPreviousGuideRoots = currentGuideRoots;
     }
 
@@ -2260,10 +2268,9 @@ namespace hairgpu::viewer
         const Mat4 view = LookAtRH(m_cameraPosition, m_cameraTarget, Vec3(0.0f, 1.0f, 0.0f));
         const Mat4 projection = PerspectiveFovRH(60.0f * 3.1415926535f / 180.0f, renderWidth / renderHeight, 0.01f, 20.0f);
         const Mat4 viewProjection = Multiply(view, projection);
-        const Mat4 viewProjectionForHlsl = TransposeMatrixForHlsl(viewProjection);
         for (int i = 0; i < 16; ++i)
         {
-            rc.viewProjection[i] = viewProjectionForHlsl.m[i];
+            rc.viewProjection[i] = viewProjection.m[i];
         }
         rc.cameraPosition[0] = m_cameraPosition.x;
         rc.cameraPosition[1] = m_cameraPosition.y;
@@ -2279,6 +2286,11 @@ namespace hairgpu::viewer
         rc.particlesPerStrand = m_asset.particlesPerStrand;
         rc.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
         rc.tubeRingSides = m_strandTubeRingSides;
+        rc.renderFollowerStride = 1u;
+        rc.renderGuideOnlyAboveTier = 0xFFFFFFFFu;
+        rc.renderReducedWidthBoost = 1.0f;
+        rc.renderHiddenWidthThreshold = 0.0f;
+        rc.renderStrandAlpha = 1.0f;
         m_context->UpdateSubresource(m_renderConstants.Get(), 0, nullptr, &rc, 0, 0);
 
         const float clearColor[4] = { 0.10f, 0.12f, 0.16f, 1.0f };
@@ -2306,7 +2318,8 @@ namespace hairgpu::viewer
         ID3D11Buffer* hairVB = m_segmentVertexBuffer.Get();
         ID3D11ShaderResourceView* hairSrvs[] = {
             m_positions[m_currentBufferIndex].srv.Get(),
-            m_pointWidths.srv.Get()
+            m_pointWidths.srv.Get(),
+            m_followerTierAssignmentsBuffer.srv.Get()
         };
 
         GpuTimingFrame* gpuTimingFrame = (m_activeGpuTimingFrameIndex >= 0 && static_cast<size_t>(m_activeGpuTimingFrameIndex) < m_gpuTimingFrames.size())
@@ -2437,7 +2450,7 @@ namespace hairgpu::viewer
             m_context->VSSetConstantBuffers(0, 1, &renderCb);
             m_context->GSSetConstantBuffers(0, 1, &renderCb);
             m_context->PSSetConstantBuffers(0, 1, &renderCb);
-            m_context->VSSetShaderResources(0, 2, hairSrvs);
+            m_context->VSSetShaderResources(0, 3, hairSrvs);
             m_context->VSSetShader(m_particleVS.Get(), nullptr, 0);
             m_context->GSSetShader((m_renderMode == RenderMode::ParticlePointSprite) ? m_particlePointGS.Get() : m_particleBillboardGS.Get(), nullptr, 0);
             m_context->PSSetShader(m_particlePS.Get(), nullptr, 0);
@@ -2447,8 +2460,8 @@ namespace hairgpu::viewer
             m_lastCurrentHairVertexCount = static_cast<uint64_t>(particleCount);
             m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(particleCount) * 2ull;
             m_lastCurrentHairInstanceCount = 1u;
-            ID3D11ShaderResourceView* nullHairSrvs[2] = {};
-            m_context->VSSetShaderResources(0, 2, nullHairSrvs);
+            ID3D11ShaderResourceView* nullHairSrvs[3] = {};
+            m_context->VSSetShaderResources(0, 3, nullHairSrvs);
         }
 
         if (gpuTimingFrame && gpuTimingFrame->issued)
