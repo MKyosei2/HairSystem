@@ -6,6 +6,8 @@
 #include <sstream>
 #include <limits>
 #include <unordered_map>
+#include <cctype>
+
 
 namespace hairgpu
 {
@@ -13,6 +15,94 @@ namespace hairgpu
     {
         constexpr float kEpsilon = 1.0e-6f;
         constexpr float kPi = 3.1415926535f;
+
+        std::string TrimCopy(const std::string& value)
+        {
+            const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char c)
+            {
+                return std::isspace(c) != 0;
+            });
+            const auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c)
+            {
+                return std::isspace(c) != 0;
+            }).base();
+            if (begin >= end)
+            {
+                return {};
+            }
+            return std::string(begin, end);
+        }
+
+        std::string ToLowerCopy(std::string value)
+        {
+            for (char& c : value)
+            {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return value;
+        }
+
+        std::vector<std::string> SplitCsvLine(const std::string& line)
+        {
+            std::vector<std::string> tokens;
+            std::string current;
+            for (char c : line)
+            {
+                if (c == ',')
+                {
+                    tokens.push_back(TrimCopy(current));
+                    current.clear();
+                }
+                else
+                {
+                    current.push_back(c);
+                }
+            }
+            tokens.push_back(TrimCopy(current));
+            return tokens;
+        }
+
+        bool TryParseFloatValue(const std::string& text, float& outValue)
+        {
+            try
+            {
+                outValue = std::stof(text);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseUIntValue(const std::string& text, uint32_t& outValue)
+        {
+            try
+            {
+                outValue = static_cast<uint32_t>(std::stoul(text));
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseBoolValue(const std::string& text, bool& outValue)
+        {
+            const std::string lower = ToLowerCopy(TrimCopy(text));
+            if (lower == "1" || lower == "true" || lower == "yes" || lower == "on")
+            {
+                outValue = true;
+                return true;
+            }
+            if (lower == "0" || lower == "false" || lower == "no" || lower == "off")
+            {
+                outValue = false;
+                return true;
+            }
+            return false;
+        }
 
         float Clamp01(float v)
         {
@@ -72,6 +162,195 @@ namespace hairgpu
             return 1.0f - t * t * (3.0f - 2.0f * t);
         }
 
+        float ComputeBrushDabWeight(const Vec2& uv, const BrushDab& dab)
+        {
+            const float radius = std::max(dab.radiusUv, 1.0e-4f);
+            const float dx = uv.x - dab.centerUv.x;
+            const float dy = uv.y - dab.centerUv.y;
+            const float normalizedDistance = std::sqrt(dx * dx + dy * dy) / radius;
+            if (normalizedDistance > 1.0f)
+            {
+                return 0.0f;
+            }
+            return Clamp01(dab.opacity) * ComputeFeatheredWeight(normalizedDistance, Clamp01(dab.feather));
+        }
+
+        RegionSelectionResult SelectBrushInternal(const HairAsset& asset, const BrushStroke& stroke)
+        {
+            RegionSelectionResult result = {};
+            if (stroke.dabs.empty())
+            {
+                return result;
+            }
+
+            std::vector<float> weights(asset.strands.size(), 0.0f);
+            for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+            {
+                const StrandRange& strand = asset.strands[strandIndex];
+                if (stroke.groupId != UINT32_MAX && strand.groupId != stroke.groupId)
+                {
+                    continue;
+                }
+                if (stroke.guidesOnly && strandIndex >= asset.guideStrandCount)
+                {
+                    continue;
+                }
+
+                const Vec2 uv = GetRootUv(asset, strandIndex);
+                float accumulated = 0.0f;
+                for (const BrushDab& dab : stroke.dabs)
+                {
+                    const float dabWeight = ComputeBrushDabWeight(uv, dab);
+                    if (dab.subtract)
+                    {
+                        accumulated = Clamp01(accumulated - dabWeight);
+                    }
+                    else
+                    {
+                        accumulated = Clamp01(accumulated + dabWeight * (1.0f - accumulated));
+                    }
+                }
+                weights[strandIndex] = accumulated;
+                if (accumulated > 1.0e-4f)
+                {
+                    result.strands.push_back({ strandIndex, std::clamp(accumulated, 0.05f, 1.0f) });
+                }
+            }
+            return result;
+        }
+
+        EditSettings ScaleEditByStrength(EditSettings settings, float strength)
+        {
+            strength = Clamp01(strength);
+            settings.lengthScale = Lerp(1.0f, settings.lengthScale, strength);
+            settings.widthScale = Lerp(1.0f, settings.widthScale, strength);
+            settings.rootOffset = settings.rootOffset * strength;
+            settings.tipOffset = settings.tipOffset * strength;
+            settings.sideOffset *= strength;
+            settings.yawRadians *= strength;
+            settings.followerInfluence = Lerp(1.0f, settings.followerInfluence, strength);
+            return settings;
+        }
+
+        void AddPresetLayer(EditStack& stack,
+                            const char* name,
+                            const RegionSelectionSettings& region,
+                            const EditSettings& targetEdit,
+                            float strength)
+        {
+            EditLayer layer = {};
+            layer.name = name;
+            layer.region = region;
+            layer.edit = ScaleEditByStrength(targetEdit, strength);
+            layer.layerWeight = 1.0f;
+            layer.enabled = true;
+            stack.layers.push_back(layer);
+        }
+
+        bool AppendPresetInternal(EditStack& stack, const std::string& presetName, float strength, std::string& outError)
+        {
+            const std::string key = ToLowerCopy(TrimCopy(presetName));
+            const float safeStrength = Clamp01(strength);
+            if (key.empty())
+            {
+                outError = "Preset name is empty.";
+                return false;
+            }
+
+            RegionSelectionSettings region = {};
+            EditSettings edit = {};
+
+            if (key == "front bangs" || key == "front_bangs" || key == "bangs")
+            {
+                region.mode = RegionSelectMode::Ellipse;
+                region.centerUv = { 0.50f, 0.22f };
+                region.radiusUv = { 0.18f, 0.14f };
+                region.feather = 0.42f;
+                edit.lengthScale = 0.92f;
+                edit.rootOffset = { 0.0f, -0.012f, 0.0f };
+                edit.tipOffset = { 0.0f, -0.10f, 0.06f };
+                edit.widthScale = 1.04f;
+                AddPresetLayer(stack, "Front Bangs", region, edit, safeStrength);
+            }
+            else if (key == "left sweep" || key == "left_sweep")
+            {
+                region.mode = RegionSelectMode::Sector;
+                region.centerUv = { 0.52f, 0.30f };
+                region.radiusUv = { 0.42f, 0.30f };
+                region.angleCenterRadians = 3.14159265f;
+                region.angleHalfExtentRadians = 1.05f;
+                region.feather = 0.38f;
+                edit.sideOffset = -0.08f;
+                edit.tipOffset = { -0.02f, 0.02f, 0.03f };
+                edit.yawRadians = 0.42f;
+                edit.widthScale = 1.03f;
+                AddPresetLayer(stack, "Left Sweep", region, edit, safeStrength);
+            }
+            else if (key == "right sweep" || key == "right_sweep")
+            {
+                region.mode = RegionSelectMode::Sector;
+                region.centerUv = { 0.48f, 0.30f };
+                region.radiusUv = { 0.42f, 0.30f };
+                region.angleCenterRadians = 0.0f;
+                region.angleHalfExtentRadians = 1.05f;
+                region.feather = 0.38f;
+                edit.sideOffset = 0.08f;
+                edit.tipOffset = { 0.02f, 0.02f, 0.03f };
+                edit.yawRadians = -0.42f;
+                edit.widthScale = 1.03f;
+                AddPresetLayer(stack, "Right Sweep", region, edit, safeStrength);
+            }
+            else if (key == "crown lift" || key == "crown_lift")
+            {
+                region.mode = RegionSelectMode::Ellipse;
+                region.centerUv = { 0.50f, 0.48f };
+                region.radiusUv = { 0.16f, 0.14f };
+                region.feather = 0.46f;
+                edit.lengthScale = 1.08f;
+                edit.rootOffset = { 0.0f, 0.04f, 0.0f };
+                edit.tipOffset = { 0.0f, 0.11f, 0.0f };
+                AddPresetLayer(stack, "Crown Lift", region, edit, safeStrength);
+            }
+            else if (key == "side volume" || key == "side_volume")
+            {
+                region.mode = RegionSelectMode::Rectangle;
+                region.centerUv = { 0.23f, 0.46f };
+                region.radiusUv = { 0.12f, 0.24f };
+                region.feather = 0.40f;
+                edit.sideOffset = -0.06f;
+                edit.tipOffset = { -0.02f, 0.05f, 0.0f };
+                edit.widthScale = 1.07f;
+                AddPresetLayer(stack, "Side Volume Left", region, edit, safeStrength);
+
+                region.centerUv = { 0.77f, 0.46f };
+                edit.sideOffset = 0.06f;
+                edit.tipOffset = { 0.02f, 0.05f, 0.0f };
+                AddPresetLayer(stack, "Side Volume Right", region, edit, safeStrength);
+            }
+            else if (key == "back tuck" || key == "back_tuck")
+            {
+                region.mode = RegionSelectMode::Sector;
+                region.centerUv = { 0.50f, 0.72f };
+                region.radiusUv = { 0.34f, 0.24f };
+                region.angleCenterRadians = 1.57079632f;
+                region.angleHalfExtentRadians = 1.15f;
+                region.feather = 0.36f;
+                edit.lengthScale = 0.93f;
+                edit.rootOffset = { 0.0f, -0.015f, 0.0f };
+                edit.tipOffset = { 0.0f, -0.04f, -0.07f };
+                edit.yawRadians = 0.08f;
+                AddPresetLayer(stack, "Back Tuck", region, edit, safeStrength);
+            }
+            else
+            {
+                outError = "Unknown edit preset: " + presetName;
+                return false;
+            }
+
+            outError.clear();
+            return true;
+        }
+
         bool StrandMatchesRegion(const HairAsset& asset, uint32_t strandIndex, const RegionSelectionSettings& settings, float& outWeight)
         {
             const StrandRange& strand = asset.strands[strandIndex];
@@ -91,6 +370,12 @@ namespace hairgpu
             }
 
             const Vec2 uv = GetRootUv(asset, strandIndex);
+            if (settings.mode == RegionSelectMode::Brush)
+            {
+                const BrushDab dab = { settings.centerUv, std::max(settings.radiusUv.x, settings.radiusUv.y), 1.0f, settings.feather, false };
+                outWeight = ComputeBrushDabWeight(uv, dab);
+                return outWeight > 0.0f;
+            }
             const float dx = uv.x - settings.centerUv.x;
             const float dy = uv.y - settings.centerUv.y;
             const float rx = std::max(settings.radiusUv.x, 1.0e-4f);
@@ -332,6 +617,132 @@ namespace hairgpu
             }
         }
         return result;
+    }
+
+    RegionSelectionResult SelectBrushRegion(const HairAsset& asset, const BrushStroke& stroke)
+    {
+        return SelectBrushInternal(asset, stroke);
+    }
+
+    bool LoadBrushStrokeCsv(const std::filesystem::path& path, BrushStroke& outStroke, std::string& outError)
+    {
+        outStroke = {};
+        std::ifstream in(path);
+        if (!in)
+        {
+            outError = "Failed to open brush CSV: " + path.string();
+            return false;
+        }
+
+        std::string line;
+        uint32_t lineNumber = 0u;
+        while (std::getline(in, line))
+        {
+            ++lineNumber;
+            line = TrimCopy(line);
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+
+            std::vector<std::string> tokens = SplitCsvLine(line);
+            if (tokens.empty())
+            {
+                continue;
+            }
+
+            const std::string key = ToLowerCopy(tokens[0]);
+            if (key == "groupid" && tokens.size() >= 2u)
+            {
+                if (!TryParseUIntValue(tokens[1], outStroke.groupId))
+                {
+                    outError = "Malformed groupId row in brush CSV at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                continue;
+            }
+            if (key == "guidesonly" && tokens.size() >= 2u)
+            {
+                if (!TryParseBoolValue(tokens[1], outStroke.guidesOnly))
+                {
+                    outError = "Malformed guidesOnly row in brush CSV at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                continue;
+            }
+
+            const size_t base = (key == "dab") ? 1u : 0u;
+            if (tokens.size() < base + 4u)
+            {
+                outError = "Brush CSV rows must be `dab,u,v,radius[,opacity,feather,subtract]` or `u,v,radius,opacity[,feather,subtract]`.";
+                return false;
+            }
+
+            BrushDab dab = {};
+            if (!TryParseFloatValue(tokens[base + 0u], dab.centerUv.x) ||
+                !TryParseFloatValue(tokens[base + 1u], dab.centerUv.y) ||
+                !TryParseFloatValue(tokens[base + 2u], dab.radiusUv) ||
+                !TryParseFloatValue(tokens[base + 3u], dab.opacity))
+            {
+                outError = "Malformed brush dab row at line " + std::to_string(lineNumber);
+                return false;
+            }
+            if (tokens.size() > base + 4u && !tokens[base + 4u].empty() && !TryParseFloatValue(tokens[base + 4u], dab.feather))
+            {
+                outError = "Malformed brush feather value at line " + std::to_string(lineNumber);
+                return false;
+            }
+            if (tokens.size() > base + 5u && !tokens[base + 5u].empty() && !TryParseBoolValue(tokens[base + 5u], dab.subtract))
+            {
+                outError = "Malformed brush subtract value at line " + std::to_string(lineNumber);
+                return false;
+            }
+            dab.radiusUv = std::max(dab.radiusUv, 1.0e-4f);
+            dab.opacity = Clamp01(dab.opacity);
+            dab.feather = Clamp01(dab.feather);
+            outStroke.dabs.push_back(dab);
+        }
+
+        if (outStroke.dabs.empty())
+        {
+            outError = "Brush CSV did not contain any dabs.";
+            return false;
+        }
+        outError.clear();
+        return true;
+    }
+
+    bool SaveBrushStrokeCsv(const std::filesystem::path& path, const BrushStroke& stroke, std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to open output brush CSV: " + path.string();
+            return false;
+        }
+        out << "groupId," << stroke.groupId << "\n";
+        out << "guidesOnly," << (stroke.guidesOnly ? 1 : 0) << "\n";
+        out << "# dab,u,v,radius,opacity,feather,subtract\n";
+        for (const BrushDab& dab : stroke.dabs)
+        {
+            out << "dab," << dab.centerUv.x << "," << dab.centerUv.y << "," << dab.radiusUv << ","
+                << dab.opacity << "," << dab.feather << "," << (dab.subtract ? 1 : 0) << "\n";
+        }
+        outError.clear();
+        return true;
+    }
+
+    bool AppendNamedEditPreset(EditStack& stack, const std::string& presetName, float strength, std::string& outError)
+    {
+        return AppendPresetInternal(stack, presetName, strength, outError);
+    }
+
+    bool BuildNamedEditPresetStack(const std::string& presetName, float strength, EditStack& outStack, std::string& outError)
+    {
+        outStack = {};
+        outStack.boundarySmoothing = 0.42f;
+        outStack.boundaryRadiusUv = 0.10f;
+        return AppendPresetInternal(outStack, presetName, strength, outError);
     }
 
     bool ApplyEditToRegion(HairAsset& asset, const RegionSelectionResult& selection, const EditSettings& settings, std::string& outError)
