@@ -23,6 +23,7 @@
   <ItemGroup>
     <None Include="shaders\DebugLine.hlsl"><Filter>Shaders</Filter></None>
     <None Include="shaders\HairParticle.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="shaders\HairActiveSet.hlsl"><Filter>Shaders</Filter></None>
     <None Include="shaders\HairSim.hlsl"><Filter>Shaders</Filter></None>
     <None Include="shaders\ScalpMesh.hlsl"><Filter>Shaders</Filter></None>
   </ItemGroup>

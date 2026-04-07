@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "hairgpu/ActiveSet.h"
-#include "hairgpu/Authoring.h"
 #include "hairgpu/HybridRuntime.h"
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
@@ -211,8 +210,6 @@ namespace hairgpu::viewer
             float sphereData[4 * 4] = {};
             float capsuleData[4 * 8] = {};
 
-            uint32_t useCompactedGuideDispatch = 0u;
-            uint32_t compactedGuideCount = 0u;
             uint32_t followerUpdateStride = 1u;
             uint32_t followerUpdatePhase = 0u;
             uint32_t useCompactedFollowerDispatch = 1u;
@@ -247,43 +244,11 @@ namespace hairgpu::viewer
             Region = 2,
         };
 
-        enum class BrushTool : uint32_t
-        {
-            Length = 0,
-            Width = 1,
-            Lift = 2,
-            TipMove = 3,
-            Yaw = 4,
-        };
-
-        struct BrushParams
-        {
-            BrushTool tool = BrushTool::Length;
-            float radiusU = 0.08f;
-            float radiusV = 0.08f;
-            float strength = 0.30f;
-            bool guidesOnly = true;
-        };
-
-        struct BrushStamp
-        {
-            hairgpu::Vec2 centerUv = { 0.5f, 0.5f };
-            BrushParams params = {};
-        };
-
         enum class CpuReadbackMode : uint32_t
         {
             Off = 0,
-            GuideSignalsOnly = 1,
+            OnDemandVisibility = 1,
             FullParticlesDebug = 2,
-        };
-
-        struct GuideSignalGpu
-        {
-            float rootX = 0.0f;
-            float rootY = 0.0f;
-            float rootZ = 0.0f;
-            float velocity = 0.0f;
         };
 
         struct alignas(16) RenderConstants
@@ -346,19 +311,16 @@ namespace hairgpu::viewer
         void Shutdown();
         void UpdateAnimatedScalp(float elapsedSeconds);
         void RebuildActiveSetFoundation();
-        void RebuildRuntimeGpuAsset();
-        bool ComputeBrushUvFromViewportPoint(const POINT& point, hairgpu::Vec2& outUv) const;
-        bool ApplyViewportBrushEdit(const POINT& point, float strengthScale);
         void UpdateActiveSetRuntimeFromParticles(const std::vector<GpuParticle>& particles);
-        void UpdateActiveSetRuntimeFromGuideSignals(const std::vector<GuideSignalGpu>& guideSignals);
-        void BuildGuideIndirectWorklists();
-        void KickGuideSignalReadback();
-        bool TryConsumeGuideSignalReadback(std::vector<GuideSignalGpu>& outSignals);
         std::vector<hairgpu::Vec3> BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const;
         std::vector<float> BuildGuideContactScoresFromParticles(const std::vector<GpuParticle>& particles) const;
         void BuildHairMeshVertices(const std::vector<GpuParticle>& particles, float aspectRatio);
         void RecomputeAssetBounds();
         void AutoFrameCameraToAsset(bool resetAngles);
+        void QueueVisibilityRecovery();
+        bool ShouldRunVisibilityRecoveryThisFrame() const;
+        bool RunVisibilityRecoveryPass(float aspectRatio, bool allowCameraRecovery, std::vector<GpuParticle>* outParticles);
+        bool RestoreGpuParticleStateFromInitialPose(bool resetCamera);
         uint32_t EstimateVisibleParticleCount(const std::vector<GpuParticle>& particles, float aspectRatio) const;
         void RebuildGpuDebugLineEntries();
         bool EnsureHairMeshVertexCapacity(size_t vertexCount);
@@ -407,12 +369,6 @@ namespace hairgpu::viewer
         bool m_showFollowLinks = false;
         bool m_showTestMesh = false; // legacy CPU test mesh path disabled in runtime UI
         POINT m_lastMouse = {};
-        bool m_brushEditing = false;
-        BrushParams m_brushParams = {};
-        std::vector<BrushStamp> m_brushStroke;
-        hairgpu::HairAsset m_brushStrokeBaseAsset;
-        CpuReadbackMode m_cpuReadbackMode = CpuReadbackMode::FullParticlesDebug;
-        bool m_enableGuideIndirectDispatch = false;
 
         float m_cameraYaw = 0.1f;
         float m_cameraPitch = 0.35f;
@@ -522,9 +478,6 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildSortedRangesCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_selfCollisionCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
-        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_extractGuideSignalsCS;
-        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactGuideDispatchCS;
-        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildGuideDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactFollowerDispatchCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildFollowDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
@@ -536,10 +489,6 @@ namespace hairgpu::viewer
         StructuredBuffer m_restPositions;
         StructuredBuffer m_pointWidths;
         StructuredBuffer m_followBuffer;
-        StructuredBuffer m_guideSignalBuffer;
-        StructuredBuffer m_guideTierAssignmentsBuffer;
-        StructuredBuffer m_compactedGuideIndicesBuffer;
-        StructuredBuffer m_compactedGuideCounterBuffer;
         StructuredBuffer m_followerTierAssignmentsBuffer;
         StructuredBuffer m_compactedFollowerIndicesBuffer;
         StructuredBuffer m_compactedFollowerCounterBuffer;
@@ -564,11 +513,8 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_hairMeshVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_debugLineTemplateVertexBuffer;
         StructuredBuffer m_debugLineEntriesBuffer;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_guideDispatchArgsBuffer;
-        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_guideDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_followDispatchArgsBuffer;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_followDispatchArgsUav;
-        std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 3> m_guideSignalReadbackBuffers = {};
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpIndexBuffer;
         uint32_t m_scalpIndexCount = 0u;
@@ -595,7 +541,14 @@ namespace hairgpu::viewer
         uint32_t m_lastReadbackParticleCount = 0u;
         bool m_lastVisibilitySuspect = false;
         bool m_lastUsedCpuVisibilityFallback = false;
+        bool m_lastVisibilityReadbackValid = true;
+        bool m_lastVisibilityUsedInitialPoseFallback = false;
+        uint32_t m_visibilityReadbackFailureCount = 0u;
         uint32_t m_visibilityRecoveryCount = 0u;
+        CpuReadbackMode m_cpuReadbackMode = CpuReadbackMode::OnDemandVisibility;
+        bool m_visibilityRecoveryPending = true;
+        uint32_t m_consecutiveInvisibleFrames = 0u;
+        uint32_t m_framesSinceVisibilityCheck = 0u;
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastHairPipelineStats = {};
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastDebugPipelineStats = {};
         std::array<GpuTimingFrame, 3> m_gpuTimingFrames = {};
@@ -610,7 +563,6 @@ namespace hairgpu::viewer
         float m_accumulator = 0.0f;
         float m_elapsedSeconds = 0.0f;
         uint32_t m_currentBufferIndex = 0;
-        uint32_t m_runtimeFrameIndex = 0u;
 
         HWND m_uiPanel = nullptr;
         HWND m_btnPlayPause = nullptr;

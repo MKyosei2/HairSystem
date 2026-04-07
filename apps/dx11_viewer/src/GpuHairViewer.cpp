@@ -19,7 +19,6 @@
 
 #include "hairgpu/ActiveSet.h"
 #include "hairgpu/AssetIO.h"
-#include "hairgpu/Authoring.h"
 #include "hairgpu/Math.h"
 #include "hairgpu/Wig.h"
 
@@ -46,60 +45,6 @@ namespace hairgpu::viewer
             std::vector<unsigned char> samples;
             bool valid() const { return width > 0 && height > 0 && channels > 0 && samples.size() == static_cast<size_t>(width) * height * channels; }
         };
-
-        bool IntersectRayTriangleMoller(const Vec3& rayOrigin,
-                                        const Vec3& rayDirection,
-                                        const Vec3& a,
-                                        const Vec3& b,
-                                        const Vec3& c,
-                                        float& outT,
-                                        Vec3& outBary)
-        {
-            const Vec3 ab = b - a;
-            const Vec3 ac = c - a;
-            const Vec3 p = Cross(rayDirection, ac);
-            const float det = Dot(ab, p);
-            if (std::fabs(det) <= 1.0e-6f)
-            {
-                return false;
-            }
-
-            const float invDet = 1.0f / det;
-            const Vec3 s = rayOrigin - a;
-            const float u = Dot(s, p) * invDet;
-            if (u < 0.0f || u > 1.0f)
-            {
-                return false;
-            }
-
-            const Vec3 q = Cross(s, ab);
-            const float v = Dot(rayDirection, q) * invDet;
-            if (v < 0.0f || (u + v) > 1.0f)
-            {
-                return false;
-            }
-
-            const float t = Dot(ac, q) * invDet;
-            if (t <= 0.0f)
-            {
-                return false;
-            }
-
-            outT = t;
-            outBary = Vec3(1.0f - u - v, u, v);
-            return true;
-        }
-
-        UINT BufferElementCount(ID3D11Buffer* buffer, UINT stride)
-        {
-            if (!buffer || stride == 0u)
-            {
-                return 0u;
-            }
-            D3D11_BUFFER_DESC desc = {};
-            buffer->GetDesc(&desc);
-            return desc.ByteWidth / stride;
-        }
 
         bool EndsWithInsensitiveW(const std::wstring& s, const wchar_t* ext)
         {
@@ -373,6 +318,19 @@ namespace hairgpu::viewer
                 SetWindowTextW(hwnd, text.c_str());
             }
         }
+        hairgpu::Mat4 TransposeMatrixForHlsl(const hairgpu::Mat4& m)
+        {
+            hairgpu::Mat4 t = {};
+            for (int row = 0; row < 4; ++row)
+            {
+                for (int col = 0; col < 4; ++col)
+                {
+                    t.m[row * 4 + col] = m.m[col * 4 + row];
+                }
+            }
+            return t;
+        }
+
         bool ParticleArrayLooksValid(const float* particleData, size_t particleCount, const hairgpu::HairAsset& asset)
         {
             if (particleData == nullptr || particleCount < asset.restPoints.size() || asset.restPoints.empty())
@@ -982,18 +940,7 @@ namespace hairgpu::viewer
         m_pointWidths = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(m_asset.pointWidths.size()), m_asset.pointWidths.data(), false);
         m_followBuffer = CreateStructuredBuffer(sizeof(FollowGpuData), static_cast<UINT>(m_followGpuData.size()), m_followGpuData.data(), false);
 
-        std::array<uint32_t, 4> initialCompactionCounters = { 0u, 0u, 0u, 0u };
-
-        std::vector<GuideSignalGpu> zeroGuideSignals(std::max<UINT>(m_asset.guideStrandCount, 1u));
-        m_guideSignalBuffer = CreateStructuredBuffer(sizeof(GuideSignalGpu), static_cast<UINT>(zeroGuideSignals.size()), zeroGuideSignals.data(), true);
-
-        std::vector<uint32_t> initialGuideTiers(std::max<UINT>(m_asset.guideStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Full));
-        std::vector<uint32_t> initialCompactedGuideIndices(std::max<UINT>(m_asset.guideStrandCount, 1u), 0u);
-        m_guideTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialGuideTiers.size()), initialGuideTiers.data(), false);
-        m_compactedGuideIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactedGuideIndices.size()), initialCompactedGuideIndices.data(), true);
-        m_compactedGuideCounterBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactionCounters.size()), initialCompactionCounters.data(), true);
-
-        std::vector<uint32_t> initialFollowerTiers(std::max<UINT>(m_asset.followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Full));
+        std::vector<uint32_t> initialFollowerTiers(std::max<UINT>(m_asset.followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
         for (uint32_t followerIndex = 0u; followerIndex < m_asset.followerStrandCount; ++followerIndex)
         {
             const uint32_t strandIndex = m_asset.guideStrandCount + followerIndex;
@@ -1002,13 +949,12 @@ namespace hairgpu::viewer
                 initialFollowerTiers[followerIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
             }
         }
+        std::array<uint32_t, 4> initialCompactionCounters = { 0u, 0u, 0u, 0u };
         std::vector<uint32_t> initialCompactedFollowerIndices(std::max<UINT>(m_asset.followerStrandCount, 1u), 0u);
         m_followerTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialFollowerTiers.size()), initialFollowerTiers.data(), false);
         m_compactedFollowerIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactedFollowerIndices.size()), initialCompactedFollowerIndices.data(), true);
         m_compactedFollowerCounterBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactionCounters.size()), initialCompactionCounters.data(), true);
 
-        m_guideDispatchArgsBuffer.Reset();
-        m_guideDispatchArgsUav.Reset();
         m_followDispatchArgsBuffer.Reset();
         m_followDispatchArgsUav.Reset();
         D3D11_BUFFER_DESC indirectArgsDesc = {};
@@ -1016,8 +962,7 @@ namespace hairgpu::viewer
         indirectArgsDesc.Usage = D3D11_USAGE_DEFAULT;
         indirectArgsDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
         indirectArgsDesc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS | D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
-        if (FAILED(m_device->CreateBuffer(&indirectArgsDesc, nullptr, &m_guideDispatchArgsBuffer)) ||
-            FAILED(m_device->CreateBuffer(&indirectArgsDesc, nullptr, &m_followDispatchArgsBuffer)))
+        if (FAILED(m_device->CreateBuffer(&indirectArgsDesc, nullptr, &m_followDispatchArgsBuffer)))
         {
             return false;
         }
@@ -1028,32 +973,9 @@ namespace hairgpu::viewer
         indirectArgsUavDesc.Buffer.FirstElement = 0;
         indirectArgsUavDesc.Buffer.NumElements = indirectArgsDesc.ByteWidth / sizeof(UINT);
         indirectArgsUavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
-        if (FAILED(m_device->CreateUnorderedAccessView(m_guideDispatchArgsBuffer.Get(), &indirectArgsUavDesc, &m_guideDispatchArgsUav)) ||
-            FAILED(m_device->CreateUnorderedAccessView(m_followDispatchArgsBuffer.Get(), &indirectArgsUavDesc, &m_followDispatchArgsUav)))
+        if (FAILED(m_device->CreateUnorderedAccessView(m_followDispatchArgsBuffer.Get(), &indirectArgsUavDesc, &m_followDispatchArgsUav)))
         {
             return false;
-        }
-
-        for (Microsoft::WRL::ComPtr<ID3D11Buffer>& readbackBuffer : m_guideSignalReadbackBuffers)
-        {
-            readbackBuffer.Reset();
-        }
-        if (m_guideSignalBuffer.buffer)
-        {
-            D3D11_BUFFER_DESC guideSignalDesc = {};
-            m_guideSignalBuffer.buffer->GetDesc(&guideSignalDesc);
-            guideSignalDesc.BindFlags = 0u;
-            guideSignalDesc.Usage = D3D11_USAGE_STAGING;
-            guideSignalDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-            guideSignalDesc.MiscFlags = 0u;
-            guideSignalDesc.StructureByteStride = 0u;
-            for (Microsoft::WRL::ComPtr<ID3D11Buffer>& readbackBuffer : m_guideSignalReadbackBuffers)
-            {
-                if (FAILED(m_device->CreateBuffer(&guideSignalDesc, nullptr, &readbackBuffer)))
-                {
-                    return false;
-                }
-            }
         }
 
         m_scalpPositions = CreateStructuredBuffer(sizeof(GpuParticle), static_cast<UINT>(m_animatedScalpParticles.size()), m_animatedScalpParticles.data(), false);
@@ -1420,12 +1342,6 @@ namespace hairgpu::viewer
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_selfCollisionCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "FollowCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_followCS)) ||
-            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "ExtractGuideSignalsCS", "cs_5_0", &csBlob, errorText) ||
-            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_extractGuideSignalsCS)) ||
-            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "CompactGuideDispatchCS", "cs_5_0", &csBlob, errorText) ||
-            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_compactGuideDispatchCS)) ||
-            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "BuildGuideDispatchArgsCS", "cs_5_0", &csBlob, errorText) ||
-            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildGuideDispatchArgsCS)) ||
             !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "CompactFollowerDispatchCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_compactFollowerDispatchCS)) ||
             !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "BuildFollowDispatchArgsCS", "cs_5_0", &csBlob, errorText) ||
@@ -1486,7 +1402,6 @@ namespace hairgpu::viewer
     void GpuHairViewer::ResetSimulation()
     {
         m_currentBufferIndex = 0;
-        m_runtimeFrameIndex = 0u;
         m_context->UpdateSubresource(m_positions[0].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
         m_context->UpdateSubresource(m_positions[1].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
         m_context->UpdateSubresource(m_previousPositions[0].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
@@ -1524,7 +1439,19 @@ namespace hairgpu::viewer
         m_performanceSamples.clear();
         RebuildActiveSetFoundation();
         RecomputeAssetBounds();
-        AutoFrameCameraToAsset(false);
+        AutoFrameCameraToAsset(true);
+        m_lastEstimatedVisibleParticles = 0u;
+        m_lastReadbackParticleCount = 0u;
+        m_lastVisibilitySuspect = false;
+        m_lastUsedCpuVisibilityFallback = false;
+        m_lastVisibilityReadbackValid = true;
+        m_lastVisibilityUsedInitialPoseFallback = false;
+        m_visibilityReadbackFailureCount = 0u;
+        m_consecutiveInvisibleFrames = 0u;
+        m_visibilityRecoveryCount = 0u;
+        m_renderMode = RenderMode::ParticleBillboard;
+        m_widthScale = std::max(m_widthScale, 3.2f);
+        QueueVisibilityRecovery();
         SyncControlsFromState();
         UpdateStatsLabel();
     }
@@ -1633,394 +1560,6 @@ namespace hairgpu::viewer
         std::wstringstream ss;
         ss << L"Ready (clusters=" << m_activeSetClusters.size() << L")";
         m_activeSetLastStatus = ss.str();
-    }
-
-    void GpuHairViewer::RebuildRuntimeGpuAsset()
-    {
-        m_initialParticles.clear();
-        m_initialParticles.reserve(m_asset.restPoints.size());
-        for (const Vec3& p : m_asset.restPoints)
-        {
-            m_initialParticles.push_back({ p.x, p.y, p.z, 1.0f });
-        }
-
-        m_followGpuData.clear();
-        m_followGpuData.reserve(m_asset.followData.size());
-        for (const FollowData& f : m_asset.followData)
-        {
-            m_followGpuData.push_back({ f.parentGuide, f.followWeight, f.clumpWeight, f.noiseWeight });
-        }
-
-        m_renderData = BuildSegmentRenderData(m_asset);
-        m_rootBindingGpuData.clear();
-        m_rootBindingGpuData.reserve(m_asset.rootBindings.size());
-        for (const RootBinding& binding : m_asset.rootBindings)
-        {
-            RootBindingGpuData gpu = {};
-            gpu.triangleIndex = binding.triangleIndex;
-            gpu.barycentric[0] = binding.barycentric.x;
-            gpu.barycentric[1] = binding.barycentric.y;
-            gpu.barycentric[2] = binding.barycentric.z;
-            gpu.rootUv[0] = binding.rootUv.x;
-            gpu.rootUv[1] = binding.rootUv.y;
-            m_rootBindingGpuData.push_back(gpu);
-        }
-
-        const UINT guideSegments = m_asset.guideStrandCount * (m_asset.particlesPerStrand > 0 ? (m_asset.particlesPerStrand - 1u) : 0u);
-        const UINT guideBends = m_asset.guideStrandCount * (m_asset.particlesPerStrand > 2 ? (m_asset.particlesPerStrand - 2u) : 0u);
-        m_zeroDistanceLambdas.assign(std::max<UINT>(guideSegments, 1u), 0.0f);
-        m_zeroBendLambdas.assign(std::max<UINT>(guideBends, 1u), 0.0f);
-
-        const bool sizeChanged =
-            BufferElementCount(m_restPositions.buffer.Get(), sizeof(GpuParticle)) != static_cast<UINT>(std::max<size_t>(m_initialParticles.size(), 1u)) ||
-            BufferElementCount(m_pointWidths.buffer.Get(), sizeof(float)) != static_cast<UINT>(std::max<size_t>(m_asset.pointWidths.size(), 1u)) ||
-            BufferElementCount(m_followBuffer.buffer.Get(), sizeof(FollowGpuData)) != static_cast<UINT>(std::max<size_t>(m_followGpuData.size(), 1u)) ||
-            BufferElementCount(m_rootBindingsBuffer.buffer.Get(), sizeof(RootBindingGpuData)) != static_cast<UINT>(std::max<size_t>(m_rootBindingGpuData.size(), 1u));
-
-        if (sizeChanged)
-        {
-            CreateSimulationResources();
-        }
-        else
-        {
-            if (m_restPositions.buffer && !m_initialParticles.empty())
-            {
-                m_context->UpdateSubresource(m_restPositions.buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
-            }
-            if (m_pointWidths.buffer && !m_asset.pointWidths.empty())
-            {
-                m_context->UpdateSubresource(m_pointWidths.buffer.Get(), 0, nullptr, m_asset.pointWidths.data(), 0, 0);
-            }
-            if (m_followBuffer.buffer && !m_followGpuData.empty())
-            {
-                m_context->UpdateSubresource(m_followBuffer.buffer.Get(), 0, nullptr, m_followGpuData.data(), 0, 0);
-            }
-            if (m_rootBindingsBuffer.buffer && !m_rootBindingGpuData.empty())
-            {
-                m_context->UpdateSubresource(m_rootBindingsBuffer.buffer.Get(), 0, nullptr, m_rootBindingGpuData.data(), 0, 0);
-            }
-        }
-
-        RebuildActiveSetFoundation();
-        RecomputeAssetBounds();
-        RefreshAssetStatsText();
-        UpdateScalpOverlayVertexBuffer();
-        ResetSimulation();
-    }
-
-    bool GpuHairViewer::ComputeBrushUvFromViewportPoint(const POINT& point, hairgpu::Vec2& outUv) const
-    {
-        const RECT renderRect = GetRenderViewportRect();
-        if (!PtInRect(&renderRect, point))
-        {
-            return false;
-        }
-
-        const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
-        const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
-        const float x = (((static_cast<float>(point.x - renderRect.left) / renderWidth) * 2.0f) - 1.0f);
-        const float y = 1.0f - ((static_cast<float>(point.y - renderRect.top) / renderHeight) * 2.0f);
-        const float tanY = std::tan(60.0f * 3.1415926535f / 180.0f * 0.5f);
-        const float tanX = tanY * (renderWidth / renderHeight);
-
-        const Vec3 forward = Normalize(m_cameraTarget - m_cameraPosition);
-        Vec3 right = Normalize(Cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
-        if (Length(right) <= 1.0e-5f)
-        {
-            right = Normalize(Cross(forward, Vec3(0.0f, 0.0f, 1.0f)));
-        }
-        const Vec3 up = Normalize(Cross(right, forward));
-        const Vec3 rayOrigin = m_cameraPosition;
-        const Vec3 rayDirection = Normalize(forward + right * (x * tanX) + up * (y * tanY));
-
-        float bestT = std::numeric_limits<float>::max();
-        Vec3 bestBary = {};
-        uint32_t bestTriangleIndex = UINT32_MAX;
-        for (uint32_t triIndex = 0u; triIndex < m_asset.scalpMesh.triangles.size(); ++triIndex)
-        {
-            const TriangleGpuData& tri = m_scalpTriangles[triIndex];
-            if (tri.a >= m_animatedScalpParticles.size() || tri.b >= m_animatedScalpParticles.size() || tri.c >= m_animatedScalpParticles.size())
-            {
-                continue;
-            }
-
-            const Vec3 a(m_animatedScalpParticles[tri.a].x, m_animatedScalpParticles[tri.a].y, m_animatedScalpParticles[tri.a].z);
-            const Vec3 b(m_animatedScalpParticles[tri.b].x, m_animatedScalpParticles[tri.b].y, m_animatedScalpParticles[tri.b].z);
-            const Vec3 c(m_animatedScalpParticles[tri.c].x, m_animatedScalpParticles[tri.c].y, m_animatedScalpParticles[tri.c].z);
-
-            float t = 0.0f;
-            Vec3 bary = {};
-            if (IntersectRayTriangleMoller(rayOrigin, rayDirection, a, b, c, t, bary) && t < bestT)
-            {
-                bestT = t;
-                bestBary = bary;
-                bestTriangleIndex = triIndex;
-            }
-        }
-
-        if (bestTriangleIndex == UINT32_MAX || bestTriangleIndex >= m_asset.scalpMesh.triangles.size() || m_asset.scalpMesh.uvs.empty())
-        {
-            return false;
-        }
-
-        const TriangleIndices& tri = m_asset.scalpMesh.triangles[bestTriangleIndex];
-        if (tri.a >= m_asset.scalpMesh.uvs.size() || tri.b >= m_asset.scalpMesh.uvs.size() || tri.c >= m_asset.scalpMesh.uvs.size())
-        {
-            return false;
-        }
-
-        const Vec2 uvA = m_asset.scalpMesh.uvs[tri.a];
-        const Vec2 uvB = m_asset.scalpMesh.uvs[tri.b];
-        const Vec2 uvC = m_asset.scalpMesh.uvs[tri.c];
-        outUv.x = uvA.x * bestBary.x + uvB.x * bestBary.y + uvC.x * bestBary.z;
-        outUv.y = uvA.y * bestBary.x + uvB.y * bestBary.y + uvC.y * bestBary.z;
-        return true;
-    }
-
-    bool GpuHairViewer::ApplyViewportBrushEdit(const POINT& point, float strengthScale)
-    {
-        Vec2 uv = {};
-        if (!ComputeBrushUvFromViewportPoint(point, uv))
-        {
-            return false;
-        }
-
-        if (!m_brushStroke.empty())
-        {
-            const Vec2& lastUv = m_brushStroke.back().centerUv;
-            const float dx = uv.x - lastUv.x;
-            const float dy = uv.y - lastUv.y;
-            if ((dx * dx + dy * dy) < 1.0e-5f)
-            {
-                return false;
-            }
-        }
-
-        BrushStamp stamp = {};
-        stamp.centerUv = uv;
-        stamp.params = m_brushParams;
-        stamp.params.strength *= strengthScale;
-        m_brushStroke.push_back(stamp);
-
-        HairAsset edited = m_brushStrokeBaseAsset;
-        for (const BrushStamp& s : m_brushStroke)
-        {
-            RegionSelectionSettings region = {};
-            region.mode = RegionSelectMode::Ellipse;
-            region.centerUv = s.centerUv;
-            region.radiusUv = { s.params.radiusU, s.params.radiusV };
-            region.guidesOnly = s.params.guidesOnly;
-            const RegionSelectionResult selection = SelectRegion(edited, region);
-            if (selection.strands.empty())
-            {
-                continue;
-            }
-
-            EditSettings edit = {};
-            switch (s.params.tool)
-            {
-            case BrushTool::Length:
-                edit.lengthScale = 1.0f + s.params.strength * 0.20f;
-                break;
-            case BrushTool::Width:
-                edit.widthScale = 1.0f + s.params.strength * 0.15f;
-                break;
-            case BrushTool::Lift:
-                edit.rootOffset = Vec3(0.0f, s.params.strength * 0.006f, 0.0f);
-                edit.tipOffset = Vec3(0.0f, s.params.strength * 0.022f, 0.0f);
-                break;
-            case BrushTool::TipMove:
-                edit.tipOffset = Vec3(0.0f, s.params.strength * 0.025f, 0.0f);
-                break;
-            case BrushTool::Yaw:
-                edit.yawRadians = s.params.strength * 0.22f;
-                break;
-            }
-
-            std::string error;
-            ApplyEditToRegion(edited, selection, edit, error);
-        }
-
-        m_asset = std::move(edited);
-        RebuildRuntimeGpuAsset();
-        return true;
-    }
-
-    void GpuHairViewer::UpdateActiveSetRuntimeFromGuideSignals(const std::vector<GuideSignalGpu>& guideSignals)
-    {
-        if (!m_enableActiveSetRuntime || m_activeSetClusters.empty())
-        {
-            m_activeSetPlan = {};
-            m_activeSetLastStatus = L"Disabled";
-            m_activeSetEvaluationMilliseconds = 0.0f;
-            return;
-        }
-
-        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(guideSignals.size()));
-        if (guideCount == 0u)
-        {
-            m_activeSetPlan = {};
-            m_activeSetLastStatus = L"No guides";
-            m_activeSetEvaluationMilliseconds = 0.0f;
-            return;
-        }
-
-        std::vector<Vec3> currentGuideRoots(guideCount, Vec3(0.0f, 0.0f, 0.0f));
-        m_activeSetGuideContactScores.assign(guideCount, 0.0f);
-        m_activeSetGuideUncertainty.assign(guideCount, 0.0f);
-        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
-        {
-            currentGuideRoots[guideIndex] = Vec3(guideSignals[guideIndex].rootX, guideSignals[guideIndex].rootY, guideSignals[guideIndex].rootZ);
-            const StrandRange& strand = m_asset.strands[guideIndex];
-            const Vec3 restRoot = (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
-                ? m_asset.restPoints[strand.pointOffset]
-                : Vec3(0.0f, 0.0f, 0.0f);
-            const float contactProxy = Clamp((0.030f - (currentGuideRoots[guideIndex].y - m_simConfig.floorY)) / 0.030f, 0.0f, 1.0f);
-            const float displacementProxy = Clamp(Length(currentGuideRoots[guideIndex] - restRoot) / 0.030f, 0.0f, 1.0f);
-            const float velocityProxy = Clamp(guideSignals[guideIndex].velocity / 0.30f, 0.0f, 1.0f);
-            m_activeSetGuideContactScores[guideIndex] = contactProxy;
-            m_activeSetGuideUncertainty[guideIndex] = Clamp(velocityProxy * 0.45f + displacementProxy * 0.30f + contactProxy * 0.25f, 0.0f, 1.0f);
-        }
-        if (m_activeSetPreviousGuideRoots.size() != currentGuideRoots.size())
-        {
-            m_activeSetPreviousGuideRoots = currentGuideRoots;
-        }
-
-        ActiveSetRuntimeInput runtimeInput = {};
-        runtimeInput.currentGuideRoots = currentGuideRoots;
-        runtimeInput.previousGuideRoots = m_activeSetPreviousGuideRoots;
-        runtimeInput.guideUncertainty = m_activeSetGuideUncertainty;
-        runtimeInput.guideContactScores = m_activeSetGuideContactScores;
-        runtimeInput.cameraPosition = m_cameraPosition;
-        runtimeInput.cameraForward = Normalize(m_cameraTarget - m_cameraPosition);
-        runtimeInput.fixedTimeStep = std::max(m_simConfig.fixedTimeStep, 1.0e-4f);
-        m_activeSetBudget.previousFrameMilliseconds = m_lastSimulationStepMilliseconds;
-
-        LARGE_INTEGER begin = {};
-        LARGE_INTEGER end = {};
-        QueryPerformanceCounter(&begin);
-        ActiveSetPlan plan = {};
-        std::string error;
-        const bool ok = EvaluateActiveSetPlan(m_asset,
-                                              m_activeSetClusters,
-                                              runtimeInput,
-                                              m_activeSetScoringSettings,
-                                              m_activeSetBudget,
-                                              plan,
-                                              error);
-        QueryPerformanceCounter(&end);
-        m_activeSetEvaluationMilliseconds = static_cast<float>(end.QuadPart - begin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
-
-        if (ok)
-        {
-            m_activeSetPlan = std::move(plan);
-            if (m_activeSetPlan.summary.recommendedSolverIterations > 0u)
-            {
-                m_simConfig.solverIterations = std::max<uint32_t>(1u, m_activeSetPlan.summary.recommendedSolverIterations);
-            }
-            std::wstringstream ss;
-            ss << L"OK  clusters=" << m_activeSetPlan.summary.selectedClusterCount
-               << L" guides=" << m_activeSetPlan.summary.selectedGuideCount
-               << L" strands=" << m_activeSetPlan.summary.selectedStrandCount
-               << L"  budgetScale=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.budgetScale
-               << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations;
-            m_activeSetLastStatus = ss.str();
-        }
-        else
-        {
-            m_activeSetPlan = std::move(plan);
-            m_activeSetLastStatus = Utf8ToWide(error);
-        }
-
-        m_activeSetPreviousGuideRoots = currentGuideRoots;
-    }
-
-    void GpuHairViewer::BuildGuideIndirectWorklists()
-    {
-        const UINT guideCount = m_asset.guideStrandCount;
-        if (!m_enableGuideIndirectDispatch || guideCount == 0u || !m_compactGuideDispatchCS || !m_buildGuideDispatchArgsCS || !m_guideTierAssignmentsBuffer.buffer || !m_compactedGuideIndicesBuffer.uav || !m_compactedGuideCounterBuffer.uav || !m_guideDispatchArgsUav)
-        {
-            return;
-        }
-
-        std::vector<uint32_t> guideTierAssignments(std::max<UINT>(guideCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Full));
-        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
-        {
-            if (guideIndex < m_activeSetPlan.recommendedSimulationTiers.size())
-            {
-                guideTierAssignments[guideIndex] = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[guideIndex]);
-            }
-        }
-        const std::array<uint32_t, 4> zeroCompactionCounters = { 0u, 0u, 0u, 0u };
-        m_context->UpdateSubresource(m_guideTierAssignmentsBuffer.buffer.Get(), 0, nullptr, guideTierAssignments.data(), 0, 0);
-        m_context->UpdateSubresource(m_compactedGuideCounterBuffer.buffer.Get(), 0, nullptr, zeroCompactionCounters.data(), 0, 0);
-
-        ID3D11ShaderResourceView* compactSrvs[] = { m_guideTierAssignmentsBuffer.srv.Get() };
-        ID3D11UnorderedAccessView* compactUavs[] = {
-            nullptr,
-            nullptr,
-            m_compactedGuideIndicesBuffer.uav.Get(),
-            m_compactedGuideCounterBuffer.uav.Get(),
-            nullptr,
-            nullptr,
-            m_guideDispatchArgsUav.Get()
-        };
-        m_context->CSSetShaderResources(2, 1, compactSrvs);
-        m_context->CSSetUnorderedAccessViews(0, 7, compactUavs, nullptr);
-        m_context->CSSetShader(m_compactGuideDispatchCS.Get(), nullptr, 0);
-        m_context->Dispatch(DispatchGroups(guideCount, 64u), 1, 1);
-
-        ID3D11UnorderedAccessView* nullBuildUavs[7] = {};
-        m_context->CSSetUnorderedAccessViews(0, 7, nullBuildUavs, nullptr);
-
-        ID3D11UnorderedAccessView* argsOnlyUav = m_guideDispatchArgsUav.Get();
-        ID3D11ShaderResourceView* nullSrv = nullptr;
-        ID3D11ShaderResourceView* counterSrv = m_compactedGuideCounterBuffer.srv.Get();
-        m_context->CSSetShaderResources(2, 1, &nullSrv);
-        m_context->CSSetShaderResources(1, 1, &counterSrv);
-        m_context->CSSetUnorderedAccessViews(6, 1, &argsOnlyUav, nullptr);
-        m_context->CSSetShader(m_buildGuideDispatchArgsCS.Get(), nullptr, 0);
-        m_context->Dispatch(1, 1, 1);
-
-        ID3D11ShaderResourceView* nullSrvs[3] = {};
-        ID3D11UnorderedAccessView* nullUav = nullptr;
-        m_context->CSSetShaderResources(0, 3, nullSrvs);
-        m_context->CSSetUnorderedAccessViews(6, 1, &nullUav, nullptr);
-        m_context->CSSetShader(nullptr, nullptr, 0);
-    }
-
-    void GpuHairViewer::KickGuideSignalReadback()
-    {
-        if (!m_guideSignalBuffer.buffer || !m_guideSignalReadbackBuffers[m_runtimeFrameIndex % m_guideSignalReadbackBuffers.size()])
-        {
-            return;
-        }
-        m_context->CopyResource(m_guideSignalReadbackBuffers[m_runtimeFrameIndex % m_guideSignalReadbackBuffers.size()].Get(), m_guideSignalBuffer.buffer.Get());
-    }
-
-    bool GpuHairViewer::TryConsumeGuideSignalReadback(std::vector<GuideSignalGpu>& outSignals)
-    {
-        if (m_runtimeFrameIndex < 2u)
-        {
-            return false;
-        }
-        const size_t slot = (m_runtimeFrameIndex + 1u) % m_guideSignalReadbackBuffers.size();
-        if (!m_guideSignalReadbackBuffers[slot])
-        {
-            return false;
-        }
-
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        if (FAILED(m_context->Map(m_guideSignalReadbackBuffers[slot].Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped)))
-        {
-            return false;
-        }
-
-        const size_t signalCount = std::max<size_t>(m_asset.guideStrandCount, 1u);
-        outSignals.resize(signalCount);
-        std::memcpy(outSignals.data(), mapped.pData, signalCount * sizeof(GuideSignalGpu));
-        m_context->Unmap(m_guideSignalReadbackBuffers[slot].Get(), 0);
-        return true;
     }
 
     std::vector<hairgpu::Vec3> GpuHairViewer::BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const
@@ -2273,15 +1812,6 @@ namespace hairgpu::viewer
                 constants->capsuleData[i * 8 + 6] = c.pointB.z;
                 constants->capsuleData[i * 8 + 7] = c.radiusB;
             }
-            const bool useGuideIndirectDispatch =
-                m_enableGuideIndirectDispatch &&
-                m_compactGuideDispatchCS &&
-                m_buildGuideDispatchArgsCS &&
-                m_guideDispatchArgsBuffer &&
-                !m_activeSetPlan.recommendedSimulationTiers.empty() &&
-                m_activeSetPlan.summary.fullTierCount > 0u;
-            constants->useCompactedGuideDispatch = useGuideIndirectDispatch ? 1u : 0u;
-            constants->compactedGuideCount = 0u;
             constants->followerUpdateStride = 1u;
             constants->followerUpdatePhase = 0u;
             constants->useCompactedFollowerDispatch = 1u;
@@ -2297,17 +1827,6 @@ namespace hairgpu::viewer
         const UINT guideParticleGroups = DispatchGroups(guideStrandCount * m_asset.particlesPerStrand, 64u);
         const UINT guideStrandGroups = DispatchGroups(guideStrandCount, 64u);
         const UINT followerGroups = DispatchGroups(followerStrandCount, 64u);
-        const bool useGuideIndirectDispatch =
-            m_enableGuideIndirectDispatch &&
-            m_compactGuideDispatchCS &&
-            m_buildGuideDispatchArgsCS &&
-            m_guideDispatchArgsBuffer &&
-            !m_activeSetPlan.recommendedSimulationTiers.empty() &&
-            m_activeSetPlan.summary.fullTierCount > 0u;
-        if (useGuideIndirectDispatch)
-        {
-            BuildGuideIndirectWorklists();
-        }
         const UINT gridCellCount = std::max<UINT>(m_simConfig.selfCollisionGridDimX * m_simConfig.selfCollisionGridDimY * m_simConfig.selfCollisionGridDimZ, 1u);
         const UINT gridCellGroups = DispatchGroups(gridCellCount, 64u);
         const UINT sortedEntryGroups = DispatchGroups(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 64u);
@@ -2342,11 +1861,7 @@ namespace hairgpu::viewer
             m_followBuffer.srv.Get(),
             m_scalpPositions.srv.Get(),
             m_scalpTrianglesBuffer.srv.Get(),
-            m_rootBindingsBuffer.srv.Get(),
-            nullptr,
-            nullptr,
-            m_compactedGuideIndicesBuffer.srv.Get(),
-            m_compactedGuideCounterBuffer.srv.Get()
+            m_rootBindingsBuffer.srv.Get()
         };
         ID3D11UnorderedAccessView* broadphaseUav4 = nullptr;
         ID3D11UnorderedAccessView* broadphaseUav5 = nullptr;
@@ -2382,7 +1897,7 @@ namespace hairgpu::viewer
         };
 
         m_context->CSSetConstantBuffers(0, 1, &simCb);
-        m_context->CSSetShaderResources(0, 11, integrateSrvs);
+        m_context->CSSetShaderResources(0, 7, integrateSrvs);
         m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
 
         m_context->CSSetShader(m_integrateCS.Get(), nullptr, 0);
@@ -2393,24 +1908,10 @@ namespace hairgpu::viewer
             for (uint32_t iteration = 0; iteration < m_simConfig.solverIterations; ++iteration)
             {
                 m_context->CSSetShader(m_distanceCS.Get(), nullptr, 0);
-                if (useGuideIndirectDispatch)
-                {
-                    m_context->DispatchIndirect(m_guideDispatchArgsBuffer.Get(), 0u);
-                }
-                else
-                {
-                    m_context->Dispatch(guideStrandGroups, 1, 1);
-                }
+                m_context->Dispatch(guideStrandGroups, 1, 1);
 
                 m_context->CSSetShader(m_bendCS.Get(), nullptr, 0);
-                if (useGuideIndirectDispatch)
-                {
-                    m_context->DispatchIndirect(m_guideDispatchArgsBuffer.Get(), 0u);
-                }
-                else
-                {
-                    m_context->Dispatch(guideStrandGroups, 1, 1);
-                }
+                m_context->Dispatch(guideStrandGroups, 1, 1);
 
                 m_context->CSSetShader(m_collisionCS.Get(), nullptr, 0);
                 m_context->Dispatch(guideParticleGroups, 1, 1);
@@ -2478,7 +1979,7 @@ namespace hairgpu::viewer
 
         if (followerStrandCount > 0u)
         {
-            std::vector<uint32_t> followerTierAssignments(std::max<UINT>(followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Full));
+            std::vector<uint32_t> followerTierAssignments(std::max<UINT>(followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
             for (uint32_t followerIndex = 0u; followerIndex < followerStrandCount; ++followerIndex)
             {
                 const uint32_t strandIndex = guideStrandCount + followerIndex;
@@ -2535,18 +2036,16 @@ namespace hairgpu::viewer
                     m_scalpTrianglesBuffer.srv.Get(),
                     m_rootBindingsBuffer.srv.Get(),
                     m_compactedFollowerIndicesBuffer.srv.Get(),
-                    m_compactedFollowerCounterBuffer.srv.Get(),
-                    m_compactedGuideIndicesBuffer.srv.Get(),
-                    m_compactedGuideCounterBuffer.srv.Get()
+                    m_compactedFollowerCounterBuffer.srv.Get()
                 };
-                m_context->CSSetShaderResources(0, 11, followSrvs);
+                m_context->CSSetShaderResources(0, 9, followSrvs);
                 m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
 
-                ID3D11ShaderResourceView* nullCompactSrvs[11] = {};
+                ID3D11ShaderResourceView* nullCompactSrvs[9] = {};
                 ID3D11UnorderedAccessView* nullCompactUavs[7] = {};
                 m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
                 m_context->DispatchIndirect(m_followDispatchArgsBuffer.Get(), 0u);
-                m_context->CSSetShaderResources(0, 11, nullCompactSrvs);
+                m_context->CSSetShaderResources(0, 9, nullCompactSrvs);
                 m_context->CSSetUnorderedAccessViews(0, 7, nullCompactUavs, nullptr);
             }
             else
@@ -2556,39 +2055,15 @@ namespace hairgpu::viewer
             }
         }
 
-        if (m_extractGuideSignalsCS && m_guideSignalBuffer.uav && guideStrandCount > 0u)
-        {
-            ID3D11UnorderedAccessView* nullSimUavs[8] = {};
-            m_context->CSSetUnorderedAccessViews(0, 8, nullSimUavs, nullptr);
-            ID3D11ShaderResourceView* signalSrvs[] = {
-                m_positions[m_currentBufferIndex].srv.Get(),
-                m_positions[nextBufferIndex].srv.Get(),
-                m_restPositions.srv.Get()
-            };
-            ID3D11UnorderedAccessView* signalUavs[] = {
-                m_guideSignalBuffer.uav.Get()
-            };
-            m_context->CSSetShaderResources(4, 3, signalSrvs);
-            m_context->CSSetUnorderedAccessViews(4, 1, signalUavs, nullptr);
-            m_context->CSSetShader(m_extractGuideSignalsCS.Get(), nullptr, 0);
-            m_context->Dispatch(guideStrandGroups, 1, 1);
-            ID3D11ShaderResourceView* nullSignalSrvs[7] = {};
-            ID3D11UnorderedAccessView* nullSignalUavs[5] = {};
-            m_context->CSSetShaderResources(4, 3, &nullSignalSrvs[4]);
-            m_context->CSSetUnorderedAccessViews(4, 1, &nullSignalUavs[4], nullptr);
-            KickGuideSignalReadback();
-        }
-
-        ID3D11ShaderResourceView* nullSrvs[11] = {};
+        ID3D11ShaderResourceView* nullSrvs[9] = {};
         ID3D11UnorderedAccessView* nullUavs[8] = {};
         ID3D11Buffer* nullCb = nullptr;
         m_context->CSSetShader(nullptr, nullptr, 0);
-        m_context->CSSetShaderResources(0, 11, nullSrvs);
+        m_context->CSSetShaderResources(0, 9, nullSrvs);
         m_context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
         m_context->CSSetConstantBuffers(1, 1, &nullCb);
 
         m_currentBufferIndex = nextBufferIndex;
-        ++m_runtimeFrameIndex;
         if (gpuTimingFrame && gpuTimingFrame->issued)
         {
             m_context->End(gpuTimingFrame->simEnd.Get());
@@ -2690,6 +2165,108 @@ namespace hairgpu::viewer
         UpdateCamera();
     }
 
+    void GpuHairViewer::QueueVisibilityRecovery()
+    {
+        m_visibilityRecoveryPending = true;
+        m_framesSinceVisibilityCheck = 0u;
+    }
+
+    bool GpuHairViewer::ShouldRunVisibilityRecoveryThisFrame() const
+    {
+        if (m_cpuReadbackMode == CpuReadbackMode::Off)
+        {
+            return false;
+        }
+
+        if (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug)
+        {
+            return true;
+        }
+
+        if (m_visibilityRecoveryPending)
+        {
+            return true;
+        }
+
+        if (m_lastVisibilitySuspect && m_consecutiveInvisibleFrames >= 2u)
+        {
+            return true;
+        }
+
+        return m_framesSinceVisibilityCheck >= 120u;
+    }
+
+    bool GpuHairViewer::RestoreGpuParticleStateFromInitialPose(bool resetCamera)
+    {
+        if (m_initialParticles.empty() || !m_positions[0].buffer || !m_positions[1].buffer ||
+            !m_previousPositions[0].buffer || !m_previousPositions[1].buffer)
+        {
+            return false;
+        }
+
+        m_currentBufferIndex = 0u;
+        m_context->UpdateSubresource(m_positions[0].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+        m_context->UpdateSubresource(m_positions[1].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+        m_context->UpdateSubresource(m_previousPositions[0].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+        m_context->UpdateSubresource(m_previousPositions[1].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+        if (resetCamera)
+        {
+            AutoFrameCameraToAsset(true);
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::RunVisibilityRecoveryPass(float aspectRatio, bool allowCameraRecovery, std::vector<GpuParticle>* outParticles)
+    {
+        std::vector<GpuParticle> particles;
+        const bool readbackSucceeded = ReadBackCurrentParticlePositions(particles);
+        const bool readbackValid = readbackSucceeded &&
+            ParticleArrayLooksValid(reinterpret_cast<const float*>(particles.data()), particles.size(), m_asset);
+
+        m_lastVisibilityReadbackValid = readbackValid;
+        m_lastVisibilityUsedInitialPoseFallback = false;
+
+        if (!readbackValid)
+        {
+            ++m_visibilityReadbackFailureCount;
+            m_lastVisibilityUsedInitialPoseFallback = RestoreGpuParticleStateFromInitialPose(false);
+            particles = m_initialParticles;
+        }
+
+        const bool haveParticles = !particles.empty();
+        m_lastReadbackParticleCount = static_cast<uint32_t>(particles.size());
+        m_lastEstimatedVisibleParticles = EstimateVisibleParticleCount(particles, aspectRatio);
+        const uint32_t minimumExpectedVisibleParticles = std::max<uint32_t>(32u, static_cast<uint32_t>(std::max<size_t>(particles.size() / 160u, 1u)));
+        m_lastVisibilitySuspect = !readbackValid || (m_lastEstimatedVisibleParticles < minimumExpectedVisibleParticles);
+
+        if (allowCameraRecovery && m_lastVisibilitySuspect)
+        {
+            ++m_visibilityRecoveryCount;
+            AutoFrameCameraToAsset(true);
+            m_renderMode = RenderMode::ParticleBillboard;
+            m_widthScale = std::max(m_widthScale, 4.5f);
+
+            if (!readbackValid)
+            {
+                m_lastVisibilityUsedInitialPoseFallback = RestoreGpuParticleStateFromInitialPose(false) || m_lastVisibilityUsedInitialPoseFallback;
+            }
+
+            m_lastEstimatedVisibleParticles = EstimateVisibleParticleCount(particles, aspectRatio);
+            m_lastVisibilitySuspect = !readbackValid || (m_lastEstimatedVisibleParticles < minimumExpectedVisibleParticles);
+        }
+
+        m_visibilityRecoveryPending = m_lastVisibilitySuspect;
+        m_framesSinceVisibilityCheck = 0u;
+        m_consecutiveInvisibleFrames = m_lastVisibilitySuspect ? (m_consecutiveInvisibleFrames + 1u) : 0u;
+
+        if (outParticles != nullptr)
+        {
+            *outParticles = particles;
+        }
+
+        return haveParticles;
+    }
+
     uint32_t GpuHairViewer::EstimateVisibleParticleCount(const std::vector<GpuParticle>& particles, float aspectRatio) const
     {
         if (particles.empty())
@@ -2740,9 +2317,10 @@ namespace hairgpu::viewer
         const Mat4 view = LookAtRH(m_cameraPosition, m_cameraTarget, Vec3(0.0f, 1.0f, 0.0f));
         const Mat4 projection = PerspectiveFovRH(60.0f * 3.1415926535f / 180.0f, renderWidth / renderHeight, 0.01f, 20.0f);
         const Mat4 viewProjection = Multiply(view, projection);
+        const Mat4 viewProjectionForHlsl = TransposeMatrixForHlsl(viewProjection);
         for (int i = 0; i < 16; ++i)
         {
-            rc.viewProjection[i] = viewProjection.m[i];
+            rc.viewProjection[i] = viewProjectionForHlsl.m[i];
         }
         rc.cameraPosition[0] = m_cameraPosition.x;
         rc.cameraPosition[1] = m_cameraPosition.y;
@@ -2800,52 +2378,23 @@ namespace hairgpu::viewer
         bool drewCpuHairMesh = false;
         m_lastUsedCpuVisibilityFallback = false;
         std::vector<GpuParticle> cpuMeshParticles;
-        bool haveReadbackParticles = false;
-        if (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug)
-        {
-            haveReadbackParticles = ReadBackCurrentParticlePositions(cpuMeshParticles);
-            if (!haveReadbackParticles || !ParticleArrayLooksValid(reinterpret_cast<const float*>(cpuMeshParticles.data()), cpuMeshParticles.size(), m_asset))
-            {
-                cpuMeshParticles = m_initialParticles;
-                haveReadbackParticles = !cpuMeshParticles.empty();
-            }
+        const float aspectRatio = renderWidth / renderHeight;
+        const bool runVisibilityRecovery = ShouldRunVisibilityRecoveryThisFrame();
+        const bool haveReadbackParticles = runVisibilityRecovery
+            ? RunVisibilityRecoveryPass(aspectRatio, true, &cpuMeshParticles)
+            : false;
 
-            m_lastReadbackParticleCount = static_cast<uint32_t>(cpuMeshParticles.size());
-            m_lastEstimatedVisibleParticles = EstimateVisibleParticleCount(cpuMeshParticles, renderWidth / renderHeight);
-            const uint32_t minimumExpectedVisibleParticles = std::max<uint32_t>(32u, static_cast<uint32_t>(std::max<size_t>(cpuMeshParticles.size() / 160u, 1u)));
-            m_lastVisibilitySuspect = m_lastEstimatedVisibleParticles < minimumExpectedVisibleParticles;
-            if (m_lastVisibilitySuspect)
-            {
-                ++m_visibilityRecoveryCount;
-                AutoFrameCameraToAsset(true);
-                m_renderMode = RenderMode::ParticleBillboard;
-                m_widthScale = std::max(m_widthScale, 4.5f);
-                m_lastEstimatedVisibleParticles = EstimateVisibleParticleCount(cpuMeshParticles, renderWidth / renderHeight);
-            }
-            else
-            {
-                m_visibilityRecoveryCount = 0u;
-            }
-        }
-        else
+        if (!runVisibilityRecovery)
         {
-            m_lastReadbackParticleCount = 0u;
-            m_lastEstimatedVisibleParticles = 0u;
-            m_lastVisibilitySuspect = false;
-            m_visibilityRecoveryCount = 0u;
+            ++m_framesSinceVisibilityCheck;
         }
 
-        std::vector<GuideSignalGpu> guideSignals;
-        if (m_cpuReadbackMode != CpuReadbackMode::FullParticlesDebug && TryConsumeGuideSignalReadback(guideSignals))
-        {
-            UpdateActiveSetRuntimeFromGuideSignals(guideSignals);
-        }
-        else if (haveReadbackParticles)
+        if (haveReadbackParticles)
         {
             UpdateActiveSetRuntimeFromParticles(cpuMeshParticles);
         }
 
-        if (haveReadbackParticles && !cpuMeshParticles.empty())
+        if (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug && !cpuMeshParticles.empty())
         {
             std::vector<hairgpu::Vec3> correctedPoints;
             correctedPoints.reserve(cpuMeshParticles.size());
@@ -2873,11 +2422,11 @@ namespace hairgpu::viewer
                     }
                 }
             }
-            BuildHairMeshVertices(cpuMeshParticles, renderWidth / renderHeight);
+            BuildHairMeshVertices(cpuMeshParticles, aspectRatio);
             if (m_hairMeshVertices.empty() && !cpuMeshParticles.empty())
             {
                 AutoFrameCameraToAsset(true);
-                BuildHairMeshVertices(cpuMeshParticles, renderWidth / renderHeight);
+                BuildHairMeshVertices(cpuMeshParticles, aspectRatio);
             }
             if (!m_hairMeshVertices.empty() && EnsureHairMeshVertexCapacity(m_hairMeshVertices.size()) && m_hairMeshVertexBuffer && m_hairMeshInputLayout && m_hairMeshVS && m_hairMeshPS)
             {
@@ -3042,13 +2591,14 @@ namespace hairgpu::viewer
         depthDesc.SampleDesc.Count = 1;
         m_device->CreateTexture2D(&depthDesc, nullptr, &m_depthTexture);
         m_device->CreateDepthStencilView(m_depthTexture.Get(), nullptr, &m_dsv);
+        QueueVisibilityRecovery();
         LayoutUiControls();
     }
 
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer VISFIX5  |  preset=" << m_activePresetName
+        ss << L"Hair GPU Viewer ActiveSet Runtime [VISREC_GPU_RESTORE_2_MATRIXFIX]  |  preset=" << m_activePresetName
            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
            << L"  guides=" << m_asset.guideStrandCount
            << L"  followers=" << m_asset.followerStrandCount
@@ -3059,7 +2609,12 @@ namespace hairgpu::viewer
            << L"  vis=" << m_lastEstimatedVisibleParticles
            << L"  suspect=" << (m_lastVisibilitySuspect ? L"yes" : L"no")
            << L"  cpuFallback=" << (m_lastUsedCpuVisibilityFallback ? L"yes" : L"no")
+           << L"  readback=" << (m_cpuReadbackMode == CpuReadbackMode::Off ? L"off" : (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug ? L"full-debug" : L"on-demand"))
+           << L"  readbackValid=" << (m_lastVisibilityReadbackValid ? L"yes" : L"no")
+           << L"  initialPoseFallback=" << (m_lastVisibilityUsedInitialPoseFallback ? L"yes" : L"no")
+           << L"  recoveryPending=" << (m_visibilityRecoveryPending ? L"yes" : L"no")
            << L"  recoveries=" << m_visibilityRecoveryCount
+           << L"  readbackFailures=" << m_visibilityReadbackFailureCount
            << L"  widthScale=" << m_widthScale
            << L"  stretchCompliance=" << m_simConfig.stretchCompliance
            << L"  selfCollision=" << (m_enableSelfCollision ? L"density-grid" : L"off")
@@ -3741,6 +3296,7 @@ namespace hairgpu::viewer
         RebuildActiveSetFoundation();
         RecomputeAssetBounds();
         AutoFrameCameraToAsset(true);
+        QueueVisibilityRecovery();
         RefreshAssetStatsText();
         ResetSimulation();
         SyncControlsFromState();
@@ -4289,6 +3845,7 @@ namespace hairgpu::viewer
         RebuildActiveSetFoundation();
         RecomputeAssetBounds();
         AutoFrameCameraToAsset(true);
+        QueueVisibilityRecovery();
         RefreshAssetStatsText();
         ResetSimulation();
         SyncControlsFromState();
@@ -4931,39 +4488,20 @@ namespace hairgpu::viewer
             const POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             if (PtInRect(&renderRect, p))
             {
-                const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-                if (shiftDown)
-                {
-                    m_brushEditing = true;
-                    m_brushStroke.clear();
-                    m_brushStrokeBaseAsset = m_asset;
-                    SetCapture(m_hwnd);
-                    ApplyViewportBrushEdit(p, 1.0f);
-                }
-                else
-                {
-                    m_dragging = true;
-                    m_lastMouse = p;
-                    SetCapture(m_hwnd);
-                }
+                m_dragging = true;
+                m_lastMouse = p;
+                SetCapture(m_hwnd);
             }
             return 0;
         }
         case WM_LBUTTONUP:
-            m_brushEditing = false;
             m_dragging = false;
             ReleaseCapture();
             return 0;
         case WM_MOUSEMOVE:
-        {
-            POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            if (m_brushEditing)
-            {
-                ApplyViewportBrushEdit(p, 1.0f);
-                return 0;
-            }
             if (m_dragging)
             {
+                POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
                 const float dx = static_cast<float>(p.x - m_lastMouse.x);
                 const float dy = static_cast<float>(p.y - m_lastMouse.y);
                 m_lastMouse = p;
@@ -4971,7 +4509,6 @@ namespace hairgpu::viewer
                 m_cameraPitch = Clamp(m_cameraPitch + dy * 0.01f, -1.2f, 1.2f);
             }
             return 0;
-        }
         case WM_MOUSEWHEEL:
         {
             POINT screenPoint = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -5285,29 +4822,6 @@ namespace hairgpu::viewer
             case 'T':
                 m_renderMode = (m_renderMode == RenderMode::ParticlePointSprite) ? RenderMode::ParticleBillboard : RenderMode::ParticlePointSprite;
                 SyncControlsFromState();
-                return 0;
-            case VK_F1:
-                m_brushParams.tool = BrushTool::Length;
-                return 0;
-            case VK_F2:
-                m_brushParams.tool = BrushTool::Width;
-                return 0;
-            case VK_F3:
-                m_brushParams.tool = BrushTool::Lift;
-                return 0;
-            case VK_F4:
-                m_brushParams.tool = BrushTool::TipMove;
-                return 0;
-            case VK_F5:
-                m_brushParams.tool = BrushTool::Yaw;
-                return 0;
-            case VK_OEM_4:
-                m_brushParams.radiusU = Clamp(m_brushParams.radiusU * 0.9f, 0.01f, 0.35f);
-                m_brushParams.radiusV = Clamp(m_brushParams.radiusV * 0.9f, 0.01f, 0.35f);
-                return 0;
-            case VK_OEM_6:
-                m_brushParams.radiusU = Clamp(m_brushParams.radiusU * 1.1f, 0.01f, 0.35f);
-                m_brushParams.radiusV = Clamp(m_brushParams.radiusV * 1.1f, 0.01f, 0.35f);
                 return 0;
             case VK_OEM_MINUS:
                 m_simConfig.selfCollisionCellSize = Clamp(m_simConfig.selfCollisionCellSize * 0.92f, 0.03f, 0.20f);

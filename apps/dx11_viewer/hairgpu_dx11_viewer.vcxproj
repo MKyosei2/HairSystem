@@ -68,7 +68,7 @@
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
 if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
   if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)%%F"
   if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)shaders\%%F"
 )
@@ -100,7 +100,7 @@ exit /b 0</Command>
     <PostBuildEvent>
       <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
 if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
   if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)%%F"
   if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)shaders\%%F"
 )
@@ -118,6 +118,7 @@ exit /b 0</Command>
     <None Include="shaders\DebugLine.hlsl" />
     <None Include="shaders\HairBrickInstanced.hlsl" />
     <None Include="shaders\HairCpuMesh.hlsl" />
+    <None Include="shaders\HairActiveSet.hlsl" />
     <None Include="shaders\HairIndirectArgs.hlsl" />
     <None Include="shaders\HairLine.hlsl" />
     <None Include="shaders\HairParticle.hlsl" />
