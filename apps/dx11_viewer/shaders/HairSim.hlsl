@@ -9,6 +9,10 @@ cbuffer SimConstants : register(b0)
     uint SphereColliderCount;
     uint CapsuleColliderCount;
     uint EnableSelfCollision;
+    uint PlaneColliderCount;
+    uint AabbColliderCount;
+    uint UseSdfCollider;
+    uint SdfValueCount;
 
     float DeltaTime;
     float Gravity;
@@ -68,6 +72,11 @@ cbuffer SimConstants : register(b0)
 
     float4 SphereData[4];
     float4 CapsuleData[8];
+    float4 PlaneData[4];
+    float4 AabbData[8];
+    uint4 SdfResolution;
+    float4 SdfBoundsMin;
+    float4 SdfBoundsMax;
 
     uint UseCompactedGuideDispatch;
     uint CompactedGuideCount;
@@ -265,6 +274,41 @@ float3 ResolveCapsule(float3 p, float3 a, float ra, float3 b, float rb)
     if (distValue < radius)
     {
         return center + delta / distValue * radius;
+    }
+    return p;
+}
+
+float3 ResolvePlane(float3 p, float4 plane)
+{
+    float signedDistance = dot(plane.xyz, p) + plane.w;
+    if (signedDistance < 0.0f)
+    {
+        return p - plane.xyz * signedDistance;
+    }
+    return p;
+}
+
+float3 ResolveAabb(float3 p, float3 mn, float3 mx)
+{
+    if (all(p >= mn) && all(p <= mx))
+    {
+        float left = p.x - mn.x;
+        float right = mx.x - p.x;
+        float down = p.y - mn.y;
+        float up = mx.y - p.y;
+        float back = p.z - mn.z;
+        float front = mx.z - p.z;
+
+        float best = left;
+        float3 normal = float3(-1.0f, 0.0f, 0.0f);
+
+        if (right < best) { best = right; normal = float3(1.0f, 0.0f, 0.0f); }
+        if (down < best) { best = down; normal = float3(0.0f, -1.0f, 0.0f); }
+        if (up < best) { best = up; normal = float3(0.0f, 1.0f, 0.0f); }
+        if (back < best) { best = back; normal = float3(0.0f, 0.0f, -1.0f); }
+        if (front < best) { best = front; normal = float3(0.0f, 0.0f, 1.0f); }
+
+        return p + normal * max(best, 1.0e-4f);
     }
     return p;
 }
@@ -638,6 +682,24 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
         float3 b = capsuleB.xyz;
         float rb = capsuleB.w;
         float3 resolved = ResolveCapsule(p, a, ra, b, rb);
+        touchedSurface = touchedSurface || (length(resolved - p) > 1.0e-6f);
+        p = resolved;
+    }
+
+    [loop]
+    for (uint i = 0; i < PlaneColliderCount; ++i)
+    {
+        float3 resolved = ResolvePlane(p, PlaneData[i]);
+        touchedSurface = touchedSurface || (length(resolved - p) > 1.0e-6f);
+        p = resolved;
+    }
+
+    [loop]
+    for (uint i = 0; i < AabbColliderCount; ++i)
+    {
+        float3 mn = AabbData[i * 2u + 0u].xyz;
+        float3 mx = AabbData[i * 2u + 1u].xyz;
+        float3 resolved = ResolveAabb(p, mn, mx);
         touchedSurface = touchedSurface || (length(resolved - p) > 1.0e-6f);
         p = resolved;
     }

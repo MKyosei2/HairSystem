@@ -3004,11 +3004,16 @@ namespace hairgpu::viewer
         }
 
         HRESULT hr = E_FAIL;
+        HRESULT firstCompileFailureHr = E_FAIL;
+        std::wstring firstCompileFailurePath;
+        std::wstring firstCompileFailureMessage;
         std::wstringstream tried;
         for (const auto& candidate : candidates)
         {
+            const bool exists = std::filesystem::exists(candidate);
             tried << candidate.c_str();
-            tried << (std::filesystem::exists(candidate) ? L"  [exists]" : L"  [missing]") << L"\r\n";
+            tried << (exists ? L"  [exists]" : L"  [missing]") << L"\r\n";
+
             errorBlob.Reset();
             shaderBlob.Reset();
             hr = D3DCompileFromFile(candidate.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPoint, target, flags, 0, &shaderBlob, &errorBlob);
@@ -3016,10 +3021,38 @@ namespace hairgpu::viewer
             {
                 break;
             }
+
+            if (exists && firstCompileFailurePath.empty())
+            {
+                firstCompileFailureHr = hr;
+                firstCompileFailurePath = candidate.native();
+                if (errorBlob)
+                {
+                    const std::string message(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
+                    firstCompileFailureMessage.assign(message.begin(), message.end());
+                }
+            }
         }
         if (FAILED(hr))
         {
-            if (errorBlob)
+            if (!firstCompileFailurePath.empty())
+            {
+                if (!firstCompileFailureMessage.empty())
+                {
+                    errorText = firstCompileFailureMessage;
+                }
+                else
+                {
+                    errorText = L"Shader compilation failed for an existing shader file.";
+                    std::wstringstream hrHex;
+                    hrHex << std::hex << std::uppercase << static_cast<unsigned long>(firstCompileFailureHr);
+                    errorText += L"\r\nHRESULT: 0x";
+                    errorText += hrHex.str();
+                }
+                errorText += L"\r\n\r\nFirst existing file that failed to compile:\r\n";
+                errorText += firstCompileFailurePath;
+            }
+            else if (errorBlob)
             {
                 const std::string message(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
                 errorText.assign(message.begin(), message.end());

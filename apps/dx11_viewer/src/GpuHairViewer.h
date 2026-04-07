@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "hairgpu/ActiveSet.h"
+#include "hairgpu/Authoring.h"
 #include "hairgpu/HybridRuntime.h"
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
@@ -114,6 +115,13 @@ namespace hairgpu::viewer
             float frameMilliseconds = 0.0f;
             float simulationMilliseconds = 0.0f;
             float fps = 0.0f;
+            float gpuMemoryMegabytes = 0.0f;
+            float cpuMemoryMegabytes = 0.0f;
+            float editApplyLatencyMilliseconds = 0.0f;
+            float editBoundaryTransitionScore = 0.0f;
+            float editLocalityRatio = 0.0f;
+            float editCoverageRatio = 0.0f;
+            float editMaxGuideInfluence = 0.0f;
             uint32_t guideCount = 0;
             uint32_t followerCount = 0;
             uint32_t totalStrandCount = 0;
@@ -137,6 +145,25 @@ namespace hairgpu::viewer
             float correctiveMaxPenetration = 0.0f;
             float correctiveAverageLengthErrorBefore = 0.0f;
             float correctiveAverageLengthErrorAfter = 0.0f;
+            uint32_t editActiveGuideCount = 0u;
+            uint32_t editActiveStrandCount = 0u;
+        };
+
+        enum class EditBrushMode : uint32_t
+        {
+            Camera = 0,
+            Add = 1,
+            Subtract = 2,
+        };
+
+        struct EditorMetrics
+        {
+            float coverageRatio = 0.0f;
+            float localityRatio = 0.0f;
+            float boundaryTransitionScore = 0.0f;
+            float maxGuideInfluence = 0.0f;
+            uint32_t activeGuideCount = 0u;
+            uint32_t activeStrandCount = 0u;
         };
 
         struct Float4
@@ -158,6 +185,10 @@ namespace hairgpu::viewer
             uint32_t sphereColliderCount = 0;
             uint32_t capsuleColliderCount = 0;
             uint32_t enableSelfCollision = 0;
+            uint32_t planeColliderCount = 0;
+            uint32_t aabbColliderCount = 0;
+            uint32_t useSdfCollider = 0;
+            uint32_t sdfValueCount = 0;
 
             float deltaTime = 0.0f;
             float gravity = 9.81f;
@@ -217,6 +248,11 @@ namespace hairgpu::viewer
 
             Float4 sphereData[4] = {};
             Float4 capsuleData[8] = {};
+            Float4 planeData[4] = {};
+            Float4 aabbData[8] = {};
+            uint32_t sdfResolution[4] = {};
+            Float4 sdfBoundsMin = {};
+            Float4 sdfBoundsMax = {};
 
             uint32_t useCompactedGuideDispatch = 0u;
             uint32_t compactedGuideCount = 0u;
@@ -239,6 +275,10 @@ namespace hairgpu::viewer
             uint32_t sphereColliderCount = 0;
             uint32_t capsuleColliderCount = 0;
             uint32_t enableSelfCollision = 0;
+            uint32_t planeColliderCount = 0;
+            uint32_t aabbColliderCount = 0;
+            uint32_t useSdfCollider = 0;
+            uint32_t sdfValueCount = 0;
 
             float deltaTime = 0.0f;
             float gravity = 9.81f;
@@ -298,6 +338,11 @@ namespace hairgpu::viewer
 
             Float4 sphereData[4] = {};
             Float4 capsuleData[8] = {};
+            Float4 planeData[4] = {};
+            Float4 aabbData[8] = {};
+            uint32_t sdfResolution[4] = {};
+            Float4 sdfBoundsMin = {};
+            Float4 sdfBoundsMax = {};
 
             uint32_t followerUpdateStride = 1u;
             uint32_t followerUpdatePhase = 0u;
@@ -316,6 +361,10 @@ namespace hairgpu::viewer
             uint32_t sphereColliderCount = 0;
             uint32_t capsuleColliderCount = 0;
             uint32_t enableSelfCollision = 0;
+            uint32_t planeColliderCount = 0;
+            uint32_t aabbColliderCount = 0;
+            uint32_t useSdfCollider = 0;
+            uint32_t sdfValueCount = 0;
 
             float deltaTime = 0.0f;
             float gravity = 9.81f;
@@ -378,6 +427,11 @@ namespace hairgpu::viewer
 
             Float4 sphereData[4] = {};
             Float4 capsuleData[8] = {};
+            Float4 planeData[4] = {};
+            Float4 aabbData[8] = {};
+            uint32_t sdfResolution[4] = {};
+            Float4 sdfBoundsMin = {};
+            Float4 sdfBoundsMax = {};
         };
 
         struct alignas(16) BitonicConstants
@@ -486,6 +540,16 @@ namespace hairgpu::viewer
         void UpdateAnimatedScalp(float elapsedSeconds);
         void RebuildActiveSetFoundation();
         void SyncActiveSetGpuBuffers();
+        bool RebuildEditableAsset(bool recreateResources);
+        void ClearAuthoringEdits(bool recreateResources);
+        void RebuildAuthoringStackFromUi();
+        bool PickScalpUvFromScreenPoint(POINT clientPoint, hairgpu::Vec2& outUv) const;
+        void AppendBrushDabAtUv(const hairgpu::Vec2& uv, bool subtract);
+        EditorMetrics ComputeEditorMetrics() const;
+        float EstimateGpuMemoryMegabytes() const;
+        float EstimateCpuMemoryMegabytes() const;
+        bool SaveBrushStrokeToFile(const std::wstring& filePath) const;
+        bool LoadBrushStrokeFromFile(const std::wstring& filePath);
         void FillHairSimConstants(SimConstantsHair& constants, float dt) const;
         void FillActiveSetSimConstants(SimConstantsActiveSet& constants, float dt) const;
         void FillScalpSimConstants(SimConstantsScalp& constants, float dt) const;
@@ -576,6 +640,7 @@ namespace hairgpu::viewer
         uint32_t m_builderFollowersPerGuide = 9;
         uint32_t m_builderParticlesPerStrand = 11;
         std::wstring m_activePresetName = L"Rapunzel Preview";
+        std::wstring m_activeEditPresetName = L"None";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
         enum class MaskSourceMode : uint32_t
@@ -587,6 +652,11 @@ namespace hairgpu::viewer
 
         std::wstring m_partingMaskPath;
         std::wstring m_regionMaskPath;
+        EditBrushMode m_editBrushMode = EditBrushMode::Camera;
+        float m_editPresetStrength = 1.0f;
+        float m_brushRadiusUv = 0.085f;
+        float m_brushFeather = 0.35f;
+        float m_lastEditApplyLatencyMilliseconds = 0.0f;
         MaskSourceMode m_maskSourceMode = MaskSourceMode::Auto;
         MaskOverlayMode m_maskOverlayMode = MaskOverlayMode::None;
 
@@ -596,6 +666,10 @@ namespace hairgpu::viewer
         float m_statsUpdateAccumulator = 0.0f;
 
         hairgpu::HairAsset m_asset;
+        hairgpu::HairAsset m_sourceAsset;
+        hairgpu::EditStack m_authoringStack;
+        hairgpu::BrushStroke m_brushStroke;
+        hairgpu::RuntimeEditState m_runtimeEditState;
         hairgpu::GpuSimulationConfig m_simConfig;
         hairgpu::ColliderSet m_colliders;
         std::vector<GpuParticle> m_initialParticles;
@@ -662,6 +736,8 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactFollowerDispatchCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildFollowDispatchArgsCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactGuideDispatchCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildGuideDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_segmentInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_scalpInputLayout;
@@ -681,6 +757,7 @@ namespace hairgpu::viewer
         StructuredBuffer m_compactedGuideCounterBuffer;
         StructuredBuffer m_scalpPositions;
         StructuredBuffer m_scalpTrianglesBuffer;
+        StructuredBuffer m_sdfValuesBuffer;
         StructuredBuffer m_rootBindingsBuffer;
         StructuredBuffer m_distanceLambdaBuffer;
         StructuredBuffer m_bendLambdaBuffer;
@@ -701,7 +778,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_debugLineTemplateVertexBuffer;
         StructuredBuffer m_debugLineEntriesBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_followDispatchArgsBuffer;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_guideDispatchArgsBuffer;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_followDispatchArgsUav;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_guideDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpIndexBuffer;
         uint32_t m_scalpIndexCount = 0u;
@@ -739,6 +818,8 @@ namespace hairgpu::viewer
         uint32_t m_consecutiveInvisibleFrames = 0u;
         uint32_t m_framesSinceVisibilityCheck = 0u;
         uint32_t m_runtimeFollowerUpdatePhase = 0u;
+        uint32_t m_runtimeCompactedGuideCount = 0u;
+        uint32_t m_runtimeCompactedFollowerCount = 0u;
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastHairPipelineStats = {};
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastDebugPipelineStats = {};
         std::array<GpuTimingFrame, 3> m_gpuTimingFrames = {};
@@ -771,6 +852,11 @@ namespace hairgpu::viewer
         HWND m_previewPartingMask = nullptr;
         HWND m_previewRegionMask = nullptr;
         HWND m_comboPreset = nullptr;
+        HWND m_comboEditPreset = nullptr;
+        HWND m_comboEditBrushMode = nullptr;
+        HWND m_btnClearEdits = nullptr;
+        HWND m_btnSaveBrush = nullptr;
+        HWND m_btnLoadBrush = nullptr;
         HWND m_comboRenderMode = nullptr;
         HWND m_comboDebugColor = nullptr;
         HWND m_checkSelfCollision = nullptr;
@@ -788,6 +874,9 @@ namespace hairgpu::viewer
         HWND m_editGuides = nullptr;
         HWND m_editFollowers = nullptr;
         HWND m_editParticles = nullptr;
+        HWND m_trackEditPresetStrength = nullptr;
+        HWND m_trackBrushRadius = nullptr;
+        HWND m_trackBrushFeather = nullptr;
         HWND m_trackWidth = nullptr;
         HWND m_trackGravity = nullptr;
         HWND m_trackDamping = nullptr;
@@ -807,6 +896,9 @@ namespace hairgpu::viewer
         HWND m_labelMaskOverlay = nullptr;
         HBITMAP m_partingPreviewBitmap = nullptr;
         HBITMAP m_regionPreviewBitmap = nullptr;
+        HWND m_labelEditPresetStrength = nullptr;
+        HWND m_labelBrushRadius = nullptr;
+        HWND m_labelBrushFeather = nullptr;
         HWND m_labelWidth = nullptr;
         HWND m_labelGravity = nullptr;
         HWND m_labelDamping = nullptr;

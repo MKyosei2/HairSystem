@@ -9,6 +9,10 @@ cbuffer SimConstants : register(b0)
     uint SphereColliderCount;
     uint CapsuleColliderCount;
     uint EnableSelfCollision;
+    uint PlaneColliderCount;
+    uint AabbColliderCount;
+    uint UseSdfCollider;
+    uint SdfValueCount;
 
     float DeltaTime;
     float Gravity;
@@ -68,6 +72,11 @@ cbuffer SimConstants : register(b0)
 
     float4 SphereData[4];
     float4 CapsuleData[8];
+    float4 PlaneData[4];
+    float4 AabbData[8];
+    uint4 SdfResolution;
+    float4 SdfBoundsMin;
+    float4 SdfBoundsMax;
 
     uint FollowerUpdateStride;
     uint FollowerUpdatePhase;
@@ -80,6 +89,20 @@ struct GuideSignal
     float4 rootAndVelocity;
     float4 metrics;
 };
+
+float SignedDistanceToPlane(float3 p, float4 plane)
+{
+    return dot(plane.xyz, p) + plane.w;
+}
+
+float DistanceToAabbSurface(float3 p, float3 mn, float3 mx)
+{
+    float3 clamped = clamp(p, mn, mx);
+    float outside = length(p - clamped);
+    float3 margin = min(p - mn, mx - p);
+    float inside = min(margin.x, min(margin.y, margin.z));
+    return (outside > 0.0f) ? outside : -inside;
+}
 
 StructuredBuffer<float4> InputPositions : register(t0);
 StructuredBuffer<float4> InputPreviousPositions : register(t1);
@@ -125,6 +148,30 @@ float ComputeGuideContactProxy(float3 p)
         float radius = lerp(ra, rb, t);
         float surfaceDistance = length(p - center) - radius;
         bestScore = max(bestScore, saturate((0.045f - surfaceDistance) / 0.045f));
+    }
+
+    [unroll]
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        if (i >= PlaneColliderCount)
+        {
+            break;
+        }
+        float signedDistance = SignedDistanceToPlane(p, PlaneData[i]);
+        bestScore = max(bestScore, saturate((0.040f - signedDistance) / 0.040f));
+    }
+
+    [unroll]
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        if (i >= AabbColliderCount)
+        {
+            break;
+        }
+        float3 mn = AabbData[i * 2u + 0u].xyz;
+        float3 mx = AabbData[i * 2u + 1u].xyz;
+        float surfaceDistance = DistanceToAabbSurface(p, mn, mx);
+        bestScore = max(bestScore, saturate((0.040f - surfaceDistance) / 0.040f));
     }
 
     return bestScore;

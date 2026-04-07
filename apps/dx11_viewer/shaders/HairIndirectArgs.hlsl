@@ -9,6 +9,10 @@ cbuffer SimConstants : register(b0)
     uint SphereColliderCount;
     uint CapsuleColliderCount;
     uint EnableSelfCollision;
+    uint PlaneColliderCount;
+    uint AabbColliderCount;
+    uint UseSdfCollider;
+    uint SdfValueCount;
 
     float DeltaTime;
     float Gravity;
@@ -68,6 +72,11 @@ cbuffer SimConstants : register(b0)
 
     float4 SphereData[4];
     float4 CapsuleData[8];
+    float4 PlaneData[4];
+    float4 AabbData[8];
+    uint4 SdfResolution;
+    float4 SdfBoundsMin;
+    float4 SdfBoundsMax;
 
     uint UseCompactedGuideDispatch;
     uint CompactedGuideCount;
