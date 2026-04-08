@@ -505,123 +505,6 @@ namespace
         s.guidesOnly = ArgToInt(argc, argv, startIndex + 6, s.guidesOnly ? 1 : 0) != 0;
         return s;
     }
-
-    EditSettings ParseEditSettings(int argc, char** argv, int startIndex)
-    {
-        EditSettings edit = {};
-        edit.lengthScale = ArgToFloat(argc, argv, startIndex + 0, edit.lengthScale);
-        edit.widthScale = ArgToFloat(argc, argv, startIndex + 1, edit.widthScale);
-        edit.rootOffset.y = ArgToFloat(argc, argv, startIndex + 2, edit.rootOffset.y);
-        edit.tipOffset.y = ArgToFloat(argc, argv, startIndex + 3, edit.tipOffset.y);
-        edit.sideOffset = ArgToFloat(argc, argv, startIndex + 4, edit.sideOffset);
-        edit.yawRadians = ArgToFloat(argc, argv, startIndex + 5, edit.yawRadians);
-        edit.followerInfluence = ArgToFloat(argc, argv, startIndex + 6, edit.followerInfluence);
-        return edit;
-    }
-
-    bool WriteRuntimeEditStateJson(const std::filesystem::path& path,
-                                   const RuntimeEditState& state,
-                                   const EditStack& stack,
-                                   std::string& outError)
-    {
-        std::ofstream out(path);
-        if (!out)
-        {
-            outError = "Failed to open runtime edit state JSON output: " + path.string();
-            return false;
-        }
-        out << "{\n";
-        out << "  \"activeGuideCount\": " << state.activeGuideCount << ",\n";
-        out << "  \"maxGuideInfluence\": " << state.maxGuideInfluence << ",\n";
-        out << "  \"layerCount\": " << stack.layers.size() << ",\n";
-        out << "  \"guideInfluence\": [";
-        for (size_t i = 0; i < state.guideInfluence.size(); ++i)
-        {
-            if (i > 0u) out << ", ";
-            out << state.guideInfluence[i];
-        }
-        out << "],\n";
-        out << "  \"layers\": [\n";
-        for (size_t i = 0; i < stack.layers.size(); ++i)
-        {
-            const EditLayer& layer = stack.layers[i];
-            out << "    { \"name\": \"" << layer.name << "\", \"enabled\": " << (layer.enabled ? "true" : "false")
-                << ", \"weight\": " << layer.layerWeight << " }";
-            if (i + 1u < stack.layers.size()) out << ',';
-            out << "\n";
-        }
-        out << "  ]\n";
-        out << "}\n";
-        outError.clear();
-        return true;
-    }
-
-    bool PopulateGuideEditScoresFromFlags(const HairAsset& asset,
-                                          int argc,
-                                          char** argv,
-                                          int scanStartIndex,
-                                          std::vector<float>& outGuideEditScores,
-                                          std::string& outError)
-    {
-        outGuideEditScores.clear();
-        std::string presetName;
-        float presetStrength = 1.0f;
-        std::filesystem::path brushPath;
-        for (int i = scanStartIndex; i < argc; ++i)
-        {
-            const std::string token = argv[i];
-            if (token == "--preset" && i + 1 < argc)
-            {
-                presetName = argv[++i];
-            }
-            else if (token == "--preset-strength" && i + 1 < argc)
-            {
-                presetStrength = ArgToFloat(argc, argv, i + 1, presetStrength);
-                ++i;
-            }
-            else if (token == "--brush" && i + 1 < argc)
-            {
-                brushPath = argv[++i];
-            }
-        }
-
-        if (presetName.empty() && brushPath.empty())
-        {
-            outError.clear();
-            return true;
-        }
-
-        RuntimeEditState runtimeState = {};
-        if (!brushPath.empty())
-        {
-            BrushStroke stroke = {};
-            if (!LoadBrushStrokeCsv(brushPath, stroke, outError))
-            {
-                return false;
-            }
-            const RegionSelectionResult selection = SelectBrushRegion(asset, stroke);
-            outGuideEditScores.assign(std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size())), 0.0f);
-            for (const SelectedStrand& strand : selection.strands)
-            {
-                if (strand.strandIndex < outGuideEditScores.size())
-                {
-                    outGuideEditScores[strand.strandIndex] = std::max(outGuideEditScores[strand.strandIndex], strand.weight);
-                }
-            }
-            outError.clear();
-            return true;
-        }
-
-        EditStack stack = {};
-        if (!BuildNamedEditPresetStack(presetName, presetStrength, stack, outError))
-        {
-            return false;
-        }
-        runtimeState = BuildRuntimeEditState(asset, stack);
-        outGuideEditScores = runtimeState.guideInfluence;
-        outError.clear();
-        return true;
-    }
     bool BuildGuideOnlyReferenceAsset(const HairAsset& referenceAsset, HairAsset& outAsset, std::string& outError)
     {
         if (referenceAsset.guideStrandCount == 0u || referenceAsset.guideStrandCount > referenceAsset.strands.size())
@@ -730,8 +613,8 @@ namespace
   hairgpu_cli info <input>
   hairgpu_cli validate <input> [report.txt]
   hairgpu_cli metrics-json <input> <metrics.json>
-  hairgpu_cli active-set-plan <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [--preset <name> --preset-strength <v>] [--brush stroke.csv]
-  hairgpu_cli active-set-dispatch <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [--preset <name> --preset-strength <v>] [--brush stroke.csv]
+  hairgpu_cli active-set-plan <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
+  hairgpu_cli active-set-dispatch <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
   hairgpu_cli active-set-dispatch-pack <input> <output.dispatchbin> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [dumpJson=1]
   hairgpu_cli dispatchpack-gpubuffers <input.dispatchbin> <output_dir>
   hairgpu_cli asset-export-abc-compat <input> <output.abc>
@@ -748,12 +631,10 @@ namespace
   hairgpu_cli haircache-export-usda-sequence <input.haircache> <referenceAsset> <output_dir> [everyNth=1] [includeScalp=1] [includeCards=0]
   hairgpu_cli guidecache-export-usda-sequence <input.guidecache> <referenceAsset> <output_dir> [everyNth=1] [includeScalp=1]
   hairgpu_cli save-hairbin <input> <output.hairbin>
+  hairgpu_cli retessellate-strands <input> <output.hairbin> [targetParticlesPerStrand=15] [snapRoots=1]
+  hairgpu_cli segment-profile <input> <output.hairbin> [balanced|smooth|cinematic] [targetParticlesOverride=0]
   hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
   hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
-  hairgpu_cli preset-edit <input> <output.hairbin> <presetName> [strength=1.0]
-  hairgpu_cli brush-edit <input> <brush.csv> <output.hairbin> [lengthScale widthScale rootY tipY side yaw follower boundarySmoothing boundaryRadiusUv]
-  hairgpu_cli preset-edit-state-json <input> <output.json> <presetName> [strength=1.0]
-  hairgpu_cli brush-edit-state-json <input> <brush.csv> <output.json>
   hairgpu_cli constrain <input> <output.hairbin> [maxStretch maxBend floorY maxRootRadius]
   hairgpu_cli broadphase-stats <input> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount]
   hairgpu_cli broadphase-export <input> <output.csv> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount] [maxPairs=512]
@@ -796,6 +677,31 @@ namespace
   hairgpu_cli hybrid-compare <teacher_dir> <bundle_dir> <output_dir> [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [--colliders colliders.csv]
 )USAGE";
     }
+    uint32_t ClampParticlesPerStrandValue(uint32_t value)
+    {
+        return std::max<uint32_t>(4u, std::min<uint32_t>(value, 64u));
+    }
+
+    uint32_t ResolveSegmentProfileTarget(const HairAsset& asset, const std::string& profileName, uint32_t overrideParticles)
+    {
+        if (overrideParticles != 0u)
+        {
+            return ClampParticlesPerStrandValue(overrideParticles);
+        }
+
+        const uint32_t current = std::max<uint32_t>(asset.particlesPerStrand, 4u);
+        const std::string lowered = ToLower(profileName);
+        if (lowered == "smooth")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 15u));
+        }
+        if (lowered == "cinematic")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 17u));
+        }
+        return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 13u));
+    }
+
     int PrintLoadFailure(const std::string& context, const std::string& error, int code)
     {
         std::cerr << context << ": " << error << "\n";
@@ -818,7 +724,7 @@ int main(int argc, char** argv)
     }
     if (command == "version")
     {
-        std::cout << "hairgpu_cli 0.2.3\n";
+        std::cout << "hairgpu_cli 0.2.2\n";
         return 0;
     }
     if (command == "active-set-plan")
@@ -844,10 +750,6 @@ int main(int argc, char** argv)
         }
         ActiveSetRuntimeInput runtimeInput = {};
         runtimeInput.fixedTimeStep = 1.0f / 60.0f;
-        if (!PopulateGuideEditScoresFromFlags(asset, argc, argv, 9, runtimeInput.guideEditScores, error))
-        {
-            return PrintLoadFailure("Active-set edit input failed", error, 65);
-        }
         ActiveSetScoringSettings scoringSettings = {};
         ActiveSetBudget budget = {};
         budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
@@ -888,10 +790,6 @@ int main(int argc, char** argv)
         }
         ActiveSetRuntimeInput runtimeInput = {};
         runtimeInput.fixedTimeStep = 1.0f / 60.0f;
-        if (!PopulateGuideEditScoresFromFlags(asset, argc, argv, 9, runtimeInput.guideEditScores, error))
-        {
-            return PrintLoadFailure("Active-set edit input failed", error, 170);
-        }
         ActiveSetScoringSettings scoringSettings = {};
         ActiveSetBudget budget = {};
         budget.maxActiveClusters = ArgToUInt(argc, argv, 6, budget.maxActiveClusters);
@@ -2039,6 +1937,65 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    if (command == "retessellate-strands")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 330);
+        }
+        StrandRetessellationSettings settings = {};
+        settings.targetPointCount = ClampParticlesPerStrandValue(ArgToUInt(argc, argv, 4, std::max<uint32_t>(asset.particlesPerStrand, 15u)));
+        settings.snapRootsToScalp = ArgToInt(argc, argv, 5, 1) != 0;
+        if (!RetessellateHairAsset(asset, settings, error))
+        {
+            return PrintLoadFailure("Retessellate strands failed", error, 331);
+        }
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Hair binary save failed", error, 332);
+        }
+        const uint32_t segmentCount = (asset.particlesPerStrand > 0u) ? (asset.particlesPerStrand - 1u) : 0u;
+        std::cout << "Retessellated strands to " << asset.particlesPerStrand << " particles / " << segmentCount << " segments per strand.\n";
+        return 0;
+    }
+    if (command == "segment-profile")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 333);
+        }
+        const std::string profile = (argc >= 5) ? argv[4] : "balanced";
+        StrandRetessellationSettings settings = {};
+        settings.targetPointCount = ResolveSegmentProfileTarget(asset, profile, ArgToUInt(argc, argv, 5, 0u));
+        settings.snapRootsToScalp = true;
+        if (!RetessellateHairAsset(asset, settings, error))
+        {
+            return PrintLoadFailure("Segment profile retessellation failed", error, 334);
+        }
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Hair binary save failed", error, 335);
+        }
+        const uint32_t segmentCount = (asset.particlesPerStrand > 0u) ? (asset.particlesPerStrand - 1u) : 0u;
+        std::cout << "Applied segment profile '" << profile << "' => "
+                  << asset.particlesPerStrand << " particles / " << segmentCount << " segments per strand.\n";
+        return 0;
+    }
+
     if (command == "save-hairbin")
     {
         if (argc < 4)
@@ -2067,142 +2024,19 @@ int main(int argc, char** argv)
             return 1;
         }
         RegionSelectionSettings region = ParseRegion(argc, argv, 4);
-        const EditSettings edit = ParseEditSettings(argc, argv, 11);
+        EditSettings edit;
+        const int base = 11;
+        edit.lengthScale = ArgToFloat(argc, argv, base, edit.lengthScale);
+        edit.widthScale = ArgToFloat(argc, argv, base + 1, edit.widthScale);
+        edit.rootOffset.y = ArgToFloat(argc, argv, base + 2, edit.rootOffset.y);
+        edit.tipOffset.y = ArgToFloat(argc, argv, base + 3, edit.tipOffset.y);
+        edit.sideOffset = ArgToFloat(argc, argv, base + 4, edit.sideOffset);
+        edit.yawRadians = ArgToFloat(argc, argv, base + 5, edit.yawRadians);
+        edit.followerInfluence = ArgToFloat(argc, argv, base + 6, edit.followerInfluence);
         const RegionSelectionResult result = SelectRegion(asset, region);
         if (!ApplyEditToRegion(asset, result, edit, error) || !SaveHairAssetToHairBinary(argv[3], asset, error))
         {
             return PrintLoadFailure("Edit failed", error, 15);
-        }
-        return 0;
-    }
-    if (command == "preset-edit")
-    {
-        if (argc < 5)
-        {
-            PrintUsage();
-            return 1;
-        }
-        EditStack stack = {};
-        if (!BuildNamedEditPresetStack(argv[4], ArgToFloat(argc, argv, 5, 1.0f), stack, error))
-        {
-            return PrintLoadFailure("Preset edit failed", error, 151);
-        }
-        RuntimeEditState state = {};
-        HairAsset editedAsset = asset;
-        if (!ApplyEditStackToAsset(editedAsset, asset, stack, &state, error) || !SaveHairAssetToHairBinary(argv[3], editedAsset, error))
-        {
-            return PrintLoadFailure("Preset edit failed", error, 152);
-        }
-        std::cout << "preset=" << argv[4] << " activeGuides=" << state.activeGuideCount << " maxGuideInfluence=" << state.maxGuideInfluence << "\n";
-        return 0;
-    }
-    if (command == "brush-edit")
-    {
-        if (argc < 5)
-        {
-            PrintUsage();
-            return 1;
-        }
-        BrushStroke stroke = {};
-        if (!LoadBrushStrokeCsv(argv[3], stroke, error))
-        {
-            return PrintLoadFailure("Brush edit failed", error, 153);
-        }
-        for (const BrushDab& dab : stroke.dabs)
-        {
-            if (dab.subtract)
-            {
-                return PrintLoadFailure("Brush edit failed", "Subtract brush dabs are supported for edit-state export but not for destructive asset baking.", 154);
-            }
-        }
-        const EditSettings brushEdit = ParseEditSettings(argc, argv, 5);
-        EditStack stack = {};
-        stack.boundarySmoothing = ArgToFloat(argc, argv, 12, stack.boundarySmoothing);
-        stack.boundaryRadiusUv = ArgToFloat(argc, argv, 13, stack.boundaryRadiusUv);
-        for (const BrushDab& dab : stroke.dabs)
-        {
-            EditLayer layer = {};
-            layer.name = "Brush Dab";
-            layer.region.mode = RegionSelectMode::Brush;
-            layer.region.centerUv = dab.centerUv;
-            layer.region.radiusUv = { dab.radiusUv, dab.radiusUv };
-            layer.region.feather = dab.feather;
-            layer.region.groupId = stroke.groupId;
-            layer.region.guidesOnly = stroke.guidesOnly;
-            layer.edit = brushEdit;
-            layer.layerWeight = dab.opacity;
-            layer.enabled = true;
-            stack.layers.push_back(layer);
-        }
-        RuntimeEditState state = {};
-        HairAsset editedAsset = asset;
-        if (!ApplyEditStackToAsset(editedAsset, asset, stack, &state, error))
-        {
-            return PrintLoadFailure("Brush edit failed", error, 155);
-        }
-        if (!SaveHairAssetToHairBinary(argv[4], editedAsset, error))
-        {
-            return PrintLoadFailure("Brush edit save failed", error, 156);
-        }
-        std::cout << "brushDabs=" << stroke.dabs.size() << " activeGuides=" << state.activeGuideCount << "\n";
-        return 0;
-    }
-    if (command == "preset-edit-state-json")
-    {
-        if (argc < 5)
-        {
-            PrintUsage();
-            return 1;
-        }
-        EditStack stack = {};
-        if (!BuildNamedEditPresetStack(argv[4], ArgToFloat(argc, argv, 5, 1.0f), stack, error))
-        {
-            return PrintLoadFailure("Preset edit state export failed", error, 157);
-        }
-        const RuntimeEditState state = BuildRuntimeEditState(asset, stack);
-        if (!WriteRuntimeEditStateJson(argv[3], state, stack, error))
-        {
-            return PrintLoadFailure("Preset edit state export failed", error, 158);
-        }
-        return 0;
-    }
-    if (command == "brush-edit-state-json")
-    {
-        if (argc < 5)
-        {
-            PrintUsage();
-            return 1;
-        }
-        BrushStroke stroke = {};
-        if (!LoadBrushStrokeCsv(argv[3], stroke, error))
-        {
-            return PrintLoadFailure("Brush edit state export failed", error, 159);
-        }
-        const RegionSelectionResult selection = SelectBrushRegion(asset, stroke);
-        RuntimeEditState state = {};
-        state.strandInfluence.assign(asset.strands.size(), 0.0f);
-        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
-        state.guideInfluence.assign(guideCount, 0.0f);
-        for (const SelectedStrand& strand : selection.strands)
-        {
-            if (strand.strandIndex < state.strandInfluence.size())
-            {
-                state.strandInfluence[strand.strandIndex] = std::max(state.strandInfluence[strand.strandIndex], strand.weight);
-            }
-        }
-        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
-        {
-            state.guideInfluence[guideIndex] = state.strandInfluence[guideIndex];
-            state.maxGuideInfluence = std::max(state.maxGuideInfluence, state.guideInfluence[guideIndex]);
-            if (state.guideInfluence[guideIndex] > 1.0e-4f) ++state.activeGuideCount;
-        }
-        EditStack stack = {};
-        EditLayer layer = {};
-        layer.name = "Brush Stroke";
-        stack.layers.push_back(layer);
-        if (!WriteRuntimeEditStateJson(argv[4], state, stack, error))
-        {
-            return PrintLoadFailure("Brush edit state export failed", error, 160);
         }
         return 0;
     }

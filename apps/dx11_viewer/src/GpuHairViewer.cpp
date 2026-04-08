@@ -543,7 +543,7 @@ namespace hairgpu::viewer
         icc.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
         InitCommonControlsEx(&icc);
 
-        m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.040f);
+        m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
         {
             WigStyleSettings wig;
             wig.strength = 0.02f;
@@ -563,7 +563,7 @@ namespace hairgpu::viewer
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 18.5f;
         m_simConfig.globalDamping = 0.085f;
-        m_simConfig.segmentLength = 0.040f;
+        m_simConfig.segmentLength = 0.036f;
         m_simConfig.bendStiffness = 0.14f;
         m_simConfig.followStiffness = 0.988f;
         m_simConfig.windStrength = 0.03f;
@@ -3004,16 +3004,11 @@ namespace hairgpu::viewer
         }
 
         HRESULT hr = E_FAIL;
-        HRESULT firstCompileFailureHr = E_FAIL;
-        std::wstring firstCompileFailurePath;
-        std::wstring firstCompileFailureMessage;
         std::wstringstream tried;
         for (const auto& candidate : candidates)
         {
-            const bool exists = std::filesystem::exists(candidate);
             tried << candidate.c_str();
-            tried << (exists ? L"  [exists]" : L"  [missing]") << L"\r\n";
-
+            tried << (std::filesystem::exists(candidate) ? L"  [exists]" : L"  [missing]") << L"\r\n";
             errorBlob.Reset();
             shaderBlob.Reset();
             hr = D3DCompileFromFile(candidate.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPoint, target, flags, 0, &shaderBlob, &errorBlob);
@@ -3021,38 +3016,10 @@ namespace hairgpu::viewer
             {
                 break;
             }
-
-            if (exists && firstCompileFailurePath.empty())
-            {
-                firstCompileFailureHr = hr;
-                firstCompileFailurePath = candidate.native();
-                if (errorBlob)
-                {
-                    const std::string message(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
-                    firstCompileFailureMessage.assign(message.begin(), message.end());
-                }
-            }
         }
         if (FAILED(hr))
         {
-            if (!firstCompileFailurePath.empty())
-            {
-                if (!firstCompileFailureMessage.empty())
-                {
-                    errorText = firstCompileFailureMessage;
-                }
-                else
-                {
-                    errorText = L"Shader compilation failed for an existing shader file.";
-                    std::wstringstream hrHex;
-                    hrHex << std::hex << std::uppercase << static_cast<unsigned long>(firstCompileFailureHr);
-                    errorText += L"\r\nHRESULT: 0x";
-                    errorText += hrHex.str();
-                }
-                errorText += L"\r\n\r\nFirst existing file that failed to compile:\r\n";
-                errorText += firstCompileFailurePath;
-            }
-            else if (errorBlob)
+            if (errorBlob)
             {
                 const std::string message(static_cast<const char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
                 errorText.assign(message.begin(), message.end());
@@ -3395,7 +3362,9 @@ namespace hairgpu::viewer
            << L"Guides: " << m_asset.guideStrandCount
            << L"  Followers: " << m_asset.followerStrandCount << L"\n"
            << L"Total strands: " << m_asset.strands.size() << L"\n"
-           << L"Particles/strand: " << m_asset.particlesPerStrand << L"\n"
+           << L"Particles/strand: " << m_asset.particlesPerStrand
+           << L"  Local segments/strand: " << (m_asset.particlesPerStrand > 0u ? (m_asset.particlesPerStrand - 1u) : 0u) << L"\n"
+           << L"Segment length: " << std::fixed << std::setprecision(4) << m_simConfig.segmentLength << L" m\n"
            << L"Total particles: " << m_asset.restPoints.size() << L"\n"
            << L"Segments: " << m_renderData.segmentCount << L"\n"
            << L"Import: " << m_lastImportStatus << L"\n"
@@ -3536,7 +3505,7 @@ namespace hairgpu::viewer
             m_activePresetName = L"Rapunzel Preview";
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
-            m_builderParticlesPerStrand = 13;
+            m_builderParticlesPerStrand = 17;
             m_widthScale = 0.56f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.085f;
@@ -3553,7 +3522,7 @@ namespace hairgpu::viewer
             m_activePresetName = L"Calm Studio";
             m_builderGuideCount = 2200;
             m_builderFollowersPerGuide = 10;
-            m_builderParticlesPerStrand = 11;
+            m_builderParticlesPerStrand = 15;
             m_widthScale = 0.60f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
@@ -3570,7 +3539,7 @@ namespace hairgpu::viewer
             m_activePresetName = L"Windy Demo";
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
-            m_builderParticlesPerStrand = 13;
+            m_builderParticlesPerStrand = 17;
             m_widthScale = 0.58f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.030f;
@@ -3587,7 +3556,7 @@ namespace hairgpu::viewer
             m_activePresetName = L"Heavy Grounded";
             m_builderGuideCount = 2800;
             m_builderFollowersPerGuide = 8;
-            m_builderParticlesPerStrand = 13;
+            m_builderParticlesPerStrand = 17;
             m_widthScale = 0.62f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
@@ -3604,7 +3573,7 @@ namespace hairgpu::viewer
             m_activePresetName = L"Game-ish LOD";
             m_builderGuideCount = 1800;
             m_builderFollowersPerGuide = 6;
-            m_builderParticlesPerStrand = 11;
+            m_builderParticlesPerStrand = 15;
             m_widthScale = 0.54f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
@@ -3627,11 +3596,17 @@ namespace hairgpu::viewer
 
     bool GpuHairViewer::RebuildAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand)
     {
+        const uint32_t previousParticlesPerStrand = std::max<uint32_t>(m_builderParticlesPerStrand, 2u);
+        const float preservedChainLength = m_simConfig.segmentLength * static_cast<float>(std::max<uint32_t>(previousParticlesPerStrand - 1u, 1u));
+
         m_builderGuideCount = guideCount;
         m_builderFollowersPerGuide = followersPerGuide;
-        m_builderParticlesPerStrand = particlesPerStrand;
+        m_builderParticlesPerStrand = std::max<uint32_t>(particlesPerStrand, 4u);
+        const float rebuiltSegmentLength = preservedChainLength / static_cast<float>(std::max<uint32_t>(m_builderParticlesPerStrand - 1u, 1u));
+        m_simConfig.segmentLength = std::clamp(rebuiltSegmentLength, 0.015f, 0.060f);
+
         ApplySampleMaskOverrides();
-        m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, particlesPerStrand, m_simConfig.segmentLength);
+        m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
         {
             WigStyleSettings wig;
             wig.strength = 0.02f;

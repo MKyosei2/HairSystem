@@ -27,6 +27,25 @@ namespace hairgpu
         HairBounds bounds = {};
     };
 
+
+
+    struct HairShapeComparisonReport
+    {
+        float rmsPositionError = 0.0f;
+        float silhouetteError = 0.0f;
+        float clumpPreservationScore = 1.0f;
+        float rootLocalityScore = 1.0f;
+    };
+
+    struct HairEditComparisonReport
+    {
+        HairShapeComparisonReport shape = {};
+        float editLocalityScore = 1.0f;
+        float boundaryNaturalnessScore = 1.0f;
+        float editedStrandRatio = 0.0f;
+        float editToRunLatencyMilliseconds = 0.0f;
+    };
+
     struct HairLodComparisonReport
     {
         float strandRetentionRatio = 1.0f;
@@ -39,4 +58,7 @@ namespace hairgpu
 
     HairAssetMetrics ComputeHairAssetMetrics(const HairAsset& asset);
     HairLodComparisonReport CompareHairAssetsResampled(const HairAsset& reference, const HairAsset& candidate, uint32_t samplesPerStrand = 16);
+    HairShapeComparisonReport CompareHairShape(const HairAsset& reference, const HairAsset& candidate, uint32_t samplesPerStrand = 16);
+    HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const HairAsset& edited, uint32_t samplesPerStrand = 16);
 }
+

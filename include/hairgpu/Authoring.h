@@ -15,7 +15,6 @@ namespace hairgpu
         Ellipse = 1,
         Rectangle = 2,
         Sector = 3,
-        Brush = 4,
     };
 
     struct RegionSelectionSettings
@@ -27,23 +26,6 @@ namespace hairgpu
         float angleCenterRadians = 0.0f;
         float angleHalfExtentRadians = 3.14159265f;
         float feather = 0.20f;
-        uint32_t groupId = UINT32_MAX;
-        bool guidesOnly = false;
-    };
-
-
-    struct BrushDab
-    {
-        Vec2 centerUv = {0.5f, 0.5f};
-        float radiusUv = 0.10f;
-        float opacity = 1.0f;
-        float feather = 0.50f;
-        bool subtract = false;
-    };
-
-    struct BrushStroke
-    {
-        std::vector<BrushDab> dabs;
         uint32_t groupId = UINT32_MAX;
         bool guidesOnly = false;
     };
@@ -128,6 +110,14 @@ namespace hairgpu
         bool reorderGuideFirst = true;
     };
 
+
+    struct StrandRetessellationSettings
+    {
+        uint32_t targetPointCount = 0u;
+        bool snapRootsToScalp = true;
+        bool reorderGuideFirst = true;
+    };
+
     struct PaletteSample
     {
         float u = 0.0f;
@@ -154,10 +144,5 @@ namespace hairgpu
     bool LoadPaletteCsv(const std::filesystem::path& path, Palette& outPalette, std::string& outError);
     bool ApplyPaletteToRegion(HairAsset& asset, const RegionSelectionResult& selection, const Palette& palette, float strength, std::string& outError);
     bool CanonicalizeHairAssetToParticleChains(HairAsset& asset, const ParticleChainCanonicalizationSettings& settings, std::string& outError);
-
-    RegionSelectionResult SelectBrushRegion(const HairAsset& asset, const BrushStroke& stroke);
-    bool LoadBrushStrokeCsv(const std::filesystem::path& path, BrushStroke& outStroke, std::string& outError);
-    bool SaveBrushStrokeCsv(const std::filesystem::path& path, const BrushStroke& stroke, std::string& outError);
-    bool AppendNamedEditPreset(EditStack& stack, const std::string& presetName, float strength, std::string& outError);
-    bool BuildNamedEditPresetStack(const std::string& presetName, float strength, EditStack& outStack, std::string& outError);
+    bool RetessellateHairAsset(HairAsset& asset, const StrandRetessellationSettings& settings, std::string& outError);
 }

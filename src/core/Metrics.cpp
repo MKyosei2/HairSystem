@@ -130,4 +130,125 @@ namespace hairgpu
         report.rmsPositionError = (sampleCount > 0u) ? static_cast<float>(std::sqrt(sumSq / static_cast<double>(sampleCount))) : 0.0f;
         return report;
     }
+
+
+    HairShapeComparisonReport CompareHairShape(const HairAsset& reference, const HairAsset& candidate, uint32_t samplesPerStrand)
+    {
+        HairShapeComparisonReport report = {};
+        const HairLodComparisonReport lodReport = CompareHairAssetsResampled(reference, candidate, samplesPerStrand);
+        report.rmsPositionError = lodReport.rmsPositionError;
+
+        const uint32_t strandPairs = std::min<uint32_t>(static_cast<uint32_t>(reference.strands.size()), static_cast<uint32_t>(candidate.strands.size()));
+        if (strandPairs == 0u)
+        {
+            return report;
+        }
+
+        const HairAssetMetrics refMetrics = ComputeHairAssetMetrics(reference);
+        const Vec3 diagonal = refMetrics.bounds.max - refMetrics.bounds.min;
+        const float diagLength = std::max(Length(diagonal), 1.0e-4f);
+
+        double silhouetteSq = 0.0;
+        uint64_t silhouetteSamples = 0u;
+        double rootDisp = 0.0;
+        for (uint32_t strandIndex = 0u; strandIndex < strandPairs; ++strandIndex)
+        {
+            const StrandRange& refStrand = reference.strands[strandIndex];
+            const StrandRange& candStrand = candidate.strands[strandIndex];
+            if (refStrand.pointCount > 0u && candStrand.pointCount > 0u)
+            {
+                rootDisp += static_cast<double>(Length(reference.restPoints[refStrand.pointOffset] - candidate.restPoints[candStrand.pointOffset]));
+            }
+            for (uint32_t sampleIndex = 0u; sampleIndex < samplesPerStrand; ++sampleIndex)
+            {
+                const float t = (samplesPerStrand > 1u) ? static_cast<float>(sampleIndex) / static_cast<float>(samplesPerStrand - 1u) : 0.0f;
+                const Vec3 a = SampleStrandPoint(reference, refStrand, t);
+                const Vec3 b = SampleStrandPoint(candidate, candStrand, t);
+                const float dx = a.x - b.x;
+                const float dz = a.z - b.z;
+                silhouetteSq += static_cast<double>(dx * dx + dz * dz);
+                ++silhouetteSamples;
+            }
+        }
+        report.silhouetteError = silhouetteSamples > 0u ? static_cast<float>(std::sqrt(silhouetteSq / static_cast<double>(silhouetteSamples))) : 0.0f;
+        const float avgRootDisp = static_cast<float>(rootDisp / static_cast<double>(strandPairs));
+        report.rootLocalityScore = Clamp(1.0f - avgRootDisp / (0.10f * diagLength + 1.0e-4f), 0.0f, 1.0f);
+        report.clumpPreservationScore = Clamp(1.0f - lodReport.averageLengthDelta / (std::max(refMetrics.averageLength, 1.0e-4f) * 0.35f + 1.0e-4f), 0.0f, 1.0f);
+        return report;
+    }
+
+    HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const HairAsset& edited, uint32_t samplesPerStrand)
+    {
+        HairEditComparisonReport report = {};
+        report.shape = CompareHairShape(reference, edited, samplesPerStrand);
+        const uint32_t strandPairs = std::min<uint32_t>(static_cast<uint32_t>(reference.strands.size()), static_cast<uint32_t>(edited.strands.size()));
+        if (strandPairs == 0u)
+        {
+            return report;
+        }
+
+        std::vector<float> strandDelta(strandPairs, 0.0f);
+        const HairAssetMetrics refMetrics = ComputeHairAssetMetrics(reference);
+        const float avgLength = std::max(refMetrics.averageLength, 1.0e-4f);
+        uint32_t changedCount = 0u;
+        for (uint32_t strandIndex = 0u; strandIndex < strandPairs; ++strandIndex)
+        {
+            const StrandRange& refStrand = reference.strands[strandIndex];
+            const StrandRange& editStrand = edited.strands[strandIndex];
+            double sumSq = 0.0;
+            for (uint32_t sampleIndex = 0u; sampleIndex < samplesPerStrand; ++sampleIndex)
+            {
+                const float t = (samplesPerStrand > 1u) ? static_cast<float>(sampleIndex) / static_cast<float>(samplesPerStrand - 1u) : 0.0f;
+                const Vec3 a = SampleStrandPoint(reference, refStrand, t);
+                const Vec3 b = SampleStrandPoint(edited, editStrand, t);
+                const float d = Length(a - b);
+                sumSq += static_cast<double>(d * d);
+            }
+            strandDelta[strandIndex] = static_cast<float>(std::sqrt(sumSq / static_cast<double>(samplesPerStrand)));
+            if (strandDelta[strandIndex] > 0.01f * avgLength)
+            {
+                ++changedCount;
+            }
+        }
+        report.editedStrandRatio = static_cast<float>(changedCount) / static_cast<float>(strandPairs);
+        report.editLocalityScore = Clamp(1.0f - report.editedStrandRatio, 0.0f, 1.0f);
+
+        // Boundary smoothness: neighboring guide strands with similar roots should not have abrupt displacement jumps.
+        const uint32_t guidePairs = std::min<uint32_t>(reference.guideStrandCount, edited.guideStrandCount);
+        double boundaryAccum = 0.0;
+        uint32_t boundaryCount = 0u;
+        for (uint32_t i = 0u; i < guidePairs; ++i)
+        {
+            if (i >= reference.rootBindings.size())
+            {
+                continue;
+            }
+            const Vec2 uvi = reference.rootBindings[i].rootUv;
+            for (uint32_t j = i + 1u; j < guidePairs; ++j)
+            {
+                if (j >= reference.rootBindings.size())
+                {
+                    continue;
+                }
+                if (reference.strands[i].groupId != reference.strands[j].groupId)
+                {
+                    continue;
+                }
+                const Vec2 uvj = reference.rootBindings[j].rootUv;
+                const float du = uvi.x - uvj.x;
+                const float dv = uvi.y - uvj.y;
+                const float dist = std::sqrt(du * du + dv * dv);
+                if (dist > 0.12f)
+                {
+                    continue;
+                }
+                boundaryAccum += static_cast<double>(std::fabs(strandDelta[i] - strandDelta[j]));
+                ++boundaryCount;
+            }
+        }
+        const float avgBoundaryJump = boundaryCount > 0u ? static_cast<float>(boundaryAccum / static_cast<double>(boundaryCount)) : 0.0f;
+        report.boundaryNaturalnessScore = Clamp(1.0f - avgBoundaryJump / (0.08f * avgLength + 1.0e-4f), 0.0f, 1.0f);
+        return report;
+    }
+
 }

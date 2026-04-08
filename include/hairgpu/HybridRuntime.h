@@ -200,6 +200,11 @@ namespace hairgpu
         float p95EstimatedFrameMilliseconds = 0.0f;
         float maxEstimatedFrameMilliseconds = 0.0f;
         float hitRate60Fps = 0.0f;
+        float averageSilhouetteError = 0.0f;
+        float averageClumpPreservationScore = 1.0f;
+        float averageRootLocalityScore = 1.0f;
+        float peakEstimatedRamMegabytes = 0.0f;
+        float penetrationEventsPerSecond = 0.0f;
     };
 
     [[nodiscard]] bool IsActiveSetPredictorReady(const ActiveSetPredictor& predictor);

@@ -1,4 +1,5 @@
-﻿  GpuHairViewer.cpp
+﻿  AppMain.cpp
+  GpuHairViewer.cpp
 C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18): warning C4244: '=': 'const wchar_t' から 'char' への変換です。データが失われる可能性があります。
   (ソース ファイル 'src/GpuHairViewer.cpp' をコンパイルしています)
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18):

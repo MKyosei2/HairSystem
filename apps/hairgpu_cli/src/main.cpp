@@ -631,6 +631,8 @@ namespace
   hairgpu_cli haircache-export-usda-sequence <input.haircache> <referenceAsset> <output_dir> [everyNth=1] [includeScalp=1] [includeCards=0]
   hairgpu_cli guidecache-export-usda-sequence <input.guidecache> <referenceAsset> <output_dir> [everyNth=1] [includeScalp=1]
   hairgpu_cli save-hairbin <input> <output.hairbin>
+  hairgpu_cli retessellate-strands <input> <output.hairbin> [targetParticlesPerStrand=15] [snapRoots=1]
+  hairgpu_cli segment-profile <input> <output.hairbin> [balanced|smooth|cinematic] [targetParticlesOverride=0]
   hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
   hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
   hairgpu_cli constrain <input> <output.hairbin> [maxStretch maxBend floorY maxRootRadius]
@@ -675,6 +677,31 @@ namespace
   hairgpu_cli hybrid-compare <teacher_dir> <bundle_dir> <output_dir> [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [--colliders colliders.csv]
 )USAGE";
     }
+    uint32_t ClampParticlesPerStrandValue(uint32_t value)
+    {
+        return std::max<uint32_t>(4u, std::min<uint32_t>(value, 64u));
+    }
+
+    uint32_t ResolveSegmentProfileTarget(const HairAsset& asset, const std::string& profileName, uint32_t overrideParticles)
+    {
+        if (overrideParticles != 0u)
+        {
+            return ClampParticlesPerStrandValue(overrideParticles);
+        }
+
+        const uint32_t current = std::max<uint32_t>(asset.particlesPerStrand, 4u);
+        const std::string lowered = ToLower(profileName);
+        if (lowered == "smooth")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 15u));
+        }
+        if (lowered == "cinematic")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 17u));
+        }
+        return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 13u));
+    }
+
     int PrintLoadFailure(const std::string& context, const std::string& error, int code)
     {
         std::cerr << context << ": " << error << "\n";
@@ -1910,6 +1937,65 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    if (command == "retessellate-strands")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 330);
+        }
+        StrandRetessellationSettings settings = {};
+        settings.targetPointCount = ClampParticlesPerStrandValue(ArgToUInt(argc, argv, 4, std::max<uint32_t>(asset.particlesPerStrand, 15u)));
+        settings.snapRootsToScalp = ArgToInt(argc, argv, 5, 1) != 0;
+        if (!RetessellateHairAsset(asset, settings, error))
+        {
+            return PrintLoadFailure("Retessellate strands failed", error, 331);
+        }
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Hair binary save failed", error, 332);
+        }
+        const uint32_t segmentCount = (asset.particlesPerStrand > 0u) ? (asset.particlesPerStrand - 1u) : 0u;
+        std::cout << "Retessellated strands to " << asset.particlesPerStrand << " particles / " << segmentCount << " segments per strand.\n";
+        return 0;
+    }
+    if (command == "segment-profile")
+    {
+        if (argc < 4)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 333);
+        }
+        const std::string profile = (argc >= 5) ? argv[4] : "balanced";
+        StrandRetessellationSettings settings = {};
+        settings.targetPointCount = ResolveSegmentProfileTarget(asset, profile, ArgToUInt(argc, argv, 5, 0u));
+        settings.snapRootsToScalp = true;
+        if (!RetessellateHairAsset(asset, settings, error))
+        {
+            return PrintLoadFailure("Segment profile retessellation failed", error, 334);
+        }
+        if (!SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Hair binary save failed", error, 335);
+        }
+        const uint32_t segmentCount = (asset.particlesPerStrand > 0u) ? (asset.particlesPerStrand - 1u) : 0u;
+        std::cout << "Applied segment profile '" << profile << "' => "
+                  << asset.particlesPerStrand << " particles / " << segmentCount << " segments per strand.\n";
+        return 0;
+    }
+
     if (command == "save-hairbin")
     {
         if (argc < 4)

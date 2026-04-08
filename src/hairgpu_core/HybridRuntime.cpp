@@ -13,6 +13,7 @@
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/GuideCache.h"
 #include "hairgpu/HairCache.h"
+#include "hairgpu/Metrics.h"
 #include "hairgpu/ReducedModel.h"
 
 namespace hairgpu
@@ -30,6 +31,56 @@ namespace hairgpu
 
         float ComputeAverageScalar(const std::vector<float>& values);
         float ComputeMaxScalar(const std::vector<float>& values);
+
+        HairAsset BuildFrameAsset(const HairAsset& referenceAsset, const std::vector<Vec3>& points)
+        {
+            HairAsset frameAsset = referenceAsset;
+            frameAsset.restPoints = points;
+            if (frameAsset.pointWidths.size() != frameAsset.restPoints.size())
+            {
+                const float fallbackWidth = frameAsset.pointWidths.empty() ? 0.0025f : frameAsset.pointWidths.back();
+                frameAsset.pointWidths.resize(frameAsset.restPoints.size(), fallbackWidth);
+            }
+            return frameAsset;
+        }
+
+        float EstimateRuntimeRamMegabytes(const HairAsset& asset,
+                                          const HybridModelBundle& bundle,
+                                          uint32_t clusterCount,
+                                          uint32_t cachedFramePointCount)
+        {
+            uint64_t bytes = 0u;
+            const uint64_t pointCount = static_cast<uint64_t>(asset.restPoints.size());
+            const uint64_t strandCount = static_cast<uint64_t>(asset.strands.size());
+            bytes += pointCount * static_cast<uint64_t>(sizeof(Vec3)) * 14u;
+            bytes += pointCount * static_cast<uint64_t>(sizeof(float)) * 6u;
+            bytes += strandCount * static_cast<uint64_t>(sizeof(StrandRange)) * 2u;
+            bytes += static_cast<uint64_t>(asset.rootBindings.size()) * static_cast<uint64_t>(sizeof(RootBinding));
+            bytes += static_cast<uint64_t>(clusterCount) * (16u * static_cast<uint64_t>(sizeof(uint32_t)) + 16u * static_cast<uint64_t>(sizeof(float)));
+            bytes += static_cast<uint64_t>(bundle.priorModel.selectedGuideStrandIndices.size()) * static_cast<uint64_t>(sizeof(uint32_t));
+            bytes += static_cast<uint64_t>(bundle.residualModel.selectedGuideStrandIndices.size()) * static_cast<uint64_t>(sizeof(uint32_t));
+            bytes += static_cast<uint64_t>(bundle.priorModel.strandRecords.size()) * static_cast<uint64_t>(sizeof(ReducedModelStrandRecord));
+            bytes += static_cast<uint64_t>(bundle.residualModel.strandRecords.size()) * static_cast<uint64_t>(sizeof(ReducedModelStrandRecord));
+            bytes += static_cast<uint64_t>(bundle.priorModel.influences.size()) * static_cast<uint64_t>(sizeof(ReducedModelInfluence));
+            bytes += static_cast<uint64_t>(bundle.residualModel.influences.size()) * static_cast<uint64_t>(sizeof(ReducedModelInfluence));
+            bytes += static_cast<uint64_t>(bundle.priorModel.pointBiases.size()) * static_cast<uint64_t>(sizeof(Vec3));
+            bytes += static_cast<uint64_t>(bundle.residualModel.pointBiases.size()) * static_cast<uint64_t>(sizeof(Vec3));
+            bytes += static_cast<uint64_t>(bundle.activeSetPredictor.featureMean.size() + bundle.activeSetPredictor.featureStd.size() +
+                                           bundle.activeSetPredictor.weights.size() + bundle.activeSetPredictor.hiddenWeights.size() +
+                                           bundle.activeSetPredictor.hiddenBias.size() + bundle.activeSetPredictor.outputWeights.size()) * static_cast<uint64_t>(sizeof(float));
+            bytes += static_cast<uint64_t>(bundle.priorTemporalNetwork.inputMean.size() + bundle.priorTemporalNetwork.inputStd.size() +
+                                           bundle.priorTemporalNetwork.targetMean.size() + bundle.priorTemporalNetwork.targetStd.size() +
+                                           bundle.priorTemporalNetwork.hiddenWeights.size() + bundle.priorTemporalNetwork.hiddenBias.size() +
+                                           bundle.priorTemporalNetwork.hiddenWeights2.size() + bundle.priorTemporalNetwork.hiddenBias2.size() +
+                                           bundle.priorTemporalNetwork.outputWeights.size() + bundle.priorTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
+            bytes += static_cast<uint64_t>(bundle.residualTemporalNetwork.inputMean.size() + bundle.residualTemporalNetwork.inputStd.size() +
+                                           bundle.residualTemporalNetwork.targetMean.size() + bundle.residualTemporalNetwork.targetStd.size() +
+                                           bundle.residualTemporalNetwork.hiddenWeights.size() + bundle.residualTemporalNetwork.hiddenBias.size() +
+                                           bundle.residualTemporalNetwork.hiddenWeights2.size() + bundle.residualTemporalNetwork.hiddenBias2.size() +
+                                           bundle.residualTemporalNetwork.outputWeights.size() + bundle.residualTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
+            bytes += static_cast<uint64_t>(cachedFramePointCount) * static_cast<uint64_t>(sizeof(Vec3)) * 2u;
+            return static_cast<float>(static_cast<double>(bytes) / (1024.0 * 1024.0));
+        }
 
         Vec3 ClosestPointOnSegment(const Vec3& a, const Vec3& b, const Vec3& p)
         {
@@ -3295,6 +3346,11 @@ namespace hairgpu
         double correctedPointSum = 0.0;
         double penetrationSum = 0.0;
         double predictorRiskSum = 0.0;
+        double silhouetteErrorSum = 0.0;
+        double clumpPreservationSum = 0.0;
+        double rootLocalitySum = 0.0;
+        uint32_t penetrationEventCount = 0u;
+        float peakEstimatedRamMegabytes = 0.0f;
         float maxHybridAfterRms = 0.0f;
         float maxPenetration = 0.0f;
         float maxGuidePredictorRisk = 0.0f;
@@ -3625,6 +3681,9 @@ namespace hairgpu
             const float hybridBeforeRms = ComputeRmsError(hybridBeforeCorrection, teacherFrame);
             const float hybridAfterRms = ComputeRmsError(correctedPoints, teacherFrame);
             const float finalOutputRms = ComputeRmsError(finalOutputPoints, teacherFrame);
+            const HairAsset teacherFrameAsset = BuildFrameAsset(teacherSequence.referenceAsset, teacherFrame);
+            const HairAsset finalFrameAsset = BuildFrameAsset(teacherSequence.referenceAsset, finalOutputPoints);
+            const HairShapeComparisonReport shapeReport = CompareHairShape(teacherFrameAsset, finalFrameAsset, 12u);
 
             const float estimatedFrameMilliseconds = settings.useTeacherPhysicsProxy
                 ? (2.80f + static_cast<float>(teacherSequence.referenceAsset.strands.size()) * 0.020f + static_cast<float>(teacherSequence.referenceAsset.restPoints.size()) * 0.0022f + static_cast<float>(std::max<uint32_t>(budget.maxSolverIterations, budget.minSolverIterations)) * 0.35f)
@@ -3739,6 +3798,18 @@ namespace hairgpu
             correctedPointSum += static_cast<double>(correctiveReport.correctedPointCount);
             penetrationSum += static_cast<double>(correctiveReport.averagePenetration);
             predictorRiskSum += static_cast<double>(ComputeAverageScalar(guidePredictorRisk));
+            silhouetteErrorSum += static_cast<double>(shapeReport.silhouetteError);
+            clumpPreservationSum += static_cast<double>(shapeReport.clumpPreservationScore);
+            rootLocalitySum += static_cast<double>(shapeReport.rootLocalityScore);
+            if (correctiveReport.maxPenetration > 1.0e-5f)
+            {
+                ++penetrationEventCount;
+            }
+            peakEstimatedRamMegabytes = std::max(peakEstimatedRamMegabytes,
+                                                 EstimateRuntimeRamMegabytes(teacherSequence.referenceAsset,
+                                                                             bundle,
+                                                                             static_cast<uint32_t>(clusters.size()),
+                                                                             static_cast<uint32_t>(cachedTierSnapshotPoints.size())));
             maxHybridAfterRms = std::max(maxHybridAfterRms, finalOutputRms);
             maxPenetration = std::max(maxPenetration, correctiveReport.maxPenetration);
             maxGuidePredictorRisk = std::max(maxGuidePredictorRisk, ComputeMaxScalar(guidePredictorRisk));
@@ -3764,6 +3835,12 @@ namespace hairgpu
         outReport.maxPenetration = maxPenetration;
         outReport.averageGuidePredictorRisk = static_cast<float>(predictorRiskSum / frameCountF);
         outReport.maxGuidePredictorRisk = maxGuidePredictorRisk;
+        outReport.averageSilhouetteError = static_cast<float>(silhouetteErrorSum / frameCountF);
+        outReport.averageClumpPreservationScore = static_cast<float>(clumpPreservationSum / frameCountF);
+        outReport.averageRootLocalityScore = static_cast<float>(rootLocalitySum / frameCountF);
+        outReport.peakEstimatedRamMegabytes = peakEstimatedRamMegabytes;
+        const float durationSeconds = std::max(frameCountF / std::max(teacherSequence.frameRate, 1.0e-4f), 1.0e-4f);
+        outReport.penetrationEventsPerSecond = static_cast<float>(static_cast<double>(penetrationEventCount) / static_cast<double>(durationSeconds));
         double estimatedFrameMillisecondsSum = 0.0;
         for (const float value : estimatedFrameMillisecondsHistory)
         {
