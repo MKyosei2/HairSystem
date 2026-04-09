@@ -522,6 +522,71 @@ namespace hairgpu
         }
 
 
+        float WrapSignedUnitDelta(float v)
+        {
+            while (v > 0.5f)
+            {
+                v -= 1.0f;
+            }
+            while (v < -0.5f)
+            {
+                v += 1.0f;
+            }
+            return v;
+        }
+
+        void EvaluateScalpFrameFromBinding(const ScalpMesh& scalpMesh, const RootBinding& binding, Vec3& outNormal, Vec3& outTangent, Vec3& outBitangent)
+        {
+            outNormal = EvaluateTriangleNormal(scalpMesh, binding);
+            outTangent = Vec3(-outNormal.z, 0.0f, outNormal.x);
+            if (Length(outTangent) <= 1.0e-6f)
+            {
+                outTangent = Vec3(1.0f, 0.0f, 0.0f);
+            }
+            outTangent = Normalize(outTangent - outNormal * Dot(outTangent, outNormal));
+            outBitangent = Normalize(Cross(outNormal, outTangent));
+
+            if (binding.triangleIndex >= scalpMesh.triangles.size() ||
+                scalpMesh.positions.empty() ||
+                scalpMesh.uvs.size() != scalpMesh.positions.size())
+            {
+                return;
+            }
+
+            const TriangleIndices& tri = scalpMesh.triangles[binding.triangleIndex];
+            const Vec3& p0 = scalpMesh.positions[tri.a];
+            const Vec3& p1 = scalpMesh.positions[tri.b];
+            const Vec3& p2 = scalpMesh.positions[tri.c];
+            const Vec2& uv0 = scalpMesh.uvs[tri.a];
+            const Vec2& uv1 = scalpMesh.uvs[tri.b];
+            const Vec2& uv2 = scalpMesh.uvs[tri.c];
+
+            const Vec3 dp1 = p1 - p0;
+            const Vec3 dp2 = p2 - p0;
+            const float du1 = WrapSignedUnitDelta(uv1.x - uv0.x);
+            const float dv1 = uv1.y - uv0.y;
+            const float du2 = WrapSignedUnitDelta(uv2.x - uv0.x);
+            const float dv2 = uv2.y - uv0.y;
+            const float det = du1 * dv2 - du2 * dv1;
+
+            if (std::fabs(det) > 1.0e-7f)
+            {
+                const float invDet = 1.0f / det;
+                Vec3 tangent = (dp1 * dv2 - dp2 * dv1) * invDet;
+                tangent = tangent - outNormal * Dot(tangent, outNormal);
+                if (Length(tangent) > 1.0e-6f)
+                {
+                    outTangent = Normalize(tangent);
+                    Vec3 bitangent = Cross(outNormal, outTangent);
+                    if (Length(bitangent) > 1.0e-6f)
+                    {
+                        outBitangent = Normalize(bitangent);
+                    }
+                }
+            }
+        }
+
+
         float ComputeGuideLength(const Vec3& root, const Vec3& scalpCenter, const Vec2& uv, float baseLength, const WigParameters& parameters)
         {
             const float lowerRing = Clamp((1.0f - Clamp((root.y - (scalpCenter.y - 0.02f)) / 0.26f, 0.0f, 1.0f)), 0.0f, 1.0f);
@@ -582,28 +647,44 @@ namespace hairgpu
             const float baseChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), segmentLength);
             const float length = ComputeGuideLength(root, scalpCenter, uv, baseChainLength, parameters);
 
-            const float partPush = (0.0060f + parameters.partWidth * 0.72f + 0.0040f * crownFactor) * partInfluence;
-            const float sideSpreadMid = parameters.silhouetteWidth * (0.22f + 0.42f * sideFactor + 0.14f * napeFactor) * (1.0f - 0.88f * faceOpening);
-            const float sideSpreadTip = parameters.silhouetteWidth * (0.10f + 0.20f * sideFactor + 0.08f * napeFactor) * (1.0f - 0.82f * faceOpening);
-            const float frontRetreat = (0.010f + 0.016f * faceOpening) * frontFactor;
-            const float rootLift = parameters.rootLift * (0.28f + 0.10f * crownFactor);
+            const float strandLengthJitter = 0.92f + 0.18f * Hash01(seed + 41u);
+            const float strandSpreadJitter = 0.82f + 0.36f * Hash01(seed + 43u);
+            const float strandFrontJitter = 0.85f + 0.30f * Hash01(seed + 47u);
+            const float strandLiftJitter = 0.80f + 0.40f * Hash01(seed + 53u);
+            const float strandSplay = (Hash01(seed + 59u) - 0.5f) * 2.0f;
+            const float strandRoll = (Hash01(seed + 61u) - 0.5f) * 2.0f;
+
+            const float strandLength = length * strandLengthJitter;
+            const float partPush = (0.0060f + parameters.partWidth * 0.72f + 0.0040f * crownFactor) * partInfluence * strandSpreadJitter;
+            const float sideSpreadMid = parameters.silhouetteWidth * (0.22f + 0.42f * sideFactor + 0.14f * napeFactor) * (1.0f - 0.88f * faceOpening) * strandSpreadJitter;
+            const float sideSpreadTip = parameters.silhouetteWidth * (0.10f + 0.20f * sideFactor + 0.08f * napeFactor) * (1.0f - 0.82f * faceOpening) * (0.86f + 0.40f * Hash01(seed + 67u));
+            const float frontRetreat = (0.010f + 0.016f * faceOpening) * frontFactor * strandFrontJitter;
+            const float rootLift = parameters.rootLift * (0.28f + 0.10f * crownFactor) * strandLiftJitter;
+
+            const Vec3 orthoLift = Normalize(Cross(normal, lateral));
+            const Vec3 splayOffset = lateral * (parameters.silhouetteWidth * 0.55f * strandSplay) + orthoLift * (parameters.silhouetteWidth * 0.24f * strandRoll);
+            const Vec3 tipTwistOffset = lateral * (parameters.tipInward * 0.75f * strandSplay) + orthoLift * (parameters.tipInward * 0.45f * strandRoll);
 
             const Vec3 p0 = root;
             const Vec3 p1 = root
                 + normal * rootLift
                 + lateral * (partPush * 0.20f)
-                + flowDir * (length * 0.10f);
+                + splayOffset * 0.16f
+                + flowDir * (strandLength * 0.10f);
 
             const Vec3 p2 = root
                 + normal * (rootLift * 0.10f)
                 + lateral * (sideSpreadMid + partPush * 0.54f)
+                + splayOffset * 0.62f
                 + Vec3(0.0f, 0.0f, -1.0f) * frontRetreat
-                + flowDir * (length * 0.46f);
+                + flowDir * (strandLength * 0.46f);
 
             const Vec3 p3 = root
                 + lateral * (sideSpreadTip + partPush * 0.26f)
+                + splayOffset
+                + tipTwistOffset
                 + Vec3(0.0f, 0.0f, -1.0f) * (frontRetreat * 1.12f)
-                + flowDir * length;
+                + flowDir * strandLength;
 
             StrandRange range;
             range.pointOffset = static_cast<uint32_t>(asset.restPoints.size());
@@ -750,8 +831,8 @@ namespace hairgpu
         parameters.sideVolume = 0.0012f;
         parameters.backVolume = 0.0014f;
         parameters.lowerRingLengthBias = 0.09f;
-        parameters.strandNoise = 0.00035f;
-        parameters.followerSpread = 0.00042f;
+        parameters.strandNoise = 0.00045f;
+        parameters.followerSpread = 0.00068f;
         parameters.tipInward = 0.0006f;
         return parameters;
     }
@@ -840,43 +921,78 @@ namespace hairgpu
                 parameters,
                 Vec3(0.0f, 0.0f, 0.0f));
 
-            const Vec3 normal = EvaluateTriangleNormal(asset.scalpMesh, binding);
-            Vec3 tangent = Normalize(Vec3(-normal.z, 0.0f, normal.x));
-            if (Length(tangent) <= 1.0e-6f)
+            Vec3 normal;
+            Vec3 tangent;
+            Vec3 binormal;
+            EvaluateScalpFrameFromBinding(asset.scalpMesh, binding, normal, tangent, binormal);
+
+            const Vec2 bindingUv = EvaluateTriangleUv(asset.scalpMesh, binding);
+            const Vec3 scalpRegionsLocal = EvaluateScalpRegionMap(bindingUv.x, bindingUv.y);
+            const float crownMaskLocal = scalpRegionsLocal.x;
+            const float templeMaskLocal = scalpRegionsLocal.y;
+            const float napeMaskLocal = scalpRegionsLocal.z;
+            const float faceOpeningLocal = EvaluateFaceOpeningMask(bindingUv.x, bindingUv.y);
+            const Vec3 bindingRootPosition = EvaluateRootBindingPosition(asset.scalpMesh, binding);
+            const Vec3 radialDir = SafeNormalizeXZ(bindingRootPosition - scalpCenter);
+            Vec3 rimDir = Normalize(Cross(normal, radialDir));
+            if (Length(rimDir) <= 1.0e-6f)
             {
-                tangent = Vec3(1.0f, 0.0f, 0.0f);
+                rimDir = tangent;
             }
-            Vec3 binormal = Normalize(Cross(normal, tangent));
-            if (Length(binormal) <= 1.0e-6f)
-            {
-                binormal = Vec3(0.0f, 0.0f, 1.0f);
-            }
+            const float edgeRisk = Clamp(
+                templeMaskLocal * 0.78f +
+                napeMaskLocal * 0.52f +
+                faceOpeningLocal * 0.92f,
+                0.0f,
+                1.0f);
+            const float followerSpreadScale =
+                (1.0f - 0.48f * templeMaskLocal) *
+                (1.0f - 0.56f * napeMaskLocal) *
+                (1.0f - 0.55f * faceOpeningLocal) *
+                (0.88f + 0.08f * crownMaskLocal);
+            const float guideRotation = Hash01(guideIndex * 29u + 3u) * kTau;
+            const float goldenAngle = 2.39996323f;
 
             for (uint32_t followerIndex = 0; followerIndex < followersPerGuide; ++followerIndex)
             {
                 const uint32_t seed = guideIndex * 97u + followerIndex * 17u + 13u;
-                const float spreadSeed = Hash01(seed + 5u);
-                const float ring = parameters.followerSpread * (0.18f + 0.24f * spreadSeed);
-                const Vec3 bindingRootPosition = EvaluateRootBindingPosition(asset.scalpMesh, binding);
-                const float asymGuideSide = (bindingRootPosition.x >= scalpCenter.x) ? 1.0f : -1.0f;
-                const float angle = (Hash01(seed + 9u) * 0.22f + 0.05f * std::sin(float(guideIndex) * 0.23f) + 0.10f * asymGuideSide + 0.02f * binding.rootUv.y) * kTau;
-                const float sideSkew = (Hash01(seed + 3u) - 0.5f) * 0.08f + asymGuideSide * 0.14f;
-                const float outwardBias = 0.44f + 0.16f * Hash01(seed + 27u);
-                const float verticalBias = (Hash01(seed + 31u) - 0.5f) * 0.03f + asymGuideSide * 0.01f;
-                const Vec3 rootOffset =
-                    tangent * ((std::cos(angle) * outwardBias + sideSkew * 0.16f) * ring) +
-                    binormal * (std::sin(angle) * ring * (0.006f + 0.010f * Hash01(seed + 37u))) +
-                    normal * (verticalBias * ring * 0.10f);
+                const float ring01 = std::sqrt((static_cast<float>(followerIndex) + 0.5f) / static_cast<float>(std::max(followersPerGuide, 1u)));
+                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.12f, 0.58f, ring01);
+                const float angle = guideRotation + goldenAngle * static_cast<float>(followerIndex) + (Hash01(seed + 9u) - 0.5f) * 0.16f;
+                const float radialJitter = 0.94f + 0.10f * Hash01(seed + 5u);
+                const float tangentJitter = (Hash01(seed + 3u) - 0.5f) * 0.10f;
+                const float bitangentScale = 0.74f + 0.12f * Hash01(seed + 37u);
+                const float verticalBias = (Hash01(seed + 31u) - 0.5f) * 0.02f;
+
+                Vec3 planarOffset =
+                    tangent * ((std::cos(angle) + tangentJitter) * ring * radialJitter) +
+                    binormal * (std::sin(angle) * ring * bitangentScale);
+
+                const float outwardAmount = Dot(planarOffset, radialDir);
+                if (outwardAmount > 0.0f)
+                {
+                    planarOffset = planarOffset - radialDir * (outwardAmount * (0.72f + 0.22f * edgeRisk));
+                    planarOffset += rimDir * ((Hash01(seed + 83u) - 0.5f) * outwardAmount * 0.18f * edgeRisk);
+                }
+
+                Vec3 rootOffset = planarOffset + normal * (verticalBias * ring * (1.0f - 0.75f * edgeRisk));
+                const float maxOffset = parameters.followerSpread * Lerp(0.34f, 0.62f, 1.0f - edgeRisk);
+                const float rootOffsetLength = Length(rootOffset);
+                if (rootOffsetLength > maxOffset && rootOffsetLength > 1.0e-6f)
+                {
+                    rootOffset = rootOffset * (maxOffset / rootOffsetLength);
+                }
 
                 StrandMaterial followerMaterial = material;
-                followerMaterial.rootWidth *= 0.56f;
-                followerMaterial.tipWidth *= 0.54f;
+                const float widthJitter = 0.88f + 0.16f * Hash01(seed + 71u);
+                followerMaterial.rootWidth *= 0.42f * widthJitter;
+                followerMaterial.tipWidth *= 0.34f * widthJitter;
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.9985f + Hash01(seed + 7u) * 0.0010f;
-                followerFollow.clumpWeight = 0.995f + Hash01(seed + 19u) * 0.0030f;
-                followerFollow.noiseWeight = 0.00005f + Hash01(seed + 23u) * 0.00015f;
+                followerFollow.followWeight = 0.944f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.035f;
+                followerFollow.clumpWeight = 0.74f + Hash01(seed + 19u) * 0.060f - edgeRisk * 0.16f;
+                followerFollow.noiseWeight = 0.00022f + Hash01(seed + 23u) * 0.00036f + edgeRisk * 0.00012f;
 
                 AppendStaticWigStrand(
                     asset,

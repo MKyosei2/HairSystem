@@ -148,262 +148,264 @@ namespace hairgpu::viewer
         };
 
         struct alignas(16) SimConstantsHair
-{
-    uint32_t totalStrandCount = 0;
-    uint32_t guideStrandCount = 0;
-    uint32_t followerStrandCount = 0;
-    uint32_t particlesPerStrand = 0;
+        {
+            uint32_t totalStrandCount = 0;
+            uint32_t guideStrandCount = 0;
+            uint32_t followerStrandCount = 0;
+            uint32_t particlesPerStrand = 0;
 
-    uint32_t solverIterations = 0;
-    uint32_t sphereColliderCount = 0;
-    uint32_t capsuleColliderCount = 0;
-    uint32_t enableSelfCollision = 0;
-    uint32_t planeColliderCount = 0;
-    uint32_t aabbColliderCount = 0;
-    uint32_t useSdfCollider = 0;
-    uint32_t sdfValueCount = 0;
+            uint32_t solverIterations = 0;
+            uint32_t sphereColliderCount = 0;
+            uint32_t capsuleColliderCount = 0;
+            uint32_t enableSelfCollision = 0;
+            uint32_t planeColliderCount = 0;
+            uint32_t aabbColliderCount = 0;
+            uint32_t useSdfCollider = 0;
+            uint32_t sdfValueCount = 0;
 
-    float deltaTime = 0.0f;
-    float gravity = 9.81f;
-    float damping = 0.03f;
-    float segmentLength = 0.035f;
+            float deltaTime = 0.0f;
+            float gravity = 9.81f;
+            float damping = 0.03f;
+            float segmentLength = 0.035f;
 
-    float bendStiffness = 0.12f;
-    float followStiffness = 0.92f;
-    float windStrength = 0.0f;
-    float floorY = -1.2f;
+            float bendStiffness = 0.12f;
+            float followStiffness = 0.92f;
+            float windStrength = 0.0f;
+            float floorY = -1.2f;
 
-    float elapsedTime = 0.0f;
-    float selfCollisionRadius = 0.012f;
-    float selfCollisionStiffness = 0.35f;
-    float scalpMotionBlend = 1.0f;
+            float elapsedTime = 0.0f;
+            float selfCollisionRadius = 0.012f;
+            float selfCollisionStiffness = 0.35f;
+            float scalpMotionBlend = 1.0f;
 
-    float stretchCompliance = 2.0e-7f;
-    float bendCompliance = 1.0e-5f;
-    float rootStiffness = 0.18f;
-    float velocityShockPropagation = 0.72f;
+            float stretchCompliance = 2.0e-7f;
+            float bendCompliance = 1.0e-5f;
+            float rootStiffness = 0.18f;
+            float velocityShockPropagation = 0.72f;
 
-    float windDirection[3] = { 1.0f, 0.0f, 0.0f };
-    float gridCellSize = 0.085f;
+            float windDirection[3] = { 1.0f, 0.0f, 0.0f };
+            float gridCellSize = 0.085f;
 
-    uint32_t gridDimX = 18;
-    uint32_t gridDimY = 18;
-    uint32_t gridDimZ = 18;
-    uint32_t gridCellCapacity = 24;
+            uint32_t gridDimX = 18;
+            uint32_t gridDimY = 18;
+            uint32_t gridDimZ = 18;
+            uint32_t gridCellCapacity = 24;
 
-    float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
-    uint32_t enableGridSelfCollision = 1;
+            float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
+            uint32_t enableGridSelfCollision = 1;
 
-    float looseConstraintStiffness = 0.12f;
-    float looseConstraintMaxDistance = 0.085f;
-    float supportCollisionRadius = 0.030f;
-    float supportCollisionStiffness = 0.26f;
+            float looseConstraintStiffness = 0.12f;
+            float looseConstraintMaxDistance = 0.085f;
+            float supportCollisionRadius = 0.030f;
+            float supportCollisionStiffness = 0.26f;
 
-    float tangentialFriction = 0.06f;
-    float lateralFriction = 0.78f;
-    float freezeBackThreshold = -0.045f;
-    float freezeBlend = 0.82f;
+            float tangentialFriction = 0.06f;
+            float lateralFriction = 0.78f;
+            float freezeBackThreshold = -0.045f;
+            float freezeBlend = 0.82f;
 
-    uint32_t broadphaseMode = 0u;
-    uint32_t broadphaseHashBucketCount = 32768u;
-    uint32_t broadphasePadding0 = 0u;
-    uint32_t broadphasePadding1 = 0u;
+            uint32_t broadphaseMode = 0u;
+            uint32_t broadphaseHashBucketCount = 32768u;
+            uint32_t broadphasePadding0 = 0u;
+            uint32_t broadphasePadding1 = 0u;
 
-    uint32_t sortedPaddedEntryCount = 1u;
-    uint32_t enableRuntimeAngularBend = 1u;
-    uint32_t runtimePadding0 = 0u;
-    uint32_t runtimePadding1 = 0u;
+            uint32_t sortedPaddedEntryCount = 1u;
+            uint32_t enableRuntimeAngularBend = 1u;
+            uint32_t runtimePadding0 = 0u;
+            uint32_t runtimePadding1 = 0u;
 
-    float angularBendRadians = 0.18f;
-    float angularBendCompliance = 5.0e-6f;
-    float angularBendStiffness = 0.35f;
-    float angularBendDamping = 0.08f;
+            float angularBendRadians = 0.18f;
+            float angularBendCompliance = 5.0e-6f;
+            float angularBendStiffness = 0.35f;
+            float angularBendDamping = 0.08f;
 
-    Float4 sphereData[4] = {};
-    Float4 capsuleData[8] = {};
-    Float4 planeData[4] = {};
-    Float4 aabbData[8] = {};
-    uint32_t sdfResolution[4] = {};
-    Float4 sdfBoundsMin = {};
-    Float4 sdfBoundsMax = {};
+            Float4 sphereData[4] = {};
+            Float4 capsuleData[8] = {};
+            Float4 planeData[4] = {};
+            Float4 aabbData[8] = {};
+            uint32_t sdfResolution[4] = {};
+            Float4 sdfBoundsMin = {};
+            Float4 sdfBoundsMax = {};
 
-    uint32_t useCompactedGuideDispatch = 0u;
-    uint32_t compactedGuideCount = 0u;
-    uint32_t followerUpdateStride = 1u;
-    uint32_t followerUpdatePhase = 0u;
-    uint32_t useCompactedFollowerDispatch = 0u;
-    uint32_t compactedFollowerCount = 0u;
-};
+            uint32_t useCompactedGuideDispatch = 0u;
+            uint32_t compactedGuideCount = 0u;
+            uint32_t followerUpdateStride = 1u;
+            uint32_t followerUpdatePhase = 0u;
+            uint32_t useCompactedFollowerDispatch = 0u;
+            uint32_t compactedFollowerCount = 0u;
+            uint32_t dispatchPadding0 = 0u;
+            uint32_t dispatchPadding1 = 0u;
+        };
 
         struct alignas(16) SimConstantsActiveSet
-{
-    uint32_t totalStrandCount = 0;
-    uint32_t guideStrandCount = 0;
-    uint32_t followerStrandCount = 0;
-    uint32_t particlesPerStrand = 0;
+        {
+            uint32_t totalStrandCount = 0;
+            uint32_t guideStrandCount = 0;
+            uint32_t followerStrandCount = 0;
+            uint32_t particlesPerStrand = 0;
 
-    uint32_t solverIterations = 0;
-    uint32_t sphereColliderCount = 0;
-    uint32_t capsuleColliderCount = 0;
-    uint32_t enableSelfCollision = 0;
-    uint32_t planeColliderCount = 0;
-    uint32_t aabbColliderCount = 0;
-    uint32_t useSdfCollider = 0;
-    uint32_t sdfValueCount = 0;
+            uint32_t solverIterations = 0;
+            uint32_t sphereColliderCount = 0;
+            uint32_t capsuleColliderCount = 0;
+            uint32_t enableSelfCollision = 0;
+            uint32_t planeColliderCount = 0;
+            uint32_t aabbColliderCount = 0;
+            uint32_t useSdfCollider = 0;
+            uint32_t sdfValueCount = 0;
 
-    float deltaTime = 0.0f;
-    float gravity = 9.81f;
-    float damping = 0.03f;
-    float segmentLength = 0.035f;
+            float deltaTime = 0.0f;
+            float gravity = 9.81f;
+            float damping = 0.03f;
+            float segmentLength = 0.035f;
 
-    float bendStiffness = 0.12f;
-    float followStiffness = 0.92f;
-    float windStrength = 0.0f;
-    float floorY = -1.2f;
+            float bendStiffness = 0.12f;
+            float followStiffness = 0.92f;
+            float windStrength = 0.0f;
+            float floorY = -1.2f;
 
-    float elapsedTime = 0.0f;
-    float selfCollisionRadius = 0.012f;
-    float selfCollisionStiffness = 0.35f;
-    float scalpMotionBlend = 1.0f;
+            float elapsedTime = 0.0f;
+            float selfCollisionRadius = 0.012f;
+            float selfCollisionStiffness = 0.35f;
+            float scalpMotionBlend = 1.0f;
 
-    float stretchCompliance = 2.0e-7f;
-    float bendCompliance = 1.0e-5f;
-    float rootStiffness = 0.18f;
-    float velocityShockPropagation = 0.72f;
+            float stretchCompliance = 2.0e-7f;
+            float bendCompliance = 1.0e-5f;
+            float rootStiffness = 0.18f;
+            float velocityShockPropagation = 0.72f;
 
-    float windDirection[3] = { 1.0f, 0.0f, 0.0f };
-    float gridCellSize = 0.085f;
+            float windDirection[3] = { 1.0f, 0.0f, 0.0f };
+            float gridCellSize = 0.085f;
 
-    uint32_t gridDimX = 18;
-    uint32_t gridDimY = 18;
-    uint32_t gridDimZ = 18;
-    uint32_t gridCellCapacity = 24;
+            uint32_t gridDimX = 18;
+            uint32_t gridDimY = 18;
+            uint32_t gridDimZ = 18;
+            uint32_t gridCellCapacity = 24;
 
-    float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
-    uint32_t enableGridSelfCollision = 1;
+            float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
+            uint32_t enableGridSelfCollision = 1;
 
-    float looseConstraintStiffness = 0.12f;
-    float looseConstraintMaxDistance = 0.085f;
-    float supportCollisionRadius = 0.030f;
-    float supportCollisionStiffness = 0.26f;
+            float looseConstraintStiffness = 0.12f;
+            float looseConstraintMaxDistance = 0.085f;
+            float supportCollisionRadius = 0.030f;
+            float supportCollisionStiffness = 0.26f;
 
-    float tangentialFriction = 0.06f;
-    float lateralFriction = 0.78f;
-    float freezeBackThreshold = -0.045f;
-    float freezeBlend = 0.82f;
+            float tangentialFriction = 0.06f;
+            float lateralFriction = 0.78f;
+            float freezeBackThreshold = -0.045f;
+            float freezeBlend = 0.82f;
 
-    uint32_t broadphaseMode = 0u;
-    uint32_t broadphaseHashBucketCount = 32768u;
-    uint32_t broadphasePadding0 = 0u;
-    uint32_t broadphasePadding1 = 0u;
+            uint32_t broadphaseMode = 0u;
+            uint32_t broadphaseHashBucketCount = 32768u;
+            uint32_t broadphasePadding0 = 0u;
+            uint32_t broadphasePadding1 = 0u;
 
-    uint32_t sortedPaddedEntryCount = 1u;
-    uint32_t enableRuntimeAngularBend = 1u;
-    uint32_t runtimePadding0 = 0u;
-    uint32_t runtimePadding1 = 0u;
+            uint32_t sortedPaddedEntryCount = 1u;
+            uint32_t enableRuntimeAngularBend = 1u;
+            uint32_t runtimePadding0 = 0u;
+            uint32_t runtimePadding1 = 0u;
 
-    float angularBendRadians = 0.18f;
-    float angularBendCompliance = 5.0e-6f;
-    float angularBendStiffness = 0.35f;
-    float angularBendDamping = 0.08f;
+            float angularBendRadians = 0.18f;
+            float angularBendCompliance = 5.0e-6f;
+            float angularBendStiffness = 0.35f;
+            float angularBendDamping = 0.08f;
 
-    Float4 sphereData[4] = {};
-    Float4 capsuleData[8] = {};
-    Float4 planeData[4] = {};
-    Float4 aabbData[8] = {};
-    uint32_t sdfResolution[4] = {};
-    Float4 sdfBoundsMin = {};
-    Float4 sdfBoundsMax = {};
+            Float4 sphereData[4] = {};
+            Float4 capsuleData[8] = {};
+            Float4 planeData[4] = {};
+            Float4 aabbData[8] = {};
+            uint32_t sdfResolution[4] = {};
+            Float4 sdfBoundsMin = {};
+            Float4 sdfBoundsMax = {};
 
-    uint32_t followerUpdateStride = 1u;
-    uint32_t followerUpdatePhase = 0u;
-    uint32_t useCompactedFollowerDispatch = 0u;
-    uint32_t compactedFollowerCount = 0u;
-};
+            uint32_t followerUpdateStride = 1u;
+            uint32_t followerUpdatePhase = 0u;
+            uint32_t useCompactedFollowerDispatch = 0u;
+            uint32_t compactedFollowerCount = 0u;
+        };
 
         struct alignas(16) SimConstantsScalp
-{
-    uint32_t totalStrandCount = 0;
-    uint32_t guideStrandCount = 0;
-    uint32_t followerStrandCount = 0;
-    uint32_t particlesPerStrand = 0;
+        {
+            uint32_t totalStrandCount = 0;
+            uint32_t guideStrandCount = 0;
+            uint32_t followerStrandCount = 0;
+            uint32_t particlesPerStrand = 0;
 
-    uint32_t solverIterations = 0;
-    uint32_t sphereColliderCount = 0;
-    uint32_t capsuleColliderCount = 0;
-    uint32_t enableSelfCollision = 0;
-    uint32_t planeColliderCount = 0;
-    uint32_t aabbColliderCount = 0;
-    uint32_t useSdfCollider = 0;
-    uint32_t sdfValueCount = 0;
+            uint32_t solverIterations = 0;
+            uint32_t sphereColliderCount = 0;
+            uint32_t capsuleColliderCount = 0;
+            uint32_t enableSelfCollision = 0;
+            uint32_t planeColliderCount = 0;
+            uint32_t aabbColliderCount = 0;
+            uint32_t useSdfCollider = 0;
+            uint32_t sdfValueCount = 0;
 
-    float deltaTime = 0.0f;
-    float gravity = 9.81f;
-    float damping = 0.03f;
-    float segmentLength = 0.035f;
+            float deltaTime = 0.0f;
+            float gravity = 9.81f;
+            float damping = 0.03f;
+            float segmentLength = 0.035f;
 
-    float bendStiffness = 0.12f;
-    float followStiffness = 0.92f;
-    float windStrength = 0.0f;
-    float floorY = -1.2f;
+            float bendStiffness = 0.12f;
+            float followStiffness = 0.92f;
+            float windStrength = 0.0f;
+            float floorY = -1.2f;
 
-    float elapsedTime = 0.0f;
-    float selfCollisionRadius = 0.012f;
-    float selfCollisionStiffness = 0.35f;
-    float scalpMotionBlend = 1.0f;
+            float elapsedTime = 0.0f;
+            float selfCollisionRadius = 0.012f;
+            float selfCollisionStiffness = 0.35f;
+            float scalpMotionBlend = 1.0f;
 
-    float scalpCenter[4] = {};
-    float neckPivot[4] = {};
+            float scalpCenter[4] = {};
+            float neckPivot[4] = {};
 
-    float stretchCompliance = 2.0e-7f;
-    float bendCompliance = 1.0e-5f;
-    float rootStiffness = 0.18f;
-    float velocityShockPropagation = 0.72f;
+            float stretchCompliance = 2.0e-7f;
+            float bendCompliance = 1.0e-5f;
+            float rootStiffness = 0.18f;
+            float velocityShockPropagation = 0.72f;
 
-    float windDirection[3] = { 1.0f, 0.0f, 0.0f };
-    float gridCellSize = 0.085f;
+            float windDirection[3] = { 1.0f, 0.0f, 0.0f };
+            float gridCellSize = 0.085f;
 
-    uint32_t gridDimX = 18;
-    uint32_t gridDimY = 18;
-    uint32_t gridDimZ = 18;
-    uint32_t gridCellCapacity = 24;
+            uint32_t gridDimX = 18;
+            uint32_t gridDimY = 18;
+            uint32_t gridDimZ = 18;
+            uint32_t gridCellCapacity = 24;
 
-    float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
-    uint32_t enableGridSelfCollision = 1;
+            float gridOrigin[3] = { -0.72f, 0.48f, -0.72f };
+            uint32_t enableGridSelfCollision = 1;
 
-    float looseConstraintStiffness = 0.12f;
-    float looseConstraintMaxDistance = 0.085f;
-    float supportCollisionRadius = 0.030f;
-    float supportCollisionStiffness = 0.26f;
+            float looseConstraintStiffness = 0.12f;
+            float looseConstraintMaxDistance = 0.085f;
+            float supportCollisionRadius = 0.030f;
+            float supportCollisionStiffness = 0.26f;
 
-    float tangentialFriction = 0.06f;
-    float lateralFriction = 0.78f;
-    float freezeBackThreshold = -0.045f;
-    float freezeBlend = 0.82f;
+            float tangentialFriction = 0.06f;
+            float lateralFriction = 0.78f;
+            float freezeBackThreshold = -0.045f;
+            float freezeBlend = 0.82f;
 
-    uint32_t broadphaseMode = 0u;
-    uint32_t broadphaseHashBucketCount = 32768u;
-    uint32_t broadphasePadding0 = 0u;
-    uint32_t broadphasePadding1 = 0u;
+            uint32_t broadphaseMode = 0u;
+            uint32_t broadphaseHashBucketCount = 32768u;
+            uint32_t broadphasePadding0 = 0u;
+            uint32_t broadphasePadding1 = 0u;
 
-    uint32_t sortedPaddedEntryCount = 1u;
-    uint32_t enableRuntimeAngularBend = 1u;
-    uint32_t runtimePadding0 = 0u;
-    uint32_t runtimePadding1 = 0u;
+            uint32_t sortedPaddedEntryCount = 1u;
+            uint32_t enableRuntimeAngularBend = 1u;
+            uint32_t runtimePadding0 = 0u;
+            uint32_t runtimePadding1 = 0u;
 
-    float angularBendRadians = 0.18f;
-    float angularBendCompliance = 5.0e-6f;
-    float angularBendStiffness = 0.35f;
-    float angularBendDamping = 0.08f;
+            float angularBendRadians = 0.18f;
+            float angularBendCompliance = 5.0e-6f;
+            float angularBendStiffness = 0.35f;
+            float angularBendDamping = 0.08f;
 
-    Float4 sphereData[4] = {};
-    Float4 capsuleData[8] = {};
-    Float4 planeData[4] = {};
-    Float4 aabbData[8] = {};
-    uint32_t sdfResolution[4] = {};
-    Float4 sdfBoundsMin = {};
-    Float4 sdfBoundsMax = {};
-};
+            Float4 sphereData[4] = {};
+            Float4 capsuleData[8] = {};
+            Float4 planeData[4] = {};
+            Float4 aabbData[8] = {};
+            uint32_t sdfResolution[4] = {};
+            Float4 sdfBoundsMin = {};
+            Float4 sdfBoundsMax = {};
+        };
 
         struct alignas(16) BitonicConstants
         {
@@ -463,6 +465,9 @@ namespace hairgpu::viewer
         static_assert(sizeof(SimConstantsHair) % 16u == 0u, "SimConstantsHair must stay 16-byte aligned");
         static_assert(sizeof(SimConstantsActiveSet) % 16u == 0u, "SimConstantsActiveSet must stay 16-byte aligned");
         static_assert(sizeof(SimConstantsScalp) % 16u == 0u, "SimConstantsScalp must stay 16-byte aligned");
+        static_assert(sizeof(SimConstantsHair) == 704u, "SimConstantsHair must stay in sync with HairSim/HairIndirectArgs HLSL");
+        static_assert(sizeof(SimConstantsActiveSet) == 688u, "SimConstantsActiveSet must stay in sync with HairActiveSet HLSL");
+        static_assert(sizeof(SimConstantsScalp) == 704u, "SimConstantsScalp must stay in sync with ScalpSim HLSL");
         static_assert(sizeof(RenderConstants) == 144u, "RenderConstants must stay in sync with HLSL render constant buffers");
 
         struct StructuredBuffer
@@ -738,7 +743,6 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
         Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendState;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthState;
-        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_hairDepthState;
         size_t m_hairMeshVertexCapacity = 0;
         size_t m_debugLineEntryCapacity = 0;
         bool m_gpuDebugLinesDirty = true;
