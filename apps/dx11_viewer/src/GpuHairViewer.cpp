@@ -1050,7 +1050,7 @@ namespace hairgpu::viewer
         m_strandTubeVertexBuffer.Reset();
         m_strandTubeIndexBuffer.Reset();
         m_strandTubeIndexCount = 0;
-        m_strandTubeRingSides = 0u;
+        m_strandTubeRingSides = 4u;
 
         std::vector<ScalpVertex> scalpVertices;
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
@@ -1254,6 +1254,13 @@ namespace hairgpu::viewer
         depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
         depthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
         if (FAILED(m_device->CreateDepthStencilState(&depthDesc, &m_depthState)))
+        {
+            return false;
+        }
+
+        D3D11_DEPTH_STENCIL_DESC hairDepthDesc = depthDesc;
+        hairDepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(m_device->CreateDepthStencilState(&hairDepthDesc, &m_hairDepthState)))
         {
             return false;
         }
@@ -1620,6 +1627,11 @@ namespace hairgpu::viewer
         constants.sphereColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.spheres.size(), 4u));
         constants.capsuleColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.capsules.size(), 4u));
         constants.enableSelfCollision = m_enableSelfCollision ? 1u : 0u;
+        constants.planeColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.planes.size(), 4u));
+        constants.aabbColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.aabbs.size(), 4u));
+        const bool hasSdfCollider = !m_colliders.sdfGrids.empty() && !m_colliders.sdfGrids.front().values.empty();
+        constants.useSdfCollider = hasSdfCollider ? 1u : 0u;
+        constants.sdfValueCount = hasSdfCollider ? static_cast<uint32_t>(std::min<size_t>(m_colliders.sdfGrids.front().values.size(), static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) : 0u;
         constants.deltaTime = dt;
         constants.gravity = m_simConfig.gravity;
         constants.damping = m_simConfig.globalDamping;
@@ -1674,6 +1686,29 @@ namespace hairgpu::viewer
             const CapsuleCollider& c = m_colliders.capsules[i];
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
+        }
+        for (size_t i = 0; i < static_cast<size_t>(constants.planeColliderCount); ++i)
+        {
+            const PlaneCollider& p = m_colliders.planes[i];
+            const Vec3 n = Normalize(p.normal);
+            const float d = -(n.x * p.point.x + n.y * p.point.y + n.z * p.point.z);
+            constants.planeData[i] = { n.x, n.y, n.z, d };
+        }
+        for (size_t i = 0; i < static_cast<size_t>(constants.aabbColliderCount); ++i)
+        {
+            const AabbCollider& box = m_colliders.aabbs[i];
+            constants.aabbData[i * 2 + 0] = { box.minBounds.x, box.minBounds.y, box.minBounds.z, 0.0f };
+            constants.aabbData[i * 2 + 1] = { box.maxBounds.x, box.maxBounds.y, box.maxBounds.z, 0.0f };
+        }
+        if (constants.useSdfCollider != 0u)
+        {
+            const SdfGridCollider& sdf = m_colliders.sdfGrids.front();
+            constants.sdfResolution[0] = sdf.resolutionX;
+            constants.sdfResolution[1] = sdf.resolutionY;
+            constants.sdfResolution[2] = sdf.resolutionZ;
+            constants.sdfResolution[3] = 0u;
+            constants.sdfBoundsMin = { sdf.boundsMin.x, sdf.boundsMin.y, sdf.boundsMin.z, 0.0f };
+            constants.sdfBoundsMax = { sdf.boundsMax.x, sdf.boundsMax.y, sdf.boundsMax.z, 0.0f };
         }
         const bool activeSetReady = m_enableActiveSetRuntime && !m_activeSetPlan.recommendedSimulationTiers.empty();
         const uint32_t reducedOrCachedCount = m_activeSetPlan.summary.reducedTierCount + m_activeSetPlan.summary.cachedTierCount;
@@ -1696,6 +1731,11 @@ namespace hairgpu::viewer
         constants.sphereColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.spheres.size(), 4u));
         constants.capsuleColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.capsules.size(), 4u));
         constants.enableSelfCollision = m_enableSelfCollision ? 1u : 0u;
+        constants.planeColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.planes.size(), 4u));
+        constants.aabbColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.aabbs.size(), 4u));
+        const bool hasSdfCollider = !m_colliders.sdfGrids.empty() && !m_colliders.sdfGrids.front().values.empty();
+        constants.useSdfCollider = hasSdfCollider ? 1u : 0u;
+        constants.sdfValueCount = hasSdfCollider ? static_cast<uint32_t>(std::min<size_t>(m_colliders.sdfGrids.front().values.size(), static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) : 0u;
         constants.deltaTime = dt;
         constants.gravity = m_simConfig.gravity;
         constants.damping = m_simConfig.globalDamping;
@@ -1751,6 +1791,29 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
+        for (size_t i = 0; i < static_cast<size_t>(constants.planeColliderCount); ++i)
+        {
+            const PlaneCollider& p = m_colliders.planes[i];
+            const Vec3 n = Normalize(p.normal);
+            const float d = -(n.x * p.point.x + n.y * p.point.y + n.z * p.point.z);
+            constants.planeData[i] = { n.x, n.y, n.z, d };
+        }
+        for (size_t i = 0; i < static_cast<size_t>(constants.aabbColliderCount); ++i)
+        {
+            const AabbCollider& box = m_colliders.aabbs[i];
+            constants.aabbData[i * 2 + 0] = { box.minBounds.x, box.minBounds.y, box.minBounds.z, 0.0f };
+            constants.aabbData[i * 2 + 1] = { box.maxBounds.x, box.maxBounds.y, box.maxBounds.z, 0.0f };
+        }
+        if (constants.useSdfCollider != 0u)
+        {
+            const SdfGridCollider& sdf = m_colliders.sdfGrids.front();
+            constants.sdfResolution[0] = sdf.resolutionX;
+            constants.sdfResolution[1] = sdf.resolutionY;
+            constants.sdfResolution[2] = sdf.resolutionZ;
+            constants.sdfResolution[3] = 0u;
+            constants.sdfBoundsMin = { sdf.boundsMin.x, sdf.boundsMin.y, sdf.boundsMin.z, 0.0f };
+            constants.sdfBoundsMax = { sdf.boundsMax.x, sdf.boundsMax.y, sdf.boundsMax.z, 0.0f };
+        }
         const bool activeSetReady = m_enableActiveSetRuntime && !m_activeSetPlan.recommendedSimulationTiers.empty();
         const uint32_t reducedOrCachedCount = m_activeSetPlan.summary.reducedTierCount + m_activeSetPlan.summary.cachedTierCount;
         constants.followerUpdateStride = activeSetReady ? ((m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((reducedOrCachedCount > 0u) ? 2u : 1u)) : 1u;
@@ -1770,6 +1833,11 @@ namespace hairgpu::viewer
         constants.sphereColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.spheres.size(), 4u));
         constants.capsuleColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.capsules.size(), 4u));
         constants.enableSelfCollision = m_enableSelfCollision ? 1u : 0u;
+        constants.planeColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.planes.size(), 4u));
+        constants.aabbColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.aabbs.size(), 4u));
+        const bool hasSdfCollider = !m_colliders.sdfGrids.empty() && !m_colliders.sdfGrids.front().values.empty();
+        constants.useSdfCollider = hasSdfCollider ? 1u : 0u;
+        constants.sdfValueCount = hasSdfCollider ? static_cast<uint32_t>(std::min<size_t>(m_colliders.sdfGrids.front().values.size(), static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) : 0u;
         constants.deltaTime = dt;
         constants.gravity = m_simConfig.gravity;
         constants.damping = m_simConfig.globalDamping;
@@ -1833,6 +1901,29 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
+        for (size_t i = 0; i < static_cast<size_t>(constants.planeColliderCount); ++i)
+        {
+            const PlaneCollider& p = m_colliders.planes[i];
+            const Vec3 n = Normalize(p.normal);
+            const float d = -(n.x * p.point.x + n.y * p.point.y + n.z * p.point.z);
+            constants.planeData[i] = { n.x, n.y, n.z, d };
+        }
+        for (size_t i = 0; i < static_cast<size_t>(constants.aabbColliderCount); ++i)
+        {
+            const AabbCollider& box = m_colliders.aabbs[i];
+            constants.aabbData[i * 2 + 0] = { box.minBounds.x, box.minBounds.y, box.minBounds.z, 0.0f };
+            constants.aabbData[i * 2 + 1] = { box.maxBounds.x, box.maxBounds.y, box.maxBounds.z, 0.0f };
+        }
+        if (constants.useSdfCollider != 0u)
+        {
+            const SdfGridCollider& sdf = m_colliders.sdfGrids.front();
+            constants.sdfResolution[0] = sdf.resolutionX;
+            constants.sdfResolution[1] = sdf.resolutionY;
+            constants.sdfResolution[2] = sdf.resolutionZ;
+            constants.sdfResolution[3] = 0u;
+            constants.sdfBoundsMin = { sdf.boundsMin.x, sdf.boundsMin.y, sdf.boundsMin.z, 0.0f };
+            constants.sdfBoundsMax = { sdf.boundsMax.x, sdf.boundsMax.y, sdf.boundsMax.z, 0.0f };
+        }
     }
 
     void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& viewProjection) const
@@ -1860,7 +1951,7 @@ namespace hairgpu::viewer
         constants.renderGuideOnlyAboveTier = 4u;
         constants.renderReducedWidthBoost = 0.82f;
         constants.renderHiddenWidthThreshold = 0.0f;
-        constants.renderStrandAlpha = 1.0f;
+        constants.renderStrandAlpha = 0.88f;
         constants.renderPadding0 = 0.0f;
     }
 
@@ -2694,7 +2785,8 @@ namespace hairgpu::viewer
             UpdateActiveSetRuntimeFromParticles(cpuMeshParticles);
         }
 
-        if (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug && !cpuMeshParticles.empty())
+        const bool shouldDrawCpuFallback = !cpuMeshParticles.empty() && (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug || m_lastVisibilitySuspect);
+        if (shouldDrawCpuFallback)
         {
             std::vector<hairgpu::Vec3> correctedPoints;
             correctedPoints.reserve(cpuMeshParticles.size());
@@ -2788,6 +2880,10 @@ namespace hairgpu::viewer
 
         if (!drewCpuHairMesh && m_positions[m_currentBufferIndex].srv && m_pointWidths.srv && m_renderStrandTiersBuffer.srv && !m_asset.restPoints.empty())
         {
+            if (m_hairDepthState)
+            {
+                m_context->OMSetDepthStencilState(m_hairDepthState.Get(), 0);
+            }
             m_context->VSSetConstantBuffers(0, 1, &renderCb);
             m_context->GSSetConstantBuffers(0, 1, &renderCb);
             m_context->PSSetConstantBuffers(0, 1, &renderCb);
@@ -2826,6 +2922,10 @@ namespace hairgpu::viewer
 
             ID3D11ShaderResourceView* nullHairSrvs[3] = {};
             m_context->VSSetShaderResources(0, 3, nullHairSrvs);
+            if (m_depthState)
+            {
+                m_context->OMSetDepthStencilState(m_depthState.Get(), 0);
+            }
         }
 
         if (gpuTimingFrame && gpuTimingFrame->issued)
