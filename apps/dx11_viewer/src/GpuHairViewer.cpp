@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
@@ -469,6 +470,294 @@ namespace hairgpu::viewer
                 L"stack,0.42,0.10\r\n"
                 L"layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\r\n"
                 L"layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\r\n";
+        }
+
+        std::vector<std::string> SplitSimpleCsvText(const std::string& line)
+        {
+            std::vector<std::string> tokens;
+            std::string current;
+            bool inQuotes = false;
+            for (size_t i = 0; i < line.size(); ++i)
+            {
+                const char c = line[i];
+                if (c == '"')
+                {
+                    if (inQuotes && i + 1 < line.size() && line[i + 1] == '"')
+                    {
+                        current.push_back('"');
+                        ++i;
+                    }
+                    else
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                }
+                else if (c == ',' && !inQuotes)
+                {
+                    tokens.push_back(current);
+                    current.clear();
+                }
+                else
+                {
+                    current.push_back(c);
+                }
+            }
+            tokens.push_back(current);
+            return tokens;
+        }
+
+        std::string TrimAsciiCopy(std::string text)
+        {
+            const auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+            while (!text.empty() && isSpace(static_cast<unsigned char>(text.front())))
+            {
+                text.erase(text.begin());
+            }
+            while (!text.empty() && isSpace(static_cast<unsigned char>(text.back())))
+            {
+                text.pop_back();
+            }
+            return text;
+        }
+
+        std::string ToLowerAsciiCopy(std::string text)
+        {
+            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c)
+            {
+                return static_cast<char>(std::tolower(c));
+            });
+            return text;
+        }
+
+        bool TryParseFloatTokenLocal(const std::string& token, float& outValue)
+        {
+            try
+            {
+                size_t consumed = 0u;
+                outValue = std::stof(token, &consumed);
+                return consumed == token.size();
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseUIntTokenLocal(const std::string& token, uint32_t& outValue)
+        {
+            try
+            {
+                size_t consumed = 0u;
+                const unsigned long value = std::stoul(token, &consumed, 10);
+                if (consumed != token.size())
+                {
+                    return false;
+                }
+                outValue = static_cast<uint32_t>(value);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseBoolTokenLocal(const std::string& token, bool& outValue)
+        {
+            const std::string lowered = ToLowerAsciiCopy(TrimAsciiCopy(token));
+            if (lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on")
+            {
+                outValue = true;
+                return true;
+            }
+            if (lowered == "0" || lowered == "false" || lowered == "no" || lowered == "off")
+            {
+                outValue = false;
+                return true;
+            }
+            return false;
+        }
+
+        bool ParseRegionModeTokenLocal(const std::string& text, hairgpu::RegionSelectMode& outMode)
+        {
+            const std::string lowered = ToLowerAsciiCopy(TrimAsciiCopy(text));
+            if (lowered.empty() || lowered == "all")
+            {
+                outMode = hairgpu::RegionSelectMode::All;
+                return true;
+            }
+            if (lowered == "ellipse" || lowered == "circle")
+            {
+                outMode = hairgpu::RegionSelectMode::Ellipse;
+                return true;
+            }
+            if (lowered == "rectangle" || lowered == "rect" || lowered == "box")
+            {
+                outMode = hairgpu::RegionSelectMode::Rectangle;
+                return true;
+            }
+            if (lowered == "sector" || lowered == "fan")
+            {
+                outMode = hairgpu::RegionSelectMode::Sector;
+                return true;
+            }
+            return false;
+        }
+
+        bool LocalLoadEditStackCsvFromStream(std::istream& in, hairgpu::EditStack& outStack, std::string& outError)
+        {
+            outStack = {};
+            std::string line;
+            uint32_t lineNumber = 0u;
+            while (std::getline(in, line))
+            {
+                ++lineNumber;
+                line = TrimAsciiCopy(line);
+                if (line.empty() || line[0] == '#')
+                {
+                    continue;
+                }
+
+                std::vector<std::string> tokens = SplitSimpleCsvText(line);
+                for (std::string& token : tokens)
+                {
+                    token = TrimAsciiCopy(token);
+                }
+                if (tokens.empty())
+                {
+                    continue;
+                }
+
+                const std::string kind = ToLowerAsciiCopy(tokens[0]);
+                if (kind == "stack")
+                {
+                    if (tokens.size() >= 2u && !tokens[1].empty() && !TryParseFloatTokenLocal(tokens[1], outStack.boundarySmoothing))
+                    {
+                        outError = "Malformed boundary smoothing at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    if (tokens.size() >= 3u && !tokens[2].empty() && !TryParseFloatTokenLocal(tokens[2], outStack.boundaryRadiusUv))
+                    {
+                        outError = "Malformed boundary radius at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    continue;
+                }
+
+                if (kind != "layer")
+                {
+                    outError = "Unsupported edit stack row at line " + std::to_string(lineNumber) + ": " + line;
+                    return false;
+                }
+
+                hairgpu::EditLayer layer = {};
+                layer.name = (tokens.size() >= 2u && !tokens[1].empty()) ? tokens[1] : ("layer_" + std::to_string(outStack.layers.size()));
+                bool enabled = true;
+                if (tokens.size() >= 3u && !tokens[2].empty() && !TryParseBoolTokenLocal(tokens[2], enabled))
+                {
+                    outError = "Malformed enabled flag at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                layer.enabled = enabled;
+                if (tokens.size() >= 4u && !tokens[3].empty() && !TryParseFloatTokenLocal(tokens[3], layer.layerWeight))
+                {
+                    outError = "Malformed layer weight at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (tokens.size() >= 5u && !tokens[4].empty() && !ParseRegionModeTokenLocal(tokens[4], layer.region.mode))
+                {
+                    outError = "Malformed region mode at line " + std::to_string(lineNumber);
+                    return false;
+                }
+
+                auto parseFloatOptional = [&](size_t index, float& value, const char* label) -> bool
+                {
+                    if (index >= tokens.size() || tokens[index].empty())
+                    {
+                        return true;
+                    }
+                    if (!TryParseFloatTokenLocal(tokens[index], value))
+                    {
+                        outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    return true;
+                };
+                auto parseUIntOptional = [&](size_t index, uint32_t& value, const char* label) -> bool
+                {
+                    if (index >= tokens.size() || tokens[index].empty())
+                    {
+                        return true;
+                    }
+                    if (!TryParseUIntTokenLocal(tokens[index], value))
+                    {
+                        outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    return true;
+                };
+                auto parseBoolOptional = [&](size_t index, bool& value, const char* label) -> bool
+                {
+                    if (index >= tokens.size() || tokens[index].empty())
+                    {
+                        return true;
+                    }
+                    if (!TryParseBoolTokenLocal(tokens[index], value))
+                    {
+                        outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    return true;
+                };
+
+                uint32_t groupId = UINT32_MAX;
+                if (!parseFloatOptional(5u, layer.region.centerUv.x, "center u") ||
+                    !parseFloatOptional(6u, layer.region.centerUv.y, "center v") ||
+                    !parseFloatOptional(7u, layer.region.radiusUv.x, "radius x") ||
+                    !parseFloatOptional(8u, layer.region.radiusUv.y, "radius y") ||
+                    !parseFloatOptional(9u, layer.region.innerRadius, "inner radius") ||
+                    !parseFloatOptional(10u, layer.region.angleCenterRadians, "angle center") ||
+                    !parseFloatOptional(11u, layer.region.angleHalfExtentRadians, "angle half extent") ||
+                    !parseFloatOptional(12u, layer.region.feather, "feather") ||
+                    !parseUIntOptional(13u, groupId, "groupId") ||
+                    !parseBoolOptional(14u, layer.region.guidesOnly, "guidesOnly") ||
+                    !parseFloatOptional(15u, layer.edit.lengthScale, "lengthScale") ||
+                    !parseFloatOptional(16u, layer.edit.widthScale, "widthScale") ||
+                    !parseFloatOptional(17u, layer.edit.rootOffset.x, "rootOffsetX") ||
+                    !parseFloatOptional(18u, layer.edit.rootOffset.y, "rootOffsetY") ||
+                    !parseFloatOptional(19u, layer.edit.rootOffset.z, "rootOffsetZ") ||
+                    !parseFloatOptional(20u, layer.edit.tipOffset.x, "tipOffsetX") ||
+                    !parseFloatOptional(21u, layer.edit.tipOffset.y, "tipOffsetY") ||
+                    !parseFloatOptional(22u, layer.edit.tipOffset.z, "tipOffsetZ") ||
+                    !parseFloatOptional(23u, layer.edit.sideOffset, "sideOffset") ||
+                    !parseFloatOptional(24u, layer.edit.yawRadians, "yawRadians") ||
+                    !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence"))
+                {
+                    return false;
+                }
+                layer.region.groupId = groupId;
+                outStack.layers.push_back(layer);
+            }
+
+            outError.clear();
+            return true;
+        }
+
+        bool LocalLoadEditStackCsv(const std::filesystem::path& path, hairgpu::EditStack& outStack, std::string& outError)
+        {
+            std::ifstream in(path);
+            if (!in)
+            {
+                outError = "Failed to open edit stack CSV: " + path.string();
+                return false;
+            }
+            return LocalLoadEditStackCsvFromStream(in, outStack, outError);
+        }
+
+        bool LocalLoadEditStackCsvText(const std::string& text, hairgpu::EditStack& outStack, std::string& outError)
+        {
+            std::istringstream in(text);
+            return LocalLoadEditStackCsvFromStream(in, outStack, outError);
         }
 
         std::string SerializeEditStackToCsvText(const hairgpu::EditStack& stack)
@@ -4615,7 +4904,7 @@ namespace hairgpu::viewer
 
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsv(std::filesystem::path(m_editStackPath), stack, error))
+        if (!LocalLoadEditStackCsv(std::filesystem::path(m_editStackPath), stack, error))
         {
             setStatus(L"Load failed");
             return false;
@@ -4861,7 +5150,7 @@ namespace hairgpu::viewer
 
         hairgpu::EditStack stack = {};
         std::string error;
-        const bool parsed = hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error);
+        const bool parsed = LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error);
 
         const bool prevSyncing = m_syncingControls;
         m_syncingControls = true;
@@ -4955,7 +5244,7 @@ namespace hairgpu::viewer
     {
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        if (!LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
         {
             m_quickEditLayerName = L"quick_form";
             m_quickEditCenterU = 0.50f;
@@ -5107,7 +5396,7 @@ namespace hairgpu::viewer
 
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        if (!LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
         {
             return false;
         }
@@ -5214,7 +5503,7 @@ namespace hairgpu::viewer
         const std::string inlineUtf8 = WideToUtf8(GetInlineEditStackText());
         if (!inlineUtf8.empty())
         {
-            hairgpu::LoadEditStackCsvText(inlineUtf8, stack, error);
+            LocalLoadEditStackCsvText(inlineUtf8, stack, error);
         }
         stack.boundarySmoothing = hairgpu::Clamp(m_quickEditBoundarySmoothing, 0.0f, 1.0f);
         stack.boundaryRadiusUv = hairgpu::Clamp(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f);
@@ -5250,7 +5539,7 @@ namespace hairgpu::viewer
     {
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.size() < 2)
+        if (!LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.size() < 2)
         {
             return false;
         }
@@ -5277,7 +5566,7 @@ namespace hairgpu::viewer
     {
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        if (!LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
         {
             return false;
         }
@@ -5300,7 +5589,7 @@ namespace hairgpu::viewer
     {
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        if (!LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
         {
             return false;
         }
@@ -5323,7 +5612,7 @@ namespace hairgpu::viewer
     {
         hairgpu::EditStack stack = {};
         std::string error;
-        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        if (!LocalLoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
         {
             return false;
         }
