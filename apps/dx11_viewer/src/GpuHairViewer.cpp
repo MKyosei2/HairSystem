@@ -19,6 +19,7 @@
 
 #include "hairgpu/ActiveSet.h"
 #include "hairgpu/AssetIO.h"
+#include "hairgpu/Authoring.h"
 #include "hairgpu/Math.h"
 #include "hairgpu/Wig.h"
 
@@ -231,6 +232,74 @@ namespace hairgpu::viewer
             IDC_BTN_LOAD_SETTINGS,
             IDC_BTN_EXPORT_CSV,
             IDC_BTN_EXPORT_PERF_CSV,
+            IDC_BTN_BROWSE_EDIT_STACK,
+            IDC_BTN_CLEAR_EDIT_STACK,
+            IDC_BTN_APPLY_INLINE_EDIT_STACK,
+            IDC_BTN_SAVE_INLINE_EDIT_STACK,
+            IDC_BTN_RESET_INLINE_EDIT_STACK,
+            IDC_EDIT_INLINE_EDIT_STACK,
+            IDC_LABEL_INLINE_EDIT_STACK,
+            IDC_LABEL_QUICK_EDIT_FORM,
+            IDC_LABEL_INLINE_LAYER_LIST,
+            IDC_LIST_INLINE_LAYERS,
+            IDC_LABEL_QUICK_EDIT_NAME,
+            IDC_EDIT_QUICK_EDIT_NAME,
+            IDC_BTN_QUICK_EDIT_MOVE_UP,
+            IDC_BTN_QUICK_EDIT_MOVE_DOWN,
+            IDC_CHECK_QUICK_EDIT_ENABLED,
+            IDC_BTN_QUICK_EDIT_DELETE,
+            IDC_BTN_QUICK_EDIT_DUPLICATE,
+            IDC_COMBO_QUICK_EDIT_MODE,
+            IDC_TRACK_QUICK_EDIT_FEATHER,
+            IDC_TRACK_QUICK_EDIT_LENGTHSCALE,
+            IDC_TRACK_QUICK_EDIT_LAYERWEIGHT,
+            IDC_TRACK_QUICK_EDIT_CENTER_U,
+            IDC_TRACK_QUICK_EDIT_CENTER_V,
+            IDC_TRACK_QUICK_EDIT_RADIUS_U,
+            IDC_TRACK_QUICK_EDIT_RADIUS_V,
+            IDC_TRACK_QUICK_EDIT_INNER_RADIUS,
+            IDC_TRACK_QUICK_EDIT_ANGLE_CENTER,
+            IDC_TRACK_QUICK_EDIT_ANGLE_HALF_EXTENT,
+            IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_X,
+            IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_Y,
+            IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_Z,
+            IDC_TRACK_QUICK_EDIT_TIP_OFFSET_X,
+            IDC_TRACK_QUICK_EDIT_TIP_OFFSET_Y,
+            IDC_TRACK_QUICK_EDIT_TIP_OFFSET_Z,
+            IDC_TRACK_QUICK_EDIT_SIDE_OFFSET,
+            IDC_TRACK_QUICK_EDIT_YAW,
+            IDC_TRACK_QUICK_EDIT_WIDTHSCALE,
+            IDC_TRACK_QUICK_EDIT_FOLLOWER_INFLUENCE,
+            IDC_TRACK_QUICK_EDIT_BOUNDARY_SMOOTHING,
+            IDC_TRACK_QUICK_EDIT_BOUNDARY_RADIUS_UV,
+            IDC_EDIT_QUICK_EDIT_GROUP_ID,
+            IDC_CHECK_QUICK_EDIT_GUIDES_ONLY,
+            IDC_LABEL_QUICK_EDIT_FEATHER,
+            IDC_LABEL_QUICK_EDIT_LENGTHSCALE,
+            IDC_LABEL_QUICK_EDIT_LAYERWEIGHT,
+            IDC_LABEL_QUICK_EDIT_CENTER_U,
+            IDC_LABEL_QUICK_EDIT_CENTER_V,
+            IDC_LABEL_QUICK_EDIT_RADIUS_U,
+            IDC_LABEL_QUICK_EDIT_RADIUS_V,
+            IDC_LABEL_QUICK_EDIT_INNER_RADIUS,
+            IDC_LABEL_QUICK_EDIT_ANGLE_CENTER,
+            IDC_LABEL_QUICK_EDIT_ANGLE_HALF_EXTENT,
+            IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_X,
+            IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_Y,
+            IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_Z,
+            IDC_LABEL_QUICK_EDIT_TIP_OFFSET_X,
+            IDC_LABEL_QUICK_EDIT_TIP_OFFSET_Y,
+            IDC_LABEL_QUICK_EDIT_TIP_OFFSET_Z,
+            IDC_LABEL_QUICK_EDIT_SIDE_OFFSET,
+            IDC_LABEL_QUICK_EDIT_YAW,
+            IDC_LABEL_QUICK_EDIT_WIDTHSCALE,
+            IDC_LABEL_QUICK_EDIT_FOLLOWER_INFLUENCE,
+            IDC_LABEL_QUICK_EDIT_BOUNDARY_SMOOTHING,
+            IDC_LABEL_QUICK_EDIT_BOUNDARY_RADIUS_UV,
+            IDC_LABEL_QUICK_EDIT_GROUP_ID,
+            IDC_LABEL_QUICK_EDIT_VISUALIZATION,
+            IDC_BTN_QUICK_EDIT_REPLACE,
+            IDC_BTN_QUICK_EDIT_APPEND,
             IDC_BTN_BROWSE_PARTING_MASK,
             IDC_BTN_BROWSE_REGION_MASK,
             IDC_COMBO_MASK_SOURCE,
@@ -282,7 +351,33 @@ namespace hairgpu::viewer
             IDC_LABEL_SELF_STIFFNESS,
             IDC_LABEL_GRID_CELL,
             IDC_LABEL_STRETCH,
-            IDC_LABEL_BEND
+            IDC_LABEL_BEND,
+            IDC_LABEL_ACTIVESET_TUNING,
+            IDC_CHECK_ACTIVESET_ADAPTIVE_BUDGET,
+            IDC_CHECK_ACTIVESET_HARD_CLAMP,
+            IDC_LABEL_ACTIVESET_MAX_CLUSTERS,
+            IDC_TRACK_ACTIVESET_MAX_CLUSTERS,
+            IDC_LABEL_ACTIVESET_MAX_GUIDES,
+            IDC_TRACK_ACTIVESET_MAX_GUIDES,
+            IDC_LABEL_ACTIVESET_THRESHOLD,
+            IDC_TRACK_ACTIVESET_THRESHOLD,
+            IDC_LABEL_ACTIVESET_TARGET_FRAME,
+            IDC_TRACK_ACTIVESET_TARGET_FRAME,
+            IDC_LABEL_ACTIVESET_FIXED_COST,
+            IDC_TRACK_ACTIVESET_FIXED_COST,
+            IDC_LABEL_ACTIVESET_CLUSTER_COST,
+            IDC_TRACK_ACTIVESET_CLUSTER_COST,
+            IDC_LABEL_ACTIVESET_SCORE_WEIGHTS,
+            IDC_LABEL_ACTIVESET_MOTION_WEIGHT,
+            IDC_TRACK_ACTIVESET_MOTION_WEIGHT,
+            IDC_LABEL_ACTIVESET_CONTACT_WEIGHT,
+            IDC_TRACK_ACTIVESET_CONTACT_WEIGHT,
+            IDC_LABEL_ACTIVESET_UNCERTAINTY_WEIGHT,
+            IDC_TRACK_ACTIVESET_UNCERTAINTY_WEIGHT,
+            IDC_LABEL_ACTIVESET_EDIT_WEIGHT,
+            IDC_TRACK_ACTIVESET_EDIT_WEIGHT,
+            IDC_BTN_EXPORT_ACTIVESET_JSON,
+            IDC_BTN_EXPORT_RUNTIME_REPORT
         };
 
         int SliderFromFloat(float value, float minValue, float maxValue, int sliderMax = 1000)
@@ -318,6 +413,184 @@ namespace hairgpu::viewer
                 SetWindowTextW(hwnd, text.c_str());
             }
         }
+
+        std::wstring GetWindowTextString(HWND hwnd)
+        {
+            if (!hwnd)
+            {
+                return {};
+            }
+            const int length = GetWindowTextLengthW(hwnd);
+            if (length <= 0)
+            {
+                return {};
+            }
+            std::vector<wchar_t> buffer(static_cast<size_t>(length) + 1u, L'\0');
+            GetWindowTextW(hwnd, buffer.data(), length + 1);
+            return std::wstring(buffer.data());
+        }
+
+        std::wstring TrimCopy(const std::wstring& text)
+        {
+            const size_t begin = text.find_first_not_of(L" \t\r\n");
+            if (begin == std::wstring::npos)
+            {
+                return {};
+            }
+            const size_t end = text.find_last_not_of(L" \t\r\n");
+            return text.substr(begin, end - begin + 1u);
+        }
+
+        uint32_t ParseOptionalGroupIdText(const std::wstring& text)
+        {
+            const std::wstring trimmed = TrimCopy(text);
+            if (trimmed.empty() || trimmed == L"*" || trimmed == L"any" || trimmed == L"ANY")
+            {
+                return UINT32_MAX;
+            }
+            try
+            {
+                return static_cast<uint32_t>(std::stoul(trimmed));
+            }
+            catch (...)
+            {
+                return UINT32_MAX;
+            }
+        }
+
+        std::wstring FormatOptionalGroupId(uint32_t groupId)
+        {
+            return (groupId == UINT32_MAX) ? std::wstring(L"Any") : std::to_wstring(groupId);
+        }
+
+        std::wstring BuildDefaultInlineEditStackText()
+        {
+            return
+                L"stack,0.42,0.10\r\n"
+                L"layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\r\n"
+                L"layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\r\n";
+        }
+
+        std::string SerializeEditStackToCsvText(const hairgpu::EditStack& stack)
+        {
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(6);
+            out << "# edit stack csv\n";
+            out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
+            out << "stack," << stack.boundarySmoothing << "," << stack.boundaryRadiusUv << "\n";
+            out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
+            auto modeToToken = [](hairgpu::RegionSelectMode mode)
+            {
+                switch (mode)
+                {
+                case hairgpu::RegionSelectMode::Ellipse: return "ellipse";
+                case hairgpu::RegionSelectMode::Rectangle: return "rectangle";
+                case hairgpu::RegionSelectMode::Sector: return "sector";
+                default: return "all";
+                }
+            };
+            for (const hairgpu::EditLayer& layer : stack.layers)
+            {
+                out << "layer,"
+                    << layer.name << ","
+                    << (layer.enabled ? 1 : 0) << ","
+                    << layer.layerWeight << ","
+                    << modeToToken(layer.region.mode) << ","
+                    << layer.region.centerUv.x << ","
+                    << layer.region.centerUv.y << ","
+                    << layer.region.radiusUv.x << ","
+                    << layer.region.radiusUv.y << ","
+                    << layer.region.innerRadius << ","
+                    << layer.region.angleCenterRadians << ","
+                    << layer.region.angleHalfExtentRadians << ","
+                    << layer.region.feather << ",";
+                if (layer.region.groupId != UINT32_MAX)
+                {
+                    out << layer.region.groupId;
+                }
+                out << ","
+                    << (layer.region.guidesOnly ? 1 : 0) << ","
+                    << layer.edit.lengthScale << ","
+                    << layer.edit.widthScale << ","
+                    << layer.edit.rootOffset.x << ","
+                    << layer.edit.rootOffset.y << ","
+                    << layer.edit.rootOffset.z << ","
+                    << layer.edit.tipOffset.x << ","
+                    << layer.edit.tipOffset.y << ","
+                    << layer.edit.tipOffset.z << ","
+                    << layer.edit.sideOffset << ","
+                    << layer.edit.yawRadians << ","
+                    << layer.edit.followerInfluence << "\n";
+            }
+            return out.str();
+        }
+
+        bool WriteUtf8TextFile(const std::filesystem::path& path, const std::string& text)
+        {
+            std::ofstream out(path, std::ios::binary);
+            if (!out)
+            {
+                return false;
+            }
+            out.write(text.data(), static_cast<std::streamsize>(text.size()));
+            return static_cast<bool>(out);
+        }
+
+        std::string EscapeSettingsText(const std::string& text)
+        {
+            std::string escaped;
+            escaped.reserve(text.size());
+            for (char c : text)
+            {
+                switch (c)
+                {
+                case '\\': escaped += "\\\\"; break;
+                case '\n': escaped += "\\n"; break;
+                case '\r': escaped += "\\r"; break;
+                default: escaped.push_back(c); break;
+                }
+            }
+            return escaped;
+        }
+
+        std::string UnescapeSettingsText(const std::string& text)
+        {
+            std::string unescaped;
+            unescaped.reserve(text.size());
+            bool escaping = false;
+            for (char c : text)
+            {
+                if (!escaping)
+                {
+                    if (c == '\\')
+                    {
+                        escaping = true;
+                    }
+                    else
+                    {
+                        unescaped.push_back(c);
+                    }
+                    continue;
+                }
+
+                switch (c)
+                {
+                case 'n': unescaped.push_back('\n'); break;
+                case 'r': unescaped.push_back('\r'); break;
+                case '\\': unescaped.push_back('\\'); break;
+                default:
+                    unescaped.push_back(c);
+                    break;
+                }
+                escaping = false;
+            }
+            if (escaping)
+            {
+                unescaped.push_back('\\');
+            }
+            return unescaped;
+        }
+
         hairgpu::Mat4 TransposeMatrixForHlsl(const hairgpu::Mat4& m)
         {
             hairgpu::Mat4 t = {};
@@ -652,6 +925,7 @@ namespace hairgpu::viewer
         ResetSimulation();
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
         SyncControlsFromState();
         LayoutUiControls();
         UpdateStatsLabel();
@@ -2093,6 +2367,10 @@ namespace hairgpu::viewer
             m_activeSetLastStatus = L"Disabled";
             m_activeSetEvaluationMilliseconds = 0.0f;
             SyncActiveSetGpuBuffers();
+            if (IsActiveSetRiskOverlayMode())
+            {
+                UpdateScalpOverlayVertexBuffer();
+            }
             return;
         }
 
@@ -2103,6 +2381,10 @@ namespace hairgpu::viewer
             m_activeSetLastStatus = L"No guides";
             m_activeSetEvaluationMilliseconds = 0.0f;
             SyncActiveSetGpuBuffers();
+            if (IsActiveSetRiskOverlayMode())
+            {
+                UpdateScalpOverlayVertexBuffer();
+            }
             return;
         }
 
@@ -2176,6 +2458,10 @@ namespace hairgpu::viewer
 
         m_activeSetPreviousGuideRoots = currentGuideRoots;
         SyncActiveSetGpuBuffers();
+        if (IsActiveSetRiskOverlayMode())
+        {
+            UpdateScalpOverlayVertexBuffer();
+        }
     }
 
     void GpuHairViewer::StepSimulation(float dt)
@@ -3166,6 +3452,57 @@ namespace hairgpu::viewer
         m_btnLoadSettings = createControl(0, L"BUTTON", L"Load Settings", BS_PUSHBUTTON, IDC_BTN_LOAD_SETTINGS);
         m_btnExportCsv = createControl(0, L"BUTTON", L"Export Frame CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_CSV);
         m_btnExportPerfCsv = createControl(0, L"BUTTON", L"Export Perf CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_PERF_CSV);
+        m_btnBrowseEditStack = createControl(0, L"BUTTON", L"Load Edit Stack...", BS_PUSHBUTTON, IDC_BTN_BROWSE_EDIT_STACK);
+        m_btnClearEditStack = createControl(0, L"BUTTON", L"Clear Edit", BS_PUSHBUTTON, IDC_BTN_CLEAR_EDIT_STACK);
+        m_labelEditStack = createControl(0, L"STATIC", L"Edit stack: none", SS_LEFT, 0);
+        m_labelInlineEditStack = createControl(0, L"STATIC", L"Inline Edit Stack", SS_LEFT, IDC_LABEL_INLINE_EDIT_STACK);
+        m_editInlineEditStack = createControl(WS_EX_CLIENTEDGE, L"EDIT", BuildDefaultInlineEditStackText().c_str(), ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL, IDC_EDIT_INLINE_EDIT_STACK);
+        m_btnApplyInlineEditStack = createControl(0, L"BUTTON", L"Apply Inline", BS_PUSHBUTTON, IDC_BTN_APPLY_INLINE_EDIT_STACK);
+        m_btnSaveInlineEditStack = createControl(0, L"BUTTON", L"Save Inline...", BS_PUSHBUTTON, IDC_BTN_SAVE_INLINE_EDIT_STACK);
+        m_btnResetInlineEditStack = createControl(0, L"BUTTON", L"Reset Inline", BS_PUSHBUTTON, IDC_BTN_RESET_INLINE_EDIT_STACK);
+        m_labelQuickEditForm = createControl(0, L"STATIC", L"Quick Edit Form", SS_LEFT, IDC_LABEL_QUICK_EDIT_FORM);
+        m_labelLayerList = createControl(0, L"STATIC", L"Layer List", SS_LEFT, IDC_LABEL_INLINE_LAYER_LIST);
+        m_listInlineLayers = createControl(WS_EX_CLIENTEDGE, WC_LISTBOXW, L"", LBS_NOTIFY | WS_VSCROLL | LBS_HASSTRINGS, IDC_LIST_INLINE_LAYERS);
+        m_labelQuickEditName = createControl(0, L"STATIC", L"Layer Name", SS_LEFT, IDC_LABEL_QUICK_EDIT_NAME);
+        m_editQuickEditName = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"quick_form", ES_AUTOHSCROLL, IDC_EDIT_QUICK_EDIT_NAME);
+        m_btnQuickEditMoveUp = createControl(0, L"BUTTON", L"Move Up", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_MOVE_UP);
+        m_btnQuickEditMoveDown = createControl(0, L"BUTTON", L"Move Down", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_MOVE_DOWN);
+        m_checkQuickEditEnabled = createControl(0, L"BUTTON", L"Layer Enabled", BS_AUTOCHECKBOX, IDC_CHECK_QUICK_EDIT_ENABLED);
+        m_btnQuickEditDelete = createControl(0, L"BUTTON", L"Delete Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_DELETE);
+        m_btnQuickEditDuplicate = createControl(0, L"BUTTON", L"Duplicate Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_DUPLICATE);
+        m_comboQuickEditMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_QUICK_EDIT_MODE);
+        SendMessageW(m_comboQuickEditMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Ellipse"));
+        SendMessageW(m_comboQuickEditMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Rectangle"));
+        SendMessageW(m_comboQuickEditMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Sector"));
+        SendMessageW(m_comboQuickEditMode, CB_SETCURSEL, 0, 0);
+        m_labelQuickEditFeather = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_FEATHER);
+        m_labelQuickEditLengthScale = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_LENGTHSCALE);
+        m_labelQuickEditLayerWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_LAYERWEIGHT);
+        m_labelQuickEditCenterU = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_CENTER_U);
+        m_labelQuickEditCenterV = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_CENTER_V);
+        m_labelQuickEditRadiusU = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_RADIUS_U);
+        m_labelQuickEditRadiusV = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_RADIUS_V);
+        m_labelQuickEditInnerRadius = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_INNER_RADIUS);
+        m_labelQuickEditAngleCenter = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ANGLE_CENTER);
+        m_labelQuickEditAngleHalfExtent = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ANGLE_HALF_EXTENT);
+        m_labelQuickEditRootOffsetX = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_X);
+        m_labelQuickEditRootOffsetY = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_Y);
+        m_labelQuickEditRootOffsetZ = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_Z);
+        m_labelQuickEditTipOffsetX = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_TIP_OFFSET_X);
+        m_labelQuickEditTipOffsetY = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_TIP_OFFSET_Y);
+        m_labelQuickEditTipOffsetZ = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_TIP_OFFSET_Z);
+        m_labelQuickEditSideOffset = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_SIDE_OFFSET);
+        m_labelQuickEditYaw = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_YAW);
+        m_labelQuickEditWidthScale = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_WIDTHSCALE);
+        m_labelQuickEditFollowerInfluence = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_FOLLOWER_INFLUENCE);
+        m_labelQuickEditBoundarySmoothing = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_BOUNDARY_SMOOTHING);
+        m_labelQuickEditBoundaryRadiusUv = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_BOUNDARY_RADIUS_UV);
+        m_labelQuickEditGroupId = createControl(0, L"STATIC", L"Group Filter", SS_LEFT, IDC_LABEL_QUICK_EDIT_GROUP_ID);
+        m_editQuickEditGroupId = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL, IDC_EDIT_QUICK_EDIT_GROUP_ID);
+        m_checkQuickEditGuidesOnly = createControl(0, L"BUTTON", L"Guides Only", BS_AUTOCHECKBOX, IDC_CHECK_QUICK_EDIT_GUIDES_ONLY);
+        m_labelQuickEditVisualization = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_VISUALIZATION);
+        m_btnQuickEditReplace = createControl(0, L"BUTTON", L"Replace Selected", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_REPLACE);
+        m_btnQuickEditAppend = createControl(0, L"BUTTON", L"Append Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_APPEND);
         m_btnBrowsePartingMask = createControl(0, L"BUTTON", L"Browse Parting Mask...", BS_PUSHBUTTON, IDC_BTN_BROWSE_PARTING_MASK);
         m_btnBrowseRegionMask = createControl(0, L"BUTTON", L"Browse Region Mask...", BS_PUSHBUTTON, IDC_BTN_BROWSE_REGION_MASK);
         m_labelMaskSource = createControl(0, L"STATIC", L"Mask Source", SS_LEFT, IDC_LABEL_MASK_SOURCE);
@@ -3179,6 +3516,13 @@ namespace hairgpu::viewer
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"None"));
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Parting"));
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Region"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Influence / Selected Layer"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Boundary Before / After"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Risk / Selection"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Motion"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Contact"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Uncertainty"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Edit"));
         SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, 0, 0);
         m_labelPartingMask = createControl(0, L"STATIC", L"Parting preview", SS_LEFT, IDC_LABEL_PARTING_MASK_NAME);
         m_previewPartingMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_PARTING_MASK);
@@ -3227,6 +3571,28 @@ namespace hairgpu::viewer
             return hwnd;
         };
 
+        m_trackQuickEditFeather = createSlider(IDC_TRACK_QUICK_EDIT_FEATHER);
+        m_trackQuickEditLengthScale = createSlider(IDC_TRACK_QUICK_EDIT_LENGTHSCALE);
+        m_trackQuickEditLayerWeight = createSlider(IDC_TRACK_QUICK_EDIT_LAYERWEIGHT);
+        m_trackQuickEditCenterU = createSlider(IDC_TRACK_QUICK_EDIT_CENTER_U);
+        m_trackQuickEditCenterV = createSlider(IDC_TRACK_QUICK_EDIT_CENTER_V);
+        m_trackQuickEditRadiusU = createSlider(IDC_TRACK_QUICK_EDIT_RADIUS_U);
+        m_trackQuickEditRadiusV = createSlider(IDC_TRACK_QUICK_EDIT_RADIUS_V);
+        m_trackQuickEditInnerRadius = createSlider(IDC_TRACK_QUICK_EDIT_INNER_RADIUS);
+        m_trackQuickEditAngleCenter = createSlider(IDC_TRACK_QUICK_EDIT_ANGLE_CENTER);
+        m_trackQuickEditAngleHalfExtent = createSlider(IDC_TRACK_QUICK_EDIT_ANGLE_HALF_EXTENT);
+        m_trackQuickEditRootOffsetX = createSlider(IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_X);
+        m_trackQuickEditRootOffsetY = createSlider(IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_Y);
+        m_trackQuickEditRootOffsetZ = createSlider(IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_Z);
+        m_trackQuickEditTipOffsetX = createSlider(IDC_TRACK_QUICK_EDIT_TIP_OFFSET_X);
+        m_trackQuickEditTipOffsetY = createSlider(IDC_TRACK_QUICK_EDIT_TIP_OFFSET_Y);
+        m_trackQuickEditTipOffsetZ = createSlider(IDC_TRACK_QUICK_EDIT_TIP_OFFSET_Z);
+        m_trackQuickEditSideOffset = createSlider(IDC_TRACK_QUICK_EDIT_SIDE_OFFSET);
+        m_trackQuickEditYaw = createSlider(IDC_TRACK_QUICK_EDIT_YAW);
+        m_trackQuickEditWidthScale = createSlider(IDC_TRACK_QUICK_EDIT_WIDTHSCALE);
+        m_trackQuickEditFollowerInfluence = createSlider(IDC_TRACK_QUICK_EDIT_FOLLOWER_INFLUENCE);
+        m_trackQuickEditBoundarySmoothing = createSlider(IDC_TRACK_QUICK_EDIT_BOUNDARY_SMOOTHING);
+        m_trackQuickEditBoundaryRadiusUv = createSlider(IDC_TRACK_QUICK_EDIT_BOUNDARY_RADIUS_UV);
         m_labelWidth = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WIDTH);
         m_trackWidth = createSlider(IDC_TRACK_WIDTH);
         m_labelGravity = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_GRAVITY);
@@ -3249,11 +3615,37 @@ namespace hairgpu::viewer
         m_trackStretchCompliance = createSlider(IDC_TRACK_STRETCH);
         m_labelBendCompliance = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_BEND);
         m_trackBendCompliance = createSlider(IDC_TRACK_BEND);
+        m_labelActiveSetTuning = createControl(0, L"STATIC", L"Active-Set Runtime Tuning", SS_LEFT, IDC_LABEL_ACTIVESET_TUNING);
+        m_checkActiveSetAdaptiveBudget = createControl(0, L"BUTTON", L"Adaptive Budget", BS_AUTOCHECKBOX, IDC_CHECK_ACTIVESET_ADAPTIVE_BUDGET);
+        m_checkActiveSetHardClamp = createControl(0, L"BUTTON", L"Hard Budget Clamp", BS_AUTOCHECKBOX, IDC_CHECK_ACTIVESET_HARD_CLAMP);
+        m_labelActiveSetMaxClusters = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_MAX_CLUSTERS);
+        m_trackActiveSetMaxClusters = createSlider(IDC_TRACK_ACTIVESET_MAX_CLUSTERS);
+        m_labelActiveSetMaxGuides = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_MAX_GUIDES);
+        m_trackActiveSetMaxGuides = createSlider(IDC_TRACK_ACTIVESET_MAX_GUIDES);
+        m_labelActiveSetThreshold = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_THRESHOLD);
+        m_trackActiveSetThreshold = createSlider(IDC_TRACK_ACTIVESET_THRESHOLD);
+        m_labelActiveSetTargetFrame = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_TARGET_FRAME);
+        m_trackActiveSetTargetFrame = createSlider(IDC_TRACK_ACTIVESET_TARGET_FRAME);
+        m_labelActiveSetFixedCost = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_FIXED_COST);
+        m_trackActiveSetFixedCost = createSlider(IDC_TRACK_ACTIVESET_FIXED_COST);
+        m_labelActiveSetClusterCost = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_CLUSTER_COST);
+        m_trackActiveSetClusterCost = createSlider(IDC_TRACK_ACTIVESET_CLUSTER_COST);
+        m_labelActiveSetScoreWeights = createControl(0, L"STATIC", L"Active-Set Score Weights", SS_LEFT, IDC_LABEL_ACTIVESET_SCORE_WEIGHTS);
+        m_labelActiveSetMotionWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_MOTION_WEIGHT);
+        m_trackActiveSetMotionWeight = createSlider(IDC_TRACK_ACTIVESET_MOTION_WEIGHT);
+        m_labelActiveSetContactWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_CONTACT_WEIGHT);
+        m_trackActiveSetContactWeight = createSlider(IDC_TRACK_ACTIVESET_CONTACT_WEIGHT);
+        m_labelActiveSetUncertaintyWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_UNCERTAINTY_WEIGHT);
+        m_trackActiveSetUncertaintyWeight = createSlider(IDC_TRACK_ACTIVESET_UNCERTAINTY_WEIGHT);
+        m_labelActiveSetEditWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_EDIT_WEIGHT);
+        m_trackActiveSetEditWeight = createSlider(IDC_TRACK_ACTIVESET_EDIT_WEIGHT);
+        m_btnExportActiveSetJson = createControl(0, L"BUTTON", L"Export Active-Set JSON", BS_PUSHBUTTON, IDC_BTN_EXPORT_ACTIVESET_JSON);
+        m_btnExportRuntimeReport = createControl(0, L"BUTTON", L"Export Runtime Report", BS_PUSHBUTTON, IDC_BTN_EXPORT_RUNTIME_REPORT);
 
         m_labelStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STATS);
         m_labelAssetStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ASSET_STATS);
 
-        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_trackWidth && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
+        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
     }
 
     void GpuHairViewer::LayoutUiControls()
@@ -3290,7 +3682,7 @@ namespace hairgpu::viewer
         for (HWND child = GetWindow(m_hwnd, GW_CHILD); child != nullptr; child = GetWindow(child, GW_HWNDNEXT))
         {
             if (child == m_uiPanel || child == m_btnPlayPause || child == m_btnReset || child == m_btnStep || child == m_btnApplyAsset ||
-                child == m_btnImportAsset || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_btnBrowsePartingMask || child == m_btnBrowseRegionMask || child == m_comboPreset || child == m_comboMaskSource || child == m_comboMaskOverlay || child == m_labelMaskSource || child == m_labelMaskOverlay || child == m_labelPartingMask || child == m_labelRegionMask || child == m_previewPartingMask || child == m_previewRegionMask ||
+                child == m_btnImportAsset || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_btnBrowseEditStack || child == m_btnClearEditStack || child == m_labelEditStack || child == m_labelInlineEditStack || child == m_editInlineEditStack || child == m_btnApplyInlineEditStack || child == m_btnSaveInlineEditStack || child == m_btnResetInlineEditStack || child == m_labelQuickEditForm || child == m_labelLayerList || child == m_listInlineLayers || child == m_labelQuickEditName || child == m_editQuickEditName || child == m_btnQuickEditMoveUp || child == m_btnQuickEditMoveDown || child == m_checkQuickEditEnabled || child == m_btnQuickEditDelete || child == m_btnQuickEditDuplicate || child == m_comboQuickEditMode || child == m_labelQuickEditFeather || child == m_trackQuickEditFeather || child == m_labelQuickEditLengthScale || child == m_trackQuickEditLengthScale || child == m_labelQuickEditLayerWeight || child == m_trackQuickEditLayerWeight || child == m_labelQuickEditCenterU || child == m_trackQuickEditCenterU || child == m_labelQuickEditCenterV || child == m_trackQuickEditCenterV || child == m_labelQuickEditRadiusU || child == m_trackQuickEditRadiusU || child == m_labelQuickEditRadiusV || child == m_trackQuickEditRadiusV || child == m_labelQuickEditInnerRadius || child == m_trackQuickEditInnerRadius || child == m_labelQuickEditAngleCenter || child == m_trackQuickEditAngleCenter || child == m_labelQuickEditAngleHalfExtent || child == m_trackQuickEditAngleHalfExtent || child == m_labelQuickEditRootOffsetX || child == m_trackQuickEditRootOffsetX || child == m_labelQuickEditRootOffsetY || child == m_trackQuickEditRootOffsetY || child == m_labelQuickEditRootOffsetZ || child == m_trackQuickEditRootOffsetZ || child == m_labelQuickEditTipOffsetX || child == m_trackQuickEditTipOffsetX || child == m_labelQuickEditTipOffsetY || child == m_trackQuickEditTipOffsetY || child == m_labelQuickEditTipOffsetZ || child == m_trackQuickEditTipOffsetZ || child == m_labelQuickEditSideOffset || child == m_trackQuickEditSideOffset || child == m_labelQuickEditYaw || child == m_trackQuickEditYaw || child == m_labelQuickEditWidthScale || child == m_trackQuickEditWidthScale || child == m_labelQuickEditFollowerInfluence || child == m_trackQuickEditFollowerInfluence || child == m_labelQuickEditBoundarySmoothing || child == m_trackQuickEditBoundarySmoothing || child == m_labelQuickEditBoundaryRadiusUv || child == m_trackQuickEditBoundaryRadiusUv || child == m_labelQuickEditGroupId || child == m_editQuickEditGroupId || child == m_checkQuickEditGuidesOnly || child == m_labelQuickEditVisualization || child == m_btnQuickEditReplace || child == m_btnQuickEditAppend || child == m_btnBrowsePartingMask || child == m_btnBrowseRegionMask || child == m_comboPreset || child == m_comboMaskSource || child == m_comboMaskOverlay || child == m_labelMaskSource || child == m_labelMaskOverlay || child == m_labelPartingMask || child == m_labelRegionMask || child == m_previewPartingMask || child == m_previewRegionMask ||
                 child == m_comboRenderMode || child == m_comboDebugColor || child == m_checkSelfCollision || child == m_checkGrid || child == m_checkScalpMotion ||
                 child == m_checkShowColliders || child == m_checkShowScalpMesh || child == m_checkShowScalp || child == m_checkShowGridBounds || child == m_checkShowFloor ||
                 child == m_checkShowGuides || child == m_checkShowFollowers || child == m_checkShowRoots || child == m_checkShowLinks ||
@@ -3299,7 +3691,8 @@ namespace hairgpu::viewer
                 child == m_trackSelfStiffness || child == m_trackGridCellSize || child == m_trackStretchCompliance || child == m_trackBendCompliance ||
                 child == m_labelStats || child == m_labelAssetStats || child == m_labelWidth || child == m_labelGravity || child == m_labelDamping ||
                 child == m_labelWind || child == m_labelIterations || child == m_labelFollow || child == m_labelSelfRadius || child == m_labelSelfStiffness ||
-                child == m_labelGridCellSize || child == m_labelStretchCompliance || child == m_labelBendCompliance)
+                child == m_labelGridCellSize || child == m_labelStretchCompliance || child == m_labelBendCompliance ||
+                child == m_labelActiveSetTuning || child == m_checkActiveSetAdaptiveBudget || child == m_checkActiveSetHardClamp || child == m_labelActiveSetMaxClusters || child == m_trackActiveSetMaxClusters || child == m_labelActiveSetMaxGuides || child == m_trackActiveSetMaxGuides || child == m_labelActiveSetThreshold || child == m_trackActiveSetThreshold || child == m_labelActiveSetTargetFrame || child == m_trackActiveSetTargetFrame || child == m_labelActiveSetFixedCost || child == m_trackActiveSetFixedCost || child == m_labelActiveSetClusterCost || child == m_trackActiveSetClusterCost || child == m_labelActiveSetScoreWeights || child == m_labelActiveSetMotionWeight || child == m_trackActiveSetMotionWeight || child == m_labelActiveSetContactWeight || child == m_trackActiveSetContactWeight || child == m_labelActiveSetUncertaintyWeight || child == m_trackActiveSetUncertaintyWeight || child == m_labelActiveSetEditWeight || child == m_trackActiveSetEditWeight || child == m_btnExportActiveSetJson || child == m_btnExportRuntimeReport)
             {
                 continue;
             }
@@ -3340,6 +3733,79 @@ namespace hairgpu::viewer
         const int importButtonHalf = (importButtonsWidth - 8) / 2;
         place(m_btnApplyAsset, importButtonsX, y - controlHeight - gap - 2, importButtonHalf, controlHeight);
         place(m_btnImportAsset, importButtonsX + importButtonHalf + 8, y - controlHeight - gap - 2, importButtonsWidth - importButtonHalf - 8, controlHeight);
+        place(m_btnBrowseEditStack, x, next(controlHeight + gap), halfButtonWidth, controlHeight);
+        place(m_btnClearEditStack, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        place(m_labelEditStack, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_labelInlineEditStack, x, next(labelHeight + 2), fullWidth, labelHeight);
+        place(m_editInlineEditStack, x, next(50), fullWidth, 44);
+        const int inlineButtonRowY = next(controlHeight + gap);
+        place(m_btnApplyInlineEditStack, x, inlineButtonRowY, threeButtonWidth, controlHeight);
+        place(m_btnSaveInlineEditStack, x + threeButtonWidth + 8, inlineButtonRowY, threeButtonWidth, controlHeight);
+        place(m_btnResetInlineEditStack, x + (threeButtonWidth + 8) * 2, inlineButtonRowY, threeButtonWidth, controlHeight);
+        place(m_labelQuickEditForm, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_labelLayerList, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_listInlineLayers, x, next(74), fullWidth, 68);
+        const int layerMoveRowY = next(controlHeight + gap);
+        place(m_btnQuickEditMoveUp, x, layerMoveRowY, halfButtonWidth, controlHeight);
+        place(m_btnQuickEditMoveDown, x + halfButtonWidth + 8, layerMoveRowY, halfButtonWidth, controlHeight);
+        place(m_checkQuickEditEnabled, x, next(controlHeight), fullWidth, controlHeight);
+        place(m_labelQuickEditName, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_editQuickEditName, x, next(controlHeight), fullWidth, controlHeight);
+        const int layerActionRowY = next(controlHeight + gap);
+        place(m_btnQuickEditDuplicate, x, layerActionRowY, halfButtonWidth, controlHeight);
+        place(m_btnQuickEditDelete, x + halfButtonWidth + 8, layerActionRowY, halfButtonWidth, controlHeight);
+        place(m_comboQuickEditMode, x, next(controlHeight), fullWidth, 120);
+        place(m_labelQuickEditFeather, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditFeather, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditLengthScale, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditLengthScale, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditLayerWeight, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditLayerWeight, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditCenterU, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditCenterU, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditCenterV, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditCenterV, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditRadiusU, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditRadiusU, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditRadiusV, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditRadiusV, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditInnerRadius, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditInnerRadius, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditAngleCenter, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditAngleCenter, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditAngleHalfExtent, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditAngleHalfExtent, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditRootOffsetX, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditRootOffsetX, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditRootOffsetY, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditRootOffsetY, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditRootOffsetZ, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditRootOffsetZ, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditTipOffsetX, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditTipOffsetX, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditTipOffsetY, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditTipOffsetY, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditTipOffsetZ, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditTipOffsetZ, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditSideOffset, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditSideOffset, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditYaw, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditYaw, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditWidthScale, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditWidthScale, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditFollowerInfluence, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditFollowerInfluence, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditBoundarySmoothing, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditBoundarySmoothing, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditBoundaryRadiusUv, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_trackQuickEditBoundaryRadiusUv, x, next(sliderHeight), fullWidth, sliderHeight);
+        place(m_labelQuickEditGroupId, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_editQuickEditGroupId, x, next(controlHeight), fullWidth, controlHeight);
+        place(m_checkQuickEditGuidesOnly, x, next(controlHeight), fullWidth, controlHeight);
+        place(m_labelQuickEditVisualization, x, next(labelHeight + 4), fullWidth, labelHeight + 4);
+        const int quickButtonRowY = next(controlHeight + gap);
+        place(m_btnQuickEditReplace, x, quickButtonRowY, halfButtonWidth, controlHeight);
+        place(m_btnQuickEditAppend, x + halfButtonWidth + 8, quickButtonRowY, halfButtonWidth, controlHeight);
         place(m_btnBrowsePartingMask, x, next(controlHeight + gap), halfButtonWidth, controlHeight);
         place(m_btnBrowseRegionMask, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
         place(m_labelMaskSource, x, next(labelHeight), fullWidth, labelHeight);
@@ -3349,9 +3815,9 @@ namespace hairgpu::viewer
         const int previewLabelY = next(labelHeight + 2);
         place(m_labelPartingMask, x, previewLabelY, halfButtonWidth, labelHeight);
         place(m_labelRegionMask, x + halfButtonWidth + 8, previewLabelY, halfButtonWidth, labelHeight);
-        const int previewY = next(78);
-        place(m_previewPartingMask, x, previewY, halfButtonWidth, 72);
-        place(m_previewRegionMask, x + halfButtonWidth + 8, previewY, halfButtonWidth, 72);
+        const int previewY = next(58);
+        place(m_previewPartingMask, x, previewY, halfButtonWidth, 52);
+        place(m_previewRegionMask, x + halfButtonWidth + 8, previewY, halfButtonWidth, 52);
 
         placeAnonymousStatic(x, next(labelHeight), fullWidth, labelHeight);                // Render
         place(m_comboRenderMode, x, next(controlHeight), fullWidth, 220);
@@ -3389,18 +3855,39 @@ namespace hairgpu::viewer
         placeLabelSlider(m_labelStretchCompliance, m_trackStretchCompliance);
         placeLabelSlider(m_labelBendCompliance, m_trackBendCompliance);
 
+        place(m_labelActiveSetTuning, x, next(labelHeight), fullWidth, labelHeight);
+        place(m_checkActiveSetAdaptiveBudget, x, next(controlHeight), halfButtonWidth, controlHeight);
+        place(m_checkActiveSetHardClamp, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
+        placeLabelSlider(m_labelActiveSetMaxClusters, m_trackActiveSetMaxClusters);
+        placeLabelSlider(m_labelActiveSetMaxGuides, m_trackActiveSetMaxGuides);
+        placeLabelSlider(m_labelActiveSetThreshold, m_trackActiveSetThreshold);
+        placeLabelSlider(m_labelActiveSetTargetFrame, m_trackActiveSetTargetFrame);
+        placeLabelSlider(m_labelActiveSetFixedCost, m_trackActiveSetFixedCost);
+        placeLabelSlider(m_labelActiveSetClusterCost, m_trackActiveSetClusterCost);
+        place(m_labelActiveSetScoreWeights, x, next(labelHeight), fullWidth, labelHeight);
+        placeLabelSlider(m_labelActiveSetMotionWeight, m_trackActiveSetMotionWeight);
+        placeLabelSlider(m_labelActiveSetContactWeight, m_trackActiveSetContactWeight);
+        placeLabelSlider(m_labelActiveSetUncertaintyWeight, m_trackActiveSetUncertaintyWeight);
+        placeLabelSlider(m_labelActiveSetEditWeight, m_trackActiveSetEditWeight);
+
         const int saveRowY = next(controlHeight + gap);
         place(m_btnSaveSettings, x, saveRowY, halfButtonWidth, controlHeight);
         place(m_btnLoadSettings, x + halfButtonWidth + 8, saveRowY, halfButtonWidth, controlHeight);
         place(m_btnExportCsv, x, next(controlHeight + gap), halfButtonWidth, controlHeight);
         place(m_btnExportPerfCsv, x + halfButtonWidth + 8, y - controlHeight - gap, halfButtonWidth, controlHeight);
+        const int reportRowY = next(controlHeight + gap);
+        place(m_btnExportActiveSetJson, x, reportRowY, halfButtonWidth, controlHeight);
+        place(m_btnExportRuntimeReport, x + halfButtonWidth + 8, reportRowY, halfButtonWidth, controlHeight);
 
-        place(m_labelAssetStats, x, next(72), fullWidth, 68);
-        place(m_labelStats, x, next(132), fullWidth, 124);
+        place(m_labelAssetStats, x, next(76), fullWidth, 72);
+        place(m_labelStats, x, next(150), fullWidth, 142);
     }
 
     void GpuHairViewer::RefreshAssetStatsText()
     {
+        const std::filesystem::path inlineTempPath = GetInlineEditStackTempPath();
+        const std::wstring editStackDisplayName = m_editStackPath.empty() ? std::wstring(L"none") : ((std::filesystem::path(m_editStackPath) == inlineTempPath) ? std::wstring(L"[inline]") : std::filesystem::path(m_editStackPath).filename().wstring());
+
         std::wstringstream ss;
         ss << L"Asset\n"
            << L"Source: " << m_lastAssetSource << L"\n"
@@ -3413,7 +3900,14 @@ namespace hairgpu::viewer
            << L"Total particles: " << m_asset.restPoints.size() << L"\n"
            << L"Segments: " << m_renderData.segmentCount << L"\n"
            << L"Import: " << m_lastImportStatus << L"\n"
+           << L"Edit stack: " << (m_editStackPath.empty() ? L"none" : std::filesystem::path(m_editStackPath).filename().wstring()) << L"\n"
+           << L"Edit status: " << m_lastEditStackStatus << L"\n"
+           << L"Active edit guides: " << m_runtimeEditState.activeGuideCount << L" / " << m_asset.guideStrandCount << L"\n"
            << L"Runtime: particle-only GPU path\nEdit boxes auto-rebuild";
+        if (m_labelEditStack)
+        {
+            SetWindowTextFormat(m_labelEditStack, L"Edit Stack: " + editStackDisplayName + L"  [" + m_lastEditStackStatus + L"]");
+        }
         SetWindowTextFormat(m_labelAssetStats, ss.str());
     }
 
@@ -3463,6 +3957,27 @@ namespace hairgpu::viewer
         const float bendT = (std::log10(std::max(m_simConfig.bendCompliance, 1.0e-8f)) + 8.0f) / 5.0f;
         SendMessageW(m_trackStretchCompliance, TBM_SETPOS, TRUE, SliderFromFloat(stretchT, 0.0f, 1.0f));
         SendMessageW(m_trackBendCompliance, TBM_SETPOS, TRUE, SliderFromFloat(bendT, 0.0f, 1.0f));
+        SendMessageW(m_checkActiveSetAdaptiveBudget, BM_SETCHECK, m_activeSetBudget.enableBudgetAdaptation ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_checkActiveSetHardClamp, BM_SETCHECK, m_activeSetBudget.enableHardBudgetClamp ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(m_trackActiveSetMaxClusters, TBM_SETPOS, TRUE, SliderFromFloat(static_cast<float>(m_activeSetBudget.maxActiveClusters), 1.0f, 64.0f));
+        SendMessageW(m_trackActiveSetMaxGuides, TBM_SETPOS, TRUE, SliderFromFloat(static_cast<float>(m_activeSetBudget.maxActiveGuides), 8.0f, 2048.0f));
+        SendMessageW(m_trackActiveSetThreshold, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetBudget.promoteScoreThreshold, 0.0f, 1.0f));
+        SendMessageW(m_trackActiveSetTargetFrame, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetBudget.targetFrameMilliseconds, 4.0f, 16.67f));
+        SendMessageW(m_trackActiveSetFixedCost, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetBudget.estimatedFixedCostMilliseconds, 0.0f, 16.0f));
+        SendMessageW(m_trackActiveSetClusterCost, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetBudget.estimatedClusterCostMilliseconds, 0.05f, 4.0f));
+        SendMessageW(m_trackActiveSetMotionWeight, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetScoringSettings.motionWeight, 0.0f, 1.0f));
+        SendMessageW(m_trackActiveSetContactWeight, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetScoringSettings.contactWeight, 0.0f, 1.0f));
+        SendMessageW(m_trackActiveSetUncertaintyWeight, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetScoringSettings.uncertaintyWeight, 0.0f, 1.0f));
+        SendMessageW(m_trackActiveSetEditWeight, TBM_SETPOS, TRUE, SliderFromFloat(m_activeSetScoringSettings.editWeight, 0.0f, 1.0f));
+        SendMessageW(m_comboQuickEditMode, CB_SETCURSEL,
+            (m_quickEditMode == hairgpu::RegionSelectMode::Rectangle) ? 1 :
+            (m_quickEditMode == hairgpu::RegionSelectMode::Sector) ? 2 : 0, 0);
+        SendMessageW(m_checkQuickEditEnabled, BM_SETCHECK, m_quickEditEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+        SetWindowTextFormat(m_editQuickEditName, m_quickEditLayerName);
+        SendMessageW(m_trackQuickEditFeather, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditFeather, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditLengthScale, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditLengthScale, 0.6f, 1.4f));
+        SendMessageW(m_trackQuickEditBoundarySmoothing, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditBoundarySmoothing, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditBoundaryRadiusUv, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f));
 
         SetWindowTextFormat(m_labelWidth, L"Width Scale: " + FormatFloat(m_widthScale, 2));
         SetWindowTextFormat(m_labelGravity, L"Gravity: " + FormatFloat(m_simConfig.gravity, 2));
@@ -3475,6 +3990,9 @@ namespace hairgpu::viewer
         SetWindowTextFormat(m_labelGridCellSize, L"Grid Cell Size: " + FormatFloat(m_simConfig.selfCollisionCellSize, 3));
         SetWindowTextFormat(m_labelStretchCompliance, L"Stretch Compliance: " + FormatScientific(m_simConfig.stretchCompliance));
         SetWindowTextFormat(m_labelBendCompliance, L"Bend Compliance: " + FormatScientific(m_simConfig.bendCompliance));
+        RefreshActiveSetTuningLabels();
+        RefreshInlineLayerListFromText(m_selectedInlineLayerIndex);
+        RefreshQuickEditFormLabels();
         SetWindowTextFormat(m_btnPlayPause, m_paused ? L"Play" : L"Pause");
         RefreshAssetStatsText();
 
@@ -3520,6 +4038,60 @@ namespace hairgpu::viewer
         const float bendT = FloatFromSlider(static_cast<int>(SendMessageW(m_trackBendCompliance, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
         m_simConfig.stretchCompliance = std::pow(10.0f, -9.0f + stretchT * 5.0f);
         m_simConfig.bendCompliance = std::pow(10.0f, -8.0f + bendT * 5.0f);
+        {
+            const LRESULT quickModeSel = SendMessageW(m_comboQuickEditMode, CB_GETCURSEL, 0, 0);
+            m_quickEditMode = (quickModeSel == 1) ? hairgpu::RegionSelectMode::Rectangle : ((quickModeSel == 2) ? hairgpu::RegionSelectMode::Sector : hairgpu::RegionSelectMode::Ellipse);
+        }
+        m_quickEditEnabled = (SendMessageW(m_checkQuickEditEnabled, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_quickEditLayerName = GetWindowTextString(m_editQuickEditName);
+        m_quickEditFeather = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditFeather, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_quickEditLengthScale = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditLengthScale, TBM_GETPOS, 0, 0)), 0.6f, 1.4f);
+        m_quickEditLayerWeight = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditLayerWeight, TBM_GETPOS, 0, 0)), 0.0f, 1.5f);
+        m_quickEditCenterU = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditCenterU, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_quickEditCenterV = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditCenterV, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_quickEditRadiusU = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditRadiusU, TBM_GETPOS, 0, 0)), 0.01f, 0.60f);
+        m_quickEditRadiusV = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditRadiusV, TBM_GETPOS, 0, 0)), 0.01f, 0.60f);
+        m_quickEditInnerRadius = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditInnerRadius, TBM_GETPOS, 0, 0)), 0.0f, 0.95f);
+        m_quickEditAngleCenterRadians = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditAngleCenter, TBM_GETPOS, 0, 0)), -3.1415926f, 3.1415926f);
+        m_quickEditAngleHalfExtentRadians = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditAngleHalfExtent, TBM_GETPOS, 0, 0)), 0.05f, 3.1415926f);
+        m_quickEditRootOffsetX = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditRootOffsetX, TBM_GETPOS, 0, 0)), -0.12f, 0.12f);
+        m_quickEditRootOffsetY = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditRootOffsetY, TBM_GETPOS, 0, 0)), -0.12f, 0.12f);
+        m_quickEditRootOffsetZ = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditRootOffsetZ, TBM_GETPOS, 0, 0)), -0.12f, 0.12f);
+        m_quickEditTipOffsetX = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditTipOffsetX, TBM_GETPOS, 0, 0)), -0.20f, 0.20f);
+        m_quickEditTipOffsetY = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditTipOffsetY, TBM_GETPOS, 0, 0)), -0.20f, 0.20f);
+        m_quickEditTipOffsetZ = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditTipOffsetZ, TBM_GETPOS, 0, 0)), -0.20f, 0.20f);
+        m_quickEditSideOffset = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditSideOffset, TBM_GETPOS, 0, 0)), -0.20f, 0.20f);
+        m_quickEditYawRadians = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditYaw, TBM_GETPOS, 0, 0)), -1.5707963f, 1.5707963f);
+        m_quickEditWidthScale = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditWidthScale, TBM_GETPOS, 0, 0)), 0.50f, 1.80f);
+        m_quickEditFollowerInfluence = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditFollowerInfluence, TBM_GETPOS, 0, 0)), 0.0f, 1.5f);
+        m_quickEditBoundarySmoothing = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditBoundarySmoothing, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_quickEditBoundaryRadiusUv = FloatFromSlider(static_cast<int>(SendMessageW(m_trackQuickEditBoundaryRadiusUv, TBM_GETPOS, 0, 0)), 0.01f, 0.30f);
+        m_quickEditGroupId = ParseOptionalGroupIdText(GetWindowTextString(m_editQuickEditGroupId));
+        m_quickEditGuidesOnly = (SendMessageW(m_checkQuickEditGuidesOnly, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_quickEditInnerRadius = hairgpu::Clamp(m_quickEditInnerRadius, 0.0f, 0.95f);
+        const float quickEditMinRadius = std::min(m_quickEditRadiusU, m_quickEditRadiusV);
+        if (quickEditMinRadius > 1.0e-4f)
+        {
+            m_quickEditInnerRadius = std::min(m_quickEditInnerRadius, quickEditMinRadius * 0.95f);
+        }
+        m_quickEditBoundarySmoothing = hairgpu::Clamp(m_quickEditBoundarySmoothing, 0.0f, 1.0f);
+        m_quickEditBoundaryRadiusUv = hairgpu::Clamp(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f);
+
+        m_activeSetBudget.enableBudgetAdaptation = (SendMessageW(m_checkActiveSetAdaptiveBudget, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_activeSetBudget.enableHardBudgetClamp = (SendMessageW(m_checkActiveSetHardClamp, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        m_activeSetBudget.maxActiveClusters = static_cast<uint32_t>(std::round(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetMaxClusters, TBM_GETPOS, 0, 0)), 1.0f, 64.0f)));
+        m_activeSetBudget.maxActiveGuides = static_cast<uint32_t>(std::round(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetMaxGuides, TBM_GETPOS, 0, 0)), 8.0f, 2048.0f)));
+        m_activeSetBudget.promoteScoreThreshold = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetThreshold, TBM_GETPOS, 0, 0)), 0.0f, 1.0f), 0.0f, 1.0f);
+        m_activeSetBudget.targetFrameMilliseconds = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetTargetFrame, TBM_GETPOS, 0, 0)), 4.0f, 16.67f), 4.0f, 16.67f);
+        m_activeSetBudget.estimatedFixedCostMilliseconds = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetFixedCost, TBM_GETPOS, 0, 0)), 0.0f, 16.0f), 0.0f, 16.0f);
+        m_activeSetBudget.estimatedClusterCostMilliseconds = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetClusterCost, TBM_GETPOS, 0, 0)), 0.05f, 4.0f), 0.05f, 4.0f);
+        m_activeSetBudget.minActiveClusters = std::min<uint32_t>(m_activeSetBudget.minActiveClusters, m_activeSetBudget.maxActiveClusters);
+        m_activeSetBudget.maxActiveGuides = std::max<uint32_t>(m_activeSetBudget.maxActiveGuides, m_activeSetBudget.maxActiveClusters);
+        m_activeSetBudget.frameBudgetMilliseconds = 16.67f;
+        m_activeSetScoringSettings.motionWeight = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetMotionWeight, TBM_GETPOS, 0, 0)), 0.0f, 1.0f), 0.0f, 1.0f);
+        m_activeSetScoringSettings.contactWeight = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetContactWeight, TBM_GETPOS, 0, 0)), 0.0f, 1.0f), 0.0f, 1.0f);
+        m_activeSetScoringSettings.uncertaintyWeight = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetUncertaintyWeight, TBM_GETPOS, 0, 0)), 0.0f, 1.0f), 0.0f, 1.0f);
+        m_activeSetScoringSettings.editWeight = hairgpu::Clamp(FloatFromSlider(static_cast<int>(SendMessageW(m_trackActiveSetEditWeight, TBM_GETPOS, 0, 0)), 0.0f, 1.0f), 0.0f, 1.0f);
 
         BOOL ok = FALSE;
         UINT value = GetDlgItemInt(m_hwnd, IDC_EDIT_GUIDES, &ok, FALSE);
@@ -3531,6 +4103,18 @@ namespace hairgpu::viewer
 
         m_gpuDebugLinesDirty = true;
         SyncControlsFromState();
+        if (IsActiveSetRiskOverlayMode())
+        {
+            std::vector<GpuParticle> particles;
+            if (ReadBackCurrentParticlePositions(particles))
+            {
+                UpdateActiveSetRuntimeFromParticles(particles);
+            }
+        }
+        else if (IsEditInfluenceOverlayMode())
+        {
+            UpdateScalpOverlayVertexBuffer();
+        }
     }
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
@@ -3664,6 +4248,17 @@ namespace hairgpu::viewer
         }
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Procedural sample asset rebuilt";
+        m_baseAsset = m_asset;
+        hairgpu::HairAsset editedAsset = m_baseAsset;
+        if (m_editStackPath.empty())
+        {
+            m_runtimeEditState = {};
+        }
+        else
+        {
+            ApplyEditStackToAsset(editedAsset, nullptr);
+        }
+        m_asset = std::move(editedAsset);
         if (!CreateSimulationResources())
         {
             MessageBoxW(m_hwnd, L"Failed to rebuild simulation resources after changing the asset.", L"Rebuild Failed", MB_OK | MB_ICONERROR);
@@ -3724,25 +4319,36 @@ namespace hairgpu::viewer
            << L"  Prims=" << m_lastDebugPipelineStats.IAPrimitives
            << L"  PS=" << m_lastDebugPipelineStats.PSInvocations << L"\n"
            << L"Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : L"Natural"))
-           << L"\nActive Set: " << (m_enableActiveSetRuntime ? L"On" : L"Off")
+           << L"  Scalp: " << GetMaskOverlayModeDisplayName() << L"\n";
+        ss << L"Active Set: " << (m_enableActiveSetRuntime ? L"On" : L"Off")
            << L"  Plan: " << m_activeSetPlan.summary.selectedClusterCount << L"/" << m_activeSetPlan.summary.clusterCount << L" clusters"
            << L"  Guides: " << m_activeSetPlan.summary.selectedGuideCount
-           << L"  Eval: " << std::setprecision(2) << m_activeSetEvaluationMilliseconds << L" ms\n"
-           << L"Active Score: hi=" << m_activeSetPlan.summary.highestScore
+           << L"  Eval: " << std::setprecision(2) << m_activeSetEvaluationMilliseconds << L" ms\n";
+        ss << L"Active Score: hi=" << m_activeSetPlan.summary.highestScore
            << L"  avg=" << m_activeSetPlan.summary.averageSelectedScore
-           << L"  status=" << m_activeSetLastStatus << L"\n"
-           << L"Budget: scale=" << m_activeSetPlan.summary.budgetScale
+           << L"  status=" << m_activeSetLastStatus << L"\n";
+        ss << L"Budget: scale=" << m_activeSetPlan.summary.budgetScale
            << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations
            << L"  tiers F/R/Fz/C=" << m_activeSetPlan.summary.fullTierCount << L"/"
            << m_activeSetPlan.summary.reducedTierCount << L"/"
            << m_activeSetPlan.summary.frozenTierCount << L"/"
-           << m_activeSetPlan.summary.cachedTierCount << L"\n"
-           << L"Corrective: strands=" << m_sparseCorrectiveReport.correctedStrandCount
+           << m_activeSetPlan.summary.cachedTierCount << L"\n";
+        ss << L"Tune: maxC=" << m_activeSetBudget.maxActiveClusters
+           << L" maxG=" << m_activeSetBudget.maxActiveGuides
+           << L" thr=" << m_activeSetBudget.promoteScoreThreshold
+           << L" tgt=" << m_activeSetBudget.targetFrameMilliseconds << L" ms"
+           << (m_activeSetBudget.enableBudgetAdaptation ? L" adapt" : L" fixed")
+           << (m_activeSetBudget.enableHardBudgetClamp ? L" clamp" : L" no-clamp") << L"\n";
+        ss << L"Weights: motion=" << m_activeSetScoringSettings.motionWeight
+           << L" contact=" << m_activeSetScoringSettings.contactWeight
+           << L" uncert=" << m_activeSetScoringSettings.uncertaintyWeight
+           << L" edit=" << m_activeSetScoringSettings.editWeight << L"\n";
+        ss << L"Corrective: strands=" << m_sparseCorrectiveReport.correctedStrandCount
            << L"  points=" << m_sparseCorrectiveReport.correctedPointCount
            << L"  avgPen=" << m_sparseCorrectiveReport.averagePenetration
-           << L"  maxPen=" << m_sparseCorrectiveReport.maxPenetration << L"\n"
-           << L"GPU runtime: guide solve + follower interpolate\n"
-           << L"Self Collision: " << (m_enableSelfCollision ? L"Density Grid Repulsion" : L"Off")
+           << L"  maxPen=" << m_sparseCorrectiveReport.maxPenetration << L"\n";
+        ss << L"GPU runtime: guide solve + follower interpolate\n";
+        ss << L"Self Collision: " << (m_enableSelfCollision ? L"Density Grid Repulsion" : L"Off")
            << L"  Angular XPBD: " << (m_enableRuntimeAngularBend ? L"On" : L"Off")
            << L"  Samples: " << m_performanceSamples.size()
            << (m_paused ? L"\n[PAUSED]" : L"");
@@ -3793,8 +4399,23 @@ namespace hairgpu::viewer
         out << "debugColorMode=" << static_cast<uint32_t>(m_debugColorMode) << "\n";
         out << "maskSourceMode=" << static_cast<uint32_t>(m_maskSourceMode) << "\n";
         out << "maskOverlayMode=" << static_cast<uint32_t>(m_maskOverlayMode) << "\n";
+        out << "editStackPath=" << WideToUtf8(m_editStackPath) << "\n";
         out << "partingMaskPath=" << WideToUtf8(m_partingMaskPath) << "\n";
         out << "regionMaskPath=" << WideToUtf8(m_regionMaskPath) << "\n";
+        out << "inlineEditStackText=" << EscapeSettingsText(WideToUtf8(GetInlineEditStackText())) << "\n";
+        out << "selectedInlineLayerIndex=" << std::max(m_selectedInlineLayerIndex, 0) << "\n";
+        out << "activeSetAdaptiveBudget=" << (m_activeSetBudget.enableBudgetAdaptation ? 1 : 0) << "\n";
+        out << "activeSetHardClamp=" << (m_activeSetBudget.enableHardBudgetClamp ? 1 : 0) << "\n";
+        out << "activeSetMaxClusters=" << m_activeSetBudget.maxActiveClusters << "\n";
+        out << "activeSetMaxGuides=" << m_activeSetBudget.maxActiveGuides << "\n";
+        out << "activeSetPromoteThreshold=" << m_activeSetBudget.promoteScoreThreshold << "\n";
+        out << "activeSetTargetFrameMs=" << m_activeSetBudget.targetFrameMilliseconds << "\n";
+        out << "activeSetFixedCostMs=" << m_activeSetBudget.estimatedFixedCostMilliseconds << "\n";
+        out << "activeSetClusterCostMs=" << m_activeSetBudget.estimatedClusterCostMilliseconds << "\n";
+        out << "activeSetMotionWeight=" << m_activeSetScoringSettings.motionWeight << "\n";
+        out << "activeSetContactWeight=" << m_activeSetScoringSettings.contactWeight << "\n";
+        out << "activeSetUncertaintyWeight=" << m_activeSetScoringSettings.uncertaintyWeight << "\n";
+        out << "activeSetEditWeight=" << m_activeSetScoringSettings.editWeight << "\n";
         return true;
     }
 
@@ -3874,14 +4495,850 @@ namespace hairgpu::viewer
         { const int renderModeValue = static_cast<int>(getUInt("renderMode", static_cast<unsigned>(m_renderMode == RenderMode::ParticlePointSprite ? 0 : (m_renderMode == RenderMode::ParticleBillboard ? 1 : 2))));
           m_renderMode = (renderModeValue <= 0) ? RenderMode::ParticlePointSprite : ((renderModeValue == 1) ? RenderMode::ParticleBillboard : RenderMode::StrandRibbon); }
         m_debugColorMode = static_cast<DebugColorMode>(std::min<uint32_t>(getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)), 2u));
+        if (auto it = values.find("editStackPath"); it != values.end()) m_editStackPath = Utf8ToWide(it->second);
         if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath = Utf8ToWide(it->second);
         if (auto it = values.find("regionMaskPath"); it != values.end()) m_regionMaskPath = Utf8ToWide(it->second);
+        std::wstring inlineEditStackText = BuildDefaultInlineEditStackText();
+        if (auto it = values.find("inlineEditStackText"); it != values.end()) inlineEditStackText = Utf8ToWide(UnescapeSettingsText(it->second));
+        if (auto it = values.find("selectedInlineLayerIndex"); it != values.end()) m_selectedInlineLayerIndex = std::max(0, std::stoi(it->second));
         m_maskSourceMode = static_cast<MaskSourceMode>(std::min<uint32_t>(getUInt("maskSourceMode", static_cast<uint32_t>(m_maskSourceMode)), 2u));
-        m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 2u));
+        m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 9u));
+        m_activeSetBudget.enableBudgetAdaptation = getBool("activeSetAdaptiveBudget", m_activeSetBudget.enableBudgetAdaptation);
+        m_activeSetBudget.enableHardBudgetClamp = getBool("activeSetHardClamp", m_activeSetBudget.enableHardBudgetClamp);
+        m_activeSetBudget.maxActiveClusters = std::max<uint32_t>(1u, getUInt("activeSetMaxClusters", m_activeSetBudget.maxActiveClusters));
+        m_activeSetBudget.maxActiveGuides = std::max<uint32_t>(m_activeSetBudget.maxActiveClusters, getUInt("activeSetMaxGuides", m_activeSetBudget.maxActiveGuides));
+        m_activeSetBudget.promoteScoreThreshold = hairgpu::Clamp(getFloat("activeSetPromoteThreshold", m_activeSetBudget.promoteScoreThreshold), 0.0f, 1.0f);
+        m_activeSetBudget.targetFrameMilliseconds = hairgpu::Clamp(getFloat("activeSetTargetFrameMs", m_activeSetBudget.targetFrameMilliseconds), 4.0f, 16.67f);
+        m_activeSetBudget.estimatedFixedCostMilliseconds = hairgpu::Clamp(getFloat("activeSetFixedCostMs", m_activeSetBudget.estimatedFixedCostMilliseconds), 0.0f, 16.0f);
+        m_activeSetBudget.estimatedClusterCostMilliseconds = hairgpu::Clamp(getFloat("activeSetClusterCostMs", m_activeSetBudget.estimatedClusterCostMilliseconds), 0.05f, 4.0f);
+        m_activeSetBudget.frameBudgetMilliseconds = 16.67f;
+        m_activeSetScoringSettings.motionWeight = hairgpu::Clamp(getFloat("activeSetMotionWeight", m_activeSetScoringSettings.motionWeight), 0.0f, 1.0f);
+        m_activeSetScoringSettings.contactWeight = hairgpu::Clamp(getFloat("activeSetContactWeight", m_activeSetScoringSettings.contactWeight), 0.0f, 1.0f);
+        m_activeSetScoringSettings.uncertaintyWeight = hairgpu::Clamp(getFloat("activeSetUncertaintyWeight", m_activeSetScoringSettings.uncertaintyWeight), 0.0f, 1.0f);
+        m_activeSetScoringSettings.editWeight = hairgpu::Clamp(getFloat("activeSetEditWeight", m_activeSetScoringSettings.editWeight), 0.0f, 1.0f);
 
         SyncControlsFromState();
+        SetWindowTextW(m_editInlineEditStack, inlineEditStackText.c_str());
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+        if (!inlineEditStackText.empty())
+        {
+            const std::filesystem::path tempInlinePath = GetInlineEditStackTempPath();
+            WriteUtf8TextFile(tempInlinePath, WideToUtf8(inlineEditStackText));
+            if (m_editStackPath.empty() || !std::filesystem::exists(std::filesystem::path(m_editStackPath)))
+            {
+                m_editStackPath = tempInlinePath.wstring();
+            }
+        }
         RefreshMaskPreviewControls();
         return RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+    }
+
+    bool GpuHairViewer::BrowseAndSetEditStackPath()
+    {
+        wchar_t fileName[MAX_PATH] = L"";
+        OPENFILENAMEW ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = m_hwnd;
+        ofn.lpstrFilter = L"Edit Stack CSV (*.csv)\0*.csv\0All Files\0*.*\0";
+        ofn.lpstrFile = fileName;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+        if (!GetOpenFileNameW(&ofn))
+        {
+            return false;
+        }
+        m_editStackPath = fileName;
+        try
+        {
+            std::ifstream in(std::filesystem::path(fileName), std::ios::binary);
+            std::string inlineText((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!inlineText.empty())
+            {
+                SetWindowTextW(m_editInlineEditStack, Utf8ToWide(inlineText).c_str());
+                LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+            }
+        }
+        catch (...)
+        {
+        }
+        return ApplyEditStackToCurrentAsset(true);
+    }
+
+    bool GpuHairViewer::ClearEditStackAndRestoreAsset()
+    {
+        m_editStackPath.clear();
+        m_lastEditStackStatus = L"No edit stack";
+        m_runtimeEditState = {};
+        if (m_baseAsset.strands.empty())
+        {
+            RefreshAssetStatsText();
+            SyncControlsFromState();
+            return true;
+        }
+        m_asset = m_baseAsset;
+        if (!CreateSimulationResources())
+        {
+            m_lastEditStackStatus = L"Restore failed";
+            RefreshAssetStatsText();
+            return false;
+        }
+        RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        QueueVisibilityRecovery();
+        RefreshAssetStatsText();
+        ResetSimulation();
+        SyncControlsFromState();
+        UpdateScalpOverlayVertexBuffer();
+        return true;
+    }
+
+    bool GpuHairViewer::ApplyEditStackToAsset(hairgpu::HairAsset& asset, std::wstring* outStatusText)
+    {
+        auto setStatus = [&](const std::wstring& status)
+        {
+            m_lastEditStackStatus = status;
+            if (outStatusText)
+            {
+                *outStatusText = status;
+            }
+        };
+
+        m_runtimeEditState = {};
+        m_runtimeEditState.guideInfluence.assign(std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size())), 0.0f);
+        m_runtimeEditState.strandInfluence.assign(asset.strands.size(), 0.0f);
+
+        if (m_editStackPath.empty())
+        {
+            setStatus(L"No edit stack");
+            return true;
+        }
+
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsv(std::filesystem::path(m_editStackPath), stack, error))
+        {
+            setStatus(L"Load failed");
+            return false;
+        }
+
+        hairgpu::HairAsset edited = asset;
+        hairgpu::RuntimeEditState state = {};
+        if (!hairgpu::ApplyEditStackToAsset(edited, asset, stack, &state, error))
+        {
+            setStatus(L"Apply failed");
+            return false;
+        }
+
+        asset = std::move(edited);
+        m_runtimeEditState = std::move(state);
+        std::wstringstream ss;
+        ss << L"Applied " << stack.layers.size() << L" layers";
+        setStatus(ss.str());
+        return true;
+    }
+
+    bool GpuHairViewer::ApplyEditStackToCurrentAsset(bool showMessageOnFailure)
+    {
+        if (m_baseAsset.strands.empty())
+        {
+            m_baseAsset = m_asset;
+        }
+        hairgpu::HairAsset edited = m_baseAsset;
+        std::wstring status;
+        if (!ApplyEditStackToAsset(edited, &status))
+        {
+            RefreshAssetStatsText();
+            UpdateScalpOverlayVertexBuffer();
+            if (showMessageOnFailure)
+            {
+                const std::wstring message = L"Edit stack apply failed.\r\n\r\n" + status + L"\r\nPath: " + m_editStackPath;
+                MessageBoxW(m_hwnd, message.c_str(), L"Edit Stack", MB_OK | MB_ICONERROR);
+            }
+            return false;
+        }
+        m_asset = std::move(edited);
+        if (!CreateSimulationResources())
+        {
+            if (showMessageOnFailure)
+            {
+                MessageBoxW(m_hwnd, L"Edit stack was applied, but GPU resources failed to rebuild.", L"Edit Stack", MB_OK | MB_ICONERROR);
+            }
+            return false;
+        }
+        RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        QueueVisibilityRecovery();
+        RefreshAssetStatsText();
+        ResetSimulation();
+        SyncControlsFromState();
+        UpdateScalpOverlayVertexBuffer();
+        return true;
+    }
+
+    std::wstring GpuHairViewer::GetInlineEditStackText() const
+    {
+        return GetWindowTextString(m_editInlineEditStack);
+    }
+
+    std::filesystem::path GpuHairViewer::GetInlineEditStackTempPath() const
+    {
+        try
+        {
+            return std::filesystem::temp_directory_path() / "hairgpu_viewer_inline_edit_stack.csv";
+        }
+        catch (...)
+        {
+            return std::filesystem::path("hairgpu_viewer_inline_edit_stack.csv");
+        }
+    }
+
+    void GpuHairViewer::ResetInlineEditStackText()
+    {
+        SetWindowTextW(m_editInlineEditStack, BuildDefaultInlineEditStackText().c_str());
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+    }
+
+    bool GpuHairViewer::SaveInlineEditStackToPath(const std::wstring& filePath, bool applyAfterSave)
+    {
+        const std::wstring inlineText = GetInlineEditStackText();
+        if (!WriteUtf8TextFile(std::filesystem::path(filePath), WideToUtf8(inlineText)))
+        {
+            return false;
+        }
+
+        m_editStackPath = filePath;
+        if (applyAfterSave)
+        {
+            return ApplyEditStackToCurrentAsset(true);
+        }
+
+        SyncControlsFromState();
+        return true;
+    }
+
+    bool GpuHairViewer::ApplyInlineEditStackFromUi(bool showMessageOnFailure)
+    {
+        const std::wstring inlineText = GetInlineEditStackText();
+        const std::filesystem::path tempPath = GetInlineEditStackTempPath();
+        if (!WriteUtf8TextFile(tempPath, WideToUtf8(inlineText)))
+        {
+            if (showMessageOnFailure)
+            {
+                MessageBoxW(m_hwnd, L"Failed to stage the inline edit stack text.", L"Inline Edit Stack", MB_OK | MB_ICONERROR);
+            }
+            return false;
+        }
+
+        m_editStackPath = tempPath.wstring();
+        return ApplyEditStackToCurrentAsset(showMessageOnFailure);
+    }
+
+    void GpuHairViewer::RefreshActiveSetTuningLabels()
+    {
+        if (!m_labelActiveSetMaxClusters)
+        {
+            return;
+        }
+        SetWindowTextFormat(m_labelActiveSetMaxClusters, L"Max Active Clusters: " + std::to_wstring(m_activeSetBudget.maxActiveClusters));
+        SetWindowTextFormat(m_labelActiveSetMaxGuides, L"Max Active Guides: " + std::to_wstring(m_activeSetBudget.maxActiveGuides));
+        SetWindowTextFormat(m_labelActiveSetThreshold, L"Promote Threshold: " + FormatFloat(m_activeSetBudget.promoteScoreThreshold, 2));
+        SetWindowTextFormat(m_labelActiveSetTargetFrame, L"Target Frame: " + FormatFloat(m_activeSetBudget.targetFrameMilliseconds, 2) + L" ms");
+        SetWindowTextFormat(m_labelActiveSetFixedCost, L"Estimated Fixed Cost: " + FormatFloat(m_activeSetBudget.estimatedFixedCostMilliseconds, 2) + L" ms");
+        SetWindowTextFormat(m_labelActiveSetClusterCost, L"Estimated Cluster Cost: " + FormatFloat(m_activeSetBudget.estimatedClusterCostMilliseconds, 2) + L" ms");
+        SetWindowTextFormat(m_labelActiveSetMotionWeight, L"Motion Weight: " + FormatFloat(m_activeSetScoringSettings.motionWeight, 2));
+        SetWindowTextFormat(m_labelActiveSetContactWeight, L"Contact Weight: " + FormatFloat(m_activeSetScoringSettings.contactWeight, 2));
+        SetWindowTextFormat(m_labelActiveSetUncertaintyWeight, L"Uncertainty Weight: " + FormatFloat(m_activeSetScoringSettings.uncertaintyWeight, 2));
+        SetWindowTextFormat(m_labelActiveSetEditWeight, L"Edit Weight: " + FormatFloat(m_activeSetScoringSettings.editWeight, 2));
+        std::wstring tuningHeader = L"Active-Set Runtime Tuning";
+        tuningHeader += m_activeSetBudget.enableBudgetAdaptation ? L" [adaptive]" : L" [fixed]";
+        tuningHeader += m_activeSetBudget.enableHardBudgetClamp ? L" [clamp]" : L" [open]";
+        SetWindowTextFormat(m_labelActiveSetTuning, tuningHeader);
+    }
+
+    void GpuHairViewer::RefreshQuickEditFormLabels()
+    {
+        std::wstring selectedLabel = L"Selected Layer: ";
+        const int selectedIndex = GetSelectedInlineLayerIndex();
+        if (selectedIndex >= 0)
+        {
+            selectedLabel += std::to_wstring(selectedIndex + 1);
+            selectedLabel += m_quickEditEnabled ? L" [on]" : L" [off]";
+        }
+        else
+        {
+            selectedLabel += L"none";
+        }
+        SetWindowTextFormat(m_labelLayerList, selectedLabel);
+        constexpr float kRadToDeg = 57.2957795f;
+        SetWindowTextFormat(m_labelQuickEditFeather, L"Feather: " + FormatFloat(m_quickEditFeather, 2));
+        SetWindowTextFormat(m_labelQuickEditLengthScale, L"Length Scale: " + FormatFloat(m_quickEditLengthScale, 2));
+        SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Layer Weight: " + FormatFloat(m_quickEditLayerWeight, 2));
+        SetWindowTextFormat(m_labelQuickEditCenterU, L"Center U: " + FormatFloat(m_quickEditCenterU, 2));
+        SetWindowTextFormat(m_labelQuickEditCenterV, L"Center V: " + FormatFloat(m_quickEditCenterV, 2));
+        SetWindowTextFormat(m_labelQuickEditRadiusU, L"Radius U: " + FormatFloat(m_quickEditRadiusU, 2));
+        SetWindowTextFormat(m_labelQuickEditRadiusV, L"Radius V: " + FormatFloat(m_quickEditRadiusV, 2));
+        SetWindowTextFormat(m_labelQuickEditInnerRadius, L"Inner Radius: " + FormatFloat(m_quickEditInnerRadius, 2));
+        SetWindowTextFormat(m_labelQuickEditAngleCenter, L"Angle Center: " + FormatFloat(m_quickEditAngleCenterRadians * kRadToDeg, 1) + L" deg");
+        SetWindowTextFormat(m_labelQuickEditAngleHalfExtent, L"Angle Half Extent: " + FormatFloat(m_quickEditAngleHalfExtentRadians * kRadToDeg, 1) + L" deg");
+        SetWindowTextFormat(m_labelQuickEditRootOffsetX, L"Root Offset X: " + FormatFloat(m_quickEditRootOffsetX, 3));
+        SetWindowTextFormat(m_labelQuickEditRootOffsetY, L"Root Offset Y: " + FormatFloat(m_quickEditRootOffsetY, 3));
+        SetWindowTextFormat(m_labelQuickEditRootOffsetZ, L"Root Offset Z: " + FormatFloat(m_quickEditRootOffsetZ, 3));
+        SetWindowTextFormat(m_labelQuickEditTipOffsetX, L"Tip Offset X: " + FormatFloat(m_quickEditTipOffsetX, 3));
+        SetWindowTextFormat(m_labelQuickEditTipOffsetY, L"Tip Offset Y: " + FormatFloat(m_quickEditTipOffsetY, 3));
+        SetWindowTextFormat(m_labelQuickEditTipOffsetZ, L"Tip Offset Z: " + FormatFloat(m_quickEditTipOffsetZ, 3));
+        SetWindowTextFormat(m_labelQuickEditSideOffset, L"Side Offset: " + FormatFloat(m_quickEditSideOffset, 3));
+        SetWindowTextFormat(m_labelQuickEditYaw, L"Yaw: " + FormatFloat(m_quickEditYawRadians * kRadToDeg, 1) + L" deg");
+        SetWindowTextFormat(m_labelQuickEditWidthScale, L"Width Scale: " + FormatFloat(m_quickEditWidthScale, 2));
+        SetWindowTextFormat(m_labelQuickEditFollowerInfluence, L"Follower Influence: " + FormatFloat(m_quickEditFollowerInfluence, 2));
+        SetWindowTextFormat(m_labelQuickEditBoundarySmoothing, L"Boundary Smoothing: " + FormatFloat(m_quickEditBoundarySmoothing, 2));
+        SetWindowTextFormat(m_labelQuickEditBoundaryRadiusUv, L"Boundary Radius UV: " + FormatFloat(m_quickEditBoundaryRadiusUv, 2));
+        SetWindowTextFormat(m_labelQuickEditGroupId, L"Group Filter: " + FormatOptionalGroupId(m_quickEditGroupId));
+
+        std::wstring previewLabel = L"Preview: combined edit influence";
+        std::vector<float> previewInfluence;
+        uint32_t previewGuideCount = 0u;
+        float previewMaxInfluence = 0.0f;
+        if (TryBuildSelectedInlineLayerPreview(previewInfluence, previewGuideCount, previewMaxInfluence))
+        {
+            if (GetSelectedInlineLayerIndex() >= 0)
+            {
+                previewLabel = L"Preview: selected layer guides " + std::to_wstring(previewGuideCount) +
+                    L", max " + FormatFloat(previewMaxInfluence, 2) +
+                    L", center (" + FormatFloat(m_quickEditCenterU, 2) + L", " + FormatFloat(m_quickEditCenterV, 2) + L")" +
+                    L", tipZ " + FormatFloat(m_quickEditTipOffsetZ, 2) +
+                    L", yaw " + FormatFloat(m_quickEditYawRadians * kRadToDeg, 0) + L" deg" +
+                    L", width " + FormatFloat(m_quickEditWidthScale, 2) +
+                    L", follow " + FormatFloat(m_quickEditFollowerInfluence, 2) +
+                    L", smooth " + FormatFloat(m_quickEditBoundarySmoothing, 2) +
+                    L", radius " + FormatFloat(m_quickEditBoundaryRadiusUv, 2) +
+                    L", group " + FormatOptionalGroupId(m_quickEditGroupId) +
+                    (m_quickEditGuidesOnly ? L", guides only" : L", guides+followers") +
+                    (IsBoundaryBeforeAfterOverlayMode() ? L" (Boundary Before/After: left raw, right tinted)" : (IsActiveSetRiskOverlayMode() ? L" (Active-Set overlay shows risk heat + selected clusters)" : L" (Edit Influence overlay adds boundary tint)"));
+            }
+        }
+        SetWindowTextFormat(m_labelQuickEditVisualization, previewLabel);
+    }
+
+    int GpuHairViewer::GetSelectedInlineLayerIndex() const
+    {
+        if (!m_listInlineLayers)
+        {
+            return m_selectedInlineLayerIndex;
+        }
+        const LRESULT selected = SendMessageW(m_listInlineLayers, LB_GETCURSEL, 0, 0);
+        if (selected == LB_ERR)
+        {
+            return -1;
+        }
+        return static_cast<int>(selected);
+    }
+
+    void GpuHairViewer::SetSelectedInlineLayerIndex(int layerIndex)
+    {
+        m_selectedInlineLayerIndex = layerIndex;
+        if (!m_listInlineLayers)
+        {
+            return;
+        }
+        const LRESULT count = SendMessageW(m_listInlineLayers, LB_GETCOUNT, 0, 0);
+        if (count == LB_ERR || count <= 0)
+        {
+            SendMessageW(m_listInlineLayers, LB_SETCURSEL, static_cast<WPARAM>(-1), 0);
+            m_selectedInlineLayerIndex = -1;
+            return;
+        }
+        const int clamped = std::clamp(layerIndex, 0, static_cast<int>(count) - 1);
+        SendMessageW(m_listInlineLayers, LB_SETCURSEL, static_cast<WPARAM>(clamped), 0);
+        m_selectedInlineLayerIndex = clamped;
+    }
+
+    void GpuHairViewer::RefreshInlineLayerListFromText(int preferredSelection)
+    {
+        if (!m_listInlineLayers)
+        {
+            return;
+        }
+
+        hairgpu::EditStack stack = {};
+        std::string error;
+        const bool parsed = hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error);
+
+        const bool prevSyncing = m_syncingControls;
+        m_syncingControls = true;
+        SendMessageW(m_listInlineLayers, LB_RESETCONTENT, 0, 0);
+
+        if (!parsed || stack.layers.empty())
+        {
+            m_selectedInlineLayerIndex = -1;
+            m_syncingControls = prevSyncing;
+            RefreshQuickEditFormLabels();
+            return;
+        }
+
+        auto modeLabel = [](hairgpu::RegionSelectMode mode)
+        {
+            switch (mode)
+            {
+            case hairgpu::RegionSelectMode::Ellipse: return L"Ellipse";
+            case hairgpu::RegionSelectMode::Rectangle: return L"Rectangle";
+            case hairgpu::RegionSelectMode::Sector: return L"Sector";
+            default: return L"All";
+            }
+        };
+
+        for (size_t i = 0; i < stack.layers.size(); ++i)
+        {
+            const hairgpu::EditLayer& layer = stack.layers[i];
+            std::wstringstream ss;
+            ss << (i + 1) << L". ";
+            if (!layer.enabled)
+            {
+                ss << L"[off] ";
+            }
+            ss << Utf8ToWide(layer.name.empty() ? std::string("layer") : layer.name);
+            ss << L"  (" << modeLabel(layer.region.mode) << L", w " << FormatFloat(layer.layerWeight, 2) << L", len " << FormatFloat(layer.edit.lengthScale, 2)
+               << L", width " << FormatFloat(layer.edit.widthScale, 2) << L", follow " << FormatFloat(layer.edit.followerInfluence, 2);
+            if (layer.region.groupId != UINT32_MAX)
+            {
+                ss << L", g " << layer.region.groupId;
+            }
+            ss << (layer.region.guidesOnly ? L", guides" : L", all") << L")";
+            SendMessageW(m_listInlineLayers, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(ss.str().c_str()));
+        }
+
+        const int target = (preferredSelection >= 0) ? preferredSelection : ((m_selectedInlineLayerIndex >= 0) ? m_selectedInlineLayerIndex : 0);
+        m_syncingControls = prevSyncing;
+        SetSelectedInlineLayerIndex(target);
+        RefreshQuickEditFormLabels();
+    }
+
+    void GpuHairViewer::SyncQuickEditFormControlsFromState()
+    {
+        const bool prevSyncing = m_syncingControls;
+        m_syncingControls = true;
+        SendMessageW(m_comboQuickEditMode, CB_SETCURSEL,
+            (m_quickEditMode == hairgpu::RegionSelectMode::Rectangle) ? 1 :
+            (m_quickEditMode == hairgpu::RegionSelectMode::Sector) ? 2 : 0, 0);
+        SendMessageW(m_checkQuickEditEnabled, BM_SETCHECK, m_quickEditEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+        SetWindowTextFormat(m_editQuickEditName, m_quickEditLayerName);
+        SendMessageW(m_trackQuickEditFeather, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditFeather, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditLengthScale, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditLengthScale, 0.6f, 1.4f));
+        SendMessageW(m_trackQuickEditBoundarySmoothing, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditBoundarySmoothing, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditBoundaryRadiusUv, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f));
+        SendMessageW(m_trackQuickEditLayerWeight, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditLayerWeight, 0.0f, 1.5f));
+        SendMessageW(m_trackQuickEditCenterU, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditCenterU, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditCenterV, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditCenterV, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditRadiusU, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditRadiusU, 0.01f, 0.60f));
+        SendMessageW(m_trackQuickEditRadiusV, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditRadiusV, 0.01f, 0.60f));
+        SendMessageW(m_trackQuickEditInnerRadius, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditInnerRadius, 0.0f, 0.95f));
+        SendMessageW(m_trackQuickEditAngleCenter, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditAngleCenterRadians, -3.1415926f, 3.1415926f));
+        SendMessageW(m_trackQuickEditAngleHalfExtent, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditAngleHalfExtentRadians, 0.05f, 3.1415926f));
+        SendMessageW(m_trackQuickEditRootOffsetX, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditRootOffsetX, -0.12f, 0.12f));
+        SendMessageW(m_trackQuickEditRootOffsetY, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditRootOffsetY, -0.12f, 0.12f));
+        SendMessageW(m_trackQuickEditRootOffsetZ, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditRootOffsetZ, -0.12f, 0.12f));
+        SendMessageW(m_trackQuickEditTipOffsetX, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditTipOffsetX, -0.20f, 0.20f));
+        SendMessageW(m_trackQuickEditTipOffsetY, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditTipOffsetY, -0.20f, 0.20f));
+        SendMessageW(m_trackQuickEditTipOffsetZ, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditTipOffsetZ, -0.20f, 0.20f));
+        SendMessageW(m_trackQuickEditSideOffset, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditSideOffset, -0.20f, 0.20f));
+        SendMessageW(m_trackQuickEditYaw, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditYawRadians, -1.5707963f, 1.5707963f));
+        SendMessageW(m_trackQuickEditWidthScale, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditWidthScale, 0.50f, 1.80f));
+        SendMessageW(m_trackQuickEditFollowerInfluence, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditFollowerInfluence, 0.0f, 1.5f));
+        SendMessageW(m_trackQuickEditBoundarySmoothing, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditBoundarySmoothing, 0.0f, 1.0f));
+        SendMessageW(m_trackQuickEditBoundaryRadiusUv, TBM_SETPOS, TRUE, SliderFromFloat(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f));
+        SetWindowTextFormat(m_editQuickEditGroupId, (m_quickEditGroupId == UINT32_MAX) ? std::wstring(L"") : std::to_wstring(m_quickEditGroupId));
+        SendMessageW(m_checkQuickEditGuidesOnly, BM_SETCHECK, m_quickEditGuidesOnly ? BST_CHECKED : BST_UNCHECKED, 0);
+        RefreshQuickEditFormLabels();
+        m_syncingControls = prevSyncing;
+    }
+
+    void GpuHairViewer::LoadQuickEditFormFromInlineText(int preferredSelection)
+    {
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        {
+            m_quickEditLayerName = L"quick_form";
+            m_quickEditCenterU = 0.50f;
+            m_quickEditCenterV = 0.50f;
+            m_quickEditRadiusU = 0.18f;
+            m_quickEditRadiusV = 0.18f;
+            m_quickEditInnerRadius = 0.00f;
+            m_quickEditAngleCenterRadians = 0.00f;
+            m_quickEditAngleHalfExtentRadians = 3.1415926f;
+            m_quickEditRootOffsetX = 0.00f;
+            m_quickEditRootOffsetY = 0.00f;
+            m_quickEditRootOffsetZ = 0.00f;
+            m_quickEditTipOffsetX = 0.02f;
+            m_quickEditTipOffsetY = 0.00f;
+            m_quickEditTipOffsetZ = -0.08f;
+            m_quickEditSideOffset = 0.00f;
+            m_quickEditYawRadians = 0.00f;
+            m_quickEditWidthScale = 1.00f;
+            m_quickEditFollowerInfluence = 1.00f;
+            m_quickEditBoundarySmoothing = 0.42f;
+            m_quickEditBoundaryRadiusUv = 0.10f;
+            m_quickEditGroupId = UINT32_MAX;
+            m_quickEditGuidesOnly = true;
+            RefreshInlineLayerListFromText(-1);
+            SyncQuickEditFormControlsFromState();
+            if (IsEditInfluenceOverlayMode())
+            {
+                UpdateScalpOverlayVertexBuffer();
+            }
+            return;
+        }
+
+        m_quickEditBoundarySmoothing = hairgpu::Clamp(stack.boundarySmoothing, 0.0f, 1.0f);
+        if (m_quickEditBoundarySmoothing <= 0.0f)
+        {
+            m_quickEditBoundarySmoothing = 0.42f;
+        }
+        m_quickEditBoundaryRadiusUv = hairgpu::Clamp(stack.boundaryRadiusUv, 0.01f, 0.30f);
+
+        int layerIndex = preferredSelection;
+        if (layerIndex < 0)
+        {
+            layerIndex = GetSelectedInlineLayerIndex();
+        }
+        if (layerIndex < 0)
+        {
+            layerIndex = m_selectedInlineLayerIndex;
+        }
+        layerIndex = std::clamp(layerIndex, 0, static_cast<int>(stack.layers.size()) - 1);
+        m_selectedInlineLayerIndex = layerIndex;
+
+        const hairgpu::EditLayer& layer = stack.layers[static_cast<size_t>(layerIndex)];
+        m_quickEditLayerName = Utf8ToWide(layer.name.empty() ? std::string("layer") : layer.name);
+        m_quickEditEnabled = layer.enabled;
+        m_quickEditMode = layer.region.mode;
+        if (m_quickEditMode == hairgpu::RegionSelectMode::All)
+        {
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+        }
+        m_quickEditFeather = hairgpu::Clamp(layer.region.feather, 0.0f, 1.0f);
+        m_quickEditLengthScale = hairgpu::Clamp(layer.edit.lengthScale, 0.6f, 1.4f);
+        m_quickEditLayerWeight = hairgpu::Clamp(layer.layerWeight, 0.0f, 1.5f);
+        m_quickEditCenterU = hairgpu::Clamp(layer.region.centerUv.x, 0.0f, 1.0f);
+        m_quickEditCenterV = hairgpu::Clamp(layer.region.centerUv.y, 0.0f, 1.0f);
+        m_quickEditRadiusU = hairgpu::Clamp(layer.region.radiusUv.x, 0.01f, 0.60f);
+        m_quickEditRadiusV = hairgpu::Clamp(layer.region.radiusUv.y, 0.01f, 0.60f);
+        m_quickEditInnerRadius = hairgpu::Clamp(layer.region.innerRadius, 0.0f, 0.95f);
+        m_quickEditAngleCenterRadians = hairgpu::Clamp(layer.region.angleCenterRadians, -3.1415926f, 3.1415926f);
+        m_quickEditAngleHalfExtentRadians = hairgpu::Clamp(layer.region.angleHalfExtentRadians, 0.05f, 3.1415926f);
+        m_quickEditRootOffsetX = hairgpu::Clamp(layer.edit.rootOffset.x, -0.12f, 0.12f);
+        m_quickEditRootOffsetY = hairgpu::Clamp(layer.edit.rootOffset.y, -0.12f, 0.12f);
+        m_quickEditRootOffsetZ = hairgpu::Clamp(layer.edit.rootOffset.z, -0.12f, 0.12f);
+        m_quickEditTipOffsetX = hairgpu::Clamp(layer.edit.tipOffset.x, -0.20f, 0.20f);
+        m_quickEditTipOffsetY = hairgpu::Clamp(layer.edit.tipOffset.y, -0.20f, 0.20f);
+        m_quickEditTipOffsetZ = hairgpu::Clamp(layer.edit.tipOffset.z, -0.20f, 0.20f);
+        m_quickEditSideOffset = hairgpu::Clamp(layer.edit.sideOffset, -0.20f, 0.20f);
+        m_quickEditYawRadians = hairgpu::Clamp(layer.edit.yawRadians, -1.5707963f, 1.5707963f);
+        m_quickEditWidthScale = hairgpu::Clamp(layer.edit.widthScale, 0.50f, 1.80f);
+        m_quickEditFollowerInfluence = hairgpu::Clamp(layer.edit.followerInfluence, 0.0f, 1.5f);
+        m_quickEditGroupId = layer.region.groupId;
+        m_quickEditGuidesOnly = layer.region.guidesOnly;
+        RefreshInlineLayerListFromText(layerIndex);
+        SyncQuickEditFormControlsFromState();
+        if (IsEditInfluenceOverlayMode())
+        {
+            UpdateScalpOverlayVertexBuffer();
+        }
+    }
+
+    bool GpuHairViewer::IsEditInfluenceOverlayMode() const
+    {
+        return m_maskOverlayMode == MaskOverlayMode::EditInfluence || m_maskOverlayMode == MaskOverlayMode::EditInfluenceBeforeAfter;
+    }
+
+    bool GpuHairViewer::IsBoundaryBeforeAfterOverlayMode() const
+    {
+        return m_maskOverlayMode == MaskOverlayMode::EditInfluenceBeforeAfter;
+    }
+
+    bool GpuHairViewer::IsActiveSetRiskOverlayMode() const
+    {
+        return m_maskOverlayMode == MaskOverlayMode::ActiveSetRiskSelection ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetMotion ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetContact ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetUncertainty ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetEdit;
+    }
+
+    const wchar_t* GpuHairViewer::GetMaskOverlayModeDisplayName() const
+    {
+        switch (m_maskOverlayMode)
+        {
+        case MaskOverlayMode::Parting: return L"Parting";
+        case MaskOverlayMode::Region: return L"Region";
+        case MaskOverlayMode::EditInfluence: return L"Edit Influence";
+        case MaskOverlayMode::EditInfluenceBeforeAfter: return L"Boundary Before/After";
+        case MaskOverlayMode::ActiveSetRiskSelection: return L"Active-Set Risk";
+        case MaskOverlayMode::ActiveSetMotion: return L"Active-Set Motion";
+        case MaskOverlayMode::ActiveSetContact: return L"Active-Set Contact";
+        case MaskOverlayMode::ActiveSetUncertainty: return L"Active-Set Uncertainty";
+        case MaskOverlayMode::ActiveSetEdit: return L"Active-Set Edit";
+        default: return L"None";
+        }
+    }
+
+    float GpuHairViewer::GetActiveSetOverlayScoreValue(const hairgpu::ActiveSetClusterScore& score) const
+    {
+        switch (m_maskOverlayMode)
+        {
+        case MaskOverlayMode::ActiveSetMotion:
+            return hairgpu::Clamp(score.motionScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetContact:
+            return hairgpu::Clamp(score.contactScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetUncertainty:
+            return hairgpu::Clamp(score.uncertaintyScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetEdit:
+            return hairgpu::Clamp(score.editScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetRiskSelection:
+        default:
+            return hairgpu::Clamp(score.finalScore, 0.0f, 1.0f);
+        }
+    }
+
+    bool GpuHairViewer::TryBuildSelectedInlineLayerPreview(std::vector<float>& outGuideInfluence, uint32_t& outActiveGuideCount, float& outMaxInfluence) const
+    {
+        outGuideInfluence.clear();
+        outActiveGuideCount = 0u;
+        outMaxInfluence = 0.0f;
+
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        {
+            return false;
+        }
+
+        int layerIndex = GetSelectedInlineLayerIndex();
+        if (layerIndex < 0)
+        {
+            layerIndex = m_selectedInlineLayerIndex;
+        }
+        if (layerIndex < 0 || stack.layers.empty())
+        {
+            return false;
+        }
+        layerIndex = std::clamp(layerIndex, 0, static_cast<int>(stack.layers.size()) - 1);
+
+        const hairgpu::HairAsset& previewAsset = m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+        const uint32_t guideCount = std::min<uint32_t>(previewAsset.guideStrandCount, static_cast<uint32_t>(previewAsset.strands.size()));
+        if (guideCount == 0u)
+        {
+            return false;
+        }
+
+        outGuideInfluence.assign(guideCount, 0.0f);
+        const hairgpu::EditLayer& layer = stack.layers[static_cast<size_t>(layerIndex)];
+        if (!layer.enabled)
+        {
+            return true;
+        }
+
+        const hairgpu::RegionSelectionResult selection = hairgpu::SelectRegion(previewAsset, layer.region);
+        for (const hairgpu::SelectedStrand& selected : selection.strands)
+        {
+            if (selected.strandIndex >= guideCount)
+            {
+                continue;
+            }
+            const float influence = hairgpu::Clamp(selected.weight * layer.layerWeight, 0.0f, 1.0f);
+            outGuideInfluence[selected.strandIndex] = std::max(outGuideInfluence[selected.strandIndex], influence);
+        }
+
+        for (float influence : outGuideInfluence)
+        {
+            if (influence > 1.0e-4f)
+            {
+                ++outActiveGuideCount;
+                outMaxInfluence = std::max(outMaxInfluence, influence);
+            }
+        }
+        return true;
+    }
+
+    hairgpu::EditLayer GpuHairViewer::BuildQuickEditLayerFromUi() const
+    {
+        hairgpu::EditLayer layer = {};
+        std::string layerName = WideToUtf8(m_quickEditLayerName);
+        for (char& c : layerName)
+        {
+            if (c == ',' || c == '\r' || c == '\n')
+            {
+                c = '_';
+            }
+        }
+        if (layerName.empty())
+        {
+            layerName = "quick_form";
+        }
+        layer.name = layerName;
+        layer.enabled = m_quickEditEnabled;
+        layer.layerWeight = m_quickEditLayerWeight;
+        layer.region.mode = m_quickEditMode;
+        layer.region.centerUv = { hairgpu::Clamp(m_quickEditCenterU, 0.0f, 1.0f), hairgpu::Clamp(m_quickEditCenterV, 0.0f, 1.0f) };
+        layer.region.radiusUv = { hairgpu::Clamp(m_quickEditRadiusU, 0.01f, 0.60f), hairgpu::Clamp(m_quickEditRadiusV, 0.01f, 0.60f) };
+        const float quickEditMinRadius = std::min(layer.region.radiusUv.x, layer.region.radiusUv.y);
+        layer.region.innerRadius = hairgpu::Clamp(m_quickEditInnerRadius, 0.0f, quickEditMinRadius * 0.95f);
+        layer.region.angleCenterRadians = hairgpu::Clamp(m_quickEditAngleCenterRadians, -3.1415926f, 3.1415926f);
+        layer.region.angleHalfExtentRadians = hairgpu::Clamp(m_quickEditAngleHalfExtentRadians, 0.05f, 3.1415926f);
+        layer.region.feather = m_quickEditFeather;
+        layer.region.groupId = m_quickEditGroupId;
+        layer.region.guidesOnly = m_quickEditGuidesOnly;
+        layer.edit.lengthScale = m_quickEditLengthScale;
+        layer.edit.widthScale = hairgpu::Clamp(m_quickEditWidthScale, 0.50f, 1.80f);
+        layer.edit.followerInfluence = hairgpu::Clamp(m_quickEditFollowerInfluence, 0.0f, 1.5f);
+        layer.edit.rootOffset = {
+            hairgpu::Clamp(m_quickEditRootOffsetX, -0.12f, 0.12f),
+            hairgpu::Clamp(m_quickEditRootOffsetY, -0.12f, 0.12f),
+            hairgpu::Clamp(m_quickEditRootOffsetZ, -0.12f, 0.12f)
+        };
+        layer.edit.tipOffset = {
+            hairgpu::Clamp(m_quickEditTipOffsetX, -0.20f, 0.20f),
+            hairgpu::Clamp(m_quickEditTipOffsetY, -0.20f, 0.20f),
+            hairgpu::Clamp(m_quickEditTipOffsetZ, -0.20f, 0.20f)
+        };
+        layer.edit.sideOffset = hairgpu::Clamp(m_quickEditSideOffset, -0.20f, 0.20f);
+        layer.edit.yawRadians = hairgpu::Clamp(m_quickEditYawRadians, -1.5707963f, 1.5707963f);
+        return layer;
+    }
+
+    bool GpuHairViewer::PushQuickEditFormToInlineText(bool replaceSelectedLayer, bool applyAfterPush)
+    {
+        SyncStateFromControls();
+
+        hairgpu::EditStack stack = {};
+        std::string error;
+        const std::string inlineUtf8 = WideToUtf8(GetInlineEditStackText());
+        if (!inlineUtf8.empty())
+        {
+            hairgpu::LoadEditStackCsvText(inlineUtf8, stack, error);
+        }
+        stack.boundarySmoothing = hairgpu::Clamp(m_quickEditBoundarySmoothing, 0.0f, 1.0f);
+        stack.boundaryRadiusUv = hairgpu::Clamp(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f);
+        if (stack.boundarySmoothing <= 0.0f)
+        {
+            stack.boundarySmoothing = 0.42f;
+        }
+
+        hairgpu::EditLayer layer = BuildQuickEditLayerFromUi();
+        int selectionAfterWrite = static_cast<int>(stack.layers.size());
+        if (replaceSelectedLayer && !stack.layers.empty())
+        {
+            const int selectedIndex = std::clamp(GetSelectedInlineLayerIndex(), 0, static_cast<int>(stack.layers.size()) - 1);
+            stack.layers[static_cast<size_t>(selectedIndex)] = layer;
+            selectionAfterWrite = selectedIndex;
+        }
+        else
+        {
+            stack.layers.push_back(layer);
+        }
+
+        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        LoadQuickEditFormFromInlineText(selectionAfterWrite);
+        if (applyAfterPush)
+        {
+            return ApplyInlineEditStackFromUi(true);
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::MoveSelectedInlineLayer(int direction, bool applyAfterMove)
+    {
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.size() < 2)
+        {
+            return false;
+        }
+
+        const int selectedIndex = std::clamp(GetSelectedInlineLayerIndex(), 0, static_cast<int>(stack.layers.size()) - 1);
+        const int targetIndex = std::clamp(selectedIndex + direction, 0, static_cast<int>(stack.layers.size()) - 1);
+        if (targetIndex == selectedIndex)
+        {
+            return false;
+        }
+
+        std::swap(stack.layers[static_cast<size_t>(selectedIndex)], stack.layers[static_cast<size_t>(targetIndex)]);
+        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        LoadQuickEditFormFromInlineText(targetIndex);
+        if (applyAfterMove)
+        {
+            return ApplyInlineEditStackFromUi(true);
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::ToggleSelectedInlineLayerEnabled(bool applyAfterToggle)
+    {
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        {
+            return false;
+        }
+
+        const int selectedIndex = std::clamp(GetSelectedInlineLayerIndex(), 0, static_cast<int>(stack.layers.size()) - 1);
+        hairgpu::EditLayer& layer = stack.layers[static_cast<size_t>(selectedIndex)];
+        layer.enabled = !layer.enabled;
+        m_quickEditEnabled = layer.enabled;
+        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        LoadQuickEditFormFromInlineText(selectedIndex);
+        if (applyAfterToggle)
+        {
+            return ApplyInlineEditStackFromUi(true);
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::DuplicateSelectedInlineLayer(bool applyAfterDuplicate)
+    {
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        {
+            return false;
+        }
+
+        const int selectedIndex = std::clamp(GetSelectedInlineLayerIndex(), 0, static_cast<int>(stack.layers.size()) - 1);
+        hairgpu::EditLayer duplicate = stack.layers[static_cast<size_t>(selectedIndex)];
+        duplicate.name += "_copy";
+        stack.layers.insert(stack.layers.begin() + selectedIndex + 1, duplicate);
+        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        LoadQuickEditFormFromInlineText(selectedIndex + 1);
+        if (applyAfterDuplicate)
+        {
+            return ApplyInlineEditStackFromUi(true);
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::DeleteSelectedInlineLayer(bool applyAfterDelete)
+    {
+        hairgpu::EditStack stack = {};
+        std::string error;
+        if (!hairgpu::LoadEditStackCsvText(WideToUtf8(GetInlineEditStackText()), stack, error) || stack.layers.empty())
+        {
+            return false;
+        }
+
+        const int selectedIndex = std::clamp(GetSelectedInlineLayerIndex(), 0, static_cast<int>(stack.layers.size()) - 1);
+        stack.layers.erase(stack.layers.begin() + selectedIndex);
+        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        const int nextSelection = stack.layers.empty() ? -1 : std::min<int>(selectedIndex, static_cast<int>(stack.layers.size()) - 1);
+        LoadQuickEditFormFromInlineText(nextSelection);
+        if (applyAfterDelete)
+        {
+            return ApplyInlineEditStackFromUi(true);
+        }
+        return true;
     }
 
     bool GpuHairViewer::BrowseAndSetMaskPath(bool partingMask)
@@ -4007,6 +5464,82 @@ namespace hairgpu::viewer
         if (!effectiveParting.empty()) LoadPreviewMaskAny(effectiveParting, 1u, partImg);
         if (!effectiveRegion.empty()) LoadPreviewMaskAny(effectiveRegion, 3u, regionImg);
 
+        std::vector<Vec2> guideRootUvs;
+        std::vector<float> guideRootInfluence;
+        std::vector<float> guideRootRisk;
+        std::vector<uint8_t> guideRootActive;
+        bool usingSelectedLayerPreview = false;
+        const bool needsGuideOverlayData = IsEditInfluenceOverlayMode() || IsActiveSetRiskOverlayMode();
+        if (needsGuideOverlayData)
+        {
+            if (IsEditInfluenceOverlayMode())
+            {
+                uint32_t previewGuideCount = 0u;
+                float previewMaxInfluence = 0.0f;
+                usingSelectedLayerPreview = TryBuildSelectedInlineLayerPreview(guideRootInfluence, previewGuideCount, previewMaxInfluence);
+                if (!usingSelectedLayerPreview)
+                {
+                    guideRootInfluence = m_runtimeEditState.guideInfluence;
+                }
+            }
+
+            uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+            if (IsEditInfluenceOverlayMode() && !guideRootInfluence.empty())
+            {
+                guideCount = std::min<uint32_t>(guideCount, static_cast<uint32_t>(guideRootInfluence.size()));
+            }
+            if (guideCount > 0u)
+            {
+                guideRootUvs.reserve(guideCount);
+                if (!guideRootInfluence.empty())
+                {
+                    guideRootInfluence.resize(guideCount);
+                }
+                if (IsActiveSetRiskOverlayMode())
+                {
+                    guideRootRisk.assign(guideCount, 0.0f);
+                    guideRootActive.assign(guideCount, 0u);
+                    for (const hairgpu::ActiveSetClusterScore& score : m_activeSetPlan.scores)
+                    {
+                        if (score.clusterIndex >= m_activeSetClusters.size())
+                        {
+                            continue;
+                        }
+                        const hairgpu::ActiveSetCluster& cluster = m_activeSetClusters[score.clusterIndex];
+                        const float risk = GetActiveSetOverlayScoreValue(score);
+                        for (uint32_t guideIndex : cluster.guideStrandIndices)
+                        {
+                            if (guideIndex >= guideCount)
+                            {
+                                continue;
+                            }
+                            guideRootRisk[guideIndex] = std::max(guideRootRisk[guideIndex], risk);
+                            if (score.selected)
+                            {
+                                guideRootActive[guideIndex] = 1u;
+                            }
+                        }
+                    }
+                }
+
+                for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
+                {
+                    Vec2 uv = { 0.5f, 0.5f };
+                    if (guideIndex < m_asset.rootBindings.size())
+                    {
+                        uv = m_asset.rootBindings[guideIndex].rootUv;
+                    }
+                    else if (guideIndex < m_asset.strands.size() && m_asset.strands[guideIndex].pointCount > 0u)
+                    {
+                        const Vec3 root = m_asset.restPoints[m_asset.strands[guideIndex].pointOffset];
+                        const Vec3 previewUv = ComputeScalpPreviewUv(root);
+                        uv = { previewUv.x, previewUv.y };
+                    }
+                    guideRootUvs.push_back(uv);
+                }
+            }
+        }
+
         std::vector<ScalpVertex> scalpVertices;
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
         for (size_t i = 0; i < m_asset.scalpMesh.positions.size(); ++i)
@@ -4028,6 +5561,144 @@ namespace hairgpu::viewer
                 r = 0.20f + 0.80f * region.x;
                 g = 0.20f + 0.80f * region.y;
                 b = 0.20f + 0.80f * region.z;
+            }
+            else if (IsEditInfluenceOverlayMode() && !guideRootUvs.empty())
+            {
+                float bestDistSq = std::numeric_limits<float>::max();
+                float influence = 0.0f;
+                float nearestSelectedDistSq = std::numeric_limits<float>::max();
+                float nearestOutsideDistSq = std::numeric_limits<float>::max();
+                for (size_t guideIndex = 0; guideIndex < guideRootUvs.size(); ++guideIndex)
+                {
+                    const float du = uvw.x - guideRootUvs[guideIndex].x;
+                    const float dv = uvw.y - guideRootUvs[guideIndex].y;
+                    const float distSq = du * du + dv * dv;
+                    const float guideInfluence = hairgpu::Clamp(guideRootInfluence[guideIndex], 0.0f, 1.0f);
+                    if (distSq < bestDistSq)
+                    {
+                        bestDistSq = distSq;
+                        influence = guideInfluence;
+                    }
+                    if (guideInfluence >= 0.01f)
+                    {
+                        nearestSelectedDistSq = std::min(nearestSelectedDistSq, distSq);
+                    }
+                    else
+                    {
+                        nearestOutsideDistSq = std::min(nearestOutsideDistSq, distSq);
+                    }
+                }
+                influence = Clamp(influence, 0.0f, 1.0f);
+                const float rawR = 0.18f + 0.82f * influence;
+                const float rawG = 0.28f + 0.50f * (1.0f - influence);
+                const float rawB = 0.92f - 0.74f * influence;
+                float afterR = rawR;
+                float afterG = rawG;
+                float afterB = rawB;
+                if (usingSelectedLayerPreview && nearestSelectedDistSq < std::numeric_limits<float>::max() && nearestOutsideDistSq < std::numeric_limits<float>::max())
+                {
+                    const float ds = std::sqrt(nearestSelectedDistSq);
+                    const float dof = std::sqrt(nearestOutsideDistSq);
+                    const float denom = std::max(std::max(ds, dof), 1.0e-4f);
+                    const float boundary = Clamp(1.0f - std::abs(ds - dof) / denom, 0.0f, 1.0f);
+                    afterR = Clamp(afterR + 0.32f * boundary, 0.0f, 1.0f);
+                    afterG = Clamp(afterG + 0.20f * boundary, 0.0f, 1.0f);
+                    afterB = Clamp(afterB * (1.0f - 0.42f * boundary), 0.0f, 1.0f);
+                }
+
+                if (IsBoundaryBeforeAfterOverlayMode())
+                {
+                    const bool showAfter = uvw.x >= 0.5f;
+                    r = showAfter ? afterR : rawR;
+                    g = showAfter ? afterG : rawG;
+                    b = showAfter ? afterB : rawB;
+
+                    const float divider = Clamp(1.0f - std::abs(uvw.x - 0.5f) / 0.018f, 0.0f, 1.0f);
+                    if (divider > 0.0f)
+                    {
+                        r = Clamp(r * (1.0f - 0.65f * divider) + 0.95f * divider, 0.0f, 1.0f);
+                        g = Clamp(g * (1.0f - 0.65f * divider) + 0.95f * divider, 0.0f, 1.0f);
+                        b = Clamp(b * (1.0f - 0.65f * divider) + 0.95f * divider, 0.0f, 1.0f);
+                    }
+                }
+                else
+                {
+                    r = afterR;
+                    g = afterG;
+                    b = afterB;
+                }
+            }
+            else if (IsActiveSetRiskOverlayMode() && !guideRootUvs.empty() && guideRootRisk.size() == guideRootUvs.size())
+            {
+                float bestDistSq = std::numeric_limits<float>::max();
+                float risk = 0.0f;
+                bool nearestActive = false;
+                float nearestActiveDistSq = std::numeric_limits<float>::max();
+                float nearestInactiveDistSq = std::numeric_limits<float>::max();
+                for (size_t guideIndex = 0; guideIndex < guideRootUvs.size(); ++guideIndex)
+                {
+                    const float du = uvw.x - guideRootUvs[guideIndex].x;
+                    const float dv = uvw.y - guideRootUvs[guideIndex].y;
+                    const float distSq = du * du + dv * dv;
+                    const float guideRisk = hairgpu::Clamp(guideRootRisk[guideIndex], 0.0f, 1.0f);
+                    const bool guideActive = guideIndex < guideRootActive.size() && guideRootActive[guideIndex] != 0u;
+                    if (distSq < bestDistSq)
+                    {
+                        bestDistSq = distSq;
+                        risk = guideRisk;
+                        nearestActive = guideActive;
+                    }
+                    if (guideActive)
+                    {
+                        nearestActiveDistSq = std::min(nearestActiveDistSq, distSq);
+                    }
+                    else
+                    {
+                        nearestInactiveDistSq = std::min(nearestInactiveDistSq, distSq);
+                    }
+                }
+                risk = Clamp(risk, 0.0f, 1.0f);
+                r = 0.16f + 0.84f * risk;
+                g = 0.24f + 0.56f * (1.0f - risk);
+                b = 0.96f - 0.82f * risk;
+                if (m_maskOverlayMode == MaskOverlayMode::ActiveSetMotion)
+                {
+                    g = Clamp(g + 0.06f * risk, 0.0f, 1.0f);
+                    b = Clamp(b + 0.04f * (1.0f - risk), 0.0f, 1.0f);
+                }
+                else if (m_maskOverlayMode == MaskOverlayMode::ActiveSetContact)
+                {
+                    r = Clamp(r + 0.12f * risk, 0.0f, 1.0f);
+                    b = Clamp(b * (1.0f - 0.10f * risk), 0.0f, 1.0f);
+                }
+                else if (m_maskOverlayMode == MaskOverlayMode::ActiveSetUncertainty)
+                {
+                    r = Clamp(r * (1.0f - 0.10f * risk) + 0.12f * risk, 0.0f, 1.0f);
+                    g = Clamp(g + 0.10f * (1.0f - risk), 0.0f, 1.0f);
+                    b = Clamp(b + 0.08f, 0.0f, 1.0f);
+                }
+                else if (m_maskOverlayMode == MaskOverlayMode::ActiveSetEdit)
+                {
+                    r = Clamp(r + 0.08f * risk, 0.0f, 1.0f);
+                    g = Clamp(g + 0.18f * risk, 0.0f, 1.0f);
+                    b = Clamp(b * (1.0f - 0.18f * risk), 0.0f, 1.0f);
+                }
+                if (nearestActive)
+                {
+                    r = Clamp(r + 0.10f, 0.0f, 1.0f);
+                    g = Clamp(g + 0.22f, 0.0f, 1.0f);
+                    b = Clamp(b * 0.62f, 0.0f, 1.0f);
+                }
+                if (nearestActiveDistSq < std::numeric_limits<float>::max() && nearestInactiveDistSq < std::numeric_limits<float>::max())
+                {
+                    const float ds = std::sqrt(nearestActiveDistSq);
+                    const float dof = std::sqrt(nearestInactiveDistSq);
+                    const float denom = std::max(std::max(ds, dof), 1.0e-4f);
+                    const float boundary = Clamp(1.0f - std::abs(ds - dof) / denom, 0.0f, 1.0f);
+                    r = Clamp(r * (1.0f - 0.38f * boundary) + 0.98f * boundary, 0.0f, 1.0f);
+                    g = Clamp(g * (1.0f - 0.22f * boundary) + 0.95f * boundary, 0.0f, 1.0f);
+                    b = Clamp(b + 0.10f * boundary, 0.0f, 1.0f);
+                }
             }
             ScalpVertex v = {};
             v.scalpIndex = static_cast<uint32_t>(i);
@@ -4125,6 +5796,109 @@ namespace hairgpu::viewer
         return true;
     }
 
+    bool GpuHairViewer::ExportActiveSetPlanJson(const std::wstring& filePath) const
+    {
+        std::string error;
+        return hairgpu::WriteActiveSetPlanJson(std::filesystem::path(filePath), m_asset, m_activeSetPlan, error);
+    }
+
+    bool GpuHairViewer::ExportRuntimeReport(const std::wstring& filePath) const
+    {
+        const std::filesystem::path summaryPath(filePath);
+        std::ofstream out(summaryPath);
+        if (!out)
+        {
+            return false;
+        }
+
+        auto p95 = [](std::vector<float> values) -> float
+        {
+            if (values.empty())
+            {
+                return 0.0f;
+            }
+            std::sort(values.begin(), values.end());
+            const size_t idx = std::min(values.size() - 1, static_cast<size_t>(std::floor(0.95 * static_cast<double>(values.size() - 1))));
+            return values[idx];
+        };
+        auto average = [](const std::vector<float>& values) -> float
+        {
+            if (values.empty())
+            {
+                return 0.0f;
+            }
+            const double sum = std::accumulate(values.begin(), values.end(), 0.0);
+            return static_cast<float>(sum / static_cast<double>(values.size()));
+        };
+
+        std::vector<float> frameMs;
+        std::vector<float> simMs;
+        std::vector<float> selectedClusters;
+        frameMs.reserve(m_performanceSamples.size());
+        simMs.reserve(m_performanceSamples.size());
+        selectedClusters.reserve(m_performanceSamples.size());
+        for (const PerformanceSample& s : m_performanceSamples)
+        {
+            frameMs.push_back(s.frameMilliseconds);
+            simMs.push_back(s.simulationMilliseconds);
+            selectedClusters.push_back(static_cast<float>(s.activeSetSelectedClusterCount));
+        }
+
+        const std::filesystem::path baseDir = summaryPath.parent_path();
+        const std::wstring stem = summaryPath.stem().wstring();
+        const std::filesystem::path perfPath = baseDir / (stem + L"_performance.csv");
+        const std::filesystem::path planPath = baseDir / (stem + L"_activeset_plan.json");
+        const std::filesystem::path settingsPath = baseDir / (stem + L"_viewer_settings.ini");
+        const bool perfOk = ExportPerformanceCsv(perfPath.wstring());
+        const bool planOk = ExportActiveSetPlanJson(planPath.wstring());
+        const bool settingsOk = SaveSettingsToFile(settingsPath.wstring());
+
+        const float frameMax = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
+        const float simMax = simMs.empty() ? 0.0f : *std::max_element(simMs.begin(), simMs.end());
+        const std::string assetSourceUtf8 = WideToUtf8(m_lastAssetSource);
+        const std::string importStatusUtf8 = WideToUtf8(m_lastImportStatus);
+        const std::string editStatusUtf8 = WideToUtf8(m_lastEditStackStatus);
+        const std::string perfPathUtf8 = WideToUtf8(perfPath.wstring());
+        const std::string planPathUtf8 = WideToUtf8(planPath.wstring());
+        const std::string settingsPathUtf8 = WideToUtf8(settingsPath.wstring());
+
+        out << "HairGPU Viewer Runtime Report\n";
+        out << "=============================\n";
+        out << "assetSource=" << assetSourceUtf8 << "\n";
+        out << "importStatus=" << importStatusUtf8 << "\n";
+        out << "editStatus=" << editStatusUtf8 << "\n";
+        out << "guides=" << m_asset.guideStrandCount;
+        out << " followers=" << m_asset.followerStrandCount;
+        out << " totalStrands=" << m_asset.strands.size();
+        out << " particles=" << m_asset.restPoints.size() << "\n";
+        out << "frame.avgMs=" << average(frameMs);
+        out << " frame.p95Ms=" << p95(frameMs);
+        out << " frame.maxMs=" << frameMax << "\n";
+        out << "sim.avgMs=" << average(simMs);
+        out << " sim.p95Ms=" << p95(simMs);
+        out << " sim.maxMs=" << simMax << "\n";
+        out << "activeset.avgSelectedClusters=" << average(selectedClusters);
+        out << " currentSelectedClusters=" << m_activeSetPlan.summary.selectedClusterCount;
+        out << " currentSelectedGuides=" << m_activeSetPlan.summary.selectedGuideCount;
+        out << " budgetScale=" << m_activeSetPlan.summary.budgetScale << "\n";
+        out << "budget.maxClusters=" << m_activeSetBudget.maxActiveClusters;
+        out << " budget.maxGuides=" << m_activeSetBudget.maxActiveGuides;
+        out << " budget.threshold=" << m_activeSetBudget.promoteScoreThreshold;
+        out << " budget.targetFrameMs=" << m_activeSetBudget.targetFrameMilliseconds;
+        out << " budget.fixedCostMs=" << m_activeSetBudget.estimatedFixedCostMilliseconds;
+        out << " budget.clusterCostMs=" << m_activeSetBudget.estimatedClusterCostMilliseconds;
+        out << " budget.adaptive=" << (m_activeSetBudget.enableBudgetAdaptation ? 1 : 0);
+        out << " budget.hardClamp=" << (m_activeSetBudget.enableHardBudgetClamp ? 1 : 0) << "\n";
+        out << "weights.motion=" << m_activeSetScoringSettings.motionWeight;
+        out << " weights.contact=" << m_activeSetScoringSettings.contactWeight;
+        out << " weights.uncertainty=" << m_activeSetScoringSettings.uncertaintyWeight;
+        out << " weights.edit=" << m_activeSetScoringSettings.editWeight << "\n";
+        out << "exports.performanceCsv=" << (perfOk ? 1 : 0) << " path=" << perfPathUtf8 << "\n";
+        out << "exports.activeSetJson=" << (planOk ? 1 : 0) << " path=" << planPathUtf8 << "\n";
+        out << "exports.viewerSettings=" << (settingsOk ? 1 : 0) << " path=" << settingsPathUtf8 << "\n";
+        return true;
+    }
+
     bool GpuHairViewer::ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles)
     {
         if (!m_positions[m_currentBufferIndex].buffer)
@@ -4181,6 +5955,10 @@ namespace hairgpu::viewer
         {
             loaded = hairgpu::LoadHairAssetFromAlembic(path, importedAsset, errorText);
         }
+        else if (ext == L".hairbin" || ext == L".hair")
+        {
+            loaded = hairgpu::LoadHairAssetFromHairBinary(path, importedAsset, errorText);
+        }
         else
         {
             errorText = "Unsupported hair asset file type. Use .csv / .usda / .usd, or .abc with an Alembic-enabled build.";
@@ -4209,7 +5987,18 @@ namespace hairgpu::viewer
         m_builderParticlesPerStrand = m_asset.particlesPerStrand;
         m_activePresetName = L"Imported Asset";
         m_lastAssetSource = path.filename().wstring();
-        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : ((ext == L".usd" || ext == L".usda") ? L"USD ASCII imported" : L"Alembic imported");
+        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : ((ext == L".usd" || ext == L".usda") ? L"USD ASCII imported" : ((ext == L".hairbin" || ext == L".hair") ? L"Hair binary imported" : L"Alembic imported"));
+        m_baseAsset = m_asset;
+        hairgpu::HairAsset editedAsset = m_baseAsset;
+        if (m_editStackPath.empty())
+        {
+            m_runtimeEditState = {};
+        }
+        else
+        {
+            ApplyEditStackToAsset(editedAsset, nullptr);
+        }
+        m_asset = std::move(editedAsset);
 
         if (!CreateSimulationResources())
         {
@@ -4912,6 +6701,12 @@ namespace hairgpu::viewer
 
             const int id = LOWORD(wParam);
             const int code = HIWORD(wParam);
+            if (id == IDC_LIST_INLINE_LAYERS && code == LBN_SELCHANGE)
+            {
+                m_selectedInlineLayerIndex = GetSelectedInlineLayerIndex();
+                LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+                return 0;
+            }
             switch (id)
             {
             case IDC_BTN_PLAYPAUSE:
@@ -4928,13 +6723,102 @@ namespace hairgpu::viewer
                 SyncStateFromControls();
                 RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
                 return 0;
+            case IDC_BTN_BROWSE_EDIT_STACK:
+                BrowseAndSetEditStackPath();
+                return 0;
+            case IDC_BTN_CLEAR_EDIT_STACK:
+                if (!ClearEditStackAndRestoreAsset())
+                {
+                    MessageBoxW(hwnd, L"Failed to clear the current edit stack.", L"Edit Stack", MB_OK | MB_ICONERROR);
+                }
+                return 0;
+            case IDC_BTN_APPLY_INLINE_EDIT_STACK:
+                ApplyInlineEditStackFromUi(true);
+                return 0;
+            case IDC_BTN_SAVE_INLINE_EDIT_STACK:
+            {
+                wchar_t fileName[MAX_PATH] = L"viewer_inline_edit_stack.csv";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"Edit Stack CSV (*.csv)\0*.csv\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                if (GetSaveFileNameW(&ofn))
+                {
+                    if (!SaveInlineEditStackToPath(fileName, true))
+                    {
+                        MessageBoxW(hwnd, L"Failed to save the inline edit stack.", L"Inline Edit Stack", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_BTN_RESET_INLINE_EDIT_STACK:
+                ResetInlineEditStackText();
+                return 0;
+            case IDC_BTN_QUICK_EDIT_REPLACE:
+                PushQuickEditFormToInlineText(true, true);
+                return 0;
+            case IDC_BTN_QUICK_EDIT_APPEND:
+                PushQuickEditFormToInlineText(false, true);
+                return 0;
+            case IDC_BTN_QUICK_EDIT_MOVE_UP:
+                if (!MoveSelectedInlineLayer(-1, true))
+                {
+                    MessageBoxW(hwnd, L"The selected inline layer could not be moved up.", L"Quick Edit Form", MB_OK | MB_ICONWARNING);
+                }
+                return 0;
+            case IDC_BTN_QUICK_EDIT_MOVE_DOWN:
+                if (!MoveSelectedInlineLayer(1, true))
+                {
+                    MessageBoxW(hwnd, L"The selected inline layer could not be moved down.", L"Quick Edit Form", MB_OK | MB_ICONWARNING);
+                }
+                return 0;
+            case IDC_CHECK_QUICK_EDIT_ENABLED:
+                if (!m_syncingControls)
+                {
+                    ToggleSelectedInlineLayerEnabled(true);
+                }
+                return 0;
+            case IDC_CHECK_QUICK_EDIT_GUIDES_ONLY:
+                SyncStateFromControls();
+                RefreshQuickEditFormLabels();
+                if (IsEditInfluenceOverlayMode())
+                {
+                    UpdateScalpOverlayVertexBuffer();
+                }
+                return 0;
+            case IDC_EDIT_QUICK_EDIT_GROUP_ID:
+                if (code == EN_CHANGE)
+                {
+                    SyncStateFromControls();
+                    RefreshQuickEditFormLabels();
+                    if (IsEditInfluenceOverlayMode())
+                    {
+                        UpdateScalpOverlayVertexBuffer();
+                    }
+                }
+                return 0;
+            case IDC_BTN_QUICK_EDIT_DUPLICATE:
+                if (!DuplicateSelectedInlineLayer(true))
+                {
+                    MessageBoxW(hwnd, L"No inline layer could be duplicated.", L"Quick Edit Form", MB_OK | MB_ICONWARNING);
+                }
+                return 0;
+            case IDC_BTN_QUICK_EDIT_DELETE:
+                if (!DeleteSelectedInlineLayer(true))
+                {
+                    MessageBoxW(hwnd, L"No inline layer could be deleted.", L"Quick Edit Form", MB_OK | MB_ICONWARNING);
+                }
+                return 0;
             case IDC_BTN_IMPORT_ASSET:
             {
                 wchar_t fileName[MAX_PATH] = L"";
                 OPENFILENAMEW ofn = {};
                 ofn.lStructSize = sizeof(ofn);
                 ofn.hwndOwner = hwnd;
-                ofn.lpstrFilter = L"Hair Assets (*.csv;*.abc)\0*.csv;*.abc\0Curves CSV (*.csv)\0*.csv\0Alembic (*.abc)\0*.abc\0All Files\0*.*\0";
+                ofn.lpstrFilter = L"Hair Assets (*.csv;*.abc;*.hairbin;*.hair)\0*.csv;*.abc;*.hairbin;*.hair\0Curves CSV (*.csv)\0*.csv\0Alembic (*.abc)\0*.abc\0Hair Binary (*.hairbin;*.hair)\0*.hairbin;*.hair\0All Files\0*.*\0";
                 ofn.lpstrFile = fileName;
                 ofn.nMaxFile = MAX_PATH;
                 ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -5024,6 +6908,44 @@ namespace hairgpu::viewer
                 }
                 return 0;
             }
+            case IDC_BTN_EXPORT_ACTIVESET_JSON:
+            {
+                wchar_t fileName[MAX_PATH] = L"active_set_plan.json";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                if (GetSaveFileNameW(&ofn))
+                {
+                    if (!ExportActiveSetPlanJson(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to export the active-set plan JSON.", L"Export Failed", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
+            case IDC_BTN_EXPORT_RUNTIME_REPORT:
+            {
+                wchar_t fileName[MAX_PATH] = L"hair_runtime_report.txt";
+                OPENFILENAMEW ofn = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = hwnd;
+                ofn.lpstrFilter = L"Text Files\0*.txt\0All Files\0*.*\0";
+                ofn.lpstrFile = fileName;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                if (GetSaveFileNameW(&ofn))
+                {
+                    if (!ExportRuntimeReport(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to export the runtime report bundle.", L"Export Failed", MB_OK | MB_ICONERROR);
+                    }
+                }
+                return 0;
+            }
             case IDC_BTN_BROWSE_PARTING_MASK:
                 if (BrowseAndSetMaskPath(true))
                 {
@@ -5054,6 +6976,7 @@ namespace hairgpu::viewer
             case IDC_COMBO_DEBUG_COLOR:
             case IDC_COMBO_MASK_SOURCE:
             case IDC_COMBO_MASK_OVERLAY:
+            case IDC_COMBO_QUICK_EDIT_MODE:
                 if (code == CBN_SELCHANGE)
                 {
                     SyncStateFromControls();
@@ -5066,6 +6989,12 @@ namespace hairgpu::viewer
                     {
                         UpdateScalpOverlayVertexBuffer();
                     }
+                }
+                return 0;
+            case IDC_EDIT_QUICK_EDIT_NAME:
+                if (code == EN_KILLFOCUS)
+                {
+                    SyncStateFromControls();
                 }
                 return 0;
             case IDC_EDIT_GUIDES:
@@ -5089,6 +7018,8 @@ namespace hairgpu::viewer
             case IDC_CHECK_SHOW_FOLLOWERS:
             case IDC_CHECK_SHOW_ROOTS:
             case IDC_CHECK_SHOW_LINKS:
+            case IDC_CHECK_ACTIVESET_ADAPTIVE_BUDGET:
+            case IDC_CHECK_ACTIVESET_HARD_CLAMP:
                 if (code == BN_CLICKED)
                 {
                     SyncStateFromControls();

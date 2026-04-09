@@ -138,6 +138,10 @@ namespace hairgpu
                                const EditStack& stack,
                                RuntimeEditState* outState,
                                std::string& outError);
+    bool LoadEditStackCsv(const std::filesystem::path& path, EditStack& outStack, std::string& outError);
+    bool LoadEditStackCsvText(const std::string& text, EditStack& outStack, std::string& outError);
+    bool WriteEditStackCsv(const std::filesystem::path& path, const EditStack& stack, std::string& outError);
+    bool WriteEditStackTemplateCsv(const std::filesystem::path& path, std::string& outError);
     void ApplyConstraints(HairAsset& asset, const ConstraintSettings& settings);
     void ApplyAngularBendRelaxation(HairAsset& asset, const AngularBendRelaxationSettings& settings);
     void ApplyAngularXpbdBendRelaxation(HairAsset& asset, const AngularXpbdBendSettings& settings);

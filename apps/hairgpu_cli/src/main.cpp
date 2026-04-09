@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <iomanip>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -605,6 +607,340 @@ namespace
         outError.clear();
         return true;
     }
+    bool TryParseBoolToken(const std::string& text, bool& outValue)
+    {
+        const std::string lowered = ToLower(Trim(text));
+        if (lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on")
+        {
+            outValue = true;
+            return true;
+        }
+        if (lowered == "0" || lowered == "false" || lowered == "no" || lowered == "off")
+        {
+            outValue = false;
+            return true;
+        }
+        return false;
+    }
+
+    std::string JsonEscape(const std::string& value)
+    {
+        std::string escaped;
+        escaped.reserve(value.size() + 8u);
+        for (char c : value)
+        {
+            switch (c)
+            {
+            case '\\': escaped += "\\\\"; break;
+            case '"': escaped += "\\\""; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default: escaped.push_back(c); break;
+            }
+        }
+        return escaped;
+    }
+
+    bool ParseRegionModeToken(const std::string& text, RegionSelectMode& outMode)
+    {
+        const std::string lowered = ToLower(Trim(text));
+        if (lowered.empty() || lowered == "all")
+        {
+            outMode = RegionSelectMode::All;
+            return true;
+        }
+        if (lowered == "ellipse" || lowered == "circle")
+        {
+            outMode = RegionSelectMode::Ellipse;
+            return true;
+        }
+        if (lowered == "rectangle" || lowered == "rect" || lowered == "box")
+        {
+            outMode = RegionSelectMode::Rectangle;
+            return true;
+        }
+        if (lowered == "sector" || lowered == "fan")
+        {
+            outMode = RegionSelectMode::Sector;
+            return true;
+        }
+        return false;
+    }
+
+    const char* RegionModeToString(RegionSelectMode mode)
+    {
+        switch (mode)
+        {
+        case RegionSelectMode::Ellipse: return "ellipse";
+        case RegionSelectMode::Rectangle: return "rectangle";
+        case RegionSelectMode::Sector: return "sector";
+        default: return "all";
+        }
+    }
+
+    bool LocalLoadEditStackCsv(const std::filesystem::path& path, EditStack& outStack, std::string& outError)
+    {
+        std::ifstream in(path);
+        if (!in)
+        {
+            outError = "Failed to open edit stack CSV: " + path.string();
+            return false;
+        }
+
+        outStack = {};
+        std::string line;
+        uint32_t lineNumber = 0u;
+        while (std::getline(in, line))
+        {
+            ++lineNumber;
+            line = Trim(line);
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+            std::vector<std::string> tokens = SplitSimpleCsv(line);
+            for (std::string& token : tokens)
+            {
+                token = Trim(token);
+            }
+            if (tokens.empty())
+            {
+                continue;
+            }
+
+            const std::string kind = ToLower(tokens[0]);
+            if (kind == "stack")
+            {
+                if (tokens.size() >= 2u && !tokens[1].empty() && !TryParseFloatToken(tokens[1], outStack.boundarySmoothing))
+                {
+                    outError = "Malformed boundary smoothing at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (tokens.size() >= 3u && !tokens[2].empty() && !TryParseFloatToken(tokens[2], outStack.boundaryRadiusUv))
+                {
+                    outError = "Malformed boundary radius at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                continue;
+            }
+
+            if (kind != "layer")
+            {
+                outError = "Unsupported edit stack row at line " + std::to_string(lineNumber) + ": " + line;
+                return false;
+            }
+
+            EditLayer layer = {};
+            layer.name = (tokens.size() >= 2u && !tokens[1].empty()) ? tokens[1] : ("layer_" + std::to_string(outStack.layers.size()));
+            bool enabled = true;
+            if (tokens.size() >= 3u && !tokens[2].empty() && !TryParseBoolToken(tokens[2], enabled))
+            {
+                outError = "Malformed enabled flag at line " + std::to_string(lineNumber);
+                return false;
+            }
+            layer.enabled = enabled;
+            if (tokens.size() >= 4u && !tokens[3].empty() && !TryParseFloatToken(tokens[3], layer.layerWeight))
+            {
+                outError = "Malformed layer weight at line " + std::to_string(lineNumber);
+                return false;
+            }
+            if (tokens.size() >= 5u && !tokens[4].empty() && !ParseRegionModeToken(tokens[4], layer.region.mode))
+            {
+                outError = "Malformed region mode at line " + std::to_string(lineNumber);
+                return false;
+            }
+
+            auto parseFloatOptional = [&](size_t index, float& value, const char* label) -> bool
+            {
+                if (index >= tokens.size() || tokens[index].empty())
+                {
+                    return true;
+                }
+                if (!TryParseFloatToken(tokens[index], value))
+                {
+                    outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                return true;
+            };
+            auto parseUIntOptional = [&](size_t index, uint32_t& value, const char* label) -> bool
+            {
+                if (index >= tokens.size() || tokens[index].empty())
+                {
+                    return true;
+                }
+                if (!TryParseUIntToken(tokens[index], value))
+                {
+                    outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                return true;
+            };
+            auto parseBoolOptional = [&](size_t index, bool& value, const char* label) -> bool
+            {
+                if (index >= tokens.size() || tokens[index].empty())
+                {
+                    return true;
+                }
+                if (!TryParseBoolToken(tokens[index], value))
+                {
+                    outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                return true;
+            };
+
+            uint32_t groupId = UINT32_MAX;
+            if (!parseFloatOptional(5u, layer.region.centerUv.x, "center u") ||
+                !parseFloatOptional(6u, layer.region.centerUv.y, "center v") ||
+                !parseFloatOptional(7u, layer.region.radiusUv.x, "radius x") ||
+                !parseFloatOptional(8u, layer.region.radiusUv.y, "radius y") ||
+                !parseFloatOptional(9u, layer.region.innerRadius, "inner radius") ||
+                !parseFloatOptional(10u, layer.region.angleCenterRadians, "angle center") ||
+                !parseFloatOptional(11u, layer.region.angleHalfExtentRadians, "angle half extent") ||
+                !parseFloatOptional(12u, layer.region.feather, "feather") ||
+                !parseUIntOptional(13u, groupId, "groupId") ||
+                !parseBoolOptional(14u, layer.region.guidesOnly, "guidesOnly") ||
+                !parseFloatOptional(15u, layer.edit.lengthScale, "lengthScale") ||
+                !parseFloatOptional(16u, layer.edit.widthScale, "widthScale") ||
+                !parseFloatOptional(17u, layer.edit.rootOffset.x, "rootOffsetX") ||
+                !parseFloatOptional(18u, layer.edit.rootOffset.y, "rootOffsetY") ||
+                !parseFloatOptional(19u, layer.edit.rootOffset.z, "rootOffsetZ") ||
+                !parseFloatOptional(20u, layer.edit.tipOffset.x, "tipOffsetX") ||
+                !parseFloatOptional(21u, layer.edit.tipOffset.y, "tipOffsetY") ||
+                !parseFloatOptional(22u, layer.edit.tipOffset.z, "tipOffsetZ") ||
+                !parseFloatOptional(23u, layer.edit.sideOffset, "sideOffset") ||
+                !parseFloatOptional(24u, layer.edit.yawRadians, "yawRadians") ||
+                !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence"))
+            {
+                return false;
+            }
+            layer.region.groupId = groupId;
+            outStack.layers.push_back(layer);
+        }
+
+        outError.clear();
+        return true;
+    }
+
+    bool LocalWriteEditStackTemplateCsv(const std::filesystem::path& path, std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to open edit stack template for writing: " + path.string();
+            return false;
+        }
+        out << "# edit stack csv\n";
+        out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
+        out << "stack,0.42,0.10\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
+        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\n";
+        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\n";
+        outError.clear();
+        return true;
+    }
+
+    bool WriteEditRuntimeStateJson(const std::filesystem::path& path,
+                                   const EditStack& stack,
+                                   const RuntimeEditState& state,
+                                   const HairAsset& asset,
+                                   std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to write runtime edit state json: " + path.string();
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"layerCount\": " << stack.layers.size() << ",\n";
+        out << "  \"boundarySmoothing\": " << stack.boundarySmoothing << ",\n";
+        out << "  \"boundaryRadiusUv\": " << stack.boundaryRadiusUv << ",\n";
+        out << "  \"activeGuideCount\": " << state.activeGuideCount << ",\n";
+        out << "  \"guideCount\": " << asset.guideStrandCount << ",\n";
+        out << "  \"strandCount\": " << asset.strands.size() << ",\n";
+        out << "  \"maxGuideInfluence\": " << state.maxGuideInfluence << ",\n";
+        out << "  \"activeGuideRatio\": " << (asset.guideStrandCount > 0u ? (static_cast<double>(state.activeGuideCount) / static_cast<double>(asset.guideStrandCount)) : 0.0) << ",\n";
+        out << "  \"layers\": [\n";
+        for (size_t i = 0; i < stack.layers.size(); ++i)
+        {
+            const EditLayer& layer = stack.layers[i];
+            out << "    {\n";
+            out << "      \"name\": \"" << JsonEscape(layer.name) << "\",\n";
+            out << "      \"enabled\": " << (layer.enabled ? "true" : "false") << ",\n";
+            out << "      \"layerWeight\": " << layer.layerWeight << ",\n";
+            out << "      \"mode\": \"" << RegionModeToString(layer.region.mode) << "\",\n";
+            out << "      \"guidesOnly\": " << (layer.region.guidesOnly ? "true" : "false") << ",\n";
+            out << "      \"groupId\": ";
+            if (layer.region.groupId == UINT32_MAX)
+            {
+                out << "null";
+            }
+            else
+            {
+                out << layer.region.groupId;
+            }
+            out << "\n    }";
+            if (i + 1u < stack.layers.size())
+            {
+                out << ",";
+            }
+            out << "\n";
+        }
+        out << "  ],\n";
+        out << "  \"guideInfluence\": [";
+        for (size_t i = 0; i < state.guideInfluence.size(); ++i)
+        {
+            if (i != 0u)
+            {
+                out << ", ";
+            }
+            out << state.guideInfluence[i];
+        }
+        out << "],\n";
+        out << "  \"strandInfluence\": [";
+        for (size_t i = 0; i < state.strandInfluence.size(); ++i)
+        {
+            if (i != 0u)
+            {
+                out << ", ";
+            }
+            out << state.strandInfluence[i];
+        }
+        out << "]\n}";
+        out << "\n";
+        outError.clear();
+        return true;
+    }
+
+    bool WriteEditComparisonJson(const std::filesystem::path& path,
+                                 const HairEditComparisonReport& report,
+                                 std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to write edit comparison json: " + path.string();
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"rmsPositionError\": " << report.shape.rmsPositionError << ",\n";
+        out << "  \"silhouetteError\": " << report.shape.silhouetteError << ",\n";
+        out << "  \"clumpPreservationScore\": " << report.shape.clumpPreservationScore << ",\n";
+        out << "  \"rootLocalityScore\": " << report.shape.rootLocalityScore << ",\n";
+        out << "  \"editLocalityScore\": " << report.editLocalityScore << ",\n";
+        out << "  \"boundaryNaturalnessScore\": " << report.boundaryNaturalnessScore << ",\n";
+        out << "  \"editedStrandRatio\": " << report.editedStrandRatio << ",\n";
+        out << "  \"editToRunLatencyMilliseconds\": " << report.editToRunLatencyMilliseconds << "\n";
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
     void PrintUsage()
     {
         std::cout << R"USAGE(hairgpu_cli usage:
@@ -635,6 +971,10 @@ namespace
   hairgpu_cli segment-profile <input> <output.hairbin> [balanced|smooth|cinematic] [targetParticlesOverride=0]
   hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
   hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
+  hairgpu_cli edit-stack-template <output.csv>
+  hairgpu_cli edit-stack-apply <input> <stack.csv> <output.hairbin> [runtime.json]
+  hairgpu_cli edit-stack-eval <input> <stack.csv> <output_dir> [samplesPerStrand=16]
+  hairgpu_cli edit-compare <reference> <edited> <output.json> [samplesPerStrand=16]
   hairgpu_cli constrain <input> <output.hairbin> [maxStretch maxBend floorY maxRootRadius]
   hairgpu_cli broadphase-stats <input> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount]
   hairgpu_cli broadphase-export <input> <output.csv> [cellSize] [mode=dense|hash|adaptive|sorted] [hashBucketCount] [maxPairs=512]
@@ -1881,6 +2221,21 @@ int main(int argc, char** argv)
                   << " values=" << grid.values.size() << "\n";
         return 0;
     }
+    if (command == "edit-stack-template")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        std::string error;
+        if (!LocalWriteEditStackTemplateCsv(argv[2], error))
+        {
+            return PrintLoadFailure("Edit stack template write failed", error, 200);
+        }
+        std::cout << "templateWritten=" << argv[2] << "\n";
+        return 0;
+    }
     if (argc < 3)
     {
         PrintUsage();
@@ -2040,6 +2395,103 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    if (command == "edit-stack-apply")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        EditStack stack = {};
+        if (!LocalLoadEditStackCsv(argv[3], stack, error))
+        {
+            return PrintLoadFailure("Edit stack load failed", error, 201);
+        }
+        const HairAsset baseAsset = asset;
+        RuntimeEditState state = {};
+        if (!ApplyEditStackToAsset(asset, baseAsset, stack, &state, error) || !SaveHairAssetToHairBinary(argv[4], asset, error))
+        {
+            return PrintLoadFailure("Edit stack apply failed", error, 202);
+        }
+        if (argc >= 6 && !WriteEditRuntimeStateJson(argv[5], stack, state, baseAsset, error))
+        {
+            return PrintLoadFailure("Edit runtime state write failed", error, 203);
+        }
+        std::cout << "layers=" << stack.layers.size()
+                  << " activeGuides=" << state.activeGuideCount
+                  << " maxGuideInfluence=" << state.maxGuideInfluence
+                  << " output=" << argv[4] << "\n";
+        return 0;
+    }
+    if (command == "edit-stack-eval")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        EditStack stack = {};
+        if (!LocalLoadEditStackCsv(argv[3], stack, error))
+        {
+            return PrintLoadFailure("Edit stack load failed", error, 204);
+        }
+        const HairAsset baseAsset = asset;
+        RuntimeEditState state = {};
+        const uint32_t samplesPerStrand = std::max<uint32_t>(2u, ArgToUInt(argc, argv, 5, 16u));
+        const auto startTime = std::chrono::steady_clock::now();
+        if (!ApplyEditStackToAsset(asset, baseAsset, stack, &state, error))
+        {
+            return PrintLoadFailure("Edit stack eval failed", error, 205);
+        }
+        const auto endTime = std::chrono::steady_clock::now();
+        HairEditComparisonReport report = CompareHairEditRegion(baseAsset, asset, samplesPerStrand);
+        report.editToRunLatencyMilliseconds = static_cast<float>(std::chrono::duration<double, std::milli>(endTime - startTime).count());
+
+        std::error_code ec;
+        std::filesystem::create_directories(argv[4], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Edit eval output failed", ec.message(), 206);
+        }
+        const std::filesystem::path outputDir(argv[4]);
+        if (!SaveHairAssetToHairBinary(outputDir / "edited.hairbin", asset, error) ||
+            !WriteEditRuntimeStateJson(outputDir / "edit_runtime.json", stack, state, baseAsset, error) ||
+            !WriteEditComparisonJson(outputDir / "edit_metrics.json", report, error))
+        {
+            return PrintLoadFailure("Edit eval write failed", error, 207);
+        }
+        std::cout << "layers=" << stack.layers.size()
+                  << " activeGuides=" << state.activeGuideCount
+                  << " locality=" << report.editLocalityScore
+                  << " boundary=" << report.boundaryNaturalnessScore
+                  << " latencyMs=" << report.editToRunLatencyMilliseconds
+                  << " outputDir=" << outputDir.string() << "\n";
+        return 0;
+    }
+    if (command == "edit-compare")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset editedAsset = {};
+        if (!LoadHairAssetAny(argv[3], editedAsset, error))
+        {
+            return PrintLoadFailure("Edited asset load failed", error, 208);
+        }
+        HairEditComparisonReport report = CompareHairEditRegion(asset, editedAsset, std::max<uint32_t>(2u, ArgToUInt(argc, argv, 5, 16u)));
+        if (!WriteEditComparisonJson(argv[4], report, error))
+        {
+            return PrintLoadFailure("Edit comparison write failed", error, 209);
+        }
+        std::cout << "locality=" << report.editLocalityScore
+                  << " boundary=" << report.boundaryNaturalnessScore
+                  << " editedStrandRatio=" << report.editedStrandRatio
+                  << " output=" << argv[4] << "\n";
+        return 0;
+    }
+
     if (command == "constrain")
     {
         if (argc < 4)

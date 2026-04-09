@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
 #include <limits>
 #include <unordered_map>
 
@@ -30,6 +32,310 @@ namespace hairgpu
                 radians += 2.0f * kPi;
             }
             return radians;
+        }
+
+        std::string Trim(std::string text)
+        {
+            const auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+            while (!text.empty() && isSpace(static_cast<unsigned char>(text.front())))
+            {
+                text.erase(text.begin());
+            }
+            while (!text.empty() && isSpace(static_cast<unsigned char>(text.back())))
+            {
+                text.pop_back();
+            }
+            return text;
+        }
+
+        std::string ToLower(std::string text)
+        {
+            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c)
+            {
+                return static_cast<char>(std::tolower(c));
+            });
+            return text;
+        }
+
+        std::vector<std::string> SplitSimpleCsv(const std::string& line)
+        {
+            std::vector<std::string> tokens;
+            std::string current;
+            bool inQuotes = false;
+            for (size_t i = 0; i < line.size(); ++i)
+            {
+                const char c = line[i];
+                if (c == '"')
+                {
+                    if (inQuotes && i + 1 < line.size() && line[i + 1] == '"')
+                    {
+                        current.push_back('"');
+                        ++i;
+                    }
+                    else
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                }
+                else if (c == ',' && !inQuotes)
+                {
+                    tokens.push_back(current);
+                    current.clear();
+                }
+                else
+                {
+                    current.push_back(c);
+                }
+            }
+            tokens.push_back(current);
+            return tokens;
+        }
+
+        bool TryParseFloatToken(const std::string& token, float& outValue)
+        {
+            try
+            {
+                size_t consumed = 0u;
+                outValue = std::stof(token, &consumed);
+                return consumed == token.size();
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseUIntToken(const std::string& token, uint32_t& outValue)
+        {
+            try
+            {
+                size_t consumed = 0u;
+                const unsigned long value = std::stoul(token, &consumed, 10);
+                if (consumed != token.size())
+                {
+                    return false;
+                }
+                outValue = static_cast<uint32_t>(value);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseBoolToken(const std::string& token, bool& outValue)
+        {
+            const std::string lowered = ToLower(Trim(token));
+            if (lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on")
+            {
+                outValue = true;
+                return true;
+            }
+            if (lowered == "0" || lowered == "false" || lowered == "no" || lowered == "off")
+            {
+                outValue = false;
+                return true;
+            }
+            return false;
+        }
+
+        bool ParseRegionModeToken(const std::string& text, RegionSelectMode& outMode)
+        {
+            const std::string lowered = ToLower(Trim(text));
+            if (lowered.empty() || lowered == "all")
+            {
+                outMode = RegionSelectMode::All;
+                return true;
+            }
+            if (lowered == "ellipse" || lowered == "circle")
+            {
+                outMode = RegionSelectMode::Ellipse;
+                return true;
+            }
+            if (lowered == "rectangle" || lowered == "rect" || lowered == "box")
+            {
+                outMode = RegionSelectMode::Rectangle;
+                return true;
+            }
+            if (lowered == "sector" || lowered == "fan")
+            {
+                outMode = RegionSelectMode::Sector;
+                return true;
+            }
+            return false;
+        }
+
+        std::string EscapeCsvToken(const std::string& token)
+        {
+            if (token.find_first_of(",\"\n\r") == std::string::npos)
+            {
+                return token;
+            }
+            std::string escaped = "\"";
+            for (char c : token)
+            {
+                if (c == '"')
+                {
+                    escaped += "\"\"";
+                }
+                else
+                {
+                    escaped.push_back(c);
+                }
+            }
+            escaped.push_back('"');
+            return escaped;
+        }
+
+        const char* RegionModeToToken(RegionSelectMode mode)
+        {
+            switch (mode)
+            {
+            case RegionSelectMode::Ellipse: return "ellipse";
+            case RegionSelectMode::Rectangle: return "rectangle";
+            case RegionSelectMode::Sector: return "sector";
+            case RegionSelectMode::All:
+            default: return "all";
+            }
+        }
+
+        bool LoadEditStackCsvFromStream(std::istream& in, EditStack& outStack, std::string& outError)
+        {
+            outStack = {};
+            std::string line;
+            uint32_t lineNumber = 0u;
+            while (std::getline(in, line))
+            {
+                ++lineNumber;
+                line = Trim(line);
+                if (line.empty() || line[0] == '#')
+                {
+                    continue;
+                }
+                std::vector<std::string> tokens = SplitSimpleCsv(line);
+                for (std::string& token : tokens)
+                {
+                    token = Trim(token);
+                }
+                if (tokens.empty())
+                {
+                    continue;
+                }
+
+                const std::string kind = ToLower(tokens[0]);
+                if (kind == "stack")
+                {
+                    if (tokens.size() >= 2u && !tokens[1].empty() && !TryParseFloatToken(tokens[1], outStack.boundarySmoothing))
+                    {
+                        outError = "Malformed boundary smoothing at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    if (tokens.size() >= 3u && !tokens[2].empty() && !TryParseFloatToken(tokens[2], outStack.boundaryRadiusUv))
+                    {
+                        outError = "Malformed boundary radius at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    continue;
+                }
+
+                if (kind != "layer")
+                {
+                    outError = "Unsupported edit stack row at line " + std::to_string(lineNumber) + ": " + line;
+                    return false;
+                }
+
+                EditLayer layer = {};
+                layer.name = (tokens.size() >= 2u && !tokens[1].empty()) ? tokens[1] : ("layer_" + std::to_string(outStack.layers.size()));
+                bool enabled = true;
+                if (tokens.size() >= 3u && !tokens[2].empty() && !TryParseBoolToken(tokens[2], enabled))
+                {
+                    outError = "Malformed enabled flag at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                layer.enabled = enabled;
+                if (tokens.size() >= 4u && !tokens[3].empty() && !TryParseFloatToken(tokens[3], layer.layerWeight))
+                {
+                    outError = "Malformed layer weight at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (tokens.size() >= 5u && !tokens[4].empty() && !ParseRegionModeToken(tokens[4], layer.region.mode))
+                {
+                    outError = "Malformed region mode at line " + std::to_string(lineNumber);
+                    return false;
+                }
+
+                auto parseFloatOptional = [&](size_t index, float& value, const char* label) -> bool
+                {
+                    if (index >= tokens.size() || tokens[index].empty())
+                    {
+                        return true;
+                    }
+                    if (!TryParseFloatToken(tokens[index], value))
+                    {
+                        outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    return true;
+                };
+                auto parseUIntOptional = [&](size_t index, uint32_t& value, const char* label) -> bool
+                {
+                    if (index >= tokens.size() || tokens[index].empty())
+                    {
+                        return true;
+                    }
+                    if (!TryParseUIntToken(tokens[index], value))
+                    {
+                        outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    return true;
+                };
+                auto parseBoolOptional = [&](size_t index, bool& value, const char* label) -> bool
+                {
+                    if (index >= tokens.size() || tokens[index].empty())
+                    {
+                        return true;
+                    }
+                    if (!TryParseBoolToken(tokens[index], value))
+                    {
+                        outError = std::string("Malformed ") + label + " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                    return true;
+                };
+
+                uint32_t groupId = UINT32_MAX;
+                if (!parseFloatOptional(5u, layer.region.centerUv.x, "center u") ||
+                    !parseFloatOptional(6u, layer.region.centerUv.y, "center v") ||
+                    !parseFloatOptional(7u, layer.region.radiusUv.x, "radius x") ||
+                    !parseFloatOptional(8u, layer.region.radiusUv.y, "radius y") ||
+                    !parseFloatOptional(9u, layer.region.innerRadius, "inner radius") ||
+                    !parseFloatOptional(10u, layer.region.angleCenterRadians, "angle center") ||
+                    !parseFloatOptional(11u, layer.region.angleHalfExtentRadians, "angle half extent") ||
+                    !parseFloatOptional(12u, layer.region.feather, "feather") ||
+                    !parseUIntOptional(13u, groupId, "groupId") ||
+                    !parseBoolOptional(14u, layer.region.guidesOnly, "guidesOnly") ||
+                    !parseFloatOptional(15u, layer.edit.lengthScale, "lengthScale") ||
+                    !parseFloatOptional(16u, layer.edit.widthScale, "widthScale") ||
+                    !parseFloatOptional(17u, layer.edit.rootOffset.x, "rootOffsetX") ||
+                    !parseFloatOptional(18u, layer.edit.rootOffset.y, "rootOffsetY") ||
+                    !parseFloatOptional(19u, layer.edit.rootOffset.z, "rootOffsetZ") ||
+                    !parseFloatOptional(20u, layer.edit.tipOffset.x, "tipOffsetX") ||
+                    !parseFloatOptional(21u, layer.edit.tipOffset.y, "tipOffsetY") ||
+                    !parseFloatOptional(22u, layer.edit.tipOffset.z, "tipOffsetZ") ||
+                    !parseFloatOptional(23u, layer.edit.sideOffset, "sideOffset") ||
+                    !parseFloatOptional(24u, layer.edit.yawRadians, "yawRadians") ||
+                    !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence"))
+                {
+                    return false;
+                }
+                layer.region.groupId = groupId;
+                outStack.layers.push_back(layer);
+            }
+
+            outError.clear();
+            return true;
         }
 
         Vec3 RotateYaw(const Vec3& p, float radians)
@@ -405,6 +711,94 @@ namespace hairgpu
                 }
             }
         }
+        return true;
+    }
+
+
+    bool LoadEditStackCsv(const std::filesystem::path& path, EditStack& outStack, std::string& outError)
+    {
+        std::ifstream in(path);
+        if (!in)
+        {
+            outError = "Failed to open edit stack CSV: " + path.string();
+            return false;
+        }
+        return LoadEditStackCsvFromStream(in, outStack, outError);
+    }
+
+    bool LoadEditStackCsvText(const std::string& text, EditStack& outStack, std::string& outError)
+    {
+        std::istringstream in(text);
+        return LoadEditStackCsvFromStream(in, outStack, outError);
+    }
+
+    bool WriteEditStackCsv(const std::filesystem::path& path, const EditStack& stack, std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to open edit stack CSV for writing: " + path.string();
+            return false;
+        }
+
+        out << std::fixed << std::setprecision(6);
+        out << "# edit stack csv\n";
+        out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
+        out << "stack," << stack.boundarySmoothing << "," << stack.boundaryRadiusUv << "\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
+        for (const EditLayer& layer : stack.layers)
+        {
+            out << "layer,"
+                << EscapeCsvToken(layer.name) << ","
+                << (layer.enabled ? 1 : 0) << ","
+                << layer.layerWeight << ","
+                << RegionModeToToken(layer.region.mode) << ","
+                << layer.region.centerUv.x << ","
+                << layer.region.centerUv.y << ","
+                << layer.region.radiusUv.x << ","
+                << layer.region.radiusUv.y << ","
+                << layer.region.innerRadius << ","
+                << layer.region.angleCenterRadians << ","
+                << layer.region.angleHalfExtentRadians << ","
+                << layer.region.feather << ",";
+            if (layer.region.groupId != UINT32_MAX)
+            {
+                out << layer.region.groupId;
+            }
+            out << ","
+                << (layer.region.guidesOnly ? 1 : 0) << ","
+                << layer.edit.lengthScale << ","
+                << layer.edit.widthScale << ","
+                << layer.edit.rootOffset.x << ","
+                << layer.edit.rootOffset.y << ","
+                << layer.edit.rootOffset.z << ","
+                << layer.edit.tipOffset.x << ","
+                << layer.edit.tipOffset.y << ","
+                << layer.edit.tipOffset.z << ","
+                << layer.edit.sideOffset << ","
+                << layer.edit.yawRadians << ","
+                << layer.edit.followerInfluence << "\n";
+        }
+
+        outError.clear();
+        return true;
+    }
+
+    bool WriteEditStackTemplateCsv(const std::filesystem::path& path, std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to open edit stack template for writing: " + path.string();
+            return false;
+        }
+        out << "# edit stack csv\n";
+        out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
+        out << "stack,0.42,0.10\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
+        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\n";
+        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\n";
+        outError.clear();
         return true;
     }
 

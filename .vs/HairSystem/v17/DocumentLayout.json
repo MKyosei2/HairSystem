@@ -28,7 +28,7 @@
               "RelativeDocumentMoniker": "apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "RelativeToolTip": "apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
-              "ViewState": "AgIAAFsLAAAAAAAAAAAQwGcLAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAF8LAAAAAAAAAAAAwGcLAAAJAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-04-09T02:38:21.223Z",
               "EditorCaption": ""
@@ -51,8 +51,7 @@
               "RelativeToolTip": "src\\hairgpu_core\\SampleAsset.cpp",
               "ViewState": "AgIAAL8DAAAAAAAAAADwv80DAAAxAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-04-09T02:35:29.4Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-04-09T02:35:29.4Z"
             }
           ]
         }

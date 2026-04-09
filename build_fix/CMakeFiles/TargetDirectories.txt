@@ -1,0 +1,8 @@
+/mnt/data/fixwork/build_fix/CMakeFiles/edit_cache.dir
+/mnt/data/fixwork/build_fix/CMakeFiles/rebuild_cache.dir
+/mnt/data/fixwork/build_fix/src/core/CMakeFiles/hairgpu_core.dir
+/mnt/data/fixwork/build_fix/src/core/CMakeFiles/edit_cache.dir
+/mnt/data/fixwork/build_fix/src/core/CMakeFiles/rebuild_cache.dir
+/mnt/data/fixwork/build_fix/apps/cli/CMakeFiles/hairgpu_cli.dir
+/mnt/data/fixwork/build_fix/apps/cli/CMakeFiles/edit_cache.dir
+/mnt/data/fixwork/build_fix/apps/cli/CMakeFiles/rebuild_cache.dir

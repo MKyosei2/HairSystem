@@ -12,10 +12,12 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include "hairgpu/ActiveSet.h"
+#include "hairgpu/Authoring.h"
 #include "hairgpu/HybridRuntime.h"
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
@@ -434,6 +436,13 @@ namespace hairgpu::viewer
             None = 0,
             Parting = 1,
             Region = 2,
+            EditInfluence = 3,
+            EditInfluenceBeforeAfter = 4,
+            ActiveSetRiskSelection = 5,
+            ActiveSetMotion = 6,
+            ActiveSetContact = 7,
+            ActiveSetUncertainty = 8,
+            ActiveSetEdit = 9,
         };
 
         enum class CpuReadbackMode : uint32_t
@@ -541,9 +550,40 @@ namespace hairgpu::viewer
         bool LoadSettingsFromFile(const std::wstring& filePath);
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
+        bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
+        bool ExportRuntimeReport(const std::wstring& filePath) const;
         bool ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles);
         bool LoadHairAssetFromPath(const std::wstring& filePath);
+        bool BrowseAndSetEditStackPath();
+        bool ClearEditStackAndRestoreAsset();
+        bool ApplyEditStackToCurrentAsset(bool showMessageOnFailure);
+        bool ApplyEditStackToAsset(hairgpu::HairAsset& asset, std::wstring* outStatusText = nullptr);
+        bool ApplyInlineEditStackFromUi(bool showMessageOnFailure);
+        bool SaveInlineEditStackToPath(const std::wstring& filePath, bool applyAfterSave);
+        void ResetInlineEditStackText();
+        std::wstring GetInlineEditStackText() const;
+        std::filesystem::path GetInlineEditStackTempPath() const;
         bool BrowseAndSetMaskPath(bool partingMask);
+        void RefreshActiveSetTuningLabels();
+        void RefreshQuickEditFormLabels();
+        void SyncQuickEditFormControlsFromState();
+        void RefreshInlineLayerListFromText(int preferredSelection = -1);
+        bool TryBuildSelectedInlineLayerPreview(std::vector<float>& outGuideInfluence, uint32_t& outActiveGuideCount, float& outMaxInfluence) const;
+        bool IsEditInfluenceOverlayMode() const;
+        bool IsBoundaryBeforeAfterOverlayMode() const;
+        bool IsActiveSetRiskOverlayMode() const;
+        const wchar_t* GetMaskOverlayModeDisplayName() const;
+        float GetActiveSetOverlayScoreValue(const hairgpu::ActiveSetClusterScore& score) const;
+        int GetSelectedInlineLayerIndex() const;
+        void SetSelectedInlineLayerIndex(int layerIndex);
+        void LoadQuickEditFormFromInlineText(int preferredSelection = -1);
+        bool PushQuickEditFormToInlineText(bool replaceSelectedLayer, bool applyAfterPush);
+        bool MoveSelectedInlineLayer(int direction, bool applyAfterMove);
+        bool ToggleSelectedInlineLayerEnabled(bool applyAfterToggle);
+        bool DuplicateSelectedInlineLayer(bool applyAfterDuplicate);
+        bool DeleteSelectedInlineLayer(bool applyAfterDelete);
+        hairgpu::EditLayer BuildQuickEditLayerFromUi() const;
+
         void ApplySampleMaskOverrides();
         void RefreshMaskPreviewControls();
         void ReleaseMaskPreviewBitmaps();
@@ -617,6 +657,39 @@ namespace hairgpu::viewer
 
         std::wstring m_partingMaskPath;
         std::wstring m_regionMaskPath;
+        std::wstring m_editStackPath;
+        std::wstring m_lastEditStackStatus = L"No edit stack";
+        hairgpu::RuntimeEditState m_runtimeEditState;
+        hairgpu::RegionSelectMode m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+        bool m_quickEditEnabled = true;
+        std::wstring m_quickEditLayerName = L"quick_form";
+        float m_quickEditFeather = 0.20f;
+        float m_quickEditLengthScale = 1.00f;
+        float m_quickEditLayerWeight = 1.00f;
+        float m_quickEditCenterU = 0.50f;
+        float m_quickEditCenterV = 0.50f;
+        float m_quickEditRadiusU = 0.18f;
+        float m_quickEditRadiusV = 0.18f;
+        float m_quickEditInnerRadius = 0.00f;
+        float m_quickEditAngleCenterRadians = 0.00f;
+        float m_quickEditAngleHalfExtentRadians = 3.1415926f;
+        float m_quickEditRootOffsetX = 0.00f;
+        float m_quickEditRootOffsetY = 0.00f;
+        float m_quickEditRootOffsetZ = 0.00f;
+        float m_quickEditTipOffsetX = 0.02f;
+        float m_quickEditTipOffsetY = 0.00f;
+        float m_quickEditTipOffsetZ = -0.08f;
+        float m_quickEditSideOffset = 0.00f;
+        float m_quickEditYawRadians = 0.00f;
+        float m_quickEditWidthScale = 1.00f;
+        float m_quickEditFollowerInfluence = 1.00f;
+        float m_quickEditBoundarySmoothing = 0.42f;
+        float m_quickEditBoundaryRadiusUv = 0.10f;
+        uint32_t m_quickEditGroupId = UINT32_MAX;
+        bool m_quickEditGuidesOnly = true;
+        int m_selectedInlineLayerIndex = 0;
+
+        hairgpu::HairAsset m_baseAsset;
         MaskSourceMode m_maskSourceMode = MaskSourceMode::Auto;
         MaskOverlayMode m_maskOverlayMode = MaskOverlayMode::None;
 
@@ -794,6 +867,49 @@ namespace hairgpu::viewer
         HWND m_btnLoadSettings = nullptr;
         HWND m_btnExportCsv = nullptr;
         HWND m_btnExportPerfCsv = nullptr;
+        HWND m_btnBrowseEditStack = nullptr;
+        HWND m_btnClearEditStack = nullptr;
+        HWND m_btnApplyInlineEditStack = nullptr;
+        HWND m_btnSaveInlineEditStack = nullptr;
+        HWND m_btnResetInlineEditStack = nullptr;
+        HWND m_labelQuickEditForm = nullptr;
+        HWND m_labelLayerList = nullptr;
+        HWND m_listInlineLayers = nullptr;
+        HWND m_labelQuickEditName = nullptr;
+        HWND m_editQuickEditName = nullptr;
+        HWND m_btnQuickEditMoveUp = nullptr;
+        HWND m_btnQuickEditMoveDown = nullptr;
+        HWND m_checkQuickEditEnabled = nullptr;
+        HWND m_btnQuickEditDelete = nullptr;
+        HWND m_btnQuickEditDuplicate = nullptr;
+        HWND m_comboQuickEditMode = nullptr;
+        HWND m_trackQuickEditFeather = nullptr;
+        HWND m_trackQuickEditLengthScale = nullptr;
+        HWND m_trackQuickEditLayerWeight = nullptr;
+        HWND m_trackQuickEditCenterU = nullptr;
+        HWND m_trackQuickEditCenterV = nullptr;
+        HWND m_trackQuickEditRadiusU = nullptr;
+        HWND m_trackQuickEditRadiusV = nullptr;
+        HWND m_trackQuickEditInnerRadius = nullptr;
+        HWND m_trackQuickEditAngleCenter = nullptr;
+        HWND m_trackQuickEditAngleHalfExtent = nullptr;
+        HWND m_trackQuickEditRootOffsetX = nullptr;
+        HWND m_trackQuickEditRootOffsetY = nullptr;
+        HWND m_trackQuickEditRootOffsetZ = nullptr;
+        HWND m_trackQuickEditTipOffsetX = nullptr;
+        HWND m_trackQuickEditTipOffsetY = nullptr;
+        HWND m_trackQuickEditTipOffsetZ = nullptr;
+        HWND m_trackQuickEditSideOffset = nullptr;
+        HWND m_trackQuickEditYaw = nullptr;
+        HWND m_trackQuickEditWidthScale = nullptr;
+        HWND m_trackQuickEditFollowerInfluence = nullptr;
+        HWND m_trackQuickEditBoundarySmoothing = nullptr;
+        HWND m_trackQuickEditBoundaryRadiusUv = nullptr;
+        HWND m_editQuickEditGroupId = nullptr;
+        HWND m_checkQuickEditGuidesOnly = nullptr;
+        HWND m_btnQuickEditReplace = nullptr;
+        HWND m_btnQuickEditAppend = nullptr;
+
         HWND m_btnBrowsePartingMask = nullptr;
         HWND m_btnBrowseRegionMask = nullptr;
         HWND m_comboMaskSource = nullptr;
@@ -831,6 +947,34 @@ namespace hairgpu::viewer
         HWND m_trackBendCompliance = nullptr;
         HWND m_labelStats = nullptr;
         HWND m_labelAssetStats = nullptr;
+        HWND m_labelEditStack = nullptr;
+        HWND m_labelInlineEditStack = nullptr;
+        HWND m_editInlineEditStack = nullptr;
+        HWND m_labelQuickEditFeather = nullptr;
+        HWND m_labelQuickEditLengthScale = nullptr;
+        HWND m_labelQuickEditLayerWeight = nullptr;
+        HWND m_labelQuickEditCenterU = nullptr;
+        HWND m_labelQuickEditCenterV = nullptr;
+        HWND m_labelQuickEditRadiusU = nullptr;
+        HWND m_labelQuickEditRadiusV = nullptr;
+        HWND m_labelQuickEditInnerRadius = nullptr;
+        HWND m_labelQuickEditAngleCenter = nullptr;
+        HWND m_labelQuickEditAngleHalfExtent = nullptr;
+        HWND m_labelQuickEditRootOffsetX = nullptr;
+        HWND m_labelQuickEditRootOffsetY = nullptr;
+        HWND m_labelQuickEditRootOffsetZ = nullptr;
+        HWND m_labelQuickEditTipOffsetX = nullptr;
+        HWND m_labelQuickEditTipOffsetY = nullptr;
+        HWND m_labelQuickEditTipOffsetZ = nullptr;
+        HWND m_labelQuickEditSideOffset = nullptr;
+        HWND m_labelQuickEditYaw = nullptr;
+        HWND m_labelQuickEditWidthScale = nullptr;
+        HWND m_labelQuickEditFollowerInfluence = nullptr;
+        HWND m_labelQuickEditBoundarySmoothing = nullptr;
+        HWND m_labelQuickEditBoundaryRadiusUv = nullptr;
+        HWND m_labelQuickEditGroupId = nullptr;
+        HWND m_labelQuickEditVisualization = nullptr;
+
         HWND m_labelPartingMask = nullptr;
         HWND m_labelRegionMask = nullptr;
         HWND m_labelMaskSource = nullptr;
@@ -848,5 +992,31 @@ namespace hairgpu::viewer
         HWND m_labelGridCellSize = nullptr;
         HWND m_labelStretchCompliance = nullptr;
         HWND m_labelBendCompliance = nullptr;
+        HWND m_labelActiveSetTuning = nullptr;
+        HWND m_checkActiveSetAdaptiveBudget = nullptr;
+        HWND m_checkActiveSetHardClamp = nullptr;
+        HWND m_labelActiveSetMaxClusters = nullptr;
+        HWND m_trackActiveSetMaxClusters = nullptr;
+        HWND m_labelActiveSetMaxGuides = nullptr;
+        HWND m_trackActiveSetMaxGuides = nullptr;
+        HWND m_labelActiveSetThreshold = nullptr;
+        HWND m_trackActiveSetThreshold = nullptr;
+        HWND m_labelActiveSetTargetFrame = nullptr;
+        HWND m_trackActiveSetTargetFrame = nullptr;
+        HWND m_labelActiveSetFixedCost = nullptr;
+        HWND m_trackActiveSetFixedCost = nullptr;
+        HWND m_labelActiveSetClusterCost = nullptr;
+        HWND m_trackActiveSetClusterCost = nullptr;
+        HWND m_labelActiveSetScoreWeights = nullptr;
+        HWND m_labelActiveSetMotionWeight = nullptr;
+        HWND m_trackActiveSetMotionWeight = nullptr;
+        HWND m_labelActiveSetContactWeight = nullptr;
+        HWND m_trackActiveSetContactWeight = nullptr;
+        HWND m_labelActiveSetUncertaintyWeight = nullptr;
+        HWND m_trackActiveSetUncertaintyWeight = nullptr;
+        HWND m_labelActiveSetEditWeight = nullptr;
+        HWND m_trackActiveSetEditWeight = nullptr;
+        HWND m_btnExportActiveSetJson = nullptr;
+        HWND m_btnExportRuntimeReport = nullptr;
     };
 }
