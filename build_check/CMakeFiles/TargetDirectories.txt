@@ -1,8 +1,0 @@
-/mnt/data/work_stage/build_check/CMakeFiles/edit_cache.dir
-/mnt/data/work_stage/build_check/CMakeFiles/rebuild_cache.dir
-/mnt/data/work_stage/build_check/src/core/CMakeFiles/hairgpu_core.dir
-/mnt/data/work_stage/build_check/src/core/CMakeFiles/edit_cache.dir
-/mnt/data/work_stage/build_check/src/core/CMakeFiles/rebuild_cache.dir
-/mnt/data/work_stage/build_check/apps/cli/CMakeFiles/hairgpu_cli.dir
-/mnt/data/work_stage/build_check/apps/cli/CMakeFiles/edit_cache.dir
-/mnt/data/work_stage/build_check/apps/cli/CMakeFiles/rebuild_cache.dir

@@ -1,8 +1,0 @@
-/mnt/data/HairSystem_clean_source/build_test/CMakeFiles/edit_cache.dir
-/mnt/data/HairSystem_clean_source/build_test/CMakeFiles/rebuild_cache.dir
-/mnt/data/HairSystem_clean_source/build_test/src/core/CMakeFiles/hairgpu_core.dir
-/mnt/data/HairSystem_clean_source/build_test/src/core/CMakeFiles/edit_cache.dir
-/mnt/data/HairSystem_clean_source/build_test/src/core/CMakeFiles/rebuild_cache.dir
-/mnt/data/HairSystem_clean_source/build_test/apps/cli/CMakeFiles/hairgpu_cli.dir
-/mnt/data/HairSystem_clean_source/build_test/apps/cli/CMakeFiles/edit_cache.dir
-/mnt/data/HairSystem_clean_source/build_test/apps/cli/CMakeFiles/rebuild_cache.dir
