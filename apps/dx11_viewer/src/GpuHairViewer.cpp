@@ -1079,7 +1079,7 @@ namespace hairgpu::viewer
             const int length = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
             if (length <= 0)
             {
-                return std::string(text.begin(), text.end());
+                return {};
             }
             std::string utf8(static_cast<size_t>(length), '\0');
             WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, utf8.data(), length, nullptr, nullptr);
