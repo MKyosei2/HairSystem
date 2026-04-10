@@ -1108,12 +1108,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
         {
             WigStyleSettings wig;
-            wig.strength = 0.02f;
-            wig.capRegion = 0.08f;
-            wig.shellOffset = 0.00015f;
-            wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.0f;
-            wig.restoreOriginalTowardsTip = 0.0f;
+            wig.strength = 0.14f;
+            wig.capRegion = 0.20f;
+            wig.shellOffset = 0.00025f;
+            wig.flowBlend = 0.96f;
+            wig.outwardBlend = 0.02f;
+            wig.restoreOriginalTowardsTip = 0.16f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -4527,12 +4527,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
         {
             WigStyleSettings wig;
-            wig.strength = 0.02f;
-            wig.capRegion = 0.08f;
-            wig.shellOffset = 0.00015f;
-            wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.0f;
-            wig.restoreOriginalTowardsTip = 0.0f;
+            wig.strength = 0.14f;
+            wig.capRegion = 0.20f;
+            wig.shellOffset = 0.00025f;
+            wig.flowBlend = 0.96f;
+            wig.outwardBlend = 0.02f;
+            wig.restoreOriginalTowardsTip = 0.16f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -6263,12 +6263,12 @@ namespace hairgpu::viewer
         m_asset = std::move(importedAsset);
         {
             WigStyleSettings wig;
-            wig.strength = 0.72f;
-            wig.capRegion = 0.36f;
-            wig.shellOffset = 0.0035f;
-            wig.flowBlend = 0.86f;
-            wig.outwardBlend = 0.10f;
-            wig.restoreOriginalTowardsTip = 0.72f;
+            wig.strength = 0.30f;
+            wig.capRegion = 0.22f;
+            wig.shellOffset = 0.0008f;
+            wig.flowBlend = 0.92f;
+            wig.outwardBlend = 0.05f;
+            wig.restoreOriginalTowardsTip = 0.42f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_builderGuideCount = m_asset.guideStrandCount;
