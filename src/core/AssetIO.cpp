@@ -12,6 +12,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
@@ -479,6 +480,87 @@ namespace hairgpu
             {
                 return fallback;
             }
+        }
+
+        float MeasureStrandLength(const HairAsset& asset, const StrandRange& range, uint32_t pointCount)
+        {
+            if (range.pointOffset >= asset.restPoints.size() || pointCount < 2u)
+            {
+                return 0.0f;
+            }
+
+            const uint32_t clampedCount = std::min<uint32_t>(pointCount, range.pointCount);
+            float totalLength = 0.0f;
+            for (uint32_t pointIndex = 1u; pointIndex < clampedCount; ++pointIndex)
+            {
+                const Vec3& a = asset.restPoints[range.pointOffset + pointIndex - 1u];
+                const Vec3& b = asset.restPoints[range.pointOffset + pointIndex];
+                totalLength += Length(b - a);
+            }
+            return totalLength;
+        }
+
+        uint32_t EstimateAuthoredSegmentCount(const HairAsset& asset, const StrandRange& range)
+        {
+            if (range.pointCount < 2u || range.pointOffset + range.pointCount > asset.restPoints.size())
+            {
+                return 0u;
+            }
+
+            std::vector<float> segmentLengths;
+            segmentLengths.reserve(range.pointCount - 1u);
+            float sum = 0.0f;
+            for (uint32_t pointIndex = 1u; pointIndex < range.pointCount; ++pointIndex)
+            {
+                const Vec3& a = asset.restPoints[range.pointOffset + pointIndex - 1u];
+                const Vec3& b = asset.restPoints[range.pointOffset + pointIndex];
+                const float length = Length(b - a);
+                segmentLengths.push_back(length);
+                sum += length;
+            }
+            if (segmentLengths.empty())
+            {
+                return 0u;
+            }
+
+            const float mean = sum / static_cast<float>(segmentLengths.size());
+            const float threshold = std::max(5.0e-4f, mean * 0.08f);
+            uint32_t activeSegments = static_cast<uint32_t>(segmentLengths.size());
+            while (activeSegments > 1u && segmentLengths[activeSegments - 1u] <= threshold)
+            {
+                --activeSegments;
+            }
+            return activeSegments;
+        }
+
+        Vec3 SamplePolylineAtDistance(const std::vector<Vec3>& points, const std::vector<float>& cumulative, float distance)
+        {
+            if (points.empty())
+            {
+                return Vec3();
+            }
+            if (points.size() == 1u || cumulative.size() < 2u)
+            {
+                return points.front();
+            }
+
+            const float clampedDistance = Clamp(distance, 0.0f, cumulative.back());
+            auto upper = std::lower_bound(cumulative.begin(), cumulative.end(), clampedDistance);
+            if (upper == cumulative.begin())
+            {
+                return points.front();
+            }
+            if (upper == cumulative.end())
+            {
+                return points.back();
+            }
+
+            const size_t segmentIndex = static_cast<size_t>(upper - cumulative.begin()) - 1u;
+            const float d0 = cumulative[segmentIndex];
+            const float d1 = cumulative[segmentIndex + 1u];
+            const float denom = std::max(d1 - d0, 1.0e-6f);
+            const float t = (clampedDistance - d0) / denom;
+            return Lerp(points[segmentIndex], points[segmentIndex + 1u], t);
         }
 
         bool ParseBoolText(const std::string& text, bool fallback)
@@ -1830,4 +1912,219 @@ namespace hairgpu
         }
         return true;
     }
+
+    bool SaveStrandProfileCsvTemplate(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError)
+    {
+        std::ofstream out(filePath);
+        if (!out)
+        {
+            outError = "Failed to open strand profile csv for writing: " + filePath.string();
+            return false;
+        }
+
+        out << "strandIndex,isGuide,parentGuide,currentLengthMeters,currentSegmentCount,targetLengthMeters,targetSegmentCount,targetLengthScale\n";
+        for (uint32_t strandIndex = 0u; strandIndex < static_cast<uint32_t>(asset.strands.size()); ++strandIndex)
+        {
+            const StrandRange& range = asset.strands[strandIndex];
+            const uint32_t currentSegments = EstimateAuthoredSegmentCount(asset, range);
+            const uint32_t activePointCount = std::max<uint32_t>(currentSegments + 1u, std::min<uint32_t>(range.pointCount, 1u));
+            const float currentLength = MeasureStrandLength(asset, range, std::max<uint32_t>(activePointCount, 2u));
+            const FollowData follow = (strandIndex < asset.followData.size()) ? asset.followData[strandIndex] : FollowData();
+            const bool isGuide = (range.flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u || strandIndex < asset.guideStrandCount;
+            out << strandIndex << ','
+                << (isGuide ? 1 : 0) << ','
+                << follow.parentGuide << ','
+                << currentLength << ','
+                << currentSegments << ','
+                << currentLength << ','
+                << currentSegments << ','
+                << 1.0f << "\n";
+        }
+
+        outError.clear();
+        return true;
+    }
+
+    bool LoadStrandProfileCsv(const std::filesystem::path& filePath, StrandProfile& outProfile, std::string& outError)
+    {
+        std::ifstream in(filePath);
+        if (!in)
+        {
+            outError = "Failed to open strand profile csv: " + filePath.string();
+            return false;
+        }
+
+        std::string headerLine;
+        while (std::getline(in, headerLine))
+        {
+            headerLine = Trim(headerLine);
+            if (!headerLine.empty() && headerLine[0] != '#')
+            {
+                break;
+            }
+        }
+        if (headerLine.empty())
+        {
+            outError = "Strand profile csv is empty.";
+            return false;
+        }
+
+        const std::vector<std::string> headers = SplitCsvLine(headerLine);
+        std::unordered_map<std::string, size_t> columns;
+        for (size_t i = 0; i < headers.size(); ++i)
+        {
+            columns[ToLower(headers[i])] = i;
+        }
+
+        outProfile.records.clear();
+        std::string line;
+        while (std::getline(in, line))
+        {
+            line = Trim(line);
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+
+            const std::vector<std::string> values = SplitCsvLine(line);
+            std::string strandText;
+            if (!TryGetField(columns, values, {"strandIndex", "strand", "index"}, strandText))
+            {
+                continue;
+            }
+
+            StrandProfileRecord record;
+            record.strandIndex = ParseUIntOr(strandText, UINT32_MAX);
+            if (record.strandIndex == UINT32_MAX)
+            {
+                continue;
+            }
+
+            std::string value;
+            if (TryGetField(columns, values, {"targetLengthMeters", "lengthMeters", "targetLength", "length"}, value) && !value.empty())
+            {
+                record.targetLengthMeters = ParseFloatOr(value, -1.0f);
+            }
+            if (TryGetField(columns, values, {"targetSegmentCount", "segmentCount", "segments"}, value) && !value.empty())
+            {
+                record.targetSegmentCount = ParseUIntOr(value, 0u);
+            }
+            if (TryGetField(columns, values, {"targetLengthScale", "lengthScale", "scale"}, value) && !value.empty())
+            {
+                record.targetLengthScale = ParseFloatOr(value, 1.0f);
+            }
+            outProfile.records.push_back(record);
+        }
+
+        if (outProfile.records.empty())
+        {
+            outError = "Strand profile csv did not contain any valid records.";
+            return false;
+        }
+
+        outError.clear();
+        return true;
+    }
+
+    bool ApplyStrandProfileToAsset(HairAsset& asset, const StrandProfile& profile, std::string& outError)
+    {
+        if (asset.strands.empty() || asset.restPoints.empty())
+        {
+            outError = "Asset is empty.";
+            return false;
+        }
+
+        std::map<uint32_t, StrandProfileRecord> deduped;
+        for (const StrandProfileRecord& record : profile.records)
+        {
+            deduped[record.strandIndex] = record;
+        }
+
+        uint32_t appliedCount = 0u;
+        for (const auto& pair : deduped)
+        {
+            const StrandProfileRecord& record = pair.second;
+            if (record.strandIndex >= asset.strands.size())
+            {
+                continue;
+            }
+
+            StrandRange& range = asset.strands[record.strandIndex];
+            if (range.pointCount < 2u || range.pointOffset + range.pointCount > asset.restPoints.size())
+            {
+                continue;
+            }
+
+            const uint32_t currentSegments = std::max<uint32_t>(EstimateAuthoredSegmentCount(asset, range), 1u);
+            const uint32_t activePointCount = std::max<uint32_t>(currentSegments + 1u, 2u);
+            const float currentLength = std::max(MeasureStrandLength(asset, range, activePointCount), 1.0e-5f);
+            const uint32_t maxSegments = range.pointCount - 1u;
+            const uint32_t targetSegments = std::clamp(record.targetSegmentCount > 0u ? record.targetSegmentCount : currentSegments, 1u, maxSegments);
+            float targetLength = currentLength;
+            if (record.targetLengthMeters > 0.0f)
+            {
+                targetLength = record.targetLengthMeters;
+            }
+            else
+            {
+                targetLength = currentLength * std::max(record.targetLengthScale, 0.05f);
+            }
+            targetLength = std::max(targetLength, 1.0e-4f);
+
+            std::vector<Vec3> activePoints;
+            activePoints.reserve(activePointCount);
+            for (uint32_t pointIndex = 0u; pointIndex < activePointCount; ++pointIndex)
+            {
+                activePoints.push_back(asset.restPoints[range.pointOffset + pointIndex]);
+            }
+
+            std::vector<float> cumulative(activePoints.size(), 0.0f);
+            for (size_t i = 1; i < activePoints.size(); ++i)
+            {
+                cumulative[i] = cumulative[i - 1u] + Length(activePoints[i] - activePoints[i - 1u]);
+            }
+            const float sourceLength = std::max(cumulative.back(), 1.0e-5f);
+            const float scale = targetLength / sourceLength;
+            const Vec3 root = activePoints.front();
+            std::vector<Vec3> shaped(range.pointCount, root);
+            for (uint32_t pointIndex = 0u; pointIndex <= targetSegments; ++pointIndex)
+            {
+                const float fraction = static_cast<float>(pointIndex) / static_cast<float>(targetSegments);
+                const Vec3 sourcePoint = SamplePolylineAtDistance(activePoints, cumulative, sourceLength * fraction);
+                shaped[pointIndex] = root + (sourcePoint - root) * scale;
+            }
+
+            Vec3 tailDirection = Vec3(0.0f, -1.0f, 0.0f);
+            if (targetSegments > 0u)
+            {
+                const Vec3 delta = shaped[targetSegments] - shaped[targetSegments - 1u];
+                if (Length(delta) > 1.0e-6f)
+                {
+                    tailDirection = Normalize(delta);
+                }
+            }
+            const float microStep = std::max(1.0e-5f, std::min(5.0e-4f, targetLength / static_cast<float>(std::max<uint32_t>(targetSegments, 1u)) * 0.05f));
+            for (uint32_t pointIndex = targetSegments + 1u; pointIndex < range.pointCount; ++pointIndex)
+            {
+                const float offset = static_cast<float>(pointIndex - targetSegments) * microStep;
+                shaped[pointIndex] = shaped[targetSegments] + tailDirection * offset;
+            }
+
+            for (uint32_t pointIndex = 0u; pointIndex < range.pointCount; ++pointIndex)
+            {
+                asset.restPoints[range.pointOffset + pointIndex] = shaped[pointIndex];
+            }
+            ++appliedCount;
+        }
+
+        if (appliedCount == 0u)
+        {
+            outError = "No strand profile rows matched this asset.";
+            return false;
+        }
+
+        outError.clear();
+        return true;
+    }
+
 }

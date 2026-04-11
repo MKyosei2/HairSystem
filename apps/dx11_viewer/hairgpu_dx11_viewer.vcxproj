@@ -1,7 +1,15 @@
-<?xml version='1.0' encoding='utf-8'?>
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|x64">
+        <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+<ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
@@ -24,7 +32,20 @@
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
@@ -37,7 +58,13 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
@@ -51,13 +78,13 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L"shaders";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;shaders&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)include;$(SolutionDir)src\hairgpu_core;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
-      <DebugInformationFormat>OldStyle</DebugInformationFormat>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
@@ -74,17 +101,43 @@ for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSe
 )
 exit /b 0</Command>
     </PostBuildEvent>
-  <PreLinkEvent><Command>if exist "$(TargetPath)" taskkill /F /IM "$(TargetFileName)" &gt;nul 2&gt;nul
-if exist "$(TargetPath)" del /F /Q "$(TargetPath)" &gt;nul 2&gt;nul
-exit /b 0</Command></PreLinkEvent></ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;shaders&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
+if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+  if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)%%F"
+  if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)shaders\%%F"
+)
+exit /b 0</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L"shaders";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;shaders&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)include;$(SolutionDir)src\hairgpu_core;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -108,16 +161,46 @@ for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSe
 )
 exit /b 0</Command>
     </PostBuildEvent>
-  <PreLinkEvent><Command>if exist "$(TargetPath)" taskkill /F /IM "$(TargetFileName)" &gt;nul 2&gt;nul
-if exist "$(TargetPath)" del /F /Q "$(TargetPath)" &gt;nul 2&gt;nul
-exit /b 0</Command></PreLinkEvent></ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;UNICODE;_UNICODE;WIN32;_WINDOWS;NOMINMAX;HAIRGPU_VIEWER_SHADER_DIR=L&quot;shaders&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>$(SolutionDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
+if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+  if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)%%F"
+  if exist "$(ProjectDir)shaders\%%F" copy /Y "$(ProjectDir)shaders\%%F" "$(OutDir)shaders\%%F"
+)
+exit /b 0</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\AppMain.cpp" />
     <ClCompile Include="src\GpuHairViewer.cpp" />
-  <ClCompile Include="..\..\src\hairgpu_core\ActiveSet.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Adaptive.cpp" /><ClCompile Include="..\..\src\hairgpu_core\AssetIO.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Authoring.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Binding.cpp" /><ClCompile Include="..\..\src\hairgpu_core\BoneAnimation.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Broadphase.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Cards.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Collision.cpp" /><ClCompile Include="..\..\src\hairgpu_core\DccInterop.cpp" /><ClCompile Include="..\..\src\hairgpu_core\GuideCache.cpp" /><ClCompile Include="..\..\src\hairgpu_core\HairCache.cpp" /><ClCompile Include="..\..\src\hairgpu_core\HairMath.cpp" /><ClCompile Include="..\..\src\hairgpu_core\HybridRuntime.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Lod.cpp" /><ClCompile Include="..\..\src\hairgpu_core\MeshIO.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Metrics.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Pipeline.cpp" /><ClCompile Include="..\..\src\hairgpu_core\ReducedModel.cpp" /><ClCompile Include="..\..\src\hairgpu_core\RenderData.cpp" /><ClCompile Include="..\..\src\hairgpu_core\SampleAsset.cpp" /><ClCompile Include="..\..\src\hairgpu_core\TemporalModel.cpp" /><ClCompile Include="..\..\src\hairgpu_core\UsdExport.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Validation.cpp" /><ClCompile Include="..\..\src\hairgpu_core\Wig.cpp" /><ClCompile Include="..\hairgpu_cli\src\main.cpp"><ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild><ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild></ClCompile></ItemGroup>
+  </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\GpuHairViewer.h" />
-  <ClInclude Include="..\..\include\hairgpu\ActiveSet.h" /><ClInclude Include="..\..\include\hairgpu\Adaptive.h" /><ClInclude Include="..\..\include\hairgpu\AssetIO.h" /><ClInclude Include="..\..\include\hairgpu\Authoring.h" /><ClInclude Include="..\..\include\hairgpu\Binding.h" /><ClInclude Include="..\..\include\hairgpu\BoneAnimation.h" /><ClInclude Include="..\..\include\hairgpu\Broadphase.h" /><ClInclude Include="..\..\include\hairgpu\Cards.h" /><ClInclude Include="..\..\include\hairgpu\Collision.h" /><ClInclude Include="..\..\include\hairgpu\DccInterop.h" /><ClInclude Include="..\..\include\hairgpu\GuideCache.h" /><ClInclude Include="..\..\include\hairgpu\HairCache.h" /><ClInclude Include="..\..\include\hairgpu\HybridRuntime.h" /><ClInclude Include="..\..\include\hairgpu\Lod.h" /><ClInclude Include="..\..\include\hairgpu\Math.h" /><ClInclude Include="..\..\include\hairgpu\MeshIO.h" /><ClInclude Include="..\..\include\hairgpu\Metrics.h" /><ClInclude Include="..\..\include\hairgpu\Pipeline.h" /><ClInclude Include="..\..\include\hairgpu\ReducedModel.h" /><ClInclude Include="..\..\include\hairgpu\RenderData.h" /><ClInclude Include="..\..\include\hairgpu\TemporalModel.h" /><ClInclude Include="..\..\include\hairgpu\Types.h" /><ClInclude Include="..\..\include\hairgpu\UsdExport.h" /><ClInclude Include="..\..\include\hairgpu\Validation.h" /><ClInclude Include="..\..\include\hairgpu\Wig.h" /></ItemGroup>
+  </ItemGroup>
   <ItemGroup>
     <None Include="shaders\DebugLine.hlsl" />
     <None Include="shaders\HairBrickInstanced.hlsl" />
@@ -133,6 +216,15 @@ exit /b 0</Command></PreLinkEvent></ItemDefinitionGroup>
     <None Include="shaders\HairVoxel.hlsl" />
     <None Include="shaders\ScalpMesh.hlsl" />
     <None Include="shaders\ScalpSim.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\hairgpu_core\hairgpu_core.vcxproj">
+      <Project>{7D34DC9F-67C8-4378-9C5A-A21D34B390A1}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+      <LinkLibraryDependencies>true</LinkLibraryDependencies>
+      <UseLibraryDependencyInputs>false</UseLibraryDependencyInputs>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

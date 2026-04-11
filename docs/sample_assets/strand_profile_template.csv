@@ -1,0 +1,6 @@
+# Edit per-strand target length and visible segment count.
+# Export a template from the DX11 viewer for the exact strand indices of your current asset.
+strandIndex,isGuide,parentGuide,currentLengthMeters,currentSegmentCount,targetLengthMeters,targetSegmentCount,targetLengthScale
+0,1,0,0.420,14,0.320,10,1.0
+1,1,1,0.440,14,0.500,18,1.0
+2,0,0,0.415,14,0.260,8,1.0

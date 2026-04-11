@@ -552,6 +552,9 @@ namespace hairgpu::viewer
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
+        bool ExportCurrentStrandProfileCsv(const std::wstring& filePath) const;
+        bool LoadAndApplyStrandProfileFromPath(const std::wstring& filePath);
+        bool ApplyLoadedStrandProfile(hairgpu::HairAsset& asset, std::wstring* outStatusText = nullptr) const;
         bool ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles);
         bool LoadHairAssetFromPath(const std::wstring& filePath);
         bool BrowseAndSetEditStackPath();
@@ -659,6 +662,8 @@ namespace hairgpu::viewer
         std::wstring m_regionMaskPath;
         std::wstring m_editStackPath;
         std::wstring m_lastEditStackStatus = L"No edit stack";
+        std::wstring m_strandProfilePath;
+        std::wstring m_lastStrandProfileStatus = L"No strand profile";
         hairgpu::RuntimeEditState m_runtimeEditState;
         hairgpu::RegionSelectMode m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
         bool m_quickEditEnabled = true;
@@ -863,6 +868,8 @@ namespace hairgpu::viewer
         HWND m_btnStep = nullptr;
         HWND m_btnApplyAsset = nullptr;
         HWND m_btnImportAsset = nullptr;
+        HWND m_btnLoadStrandProfile = nullptr;
+        HWND m_btnExportStrandProfile = nullptr;
         HWND m_btnSaveSettings = nullptr;
         HWND m_btnLoadSettings = nullptr;
         HWND m_btnExportCsv = nullptr;

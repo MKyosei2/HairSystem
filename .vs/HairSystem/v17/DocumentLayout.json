@@ -7,14 +7,14 @@
       "RelativeMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|solutionrelative:apps\\dx11_viewer\\src\\GpuHairViewer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\Users\\kyose\\source\\repos\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|solutionrelative:src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7D34DC9F-67C8-4378-9C5A-A21D34B390A1}|src\\hairgpu_core\\hairgpu_core.vcxproj|C:\\Users\\kyose\\source\\repos\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7D34DC9F-67C8-4378-9C5A-A21D34B390A1}|src\\hairgpu_core\\hairgpu_core.vcxproj|solutionrelative:src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
-      "VerticalTabListWidth": 256,
+      "VerticalTabListWidth": 100,
       "DocumentGroups": [
         {
           "DockedWidth": 200,
@@ -36,7 +36,7 @@
               "RelativeDocumentMoniker": "apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "RelativeToolTip": "apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
-              "ViewState": "AgIAAKQNAAAAAAAAAAD4v6UNAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAKcNAAAAAAAAAAD4v6UNAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-04-09T02:38:21.223Z",
               "EditorCaption": ""

@@ -23,6 +23,20 @@ namespace hairgpu
         bool scalpRoundTripOk = false;
     };
 
+
+    struct StrandProfileRecord
+    {
+        uint32_t strandIndex = 0u;
+        float targetLengthMeters = -1.0f;
+        float targetLengthScale = 1.0f;
+        uint32_t targetSegmentCount = 0u;
+    };
+
+    struct StrandProfile
+    {
+        std::vector<StrandProfileRecord> records;
+    };
+
     struct HairAlembicSettings
     {
         bool includeScalp = true;
@@ -48,4 +62,7 @@ namespace hairgpu
                                         AlembicRoundTripReport& outReport,
                                         std::string& outError);
     bool LoadHairAssetFromHairBinary(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError);
+    bool SaveStrandProfileCsvTemplate(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError);
+    bool LoadStrandProfileCsv(const std::filesystem::path& filePath, StrandProfile& outProfile, std::string& outError);
+    bool ApplyStrandProfileToAsset(HairAsset& asset, const StrandProfile& profile, std::string& outError);
 }
