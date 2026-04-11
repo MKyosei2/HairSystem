@@ -229,8 +229,6 @@ namespace hairgpu::viewer
             IDC_BTN_STEP,
             IDC_BTN_APPLY_ASSET,
             IDC_BTN_IMPORT_ASSET,
-            IDC_BTN_LOAD_STRAND_PROFILE,
-            IDC_BTN_EXPORT_STRAND_PROFILE,
             IDC_BTN_SAVE_SETTINGS,
             IDC_BTN_LOAD_SETTINGS,
             IDC_BTN_EXPORT_CSV,
@@ -1081,7 +1079,7 @@ namespace hairgpu::viewer
             const int length = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
             if (length <= 0)
             {
-                return {};
+                return std::string(text.begin(), text.end());
             }
             std::string utf8(static_cast<size_t>(length), '\0');
             WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, utf8.data(), length, nullptr, nullptr);
@@ -1110,12 +1108,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
         {
             WigStyleSettings wig;
-            wig.strength = 0.02f;
-            wig.capRegion = 0.08f;
-            wig.shellOffset = 0.00015f;
-            wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.0f;
-            wig.restoreOriginalTowardsTip = 0.0f;
+            wig.strength = 0.82f;
+            wig.capRegion = 0.42f;
+            wig.shellOffset = 0.0032f;
+            wig.flowBlend = 0.94f;
+            wig.outwardBlend = 0.10f;
+            wig.restoreOriginalTowardsTip = 0.84f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -1621,15 +1619,20 @@ namespace hairgpu::viewer
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
         for (size_t i = 0; i < m_asset.scalpMesh.positions.size(); ++i)
         {
+            const Vec3 p = m_asset.scalpMesh.positions[i];
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
+            const Vec3 rel = p - m_scalpCenter;
+            const float frontness = Clamp((rel.z + 0.02f) / 0.16f, 0.0f, 1.0f);
+            const float noseMask = frontness * Clamp(1.0f - std::fabs(rel.x) / 0.05f, 0.0f, 1.0f) * Clamp(1.0f - std::fabs(rel.y + 0.01f) / 0.05f, 0.0f, 1.0f);
+            const float faceMask = frontness * Clamp((0.09f - std::fabs(rel.x)) / 0.09f, 0.0f, 1.0f) * Clamp((0.10f - std::fabs(rel.y + 0.03f)) / 0.10f, 0.0f, 1.0f);
             ScalpVertex v = {};
             v.scalpIndex = static_cast<uint32_t>(i);
             v.nx = n.x;
             v.ny = n.y;
             v.nz = n.z;
-            v.r = 0.76f;
-            v.g = 0.62f;
-            v.b = 0.52f;
+            v.r = Clamp(0.72f + 0.10f * faceMask + 0.06f * noseMask, 0.0f, 1.0f);
+            v.g = Clamp(0.58f + 0.09f * faceMask + 0.04f * noseMask, 0.0f, 1.0f);
+            v.b = Clamp(0.49f + 0.08f * faceMask, 0.0f, 1.0f);
             scalpVertices.push_back(v);
         }
         if (!scalpVertices.empty())
@@ -3739,8 +3742,6 @@ namespace hairgpu::viewer
         m_btnStep = createControl(0, L"BUTTON", L"Step", BS_PUSHBUTTON, IDC_BTN_STEP);
         m_btnApplyAsset = createControl(0, L"BUTTON", L"Rebuild Hair", BS_PUSHBUTTON, IDC_BTN_APPLY_ASSET);
         m_btnImportAsset = createControl(0, L"BUTTON", L"Import Hair...", BS_PUSHBUTTON, IDC_BTN_IMPORT_ASSET);
-        m_btnLoadStrandProfile = createControl(0, L"BUTTON", L"Load Strand Profile...", BS_PUSHBUTTON, IDC_BTN_LOAD_STRAND_PROFILE);
-        m_btnExportStrandProfile = createControl(0, L"BUTTON", L"Export Strand Profile...", BS_PUSHBUTTON, IDC_BTN_EXPORT_STRAND_PROFILE);
         m_btnSaveSettings = createControl(0, L"BUTTON", L"Save Settings", BS_PUSHBUTTON, IDC_BTN_SAVE_SETTINGS);
         m_btnLoadSettings = createControl(0, L"BUTTON", L"Load Settings", BS_PUSHBUTTON, IDC_BTN_LOAD_SETTINGS);
         m_btnExportCsv = createControl(0, L"BUTTON", L"Export Frame CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_CSV);
@@ -3938,7 +3939,7 @@ namespace hairgpu::viewer
         m_labelStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STATS);
         m_labelAssetStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ASSET_STATS);
 
-        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnLoadStrandProfile && m_btnExportStrandProfile && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
+        return m_comboPreset && m_comboRenderMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_checkShowScalpMesh;
     }
 
     void GpuHairViewer::LayoutUiControls()
@@ -3975,7 +3976,7 @@ namespace hairgpu::viewer
         for (HWND child = GetWindow(m_hwnd, GW_CHILD); child != nullptr; child = GetWindow(child, GW_HWNDNEXT))
         {
             if (child == m_uiPanel || child == m_btnPlayPause || child == m_btnReset || child == m_btnStep || child == m_btnApplyAsset ||
-                child == m_btnImportAsset || child == m_btnLoadStrandProfile || child == m_btnExportStrandProfile || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_btnBrowseEditStack || child == m_btnClearEditStack || child == m_labelEditStack || child == m_labelInlineEditStack || child == m_editInlineEditStack || child == m_btnApplyInlineEditStack || child == m_btnSaveInlineEditStack || child == m_btnResetInlineEditStack || child == m_labelQuickEditForm || child == m_labelLayerList || child == m_listInlineLayers || child == m_labelQuickEditName || child == m_editQuickEditName || child == m_btnQuickEditMoveUp || child == m_btnQuickEditMoveDown || child == m_checkQuickEditEnabled || child == m_btnQuickEditDelete || child == m_btnQuickEditDuplicate || child == m_comboQuickEditMode || child == m_labelQuickEditFeather || child == m_trackQuickEditFeather || child == m_labelQuickEditLengthScale || child == m_trackQuickEditLengthScale || child == m_labelQuickEditLayerWeight || child == m_trackQuickEditLayerWeight || child == m_labelQuickEditCenterU || child == m_trackQuickEditCenterU || child == m_labelQuickEditCenterV || child == m_trackQuickEditCenterV || child == m_labelQuickEditRadiusU || child == m_trackQuickEditRadiusU || child == m_labelQuickEditRadiusV || child == m_trackQuickEditRadiusV || child == m_labelQuickEditInnerRadius || child == m_trackQuickEditInnerRadius || child == m_labelQuickEditAngleCenter || child == m_trackQuickEditAngleCenter || child == m_labelQuickEditAngleHalfExtent || child == m_trackQuickEditAngleHalfExtent || child == m_labelQuickEditRootOffsetX || child == m_trackQuickEditRootOffsetX || child == m_labelQuickEditRootOffsetY || child == m_trackQuickEditRootOffsetY || child == m_labelQuickEditRootOffsetZ || child == m_trackQuickEditRootOffsetZ || child == m_labelQuickEditTipOffsetX || child == m_trackQuickEditTipOffsetX || child == m_labelQuickEditTipOffsetY || child == m_trackQuickEditTipOffsetY || child == m_labelQuickEditTipOffsetZ || child == m_trackQuickEditTipOffsetZ || child == m_labelQuickEditSideOffset || child == m_trackQuickEditSideOffset || child == m_labelQuickEditYaw || child == m_trackQuickEditYaw || child == m_labelQuickEditWidthScale || child == m_trackQuickEditWidthScale || child == m_labelQuickEditFollowerInfluence || child == m_trackQuickEditFollowerInfluence || child == m_labelQuickEditBoundarySmoothing || child == m_trackQuickEditBoundarySmoothing || child == m_labelQuickEditBoundaryRadiusUv || child == m_trackQuickEditBoundaryRadiusUv || child == m_labelQuickEditGroupId || child == m_editQuickEditGroupId || child == m_checkQuickEditGuidesOnly || child == m_labelQuickEditVisualization || child == m_btnQuickEditReplace || child == m_btnQuickEditAppend || child == m_btnBrowsePartingMask || child == m_btnBrowseRegionMask || child == m_comboPreset || child == m_comboMaskSource || child == m_comboMaskOverlay || child == m_labelMaskSource || child == m_labelMaskOverlay || child == m_labelPartingMask || child == m_labelRegionMask || child == m_previewPartingMask || child == m_previewRegionMask ||
+                child == m_btnImportAsset || child == m_btnSaveSettings || child == m_btnLoadSettings || child == m_btnExportCsv || child == m_btnExportPerfCsv || child == m_btnBrowseEditStack || child == m_btnClearEditStack || child == m_labelEditStack || child == m_labelInlineEditStack || child == m_editInlineEditStack || child == m_btnApplyInlineEditStack || child == m_btnSaveInlineEditStack || child == m_btnResetInlineEditStack || child == m_labelQuickEditForm || child == m_labelLayerList || child == m_listInlineLayers || child == m_labelQuickEditName || child == m_editQuickEditName || child == m_btnQuickEditMoveUp || child == m_btnQuickEditMoveDown || child == m_checkQuickEditEnabled || child == m_btnQuickEditDelete || child == m_btnQuickEditDuplicate || child == m_comboQuickEditMode || child == m_labelQuickEditFeather || child == m_trackQuickEditFeather || child == m_labelQuickEditLengthScale || child == m_trackQuickEditLengthScale || child == m_labelQuickEditLayerWeight || child == m_trackQuickEditLayerWeight || child == m_labelQuickEditCenterU || child == m_trackQuickEditCenterU || child == m_labelQuickEditCenterV || child == m_trackQuickEditCenterV || child == m_labelQuickEditRadiusU || child == m_trackQuickEditRadiusU || child == m_labelQuickEditRadiusV || child == m_trackQuickEditRadiusV || child == m_labelQuickEditInnerRadius || child == m_trackQuickEditInnerRadius || child == m_labelQuickEditAngleCenter || child == m_trackQuickEditAngleCenter || child == m_labelQuickEditAngleHalfExtent || child == m_trackQuickEditAngleHalfExtent || child == m_labelQuickEditRootOffsetX || child == m_trackQuickEditRootOffsetX || child == m_labelQuickEditRootOffsetY || child == m_trackQuickEditRootOffsetY || child == m_labelQuickEditRootOffsetZ || child == m_trackQuickEditRootOffsetZ || child == m_labelQuickEditTipOffsetX || child == m_trackQuickEditTipOffsetX || child == m_labelQuickEditTipOffsetY || child == m_trackQuickEditTipOffsetY || child == m_labelQuickEditTipOffsetZ || child == m_trackQuickEditTipOffsetZ || child == m_labelQuickEditSideOffset || child == m_trackQuickEditSideOffset || child == m_labelQuickEditYaw || child == m_trackQuickEditYaw || child == m_labelQuickEditWidthScale || child == m_trackQuickEditWidthScale || child == m_labelQuickEditFollowerInfluence || child == m_trackQuickEditFollowerInfluence || child == m_labelQuickEditBoundarySmoothing || child == m_trackQuickEditBoundarySmoothing || child == m_labelQuickEditBoundaryRadiusUv || child == m_trackQuickEditBoundaryRadiusUv || child == m_labelQuickEditGroupId || child == m_editQuickEditGroupId || child == m_checkQuickEditGuidesOnly || child == m_labelQuickEditVisualization || child == m_btnQuickEditReplace || child == m_btnQuickEditAppend || child == m_btnBrowsePartingMask || child == m_btnBrowseRegionMask || child == m_comboPreset || child == m_comboMaskSource || child == m_comboMaskOverlay || child == m_labelMaskSource || child == m_labelMaskOverlay || child == m_labelPartingMask || child == m_labelRegionMask || child == m_previewPartingMask || child == m_previewRegionMask ||
                 child == m_comboRenderMode || child == m_comboDebugColor || child == m_checkSelfCollision || child == m_checkGrid || child == m_checkScalpMotion ||
                 child == m_checkShowColliders || child == m_checkShowScalpMesh || child == m_checkShowScalp || child == m_checkShowGridBounds || child == m_checkShowFloor ||
                 child == m_checkShowGuides || child == m_checkShowFollowers || child == m_checkShowRoots || child == m_checkShowLinks ||
@@ -4026,9 +4027,6 @@ namespace hairgpu::viewer
         const int importButtonHalf = (importButtonsWidth - 8) / 2;
         place(m_btnApplyAsset, importButtonsX, y - controlHeight - gap - 2, importButtonHalf, controlHeight);
         place(m_btnImportAsset, importButtonsX + importButtonHalf + 8, y - controlHeight - gap - 2, importButtonsWidth - importButtonHalf - 8, controlHeight);
-        const int profileRowY = next(controlHeight + gap);
-        place(m_btnExportStrandProfile, x, profileRowY, halfButtonWidth, controlHeight);
-        place(m_btnLoadStrandProfile, x + halfButtonWidth + 8, profileRowY, halfButtonWidth, controlHeight);
         place(m_btnBrowseEditStack, x, next(controlHeight + gap), halfButtonWidth, controlHeight);
         place(m_btnClearEditStack, x + halfButtonWidth + 8, y - controlHeight, halfButtonWidth, controlHeight);
         place(m_labelEditStack, x, next(labelHeight), fullWidth, labelHeight);
@@ -4196,7 +4194,6 @@ namespace hairgpu::viewer
            << L"Total particles: " << m_asset.restPoints.size() << L"\n"
            << L"Segments: " << m_renderData.segmentCount << L"\n"
            << L"Import: " << m_lastImportStatus << L"\n"
-           << L"Strand profile: " << (m_strandProfilePath.empty() ? L"none" : std::filesystem::path(m_strandProfilePath).filename().wstring()) << L"  [" << m_lastStrandProfileStatus << L"]\n"
            << L"Edit stack: " << (m_editStackPath.empty() ? L"none" : std::filesystem::path(m_editStackPath).filename().wstring()) << L"\n"
            << L"Edit status: " << m_lastEditStackStatus << L"\n"
            << L"Active edit guides: " << m_runtimeEditState.activeGuideCount << L" / " << m_asset.guideStrandCount << L"\n"
@@ -4535,25 +4532,16 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
         {
             WigStyleSettings wig;
-            wig.strength = 0.02f;
-            wig.capRegion = 0.08f;
-            wig.shellOffset = 0.00015f;
-            wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.0f;
-            wig.restoreOriginalTowardsTip = 0.0f;
+            wig.strength = 0.82f;
+            wig.capRegion = 0.42f;
+            wig.shellOffset = 0.0032f;
+            wig.flowBlend = 0.94f;
+            wig.outwardBlend = 0.10f;
+            wig.restoreOriginalTowardsTip = 0.84f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Procedural sample asset rebuilt";
-        std::wstring profileStatus;
-        if (ApplyLoadedStrandProfile(m_asset, &profileStatus))
-        {
-            m_lastStrandProfileStatus = profileStatus;
-        }
-        else if (!m_strandProfilePath.empty())
-        {
-            m_lastStrandProfileStatus = profileStatus;
-        }
         m_baseAsset = m_asset;
         hairgpu::HairAsset editedAsset = m_baseAsset;
         if (m_editStackPath.empty())
@@ -4671,7 +4659,6 @@ namespace hairgpu::viewer
         out << "guides=" << m_builderGuideCount << "\n";
         out << "followersPerGuide=" << m_builderFollowersPerGuide << "\n";
         out << "particlesPerStrand=" << m_builderParticlesPerStrand << "\n";
-        out << "strandProfilePath=" << WideToUtf8(m_strandProfilePath) << "\n";
         out << "widthScale=" << m_widthScale << "\n";
         out << "gravity=" << m_simConfig.gravity << "\n";
         out << "damping=" << m_simConfig.globalDamping << "\n";
@@ -4761,11 +4748,6 @@ namespace hairgpu::viewer
             auto it = values.find(key);
             return (it != values.end()) ? (std::stoi(it->second) != 0) : current;
         };
-        auto getString = [&](const char* key, const std::string& current)
-        {
-            auto it = values.find(key);
-            return (it != values.end()) ? it->second : current;
-        };
 
         if (auto it = values.find("preset"); it != values.end())
         {
@@ -4774,7 +4756,6 @@ namespace hairgpu::viewer
         m_builderGuideCount = getUInt("guides", m_builderGuideCount);
         m_builderFollowersPerGuide = getUInt("followersPerGuide", m_builderFollowersPerGuide);
         m_builderParticlesPerStrand = getUInt("particlesPerStrand", m_builderParticlesPerStrand);
-        m_strandProfilePath = Utf8ToWide(getString("strandProfilePath", WideToUtf8(m_strandProfilePath)));
         m_widthScale = getFloat("widthScale", m_widthScale);
         m_simConfig.gravity = getFloat("gravity", m_simConfig.gravity);
         m_simConfig.globalDamping = getFloat("damping", m_simConfig.globalDamping);
@@ -5859,7 +5840,13 @@ namespace hairgpu::viewer
         {
             const Vec3 p = m_asset.scalpMesh.positions[i];
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
-            float r = 0.76f, g = 0.62f, b = 0.52f;
+            const Vec3 rel = p - m_scalpCenter;
+            const float frontnessDefault = Clamp((rel.z + 0.02f) / 0.16f, 0.0f, 1.0f);
+            const float noseMaskDefault = frontnessDefault * Clamp(1.0f - std::fabs(rel.x) / 0.05f, 0.0f, 1.0f) * Clamp(1.0f - std::fabs(rel.y + 0.01f) / 0.05f, 0.0f, 1.0f);
+            const float faceMaskDefault = frontnessDefault * Clamp((0.09f - std::fabs(rel.x)) / 0.09f, 0.0f, 1.0f) * Clamp((0.10f - std::fabs(rel.y + 0.03f)) / 0.10f, 0.0f, 1.0f);
+            float r = Clamp(0.72f + 0.10f * faceMaskDefault + 0.06f * noseMaskDefault, 0.0f, 1.0f);
+            float g = Clamp(0.58f + 0.09f * faceMaskDefault + 0.04f * noseMaskDefault, 0.0f, 1.0f);
+            float b = Clamp(0.49f + 0.08f * faceMaskDefault, 0.0f, 1.0f);
             const Vec3 uvw = ComputeScalpPreviewUv(p);
             if (m_maskOverlayMode == MaskOverlayMode::Parting)
             {
@@ -6248,96 +6235,6 @@ namespace hairgpu::viewer
         return true;
     }
 
-
-    bool GpuHairViewer::ExportCurrentStrandProfileCsv(const std::wstring& filePath) const
-    {
-        std::string errorText;
-        if (!hairgpu::SaveStrandProfileCsvTemplate(std::filesystem::path(filePath), m_baseAsset.strands.empty() ? m_asset : m_baseAsset, errorText))
-        {
-            return false;
-        }
-        return true;
-    }
-
-    bool GpuHairViewer::ApplyLoadedStrandProfile(hairgpu::HairAsset& asset, std::wstring* outStatusText) const
-    {
-        if (m_strandProfilePath.empty())
-        {
-            if (outStatusText)
-            {
-                *outStatusText = L"No strand profile";
-            }
-            return true;
-        }
-
-        hairgpu::StrandProfile profile;
-        std::string errorText;
-        if (!hairgpu::LoadStrandProfileCsv(std::filesystem::path(m_strandProfilePath), profile, errorText))
-        {
-            if (outStatusText)
-            {
-                *outStatusText = Utf8ToWide(errorText);
-            }
-            return false;
-        }
-        if (!hairgpu::ApplyStrandProfileToAsset(asset, profile, errorText))
-        {
-            if (outStatusText)
-            {
-                *outStatusText = Utf8ToWide(errorText);
-            }
-            return false;
-        }
-        if (outStatusText)
-        {
-            *outStatusText = L"Applied";
-        }
-        return true;
-    }
-
-    bool GpuHairViewer::LoadAndApplyStrandProfileFromPath(const std::wstring& filePath)
-    {
-        m_strandProfilePath = filePath;
-        m_lastStrandProfileStatus = L"Loaded";
-
-        hairgpu::HairAsset rebuiltAsset = m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
-        std::wstring applyStatus;
-        if (!ApplyLoadedStrandProfile(rebuiltAsset, &applyStatus))
-        {
-            m_lastStrandProfileStatus = applyStatus;
-            RefreshAssetStatsText();
-            return false;
-        }
-
-        m_lastStrandProfileStatus = applyStatus;
-        m_baseAsset = rebuiltAsset;
-        hairgpu::HairAsset editedAsset = m_baseAsset;
-        if (m_editStackPath.empty())
-        {
-            m_runtimeEditState = {};
-        }
-        else
-        {
-            ApplyEditStackToAsset(editedAsset, nullptr);
-        }
-        m_asset = std::move(editedAsset);
-
-        if (!CreateSimulationResources())
-        {
-            m_lastStrandProfileStatus = L"Applied, but GPU resources failed to rebuild";
-            RefreshAssetStatsText();
-            return false;
-        }
-
-        RebuildActiveSetFoundation();
-        RecomputeAssetBounds();
-        QueueVisibilityRecovery();
-        RefreshAssetStatsText();
-        ResetSimulation();
-        SyncControlsFromState();
-        return true;
-    }
-
     bool GpuHairViewer::LoadHairAssetFromPath(const std::wstring& filePath)
     {
         const std::filesystem::path path(filePath);
@@ -6377,12 +6274,12 @@ namespace hairgpu::viewer
         m_asset = std::move(importedAsset);
         {
             WigStyleSettings wig;
-            wig.strength = 0.72f;
-            wig.capRegion = 0.36f;
-            wig.shellOffset = 0.0035f;
-            wig.flowBlend = 0.86f;
+            wig.strength = 0.82f;
+            wig.capRegion = 0.42f;
+            wig.shellOffset = 0.0032f;
+            wig.flowBlend = 0.94f;
             wig.outwardBlend = 0.10f;
-            wig.restoreOriginalTowardsTip = 0.72f;
+            wig.restoreOriginalTowardsTip = 0.84f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_builderGuideCount = m_asset.guideStrandCount;
@@ -6391,17 +6288,6 @@ namespace hairgpu::viewer
         m_activePresetName = L"Imported Asset";
         m_lastAssetSource = path.filename().wstring();
         m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : ((ext == L".usd" || ext == L".usda") ? L"USD ASCII imported" : ((ext == L".hairbin" || ext == L".hair") ? L"Hair binary imported" : L"Alembic imported"));
-        {
-            std::wstring profileStatus;
-            if (ApplyLoadedStrandProfile(m_asset, &profileStatus))
-            {
-                m_lastStrandProfileStatus = profileStatus;
-            }
-            else if (!m_strandProfilePath.empty())
-            {
-                m_lastStrandProfileStatus = profileStatus;
-            }
-        }
         m_baseAsset = m_asset;
         hairgpu::HairAsset editedAsset = m_baseAsset;
         if (m_editStackPath.empty())
@@ -7226,45 +7112,6 @@ namespace hairgpu::viewer
                     MessageBoxW(hwnd, L"No inline layer could be deleted.", L"Quick Edit Form", MB_OK | MB_ICONWARNING);
                 }
                 return 0;
-            case IDC_BTN_LOAD_STRAND_PROFILE:
-            {
-                wchar_t fileName[MAX_PATH] = L"strand_profile.csv";
-                OPENFILENAMEW ofn = {};
-                ofn.lStructSize = sizeof(ofn);
-                ofn.hwndOwner = hwnd;
-                ofn.lpstrFilter = L"Strand Profile CSV (*.csv)\0*.csv\0All Files\0*.*\0";
-                ofn.lpstrFile = fileName;
-                ofn.nMaxFile = MAX_PATH;
-                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                if (GetOpenFileNameW(&ofn))
-                {
-                    if (!LoadAndApplyStrandProfileFromPath(fileName))
-                    {
-                        const std::wstring message = L"Failed to load strand profile.\r\n\r\n" + m_lastStrandProfileStatus;
-                        MessageBoxW(hwnd, message.c_str(), L"Strand Profile", MB_OK | MB_ICONERROR);
-                    }
-                }
-                return 0;
-            }
-            case IDC_BTN_EXPORT_STRAND_PROFILE:
-            {
-                wchar_t fileName[MAX_PATH] = L"strand_profile.csv";
-                OPENFILENAMEW ofn = {};
-                ofn.lStructSize = sizeof(ofn);
-                ofn.hwndOwner = hwnd;
-                ofn.lpstrFilter = L"Strand Profile CSV (*.csv)\0*.csv\0All Files\0*.*\0";
-                ofn.lpstrFile = fileName;
-                ofn.nMaxFile = MAX_PATH;
-                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-                if (GetSaveFileNameW(&ofn))
-                {
-                    if (!ExportCurrentStrandProfileCsv(fileName))
-                    {
-                        MessageBoxW(hwnd, L"Failed to export the current strand profile template.", L"Strand Profile", MB_OK | MB_ICONERROR);
-                    }
-                }
-                return 0;
-            }
             case IDC_BTN_IMPORT_ASSET:
             {
                 wchar_t fileName[MAX_PATH] = L"";
