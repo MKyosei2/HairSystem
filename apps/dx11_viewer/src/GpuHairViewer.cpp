@@ -1108,12 +1108,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
         {
             WigStyleSettings wig;
-            wig.strength = 0.82f;
-            wig.capRegion = 0.42f;
-            wig.shellOffset = 0.0032f;
-            wig.flowBlend = 0.94f;
-            wig.outwardBlend = 0.10f;
-            wig.restoreOriginalTowardsTip = 0.84f;
+            wig.strength = 0.0f;
+            wig.capRegion = 0.12f;
+            wig.shellOffset = 0.0f;
+            wig.flowBlend = 1.0f;
+            wig.outwardBlend = 0.0f;
+            wig.restoreOriginalTowardsTip = 0.0f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -1619,20 +1619,15 @@ namespace hairgpu::viewer
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
         for (size_t i = 0; i < m_asset.scalpMesh.positions.size(); ++i)
         {
-            const Vec3 p = m_asset.scalpMesh.positions[i];
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
-            const Vec3 rel = p - m_scalpCenter;
-            const float frontness = Clamp((rel.z + 0.02f) / 0.16f, 0.0f, 1.0f);
-            const float noseMask = frontness * Clamp(1.0f - std::fabs(rel.x) / 0.05f, 0.0f, 1.0f) * Clamp(1.0f - std::fabs(rel.y + 0.01f) / 0.05f, 0.0f, 1.0f);
-            const float faceMask = frontness * Clamp((0.09f - std::fabs(rel.x)) / 0.09f, 0.0f, 1.0f) * Clamp((0.10f - std::fabs(rel.y + 0.03f)) / 0.10f, 0.0f, 1.0f);
             ScalpVertex v = {};
             v.scalpIndex = static_cast<uint32_t>(i);
             v.nx = n.x;
             v.ny = n.y;
             v.nz = n.z;
-            v.r = Clamp(0.72f + 0.10f * faceMask + 0.06f * noseMask, 0.0f, 1.0f);
-            v.g = Clamp(0.58f + 0.09f * faceMask + 0.04f * noseMask, 0.0f, 1.0f);
-            v.b = Clamp(0.49f + 0.08f * faceMask, 0.0f, 1.0f);
+            v.r = 0.76f;
+            v.g = 0.62f;
+            v.b = 0.52f;
             scalpVertices.push_back(v);
         }
         if (!scalpVertices.empty())
@@ -4532,12 +4527,12 @@ namespace hairgpu::viewer
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
         {
             WigStyleSettings wig;
-            wig.strength = 0.82f;
-            wig.capRegion = 0.42f;
-            wig.shellOffset = 0.0032f;
-            wig.flowBlend = 0.94f;
-            wig.outwardBlend = 0.10f;
-            wig.restoreOriginalTowardsTip = 0.84f;
+            wig.strength = 0.0f;
+            wig.capRegion = 0.12f;
+            wig.shellOffset = 0.0f;
+            wig.flowBlend = 1.0f;
+            wig.outwardBlend = 0.0f;
+            wig.restoreOriginalTowardsTip = 0.0f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_lastAssetSource = L"Sample Hybrid";
@@ -5840,13 +5835,7 @@ namespace hairgpu::viewer
         {
             const Vec3 p = m_asset.scalpMesh.positions[i];
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
-            const Vec3 rel = p - m_scalpCenter;
-            const float frontnessDefault = Clamp((rel.z + 0.02f) / 0.16f, 0.0f, 1.0f);
-            const float noseMaskDefault = frontnessDefault * Clamp(1.0f - std::fabs(rel.x) / 0.05f, 0.0f, 1.0f) * Clamp(1.0f - std::fabs(rel.y + 0.01f) / 0.05f, 0.0f, 1.0f);
-            const float faceMaskDefault = frontnessDefault * Clamp((0.09f - std::fabs(rel.x)) / 0.09f, 0.0f, 1.0f) * Clamp((0.10f - std::fabs(rel.y + 0.03f)) / 0.10f, 0.0f, 1.0f);
-            float r = Clamp(0.72f + 0.10f * faceMaskDefault + 0.06f * noseMaskDefault, 0.0f, 1.0f);
-            float g = Clamp(0.58f + 0.09f * faceMaskDefault + 0.04f * noseMaskDefault, 0.0f, 1.0f);
-            float b = Clamp(0.49f + 0.08f * faceMaskDefault, 0.0f, 1.0f);
+            float r = 0.76f, g = 0.62f, b = 0.52f;
             const Vec3 uvw = ComputeScalpPreviewUv(p);
             if (m_maskOverlayMode == MaskOverlayMode::Parting)
             {
@@ -6274,12 +6263,12 @@ namespace hairgpu::viewer
         m_asset = std::move(importedAsset);
         {
             WigStyleSettings wig;
-            wig.strength = 0.82f;
-            wig.capRegion = 0.42f;
-            wig.shellOffset = 0.0032f;
-            wig.flowBlend = 0.94f;
+            wig.strength = 0.72f;
+            wig.capRegion = 0.36f;
+            wig.shellOffset = 0.0035f;
+            wig.flowBlend = 0.86f;
             wig.outwardBlend = 0.10f;
-            wig.restoreOriginalTowardsTip = 0.84f;
+            wig.restoreOriginalTowardsTip = 0.72f;
             StyleAssetToScalpWig(m_asset, wig);
         }
         m_builderGuideCount = m_asset.guideStrandCount;
