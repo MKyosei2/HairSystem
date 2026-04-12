@@ -200,6 +200,214 @@ namespace hairgpu
             }
         }
 
+        bool ParseStrandSelectionModeToken(const std::string& text, StrandSelectionMode& outMode)
+        {
+            const std::string lowered = ToLower(Trim(text));
+            if (lowered.empty() || lowered == "none")
+            {
+                outMode = StrandSelectionMode::None;
+                return true;
+            }
+            if (lowered == "union")
+            {
+                outMode = StrandSelectionMode::Union;
+                return true;
+            }
+            if (lowered == "replace" || lowered == "exact")
+            {
+                outMode = StrandSelectionMode::Replace;
+                return true;
+            }
+            if (lowered == "guide_family" || lowered == "guidefamily" || lowered == "family")
+            {
+                outMode = StrandSelectionMode::GuideFamily;
+                return true;
+            }
+            return false;
+        }
+
+        const char* StrandSelectionModeToToken(StrandSelectionMode mode)
+        {
+            switch (mode)
+            {
+            case StrandSelectionMode::Union: return "union";
+            case StrandSelectionMode::Replace: return "replace";
+            case StrandSelectionMode::GuideFamily: return "guide_family";
+            case StrandSelectionMode::None:
+            default: return "none";
+            }
+        }
+
+        bool AppendSelectedStrand(std::vector<SelectedStrand>& inOutStrands,
+                                  uint32_t strandIndex,
+                                  float weight)
+        {
+            for (SelectedStrand& selected : inOutStrands)
+            {
+                if (selected.strandIndex == strandIndex)
+                {
+                    selected.weight = std::max(selected.weight, Clamp01(weight));
+                    return true;
+                }
+            }
+            inOutStrands.push_back({ strandIndex, Clamp01(weight) });
+            return true;
+        }
+
+        bool ParseStrandSelectionSpecLocal(const std::string& text, std::vector<uint32_t>& outIndices, std::string& outError)
+        {
+            outIndices.clear();
+            const std::string trimmed = Trim(text);
+            if (trimmed.empty())
+            {
+                outError.clear();
+                return true;
+            }
+            std::string normalized = trimmed;
+            for (char& c : normalized)
+            {
+                if (c == ';' || c == ':' || c == '|')
+                {
+                    c = ',';
+                }
+            }
+            std::vector<std::string> parts = SplitSimpleCsv(normalized);
+            for (std::string part : parts)
+            {
+                part = Trim(part);
+                if (part.empty())
+                {
+                    continue;
+                }
+                const size_t dash = part.find('-');
+                if (dash != std::string::npos)
+                {
+                    uint32_t begin = 0u;
+                    uint32_t end = 0u;
+                    if (!TryParseUIntToken(Trim(part.substr(0u, dash)), begin) || !TryParseUIntToken(Trim(part.substr(dash + 1u)), end))
+                    {
+                        outError = "Malformed strand selection range: " + part;
+                        return false;
+                    }
+                    if (end < begin)
+                    {
+                        std::swap(begin, end);
+                    }
+                    for (uint32_t index = begin; index <= end; ++index)
+                    {
+                        outIndices.push_back(index);
+                        if (index == UINT32_MAX)
+                        {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                uint32_t index = 0u;
+                if (!TryParseUIntToken(part, index))
+                {
+                    outError = "Malformed strand selection token: " + part;
+                    return false;
+                }
+                outIndices.push_back(index);
+            }
+            std::sort(outIndices.begin(), outIndices.end());
+            outIndices.erase(std::unique(outIndices.begin(), outIndices.end()), outIndices.end());
+            outError.clear();
+            return true;
+        }
+
+        std::string FormatStrandSelectionSpecLocal(const std::vector<uint32_t>& strandIndices)
+        {
+            if (strandIndices.empty())
+            {
+                return {};
+            }
+            std::ostringstream out;
+            for (size_t i = 0; i < strandIndices.size(); ++i)
+            {
+                if (i > 0u)
+                {
+                    out << '|';
+                }
+                out << strandIndices[i];
+            }
+            return out.str();
+        }
+
+        RegionSelectionResult BuildExplicitStrandSelection(const HairAsset& asset,
+                                                           const EditLayer& layer)
+        {
+            RegionSelectionResult result = {};
+            if (layer.strandSelection.empty() || layer.strandSelectionMode == StrandSelectionMode::None)
+            {
+                return result;
+            }
+
+            const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+            for (uint32_t strandIndex : layer.strandSelection)
+            {
+                if (strandIndex >= asset.strands.size())
+                {
+                    continue;
+                }
+                AppendSelectedStrand(result.strands, strandIndex, layer.strandSelectionWeight);
+                if (layer.strandSelectionMode == StrandSelectionMode::GuideFamily)
+                {
+                    if (strandIndex < guideCount)
+                    {
+                        for (uint32_t followerIndex = guideCount; followerIndex < asset.strands.size(); ++followerIndex)
+                        {
+                            if (followerIndex < asset.followData.size() &&
+                                asset.followData[followerIndex].parentGuide == static_cast<int32_t>(strandIndex))
+                            {
+                                AppendSelectedStrand(result.strands,
+                                                     followerIndex,
+                                                     layer.strandSelectionWeight * std::clamp(asset.followData[followerIndex].followWeight, 0.0f, 1.0f));
+                            }
+                        }
+                    }
+                    else if (strandIndex < asset.followData.size())
+                    {
+                        const FollowData& follow = asset.followData[strandIndex];
+                        if (follow.parentGuide >= 0 && static_cast<uint32_t>(follow.parentGuide) < guideCount)
+                        {
+                            AppendSelectedStrand(result.strands,
+                                                 static_cast<uint32_t>(follow.parentGuide),
+                                                 layer.strandSelectionWeight);
+                        }
+                    }
+                }
+            }
+            return result;
+        }
+
+        RegionSelectionResult MergeSelections(const RegionSelectionResult& a,
+                                              const RegionSelectionResult& b)
+        {
+            RegionSelectionResult merged = a;
+            for (const SelectedStrand& strand : b.strands)
+            {
+                AppendSelectedStrand(merged.strands, strand.strandIndex, strand.weight);
+            }
+            return merged;
+        }
+
+        RegionSelectionResult BuildLayerSelection(const HairAsset& asset, const EditLayer& layer)
+        {
+            const RegionSelectionResult regionSelection = SelectRegion(asset, layer.region);
+            const RegionSelectionResult explicitSelection = BuildExplicitStrandSelection(asset, layer);
+            if (layer.strandSelection.empty() || layer.strandSelectionMode == StrandSelectionMode::None)
+            {
+                return regionSelection;
+            }
+            if (layer.strandSelectionMode == StrandSelectionMode::Replace)
+            {
+                return explicitSelection;
+            }
+            return MergeSelections(regionSelection, explicitSelection);
+        }
+
         bool LoadEditStackCsvFromStream(std::istream& in, EditStack& outStack, std::string& outError)
         {
             outStack = {};
@@ -331,6 +539,28 @@ namespace hairgpu
                     return false;
                 }
                 layer.region.groupId = groupId;
+                if (tokens.size() >= 27u && !tokens[26].empty())
+                {
+                    if (!ParseStrandSelectionSpecLocal(tokens[26], layer.strandSelection, outError))
+                    {
+                        outError += " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                }
+                if (tokens.size() >= 28u && !tokens[27].empty() && !ParseStrandSelectionModeToken(tokens[27], layer.strandSelectionMode))
+                {
+                    outError = "Malformed strand selection mode at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (tokens.size() >= 29u && !tokens[28].empty() && !TryParseFloatToken(tokens[28], layer.strandSelectionWeight))
+                {
+                    outError = "Malformed strand selection weight at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (!layer.strandSelection.empty() && layer.strandSelectionMode == StrandSelectionMode::None)
+                {
+                    layer.strandSelectionMode = StrandSelectionMode::Union;
+                }
                 outStack.layers.push_back(layer);
             }
 
@@ -640,6 +870,16 @@ namespace hairgpu
         return result;
     }
 
+    bool ParseStrandSelectionSpec(const std::string& text, std::vector<uint32_t>& outIndices, std::string& outError)
+    {
+        return ParseStrandSelectionSpecLocal(text, outIndices, outError);
+    }
+
+    std::string FormatStrandSelectionSpec(const std::vector<uint32_t>& strandIndices)
+    {
+        return FormatStrandSelectionSpecLocal(strandIndices);
+    }
+
     bool ApplyEditToRegion(HairAsset& asset, const RegionSelectionResult& selection, const EditSettings& settings, std::string& outError)
     {
         outError.clear();
@@ -745,7 +985,7 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack," << stack.boundarySmoothing << "," << stack.boundaryRadiusUv << "\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         for (const EditLayer& layer : stack.layers)
         {
             out << "layer,"
@@ -777,7 +1017,10 @@ namespace hairgpu
                 << layer.edit.tipOffset.z << ","
                 << layer.edit.sideOffset << ","
                 << layer.edit.yawRadians << ","
-                << layer.edit.followerInfluence << "\n";
+                << layer.edit.followerInfluence << ","
+                << EscapeCsvToken(FormatStrandSelectionSpecLocal(layer.strandSelection)) << ","
+                << StrandSelectionModeToToken(layer.strandSelectionMode) << ","
+                << layer.strandSelectionWeight << "\n";
         }
 
         outError.clear();
@@ -795,9 +1038,10 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
-        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\n";
-        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,,,1.00\n";
+        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,,,1.00\n";
+        out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,42,replace,1.00\n";
         outError.clear();
         return true;
     }
@@ -812,7 +1056,7 @@ namespace hairgpu
             {
                 continue;
             }
-            const RegionSelectionResult selection = SelectRegion(asset, layer.region);
+            const RegionSelectionResult selection = BuildLayerSelection(asset, layer);
             AccumulateSelectionWeights(state.strandInfluence, asset, selection, layer.layerWeight);
         }
 
@@ -835,8 +1079,23 @@ namespace hairgpu
                 const FollowData& follow = asset.followData[strandIndex];
                 if (follow.parentGuide >= 0 && static_cast<uint32_t>(follow.parentGuide) < guideCount)
                 {
-                    state.strandInfluence[strandIndex] = std::max(state.strandInfluence[strandIndex], state.guideInfluence[static_cast<uint32_t>(follow.parentGuide)]);
+                    const uint32_t parentGuide = static_cast<uint32_t>(follow.parentGuide);
+                    if (state.strandInfluence[strandIndex] > 1.0e-4f)
+                    {
+                        state.guideInfluence[parentGuide] = std::max(state.guideInfluence[parentGuide], state.strandInfluence[strandIndex]);
+                    }
+                    state.strandInfluence[strandIndex] = std::max(state.strandInfluence[strandIndex], state.guideInfluence[parentGuide]);
                 }
+            }
+        }
+        state.maxGuideInfluence = 0.0f;
+        state.activeGuideCount = 0u;
+        for (float influence : state.guideInfluence)
+        {
+            state.maxGuideInfluence = std::max(state.maxGuideInfluence, influence);
+            if (influence > 1.0e-4f)
+            {
+                ++state.activeGuideCount;
             }
         }
         return state;

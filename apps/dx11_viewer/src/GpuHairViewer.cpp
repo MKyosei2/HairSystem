@@ -506,6 +506,28 @@ namespace hairgpu::viewer
             return tokens;
         }
 
+        std::string EscapeCsvTokenLocal(const std::string& token)
+        {
+            if (token.find_first_of(",\"\n\r") == std::string::npos)
+            {
+                return token;
+            }
+            std::string escaped = "\"";
+            for (char c : token)
+            {
+                if (c == '\"')
+                {
+                    escaped += "\"\"";
+                }
+                else
+                {
+                    escaped.push_back(c);
+                }
+            }
+            escaped.push_back('\"');
+            return escaped;
+        }
+
         std::string TrimAsciiCopy(std::string text)
         {
             const auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
@@ -736,6 +758,36 @@ namespace hairgpu::viewer
                     return false;
                 }
                 layer.region.groupId = groupId;
+                if (tokens.size() >= 27u && !tokens[26].empty())
+                {
+                    if (!hairgpu::ParseStrandSelectionSpec(tokens[26], layer.strandSelection, outError))
+                    {
+                        outError += " at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                }
+                if (tokens.size() >= 28u && !tokens[27].empty())
+                {
+                    const std::string mode = ToLowerAsciiCopy(TrimAsciiCopy(tokens[27]));
+                    if (mode == "union") layer.strandSelectionMode = hairgpu::StrandSelectionMode::Union;
+                    else if (mode == "replace" || mode == "exact") layer.strandSelectionMode = hairgpu::StrandSelectionMode::Replace;
+                    else if (mode == "guide_family" || mode == "guidefamily" || mode == "family") layer.strandSelectionMode = hairgpu::StrandSelectionMode::GuideFamily;
+                    else if (mode.empty() || mode == "none") layer.strandSelectionMode = hairgpu::StrandSelectionMode::None;
+                    else
+                    {
+                        outError = "Malformed strand selection mode at line " + std::to_string(lineNumber);
+                        return false;
+                    }
+                }
+                if (tokens.size() >= 29u && !tokens[28].empty() && !TryParseFloatTokenLocal(tokens[28], layer.strandSelectionWeight))
+                {
+                    outError = "Malformed strand selection weight at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (!layer.strandSelection.empty() && layer.strandSelectionMode == hairgpu::StrandSelectionMode::None)
+                {
+                    layer.strandSelectionMode = hairgpu::StrandSelectionMode::Union;
+                }
                 outStack.layers.push_back(layer);
             }
 

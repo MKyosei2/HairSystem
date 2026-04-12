@@ -52,6 +52,14 @@ namespace hairgpu
         float followerInfluence = 1.0f;
     };
 
+    enum class StrandSelectionMode : uint32_t
+    {
+        None = 0,
+        Union = 1,
+        Replace = 2,
+        GuideFamily = 3,
+    };
+
     struct EditLayer
     {
         std::string name;
@@ -59,6 +67,9 @@ namespace hairgpu
         EditSettings edit = {};
         float layerWeight = 1.0f;
         bool enabled = true;
+        std::vector<uint32_t> strandSelection;
+        StrandSelectionMode strandSelectionMode = StrandSelectionMode::None;
+        float strandSelectionWeight = 1.0f;
     };
 
     struct EditStack
@@ -131,6 +142,8 @@ namespace hairgpu
     };
 
     RegionSelectionResult SelectRegion(const HairAsset& asset, const RegionSelectionSettings& settings);
+    bool ParseStrandSelectionSpec(const std::string& text, std::vector<uint32_t>& outIndices, std::string& outError);
+    std::string FormatStrandSelectionSpec(const std::vector<uint32_t>& strandIndices);
     bool ApplyEditToRegion(HairAsset& asset, const RegionSelectionResult& selection, const EditSettings& settings, std::string& outError);
     RuntimeEditState BuildRuntimeEditState(const HairAsset& asset, const EditStack& stack);
     bool ApplyEditStackToAsset(HairAsset& asset,

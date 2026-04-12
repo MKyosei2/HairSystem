@@ -1,0 +1,16 @@
+{
+  "strandCount": 2,
+  "guideCount": 1,
+  "followerCount": 1,
+  "pointCount": 8,
+  "particlesPerStrand": 4,
+  "totalLength": 1.19364,
+  "averageLength": 0.596819,
+  "maxLength": 0.60817,
+  "averageWidth": 0.00775,
+  "averageFollowerPerGuide": 1,
+  "bounds": {
+    "min": [0, 1.25382, -0.0975258],
+    "max": [0.125117, 1.80947, 0]
+  }
+}

@@ -679,6 +679,43 @@ namespace
         }
     }
 
+    bool ParseStrandSelectionModeToken(const std::string& text, StrandSelectionMode& outMode)
+    {
+        const std::string lowered = ToLower(Trim(text));
+        if (lowered.empty() || lowered == "none")
+        {
+            outMode = StrandSelectionMode::None;
+            return true;
+        }
+        if (lowered == "union")
+        {
+            outMode = StrandSelectionMode::Union;
+            return true;
+        }
+        if (lowered == "replace" || lowered == "exact")
+        {
+            outMode = StrandSelectionMode::Replace;
+            return true;
+        }
+        if (lowered == "guide_family" || lowered == "guidefamily" || lowered == "family")
+        {
+            outMode = StrandSelectionMode::GuideFamily;
+            return true;
+        }
+        return false;
+    }
+
+    const char* StrandSelectionModeToString(StrandSelectionMode mode)
+    {
+        switch (mode)
+        {
+        case StrandSelectionMode::Union: return "union";
+        case StrandSelectionMode::Replace: return "replace";
+        case StrandSelectionMode::GuideFamily: return "guide_family";
+        default: return "none";
+        }
+    }
+
     bool LocalLoadEditStackCsv(const std::filesystem::path& path, EditStack& outStack, std::string& outError)
     {
         std::ifstream in(path);
@@ -817,6 +854,28 @@ namespace
                 return false;
             }
             layer.region.groupId = groupId;
+            if (tokens.size() >= 27u && !tokens[26].empty())
+            {
+                if (!ParseStrandSelectionSpec(tokens[26], layer.strandSelection, outError))
+                {
+                    outError += " at line " + std::to_string(lineNumber);
+                    return false;
+                }
+            }
+            if (tokens.size() >= 28u && !tokens[27].empty() && !ParseStrandSelectionModeToken(tokens[27], layer.strandSelectionMode))
+            {
+                outError = "Malformed strand selection mode at line " + std::to_string(lineNumber);
+                return false;
+            }
+            if (tokens.size() >= 29u && !tokens[28].empty() && !TryParseFloatToken(tokens[28], layer.strandSelectionWeight))
+            {
+                outError = "Malformed strand selection weight at line " + std::to_string(lineNumber);
+                return false;
+            }
+            if (!layer.strandSelection.empty() && layer.strandSelectionMode == StrandSelectionMode::None)
+            {
+                layer.strandSelectionMode = StrandSelectionMode::Union;
+            }
             outStack.layers.push_back(layer);
         }
 
@@ -835,9 +894,10 @@ namespace
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence\n";
-        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\n";
-        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,,,1.00\n";
+        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,,,1.00\n";
+        out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,42,replace,1.00\n";
         outError.clear();
         return true;
     }
@@ -941,6 +1001,348 @@ namespace
         return true;
     }
 
+
+    struct ExperimentSuiteSettings
+    {
+        uint32_t samplesPerStrand = 16u;
+        ActiveSetClusterSettings clusterSettings = {};
+        ActiveSetBudget proposalBudget = {};
+    };
+
+    struct ExperimentVariantSummary
+    {
+        std::string name;
+        bool usesEditScores = false;
+        ActiveSetBudget budget = {};
+        ActiveSetPlan plan = {};
+    };
+
+    bool WriteMetricDefinitionsJson(const std::filesystem::path& path, std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to write metric definitions json: " + path.string();
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"editMetrics\": [\n";
+        out << "    {\n";
+        out << "      \"name\": \"rmsPositionError\",\n";
+        out << "      \"category\": \"shape\",\n";
+        out << "      \"formula\": \"sqrt(mean(||p_ref(t)-p_edit(t)||^2)) over all sampled strand points\",\n";
+        out << "      \"interpretation\": \"Lower is better; measures average spatial deviation after editing.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"silhouetteError\",\n";
+        out << "      \"category\": \"shape\",\n";
+        out << "      \"formula\": \"sqrt(mean((x_ref-x_edit)^2 + (z_ref-z_edit)^2)) over sampled points\",\n";
+        out << "      \"interpretation\": \"Lower is better; approximates screen-space outer contour change using the XZ projection.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"clumpPreservationScore\",\n";
+        out << "      \"category\": \"shape\",\n";
+        out << "      \"formula\": \"clamp(1 - averageLengthDelta / (0.35 * averageReferenceLength + eps), 0, 1)\",\n";
+        out << "      \"interpretation\": \"Higher is better; rewards edits that preserve strand-group length structure.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"rootLocalityScore\",\n";
+        out << "      \"category\": \"shape\",\n";
+        out << "      \"formula\": \"clamp(1 - averageRootDisplacement / (0.10 * assetBoundsDiagonal + eps), 0, 1)\",\n";
+        out << "      \"interpretation\": \"Higher is better; indicates how stable root positions stay after editing.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"editLocalityScore\",\n";
+        out << "      \"category\": \"editing\",\n";
+        out << "      \"formula\": \"1 - editedStrandRatio, where a strand is edited when RMS strand delta > 0.01 * averageReferenceLength\",\n";
+        out << "      \"interpretation\": \"Higher is better; estimates how much of the hairstyle remained untouched outside the intended region.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"boundaryNaturalnessScore\",\n";
+        out << "      \"category\": \"editing\",\n";
+        out << "      \"formula\": \"clamp(1 - averageNeighborDisplacementJump / (0.08 * averageReferenceLength + eps), 0, 1)\",\n";
+        out << "      \"interpretation\": \"Higher is better; compares nearby guide strands across UV-space boundaries to penalize visible discontinuities.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"editedStrandRatio\",\n";
+        out << "      \"category\": \"editing\",\n";
+        out << "      \"formula\": \"changedStrandCount / min(referenceStrands, editedStrands)\",\n";
+        out << "      \"interpretation\": \"Lower is better when locality is important; reports the fraction of strands whose sampled deformation exceeds the edit threshold.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"editToRunLatencyMilliseconds\",\n";
+        out << "      \"category\": \"timing\",\n";
+        out << "      \"formula\": \"wall-clock milliseconds spent applying the edit stack and preparing runtime state\",\n";
+        out << "      \"interpretation\": \"Lower is better; approximates interactive response time from edit commit to runtime-ready output.\"\n";
+        out << "    }\n";
+        out << "  ],\n";
+        out << "  \"runtimeMetrics\": [\n";
+        out << "    {\n";
+        out << "      \"name\": \"selectedClusterCount\",\n";
+        out << "      \"formula\": \"number of active-set clusters selected under the current budget\",\n";
+        out << "      \"interpretation\": \"Higher generally means more corrective work scheduled this frame.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"selectedGuideCount\",\n";
+        out << "      \"formula\": \"total guide strands promoted to full corrective simulation\",\n";
+        out << "      \"interpretation\": \"Higher means more of the hairstyle receives high-cost correction.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"estimatedFrameMilliseconds\",\n";
+        out << "      \"formula\": \"estimatedFixedCostMilliseconds + selectedClusterCount * estimatedClusterCostMilliseconds\",\n";
+        out << "      \"interpretation\": \"Predicted frame cost used for bounded-latency reasoning; lower is safer for the 16.67 ms budget.\"\n";
+        out << "    },\n";
+        out << "    {\n";
+        out << "      \"name\": \"recommendedSolverIterations\",\n";
+        out << "      \"formula\": \"budget-adapted iteration recommendation derived from the current budget scale\",\n";
+        out << "      \"interpretation\": \"Higher means the runtime can afford more local corrective iterations this frame.\"\n";
+        out << "    }\n";
+        out << "  ]\n";
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
+    bool BuildEmptyVariantPlan(const HairAsset& asset,
+                              const std::vector<ActiveSetCluster>& clusters,
+                              const ActiveSetBudget& budget,
+                              ExperimentVariantSummary& outVariant,
+                              std::string& outError);
+
+    bool EvaluateVariantPlan(const HairAsset& asset,
+                             const std::vector<ActiveSetCluster>& clusters,
+                             const RuntimeEditState* state,
+                             bool useEditScores,
+                             const ActiveSetBudget& budget,
+                             ExperimentVariantSummary& outVariant,
+                             std::string& outError)
+    {
+        ActiveSetRuntimeInput runtimeInput = {};
+        runtimeInput.fixedTimeStep = 1.0f / 60.0f;
+        if (useEditScores && state)
+        {
+            runtimeInput.guideEditScores = state->guideInfluence;
+        }
+        ActiveSetScoringSettings scoringSettings = {};
+        outVariant.usesEditScores = useEditScores;
+        outVariant.budget = budget;
+        if (EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, outVariant.plan, outError))
+        {
+            return true;
+        }
+        if (outError.find("No clusters satisfied the active-set budget and threshold") != std::string::npos)
+        {
+            return BuildEmptyVariantPlan(asset, clusters, budget, outVariant, outError);
+        }
+        return false;
+    }
+
+    bool BuildEmptyVariantPlan(const HairAsset& asset,
+                              const std::vector<ActiveSetCluster>& clusters,
+                              const ActiveSetBudget& budget,
+                              ExperimentVariantSummary& outVariant,
+                              std::string& outError)
+    {
+        outVariant.plan = {};
+        outVariant.plan.clusters = clusters;
+        outVariant.plan.scores.resize(clusters.size());
+        outVariant.plan.strandCorrectiveMask.assign(asset.strands.size(), 0u);
+        outVariant.plan.recommendedSimulationTiers.assign(asset.strands.size(), SimTier::Cached);
+        for (size_t i = 0; i < clusters.size(); ++i)
+        {
+            outVariant.plan.scores[i].clusterIndex = static_cast<uint32_t>(i);
+        }
+        outVariant.plan.summary.clusterCount = static_cast<uint32_t>(clusters.size());
+        outVariant.plan.summary.selectedClusterCount = 0u;
+        outVariant.plan.summary.selectedGuideCount = 0u;
+        outVariant.plan.summary.selectedStrandCount = 0u;
+        outVariant.plan.summary.highestScore = 0.0f;
+        outVariant.plan.summary.lowestSelectedScore = 0.0f;
+        outVariant.plan.summary.averageSelectedScore = 0.0f;
+        outVariant.plan.summary.budgetScale = 1.0f;
+        outVariant.plan.summary.pendingClusterCount = static_cast<uint32_t>(clusters.size());
+        outVariant.plan.summary.hardMaxActiveClusters = budget.maxActiveClusters;
+        outVariant.plan.summary.estimatedFixedCostMilliseconds = budget.estimatedFixedCostMilliseconds;
+        outVariant.plan.summary.estimatedClusterCostMilliseconds = budget.estimatedClusterCostMilliseconds;
+        outVariant.plan.summary.estimatedFrameMilliseconds = budget.estimatedFixedCostMilliseconds;
+        outVariant.plan.summary.recommendedSolverIterations = budget.minSolverIterations;
+        outVariant.plan.summary.fullTierCount = 0u;
+        outVariant.plan.summary.reducedTierCount = 0u;
+        outVariant.plan.summary.frozenTierCount = 0u;
+        outVariant.plan.summary.cachedTierCount = static_cast<uint32_t>(asset.strands.size());
+        outError.clear();
+        return true;
+    }
+
+    bool WriteExperimentSuitePresetJson(const std::filesystem::path& path,
+                                        const ExperimentSuiteSettings& settings,
+                                        std::string& outError)
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            outError = "Failed to write experiment preset json: " + path.string();
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"samplesPerStrand\": " << settings.samplesPerStrand << ",\n";
+        out << "  \"clusterSettings\": {\n";
+        out << "    \"targetGuideCountPerCluster\": " << settings.clusterSettings.targetGuideCountPerCluster << ",\n";
+        out << "    \"maxGuideRootDistance\": " << settings.clusterSettings.maxGuideRootDistance << "\n";
+        out << "  },\n";
+        out << "  \"proposalBudget\": {\n";
+        out << "    \"maxActiveClusters\": " << settings.proposalBudget.maxActiveClusters << ",\n";
+        out << "    \"maxActiveGuides\": " << settings.proposalBudget.maxActiveGuides << ",\n";
+        out << "    \"promoteScoreThreshold\": " << settings.proposalBudget.promoteScoreThreshold << ",\n";
+        out << "    \"targetFrameMilliseconds\": " << settings.proposalBudget.targetFrameMilliseconds << ",\n";
+        out << "    \"frameBudgetMilliseconds\": " << settings.proposalBudget.frameBudgetMilliseconds << ",\n";
+        out << "    \"estimatedFixedCostMilliseconds\": " << settings.proposalBudget.estimatedFixedCostMilliseconds << ",\n";
+        out << "    \"estimatedClusterCostMilliseconds\": " << settings.proposalBudget.estimatedClusterCostMilliseconds << "\n";
+        out << "  },\n";
+        out << "  \"variants\": [\n";
+        out << "    \"prediction_only\",\n";
+        out << "    \"active_set_runtime\",\n";
+        out << "    \"proposal_hybrid\",\n";
+        out << "    \"full_physics\"\n";
+        out << "  ]\n";
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
+    bool WriteExperimentSuiteTemplate(const std::filesystem::path& outputDirectory,
+                                      const ExperimentSuiteSettings& settings,
+                                      std::string& outError)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(outputDirectory, ec);
+        if (ec)
+        {
+            outError = "Failed to create experiment suite template directory: " + outputDirectory.string();
+            return false;
+        }
+        if (!LocalWriteEditStackTemplateCsv(outputDirectory / "proposal_edit_stack.csv", outError))
+        {
+            return false;
+        }
+        std::ofstream strandDemo(outputDirectory / "single_strand_demo_stack.csv");
+        if (!strandDemo)
+        {
+            outError = "Failed to write single strand demo stack: " + (outputDirectory / "single_strand_demo_stack.csv").string();
+            return false;
+        }
+        strandDemo << "# demo stack focused on strand-level repair\n";
+        strandDemo << "stack,0.42,0.10\n";
+        strandDemo << "layer,base_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.02,1.00,0.00,-0.01,0.00,0.00,-0.02,0.00,0.00,0.04,1.00,,,1.00\n";
+        strandDemo << "layer,explicit_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.01,0.02,0.00,0.00,0.15,0.00,42,replace,1.00\n";
+        strandDemo.close();
+        if (!WriteExperimentSuitePresetJson(outputDirectory / "experiment_suite_preset.json", settings, outError))
+        {
+            return false;
+        }
+        if (!WriteMetricDefinitionsJson(outputDirectory / "metric_definitions.json", outError))
+        {
+            return false;
+        }
+        std::ofstream readme(outputDirectory / "README_experiment_suite.txt");
+        if (!readme)
+        {
+            outError = "Failed to write experiment suite README.";
+            return false;
+        }
+        readme << "Experiment suite scaffold\n";
+        readme << "1. Start from proposal_edit_stack.csv or single_strand_demo_stack.csv.\n";
+        readme << "2. Run hairgpu_cli experiment-suite <input> <stack.csv> <output_dir>.\n";
+        readme << "3. Inspect runtime_variants/*.json and experiment_summary.{csv,json}.\n";
+        readme << "4. Use metric_definitions.json when writing the thesis evaluation section.\n";
+        outError.clear();
+        return true;
+    }
+
+    bool WriteExperimentSuiteSummary(const std::filesystem::path& outputDirectory,
+                                     const HairEditComparisonReport& editReport,
+                                     const std::vector<ExperimentVariantSummary>& variants,
+                                     std::string& outError)
+    {
+        std::ofstream csv(outputDirectory / "experiment_summary.csv");
+        if (!csv)
+        {
+            outError = "Failed to write experiment summary CSV.";
+            return false;
+        }
+        csv << "variant,usesEditScores,selectedClusters,selectedGuides,selectedStrands,highestScore,lowestSelectedScore,averageSelectedScore,estimatedFrameMs,recommendedSolverIterations,budgetScale,maxActiveClusters,maxActiveGuides,promoteScoreThreshold\n";
+        for (const ExperimentVariantSummary& variant : variants)
+        {
+            csv << variant.name << ","
+                << (variant.usesEditScores ? 1 : 0) << ","
+                << variant.plan.summary.selectedClusterCount << ","
+                << variant.plan.summary.selectedGuideCount << ","
+                << variant.plan.summary.selectedStrandCount << ","
+                << variant.plan.summary.highestScore << ","
+                << variant.plan.summary.lowestSelectedScore << ","
+                << variant.plan.summary.averageSelectedScore << ","
+                << variant.plan.summary.estimatedFrameMilliseconds << ","
+                << variant.plan.summary.recommendedSolverIterations << ","
+                << variant.plan.summary.budgetScale << ","
+                << variant.budget.maxActiveClusters << ","
+                << variant.budget.maxActiveGuides << ","
+                << variant.budget.promoteScoreThreshold << "\n";
+        }
+
+        std::ofstream out(outputDirectory / "experiment_summary.json");
+        if (!out)
+        {
+            outError = "Failed to write experiment summary JSON.";
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"editMetrics\": {\n";
+        out << "    \"rmsPositionError\": " << editReport.shape.rmsPositionError << ",\n";
+        out << "    \"silhouetteError\": " << editReport.shape.silhouetteError << ",\n";
+        out << "    \"clumpPreservationScore\": " << editReport.shape.clumpPreservationScore << ",\n";
+        out << "    \"rootLocalityScore\": " << editReport.shape.rootLocalityScore << ",\n";
+        out << "    \"editLocalityScore\": " << editReport.editLocalityScore << ",\n";
+        out << "    \"boundaryNaturalnessScore\": " << editReport.boundaryNaturalnessScore << ",\n";
+        out << "    \"editedStrandRatio\": " << editReport.editedStrandRatio << ",\n";
+        out << "    \"editToRunLatencyMilliseconds\": " << editReport.editToRunLatencyMilliseconds << "\n";
+        out << "  },\n";
+        out << "  \"variants\": [\n";
+        for (size_t i = 0; i < variants.size(); ++i)
+        {
+            const ExperimentVariantSummary& variant = variants[i];
+            out << "    {\n";
+            out << "      \"name\": \"" << JsonEscape(variant.name) << "\",\n";
+            out << "      \"usesEditScores\": " << (variant.usesEditScores ? "true" : "false") << ",\n";
+            out << "      \"selectedClusterCount\": " << variant.plan.summary.selectedClusterCount << ",\n";
+            out << "      \"selectedGuideCount\": " << variant.plan.summary.selectedGuideCount << ",\n";
+            out << "      \"selectedStrandCount\": " << variant.plan.summary.selectedStrandCount << ",\n";
+            out << "      \"highestScore\": " << variant.plan.summary.highestScore << ",\n";
+            out << "      \"lowestSelectedScore\": " << variant.plan.summary.lowestSelectedScore << ",\n";
+            out << "      \"averageSelectedScore\": " << variant.plan.summary.averageSelectedScore << ",\n";
+            out << "      \"budgetScale\": " << variant.plan.summary.budgetScale << ",\n";
+            out << "      \"estimatedFrameMilliseconds\": " << variant.plan.summary.estimatedFrameMilliseconds << ",\n";
+            out << "      \"recommendedSolverIterations\": " << variant.plan.summary.recommendedSolverIterations << ",\n";
+            out << "      \"budget\": {\n";
+            out << "        \"maxActiveClusters\": " << variant.budget.maxActiveClusters << ",\n";
+            out << "        \"maxActiveGuides\": " << variant.budget.maxActiveGuides << ",\n";
+            out << "        \"promoteScoreThreshold\": " << variant.budget.promoteScoreThreshold << "\n";
+            out << "      }\n";
+            out << "    }";
+            if (i + 1u < variants.size())
+            {
+                out << ",";
+            }
+            out << "\n";
+        }
+        out << "  ]\n";
+        out << "}\n";
+        outError.clear();
+        return true;
+    }
+
     void PrintUsage()
     {
         std::cout << R"USAGE(hairgpu_cli usage:
@@ -949,7 +1351,9 @@ namespace
   hairgpu_cli info <input>
   hairgpu_cli validate <input> [report.txt]
   hairgpu_cli metrics-json <input> <metrics.json>
+  hairgpu_cli metrics-definitions <output.json>
   hairgpu_cli active-set-plan <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
+  hairgpu_cli active-set-plan-edit <input> <stack.csv> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
   hairgpu_cli active-set-dispatch <input> <output.json> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold]
   hairgpu_cli active-set-dispatch-pack <input> <output.dispatchbin> [guidesPerCluster] [maxGuideRootDistance] [maxActiveClusters] [maxActiveGuides] [promoteThreshold] [dumpJson=1]
   hairgpu_cli dispatchpack-gpubuffers <input.dispatchbin> <output_dir>
@@ -971,7 +1375,9 @@ namespace
   hairgpu_cli segment-profile <input> <output.hairbin> [balanced|smooth|cinematic] [targetParticlesOverride=0]
   hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
   hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
+  hairgpu_cli edit-strand <input> <output.hairbin> <strandSpec> [mode=replace|guide_family|union] [lengthScale widthScale rootX rootY rootZ tipX tipY tipZ side yaw follower]
   hairgpu_cli edit-stack-template <output.csv>
+  hairgpu_cli experiment-suite-template <output_dir>
   hairgpu_cli edit-stack-apply <input> <stack.csv> <output.hairbin> [runtime.json]
   hairgpu_cli edit-stack-eval <input> <stack.csv> <output_dir> [samplesPerStrand=16]
   hairgpu_cli edit-compare <reference> <edited> <output.json> [samplesPerStrand=16]
@@ -1067,6 +1473,62 @@ int main(int argc, char** argv)
         std::cout << "hairgpu_cli 0.2.2\n";
         return 0;
     }
+    if (command == "active-set-plan-edit")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        HairAsset asset;
+        std::string error;
+        if (!LoadHairAssetAny(argv[2], asset, error))
+        {
+            return PrintLoadFailure("Hair asset load failed", error, 166);
+        }
+        EditStack stack = {};
+        if (!LocalLoadEditStackCsv(argv[3], stack, error))
+        {
+            return PrintLoadFailure("Edit stack load failed", error, 167);
+        }
+        RuntimeEditState state = {};
+        HairAsset editedAsset = asset;
+        if (!ApplyEditStackToAsset(editedAsset, asset, stack, &state, error))
+        {
+            return PrintLoadFailure("Edit stack apply failed", error, 168);
+        }
+        ActiveSetClusterSettings clusterSettings = {};
+        clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 5, clusterSettings.targetGuideCountPerCluster);
+        clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 6, clusterSettings.maxGuideRootDistance);
+        const std::vector<ActiveSetCluster> clusters = BuildActiveSetClusters(asset, clusterSettings);
+        if (clusters.empty())
+        {
+            return PrintLoadFailure("Active-set cluster build failed", "No guide clusters were built from the asset.", 169);
+        }
+        ActiveSetRuntimeInput runtimeInput = {};
+        runtimeInput.fixedTimeStep = 1.0f / 60.0f;
+        runtimeInput.guideEditScores = state.guideInfluence;
+        ActiveSetScoringSettings scoringSettings = {};
+        ActiveSetBudget budget = {};
+        budget.maxActiveClusters = ArgToUInt(argc, argv, 7, budget.maxActiveClusters);
+        budget.maxActiveGuides = ArgToUInt(argc, argv, 8, budget.maxActiveGuides);
+        budget.promoteScoreThreshold = ArgToFloat(argc, argv, 9, budget.promoteScoreThreshold);
+        ActiveSetPlan plan;
+        if (!EvaluateActiveSetPlan(asset, clusters, runtimeInput, scoringSettings, budget, plan, error))
+        {
+            return PrintLoadFailure("Active-set evaluation failed", error, 170);
+        }
+        if (!WriteActiveSetPlanJson(argv[4], asset, plan, error))
+        {
+            return PrintLoadFailure("Active-set plan export failed", error, 171);
+        }
+        std::cout << BuildActiveSetPlanSummary(plan)
+                  << " editGuides=" << state.activeGuideCount
+                  << " maxEditInfluence=" << state.maxGuideInfluence
+                  << "\n";
+        return 0;
+    }
+
     if (command == "active-set-plan")
     {
         if (argc < 4)
@@ -2221,6 +2683,41 @@ int main(int argc, char** argv)
                   << " values=" << grid.values.size() << "\n";
         return 0;
     }
+    if (command == "metrics-definitions")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        std::string error;
+        if (!WriteMetricDefinitionsJson(argv[2], error))
+        {
+            return PrintLoadFailure("Metric definition export failed", error, 336);
+        }
+        std::cout << "output=" << argv[2] << "\n";
+        return 0;
+    }
+    if (command == "experiment-suite-template")
+    {
+        if (argc < 3)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ExperimentSuiteSettings settings = {};
+        settings.proposalBudget.targetFrameMilliseconds = 8.0f;
+        settings.proposalBudget.frameBudgetMilliseconds = 16.67f;
+        settings.proposalBudget.estimatedFixedCostMilliseconds = 6.0f;
+        settings.proposalBudget.estimatedClusterCostMilliseconds = 0.85f;
+        std::string error;
+        if (!WriteExperimentSuiteTemplate(argv[2], settings, error))
+        {
+            return PrintLoadFailure("Experiment suite template write failed", error, 337);
+        }
+        std::cout << "outputDir=" << argv[2] << "\n";
+        return 0;
+    }
     if (command == "edit-stack-template")
     {
         if (argc < 3)
@@ -2395,6 +2892,53 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    if (command == "edit-strand")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        EditLayer layer = {};
+        layer.name = "explicit_strand_edit";
+        layer.region.mode = RegionSelectMode::All;
+        if (!ParseStrandSelectionSpec(argv[4], layer.strandSelection, error))
+        {
+            return PrintLoadFailure("Strand selection parse failed", error, 198);
+        }
+        layer.strandSelectionMode = StrandSelectionMode::Replace;
+        if (argc >= 6 && !ParseStrandSelectionModeToken(argv[5], layer.strandSelectionMode))
+        {
+            return PrintLoadFailure("Strand selection mode parse failed", std::string("Unsupported mode: ") + argv[5], 199);
+        }
+        const int base = 6;
+        layer.edit.lengthScale = ArgToFloat(argc, argv, base, layer.edit.lengthScale);
+        layer.edit.widthScale = ArgToFloat(argc, argv, base + 1, layer.edit.widthScale);
+        layer.edit.rootOffset.x = ArgToFloat(argc, argv, base + 2, layer.edit.rootOffset.x);
+        layer.edit.rootOffset.y = ArgToFloat(argc, argv, base + 3, layer.edit.rootOffset.y);
+        layer.edit.rootOffset.z = ArgToFloat(argc, argv, base + 4, layer.edit.rootOffset.z);
+        layer.edit.tipOffset.x = ArgToFloat(argc, argv, base + 5, layer.edit.tipOffset.x);
+        layer.edit.tipOffset.y = ArgToFloat(argc, argv, base + 6, layer.edit.tipOffset.y);
+        layer.edit.tipOffset.z = ArgToFloat(argc, argv, base + 7, layer.edit.tipOffset.z);
+        layer.edit.sideOffset = ArgToFloat(argc, argv, base + 8, layer.edit.sideOffset);
+        layer.edit.yawRadians = ArgToFloat(argc, argv, base + 9, layer.edit.yawRadians);
+        layer.edit.followerInfluence = ArgToFloat(argc, argv, base + 10, layer.edit.followerInfluence);
+
+        EditStack stack = {};
+        stack.layers.push_back(layer);
+        const HairAsset baseAsset = asset;
+        RuntimeEditState state = {};
+        if (!ApplyEditStackToAsset(asset, baseAsset, stack, &state, error) || !SaveHairAssetToHairBinary(argv[3], asset, error))
+        {
+            return PrintLoadFailure("Strand edit failed", error, 200);
+        }
+        std::cout << "selectedStrands=" << layer.strandSelection.size()
+                  << " mode=" << StrandSelectionModeToString(layer.strandSelectionMode)
+                  << " activeGuides=" << state.activeGuideCount
+                  << " output=" << argv[3] << "\n";
+        return 0;
+    }
+
     if (command == "edit-stack-apply")
     {
         if (argc < 5)
@@ -2489,6 +3033,136 @@ int main(int argc, char** argv)
                   << " boundary=" << report.boundaryNaturalnessScore
                   << " editedStrandRatio=" << report.editedStrandRatio
                   << " output=" << argv[4] << "\n";
+        return 0;
+    }
+    if (command == "experiment-suite")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        EditStack stack = {};
+        if (!LocalLoadEditStackCsv(argv[3], stack, error))
+        {
+            return PrintLoadFailure("Edit stack load failed", error, 338);
+        }
+        const HairAsset baseAsset = asset;
+        RuntimeEditState state = {};
+        HairAsset editedAsset = asset;
+        const uint32_t samplesPerStrand = std::max<uint32_t>(2u, ArgToUInt(argc, argv, 5, 16u));
+        const auto startTime = std::chrono::steady_clock::now();
+        if (!ApplyEditStackToAsset(editedAsset, baseAsset, stack, &state, error))
+        {
+            return PrintLoadFailure("Experiment suite edit apply failed", error, 339);
+        }
+        const auto endTime = std::chrono::steady_clock::now();
+        HairEditComparisonReport editReport = CompareHairEditRegion(baseAsset, editedAsset, samplesPerStrand);
+        editReport.editToRunLatencyMilliseconds = static_cast<float>(std::chrono::duration<double, std::milli>(endTime - startTime).count());
+
+        ExperimentSuiteSettings settings = {};
+        settings.samplesPerStrand = samplesPerStrand;
+        settings.clusterSettings.targetGuideCountPerCluster = ArgToUInt(argc, argv, 6, settings.clusterSettings.targetGuideCountPerCluster);
+        settings.clusterSettings.maxGuideRootDistance = ArgToFloat(argc, argv, 7, settings.clusterSettings.maxGuideRootDistance);
+        settings.proposalBudget.maxActiveClusters = ArgToUInt(argc, argv, 8, settings.proposalBudget.maxActiveClusters);
+        settings.proposalBudget.maxActiveGuides = ArgToUInt(argc, argv, 9, settings.proposalBudget.maxActiveGuides);
+        settings.proposalBudget.promoteScoreThreshold = ArgToFloat(argc, argv, 10, settings.proposalBudget.promoteScoreThreshold);
+
+        std::error_code ec;
+        std::filesystem::create_directories(argv[4], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Experiment suite output failed", ec.message(), 340);
+        }
+        const std::filesystem::path outputDir(argv[4]);
+        const std::filesystem::path runtimeDir = outputDir / "runtime_variants";
+        std::filesystem::create_directories(runtimeDir, ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Experiment suite output failed", ec.message(), 341);
+        }
+        if (!SaveHairAssetToHairBinary(outputDir / "edited.hairbin", editedAsset, error) ||
+            !WriteEditRuntimeStateJson(outputDir / "edit_runtime.json", stack, state, baseAsset, error) ||
+            !WriteEditComparisonJson(outputDir / "edit_metrics.json", editReport, error) ||
+            !WriteMetricDefinitionsJson(outputDir / "metric_definitions.json", error) ||
+            !WriteExperimentSuitePresetJson(outputDir / "experiment_suite_preset.json", settings, error))
+        {
+            return PrintLoadFailure("Experiment suite write failed", error, 342);
+        }
+
+        const std::vector<ActiveSetCluster> clusters = BuildActiveSetClusters(baseAsset, settings.clusterSettings);
+        if (clusters.empty())
+        {
+            return PrintLoadFailure("Experiment suite cluster build failed", "No guide clusters were built from the asset.", 343);
+        }
+
+        std::vector<ExperimentVariantSummary> variants;
+        variants.reserve(4u);
+
+        ExperimentVariantSummary predictionOnly = {};
+        predictionOnly.name = "prediction_only";
+        predictionOnly.budget = settings.proposalBudget;
+        predictionOnly.budget.minActiveClusters = 0u;
+        predictionOnly.budget.maxActiveClusters = 0u;
+        predictionOnly.budget.maxActiveGuides = 0u;
+        predictionOnly.budget.maxActiveStrands = 0u;
+        predictionOnly.budget.promoteScoreThreshold = 2.0f;
+        predictionOnly.budget.enableHardBudgetClamp = false;
+        if (!BuildEmptyVariantPlan(baseAsset, clusters, predictionOnly.budget, predictionOnly, error) ||
+            !WriteActiveSetPlanJson(runtimeDir / "prediction_only_plan.json", baseAsset, predictionOnly.plan, error))
+        {
+            return PrintLoadFailure("Experiment suite prediction-only plan failed", error, 344);
+        }
+        variants.push_back(std::move(predictionOnly));
+
+        ExperimentVariantSummary runtimeOnly = {};
+        runtimeOnly.name = "active_set_runtime";
+        runtimeOnly.budget = settings.proposalBudget;
+        runtimeOnly.budget.minActiveClusters = 0u;
+        if (!EvaluateVariantPlan(baseAsset, clusters, &state, false, runtimeOnly.budget, runtimeOnly, error) ||
+            !WriteActiveSetPlanJson(runtimeDir / "active_set_runtime_plan.json", baseAsset, runtimeOnly.plan, error))
+        {
+            return PrintLoadFailure("Experiment suite active-set runtime plan failed", error, 345);
+        }
+        variants.push_back(std::move(runtimeOnly));
+
+        ExperimentVariantSummary proposalHybrid = {};
+        proposalHybrid.name = "proposal_hybrid";
+        proposalHybrid.budget = settings.proposalBudget;
+        proposalHybrid.budget.minActiveClusters = 0u;
+        if (!EvaluateVariantPlan(baseAsset, clusters, &state, true, proposalHybrid.budget, proposalHybrid, error) ||
+            !WriteActiveSetPlanJson(runtimeDir / "proposal_hybrid_plan.json", baseAsset, proposalHybrid.plan, error))
+        {
+            return PrintLoadFailure("Experiment suite proposal hybrid plan failed", error, 346);
+        }
+        variants.push_back(std::move(proposalHybrid));
+
+        ExperimentVariantSummary fullPhysics = {};
+        fullPhysics.name = "full_physics";
+        fullPhysics.budget = settings.proposalBudget;
+        fullPhysics.budget.minActiveClusters = 0u;
+        fullPhysics.budget.maxActiveClusters = static_cast<uint32_t>(clusters.size());
+        fullPhysics.budget.maxActiveGuides = std::max<uint32_t>(1u, baseAsset.guideStrandCount);
+        fullPhysics.budget.maxActiveStrands = static_cast<uint32_t>(baseAsset.strands.size());
+        fullPhysics.budget.promoteScoreThreshold = 0.0f;
+        fullPhysics.budget.enableHardBudgetClamp = false;
+        if (!EvaluateVariantPlan(baseAsset, clusters, &state, true, fullPhysics.budget, fullPhysics, error) ||
+            !WriteActiveSetPlanJson(runtimeDir / "full_physics_plan.json", baseAsset, fullPhysics.plan, error))
+        {
+            return PrintLoadFailure("Experiment suite full physics plan failed", error, 347);
+        }
+        variants.push_back(std::move(fullPhysics));
+
+        if (!WriteExperimentSuiteSummary(outputDir, editReport, variants, error))
+        {
+            return PrintLoadFailure("Experiment suite summary write failed", error, 348);
+        }
+
+        std::cout << "variants=" << variants.size()
+                  << " locality=" << editReport.editLocalityScore
+                  << " boundary=" << editReport.boundaryNaturalnessScore
+                  << " latencyMs=" << editReport.editToRunLatencyMilliseconds
+                  << " outputDir=" << outputDir.string() << "\n";
         return 0;
     }
 
@@ -3073,6 +3747,16 @@ int main(int argc, char** argv)
         if (!ScaffoldHairProject(asset, argv[3], settings, outputs, error))
         {
             return PrintLoadFailure("Scaffold generation failed", error, 62);
+        }
+        ExperimentSuiteSettings experimentSettings = {};
+        experimentSettings.proposalBudget.targetFrameMilliseconds = 8.0f;
+        experimentSettings.proposalBudget.frameBudgetMilliseconds = 16.67f;
+        experimentSettings.proposalBudget.estimatedFixedCostMilliseconds = 6.0f;
+        experimentSettings.proposalBudget.estimatedClusterCostMilliseconds = 0.85f;
+        const std::filesystem::path experimentDir = std::filesystem::path(argv[3]) / "experiment_suite";
+        if (!WriteExperimentSuiteTemplate(experimentDir, experimentSettings, error))
+        {
+            return PrintLoadFailure("Experiment scaffold generation failed", error, 349);
         }
         std::cout << "scaffold=" << std::filesystem::absolute(argv[3]).string() << "\n";
         return 0;
