@@ -84,6 +84,8 @@ cbuffer SimConstants : register(b0)
     uint FollowerUpdatePhase;
     uint UseCompactedFollowerDispatch;
     uint CompactedFollowerCount;
+    uint UseCompactedGuidePointDispatch;
+    uint CompactedGuidePointCount;
 };
 
 cbuffer BitonicConstants : register(b1)
@@ -129,6 +131,8 @@ StructuredBuffer<uint> CompactedFollowerIndices : register(t7);
 StructuredBuffer<uint> FollowerTierAssignments : register(t8);
 StructuredBuffer<uint> CompactedGuideIndices : register(t9);
 StructuredBuffer<uint> GuideCompactionCountersInSim : register(t10);
+StructuredBuffer<uint> FollowerCompactionCountersInSim : register(t11);
+StructuredBuffer<float> SdfValues : register(t12);
 
 RWStructuredBuffer<float4> OutputPositions : register(u0);
 RWStructuredBuffer<float4> OutputPreviousPositions : register(u1);
@@ -161,6 +165,49 @@ uint ResolveGuideStrandIndex(uint dispatchIndex)
         return CompactedGuideIndices[dispatchIndex];
     }
     return dispatchIndex;
+}
+
+uint GetGuideParticleDispatchCount()
+{
+    if (UseCompactedGuidePointDispatch != 0u)
+    {
+        if (CompactedGuidePointCount != 0u)
+        {
+            return CompactedGuidePointCount;
+        }
+        return (ParticlesPerStrand > 1u) ? (GuideCompactionCountersInSim[0] * (ParticlesPerStrand - 1u)) : 0u;
+    }
+    return TotalGuideParticles();
+}
+
+uint ResolveGuideParticleIndex(uint dispatchIndex)
+{
+    if (UseCompactedGuidePointDispatch != 0u)
+    {
+        if (ParticlesPerStrand <= 1u)
+        {
+            return 0xFFFFFFFFu;
+        }
+        uint localStride = ParticlesPerStrand - 1u;
+        uint guideDispatchIndex = dispatchIndex / localStride;
+        uint localIndex = (dispatchIndex % localStride) + 1u;
+        uint strandIndex = ResolveGuideStrandIndex(guideDispatchIndex);
+        if (strandIndex == 0xFFFFFFFFu)
+        {
+            return 0xFFFFFFFFu;
+        }
+        return strandIndex * ParticlesPerStrand + localIndex;
+    }
+    return dispatchIndex;
+}
+
+uint GetCompactedFollowerCount()
+{
+    if (UseCompactedFollowerDispatch == 0u)
+    {
+        return FollowerStrandCount;
+    }
+    return (CompactedFollowerCount != 0u) ? CompactedFollowerCount : FollowerCompactionCountersInSim[0];
 }
 
 uint TotalGridCells()
@@ -635,12 +682,87 @@ void BendCS(uint3 id : SV_DispatchThreadID)
     }
 }
 
+uint ComputeSdfIndex(uint x, uint y, uint z)
+{
+    return (z * SdfResolution.y + y) * SdfResolution.x + x;
+}
+
+float SampleSdfNearest(int x, int y, int z)
+{
+    x = clamp(x, 0, int(SdfResolution.x) - 1);
+    y = clamp(y, 0, int(SdfResolution.y) - 1);
+    z = clamp(z, 0, int(SdfResolution.z) - 1);
+    return SdfValues[ComputeSdfIndex((uint)x, (uint)y, (uint)z)];
+}
+
+float SampleSdfTrilinear(float3 p)
+{
+    if (UseSdfCollider == 0u || SdfValueCount == 0u || SdfResolution.x < 2u || SdfResolution.y < 2u || SdfResolution.z < 2u)
+    {
+        return 1.0e9f;
+    }
+    float3 cellSize = (SdfBoundsMax.xyz - SdfBoundsMin.xyz) / max(float3(SdfResolution.xyz - 1u), float3(1.0f, 1.0f, 1.0f));
+    float gx = clamp((p.x - SdfBoundsMin.x) / max(cellSize.x, 1.0e-6f), 0.0f, float(SdfResolution.x - 1u));
+    float gy = clamp((p.y - SdfBoundsMin.y) / max(cellSize.y, 1.0e-6f), 0.0f, float(SdfResolution.y - 1u));
+    float gz = clamp((p.z - SdfBoundsMin.z) / max(cellSize.z, 1.0e-6f), 0.0f, float(SdfResolution.z - 1u));
+    int x0 = int(floor(gx)); int y0 = int(floor(gy)); int z0 = int(floor(gz));
+    int x1 = min(x0 + 1, int(SdfResolution.x) - 1);
+    int y1 = min(y0 + 1, int(SdfResolution.y) - 1);
+    int z1 = min(z0 + 1, int(SdfResolution.z) - 1);
+    float tx = gx - float(x0); float ty = gy - float(y0); float tz = gz - float(z0);
+    float c000 = SampleSdfNearest(x0, y0, z0);
+    float c100 = SampleSdfNearest(x1, y0, z0);
+    float c010 = SampleSdfNearest(x0, y1, z0);
+    float c110 = SampleSdfNearest(x1, y1, z0);
+    float c001 = SampleSdfNearest(x0, y0, z1);
+    float c101 = SampleSdfNearest(x1, y0, z1);
+    float c011 = SampleSdfNearest(x0, y1, z1);
+    float c111 = SampleSdfNearest(x1, y1, z1);
+    float c00 = lerp(c000, c100, tx);
+    float c10 = lerp(c010, c110, tx);
+    float c01 = lerp(c001, c101, tx);
+    float c11 = lerp(c011, c111, tx);
+    float c0 = lerp(c00, c10, ty);
+    float c1 = lerp(c01, c11, ty);
+    return lerp(c0, c1, tz);
+}
+
+float3 EstimateSdfGradient(float3 p)
+{
+    float3 cellSize = (SdfBoundsMax.xyz - SdfBoundsMin.xyz) / max(float3(SdfResolution.xyz - 1u), float3(1.0f, 1.0f, 1.0f));
+    float3 eps = max(cellSize, float3(1.0e-4f, 1.0e-4f, 1.0e-4f));
+    float dx = SampleSdfTrilinear(p + float3(eps.x, 0.0f, 0.0f)) - SampleSdfTrilinear(p - float3(eps.x, 0.0f, 0.0f));
+    float dy = SampleSdfTrilinear(p + float3(0.0f, eps.y, 0.0f)) - SampleSdfTrilinear(p - float3(0.0f, eps.y, 0.0f));
+    float dz = SampleSdfTrilinear(p + float3(0.0f, 0.0f, eps.z)) - SampleSdfTrilinear(p - float3(0.0f, 0.0f, eps.z));
+    float3 g = SafeNormalize(float3(dx, dy, dz));
+    return (dot(g, g) > 1.0e-8f) ? g : float3(0.0f, 1.0f, 0.0f);
+}
+
+float3 ResolveSdfCollider(float3 p, inout bool touchedSurface)
+{
+    float sdf = SampleSdfTrilinear(p);
+    float shell = max(SupportCollisionRadius * 0.6f, 0.0025f);
+    if (sdf < shell)
+    {
+        float3 n = EstimateSdfGradient(p);
+        p += n * (shell - sdf);
+        touchedSurface = true;
+    }
+    return p;
+}
+
 [numthreads(64, 1, 1)]
 void CollisionCS(uint3 id : SV_DispatchThreadID)
 {
-    uint particleIndex = id.x;
-    uint totalGuideParticles = TotalGuideParticles();
-    if (particleIndex >= totalGuideParticles)
+    uint dispatchIndex = id.x;
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
+    if (dispatchIndex >= guideParticleDispatchCount)
+    {
+        return;
+    }
+
+    uint particleIndex = ResolveGuideParticleIndex(dispatchIndex);
+    if (particleIndex == 0xFFFFFFFFu)
     {
         return;
     }
@@ -710,6 +832,11 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
         touchedSurface = true;
     }
 
+    if (UseSdfCollider != 0u && SdfValueCount > 0u)
+    {
+        p = ResolveSdfCollider(p, touchedSurface);
+    }
+
     p = ApplySupportCollisionApprox(strandIndex, localIndex, p);
 
     if (touchedSurface)
@@ -753,9 +880,15 @@ void ClearGridCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BuildGridCS(uint3 id : SV_DispatchThreadID)
 {
-    uint particleIndex = id.x;
-    uint totalGuideParticles = TotalGuideParticles();
-    if (particleIndex >= totalGuideParticles)
+    uint dispatchIndex = id.x;
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
+    if (dispatchIndex >= guideParticleDispatchCount)
+    {
+        return;
+    }
+
+    uint particleIndex = ResolveGuideParticleIndex(dispatchIndex);
+    if (particleIndex == 0xFFFFFFFFu)
     {
         return;
     }
@@ -782,6 +915,7 @@ void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
 {
     uint index = id.x;
     uint totalGuideParticles = TotalGuideParticles();
+    uint activeGuideParticles = GetGuideParticleDispatchCount();
     uint bucketCount = max(BroadphaseHashBucketCount, 1u);
     if (index < bucketCount)
     {
@@ -796,9 +930,15 @@ void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BuildHashGridCS(uint3 id : SV_DispatchThreadID)
 {
-    uint particleIndex = id.x;
-    uint totalGuideParticles = TotalGuideParticles();
-    if (particleIndex >= totalGuideParticles)
+    uint dispatchIndex = id.x;
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
+    if (dispatchIndex >= guideParticleDispatchCount)
+    {
+        return;
+    }
+
+    uint particleIndex = ResolveGuideParticleIndex(dispatchIndex);
+    if (particleIndex == 0xFFFFFFFFu)
     {
         return;
     }
@@ -842,25 +982,25 @@ void BuildSortedEntriesCS(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    uint totalGuideParticles = TotalGuideParticles();
-    if (entryIndex >= totalGuideParticles)
+    uint activeGuideParticles = GetGuideParticleDispatchCount();
+    if (entryIndex >= activeGuideParticles)
     {
         GridCellCounts[entryIndex] = 0xFFFFFFFFu;
         GridCellIndices[entryIndex] = 0xFFFFFFFFu;
         return;
     }
 
-    uint localIndex = entryIndex % ParticlesPerStrand;
-    if (localIndex == 0u)
+    uint particleIndex = ResolveGuideParticleIndex(entryIndex);
+    if (particleIndex == 0xFFFFFFFFu)
     {
         GridCellCounts[entryIndex] = 0xFFFFFFFFu;
         GridCellIndices[entryIndex] = 0xFFFFFFFFu;
         return;
     }
 
-    uint cellIndex = ComputeGridCellIndex(ComputeGridCoord(OutputPositions[entryIndex].xyz));
+    uint cellIndex = ComputeGridCellIndex(ComputeGridCoord(OutputPositions[particleIndex].xyz));
     GridCellCounts[entryIndex] = cellIndex;
-    GridCellIndices[entryIndex] = entryIndex;
+    GridCellIndices[entryIndex] = particleIndex;
 }
 
 [numthreads(256, 1, 1)]
@@ -1052,9 +1192,15 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    uint particleIndex = id.x;
-    uint totalGuideParticles = TotalGuideParticles();
-    if (particleIndex >= totalGuideParticles)
+    uint dispatchIndex = id.x;
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
+    if (dispatchIndex >= guideParticleDispatchCount)
+    {
+        return;
+    }
+
+    uint particleIndex = ResolveGuideParticleIndex(dispatchIndex);
+    if (particleIndex == 0xFFFFFFFFu)
     {
         return;
     }
@@ -1215,7 +1361,7 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
                         uint otherIndex = GridHashHeads[bucketIndex];
                         uint chainGuard = 0u;
                         [loop]
-                        while (otherIndex != 0xFFFFFFFFu && chainGuard < totalGuideParticles)
+                        while (otherIndex != 0xFFFFFFFFu && chainGuard < TotalGuideParticles())
                         {
                             uint otherLocal = otherIndex % ParticlesPerStrand;
                             uint otherLevel = (BroadphaseMode == 2u) ? ComputeAdaptiveBroadphaseLevel(otherLocal) : 0u;
@@ -1277,7 +1423,7 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     uint followerIndex = followerDispatchIndex;
     if (UseCompactedFollowerDispatch != 0u)
     {
-        if (followerDispatchIndex >= CompactedFollowerCount)
+        if (followerDispatchIndex >= GetCompactedFollowerCount())
         {
             return;
         }

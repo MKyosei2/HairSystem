@@ -16,50 +16,61 @@ def _style_header(row):
         cell.font = HEADER_FONT
 
 
+def _append_table(ws, rows):
+    if not rows:
+        return
+    headers = list(rows[0].keys())
+    ws.append(headers)
+    _style_header(ws[1])
+    for row in rows:
+        ws.append([row[h] for h in headers])
+    ws.freeze_panes = "A2"
+
+
+def _autofit(ws):
+    for column in ws.columns:
+        width = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column) + 2
+        ws.column_dimensions[column[0].column_letter].width = min(max(width, 12), 36)
+
+
 def export_workbook(db_path: Path, output_xlsx: Path) -> Path:
     db = FinalStageDatabase(db_path)
     wb = Workbook()
-    ws_runs = wb.active
-    ws_runs.title = "Runs"
-    run_rows = db.fetch_runs()
-    if run_rows:
-        headers = list(run_rows[0].keys())
-        ws_runs.append(headers)
-        _style_header(ws_runs[1])
-        for row in run_rows:
-            ws_runs.append([row[h] for h in headers])
+
+    ws_summary = wb.active
+    ws_summary.title = "Summary"
+    summary = db.fetch_experiment_summary()
+    if summary:
+        ws_summary.append(["metric", "value"])
+        _style_header(ws_summary[1])
+        for key, value in summary.items():
+            ws_summary.append([key, value])
+        ws_summary.freeze_panes = "A2"
+
+    ws_leaderboard = wb.create_sheet("Leaderboard")
+    _append_table(ws_leaderboard, db.fetch_method_summary_rows())
+
+    ws_scenarios = wb.create_sheet("ScenarioSummary")
+    _append_table(ws_scenarios, db.fetch_scenario_summary_rows())
+
+    ws_runs = wb.create_sheet("Runs")
+    run_rows = [dict(row) for row in db.fetch_runs()]
+    _append_table(ws_runs, run_rows)
 
     ws_frames = wb.create_sheet("FrameMetrics")
-    frame_rows = db.fetch_frame_metrics()
-    if frame_rows:
-        headers = list(frame_rows[0].keys())
-        ws_frames.append(headers)
-        _style_header(ws_frames[1])
-        for row in frame_rows:
-            ws_frames.append([row[h] for h in headers])
+    frame_rows = [dict(row) for row in db.fetch_frame_metrics()]
+    _append_table(ws_frames, frame_rows)
 
     ws_comp = wb.create_sheet("Comparison")
-    comp_rows = db.fetch_comparison_rows()
-    if comp_rows:
-        headers = list(comp_rows[0].keys())
-        ws_comp.append(headers)
-        _style_header(ws_comp[1])
-        for row in comp_rows:
-            ws_comp.append([row[h] for h in headers])
+    comp_rows = [dict(row) for row in db.fetch_comparison_rows()]
+    _append_table(ws_comp, comp_rows)
 
     ws_ab = wb.create_sheet("Ablation")
-    ab_rows = db.fetch_ablation_rows()
-    if ab_rows:
-        headers = list(ab_rows[0].keys())
-        ws_ab.append(headers)
-        _style_header(ws_ab[1])
-        for row in ab_rows:
-            ws_ab.append([row[h] for h in headers])
+    ab_rows = [dict(row) for row in db.fetch_ablation_rows()]
+    _append_table(ws_ab, ab_rows)
 
     for ws in wb.worksheets:
-        for column in ws.columns:
-            width = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column) + 2
-            ws.column_dimensions[column[0].column_letter].width = min(max(width, 12), 36)
+        _autofit(ws)
 
     output_xlsx.parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_xlsx)

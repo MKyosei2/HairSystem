@@ -84,6 +84,8 @@ cbuffer SimConstants : register(b0)
     uint FollowerUpdatePhase;
     uint UseCompactedFollowerDispatch;
     uint CompactedFollowerCount;
+    uint UseCompactedGuidePointDispatch;
+    uint CompactedGuidePointCount;
 };
 
 cbuffer RenderConstants : register(b0)
@@ -235,4 +237,15 @@ void BuildDrawArgsCS(uint3 tid : SV_DispatchThreadID)
     IndirectArgs.Store(8u, 0u);
     IndirectArgs.Store(12u, 0u);
     IndirectArgs.Store(16u, 0u);
+}
+
+[numthreads(1,1,1)]
+void BuildGuidePointDispatchArgsCS(uint3 tid : SV_DispatchThreadID)
+{
+    uint activeGuideCount = GuideCompactionCountersIn[0];
+    uint activeGuidePointCount = (ParticlesPerStrand > 1u) ? (activeGuideCount * (ParticlesPerStrand - 1u)) : 0u;
+    uint groupsX = (activeGuidePointCount + 63u) / 64u;
+    IndirectArgs.Store(0u, groupsX);
+    IndirectArgs.Store(4u, 1u);
+    IndirectArgs.Store(8u, 1u);
 }

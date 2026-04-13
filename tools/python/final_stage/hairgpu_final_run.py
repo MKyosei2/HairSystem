@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -9,6 +10,21 @@ from pathlib import Path
 
 from hairgpu_final_db import FinalStageDatabase, RuntimeRunMetadata
 from hairgpu_final_excel import export_workbook
+
+METHOD_ALIASES = {
+    "prediction_only": "prediction_only",
+    "prediction-only": "prediction_only",
+    "active_set_runtime": "active_set_runtime",
+    "active-set-runtime": "active_set_runtime",
+    "proposal_hybrid": "proposal_hybrid",
+    "proposal-hybrid": "proposal_hybrid",
+    "full_physics": "full_physics",
+    "full-physics": "full_physics",
+}
+
+
+def normalize_method_code(method_code: str) -> str:
+    return METHOD_ALIASES.get(method_code, method_code)
 
 
 def wait_for_file(path: Path, timeout_seconds: int) -> None:
@@ -40,56 +56,85 @@ def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_sec
     return summary_json, frame_csv
 
 
+def load_config(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run final stage DX11 telemetry -> SQLite -> Excel pipeline")
-    parser.add_argument("--db", required=True)
+    parser.add_argument("--db")
     parser.add_argument("--schema", default="tools/final_stage/schema.sql")
-    parser.add_argument("--excel", required=True)
-    parser.add_argument("--experiment", required=True)
-    parser.add_argument("--method", required=True)
-    parser.add_argument("--scenario", required=True)
+    parser.add_argument("--excel")
+    parser.add_argument("--experiment")
+    parser.add_argument("--method")
+    parser.add_argument("--scenario")
     parser.add_argument("--asset", default="")
-    parser.add_argument("--run-name", required=True)
+    parser.add_argument("--run-name")
     parser.add_argument("--operator", default="")
     parser.add_argument("--notes", default="")
     parser.add_argument("--runtime-source", default="dx11_viewer")
     parser.add_argument("--viewer-exe")
-    parser.add_argument("--telemetry-dir", required=True)
+    parser.add_argument("--telemetry-dir")
     parser.add_argument("--summary-json")
     parser.add_argument("--frame-csv")
     parser.add_argument("--timeout-seconds", type=int, default=120)
+    parser.add_argument("--config-json", help="Optional JSON config with the same fields as the CLI arguments.")
     args = parser.parse_args()
 
-    db = FinalStageDatabase(Path(args.db))
-    db.initialize(Path(args.schema))
+    config = {}
+    if args.config_json:
+        config = load_config(Path(args.config_json))
 
-    telemetry_dir = Path(args.telemetry_dir)
+    db_path = Path(args.db or config.get("db", "runtime.db"))
+    schema_path = Path(args.schema or config.get("schema", "tools/final_stage/schema.sql"))
+    excel_path = Path(args.excel or config.get("excel", db_path.with_suffix(".xlsx")))
+    experiment_name = args.experiment or config.get("experiment")
+    method_code = normalize_method_code(args.method or config.get("method", "proposal_hybrid"))
+    scenario_code = args.scenario or config.get("scenario", "default")
+    asset_name = args.asset or config.get("asset", "")
+    run_name = args.run_name or config.get("run_name")
+    operator_name = args.operator or config.get("operator", "")
+    notes = args.notes or config.get("notes", "")
+    runtime_source = args.runtime_source or config.get("runtime_source", "dx11_viewer")
+    timeout_seconds = int(args.timeout_seconds or config.get("timeout_seconds", 120))
+
+    if not experiment_name or not run_name:
+        raise SystemExit("--experiment and --run-name are required unless provided in --config-json")
+
+    telemetry_dir = Path(args.telemetry_dir or config.get("telemetry_dir", "runtime_telemetry"))
     telemetry_dir.mkdir(parents=True, exist_ok=True)
+
+    db = FinalStageDatabase(db_path)
+    db.initialize(schema_path)
 
     if args.summary_json and args.frame_csv:
         summary_json = Path(args.summary_json)
         frame_csv = Path(args.frame_csv)
-    elif args.viewer_exe:
+    elif config.get("summary_json") and config.get("frame_csv"):
+        summary_json = Path(config["summary_json"])
+        frame_csv = Path(config["frame_csv"])
+    else:
+        viewer_exe_value = args.viewer_exe or config.get("viewer_exe")
+        if not viewer_exe_value:
+            raise SystemExit("Provide either --viewer-exe or both --summary-json and --frame-csv")
         if sys.platform != "win32":
             print("Viewer launch is Windows-only. Use --summary-json/--frame-csv to ingest existing telemetry on this platform.", file=sys.stderr)
             return 2
-        summary_json, frame_csv = run_viewer(Path(args.viewer_exe), telemetry_dir, args.run_name, args.timeout_seconds)
-    else:
-        raise SystemExit("Provide either --viewer-exe or both --summary-json and --frame-csv")
+        summary_json, frame_csv = run_viewer(Path(viewer_exe_value), telemetry_dir, run_name, timeout_seconds)
 
     metadata = RuntimeRunMetadata(
-        experiment_name=args.experiment,
-        method_code=args.method,
-        scenario_code=args.scenario,
-        asset_name=args.asset,
-        run_name=args.run_name,
-        runtime_source=args.runtime_source,
-        operator_name=args.operator,
-        notes=args.notes,
+        experiment_name=experiment_name,
+        method_code=method_code,
+        scenario_code=scenario_code,
+        asset_name=asset_name,
+        run_name=run_name,
+        runtime_source=runtime_source,
+        operator_name=operator_name,
+        notes=notes,
     )
     run_id = db.import_runtime_run(metadata, summary_json, frame_csv)
     db.close()
-    export_workbook(Path(args.db), Path(args.excel))
+    export_workbook(db_path, excel_path)
     print(f"Imported runtime run {run_id}")
     return 0
 

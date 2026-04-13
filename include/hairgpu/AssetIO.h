@@ -42,6 +42,8 @@ namespace hairgpu
     bool SaveHairAssetToAlembic(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError);
     bool SaveHairAssetToAlembic(const std::filesystem::path& filePath, const HairAsset& asset, const HairAlembicSettings& settings, std::string& outError);
     bool SaveHairAssetToHairBinary(const std::filesystem::path& filePath, const HairAsset& asset, std::string& outError);
+    const char* GetAlembicBackendDescription();
+
     bool RoundTripHairAssetThroughAlembic(const HairAsset& asset,
                                         const std::filesystem::path& filePath,
                                         const HairAlembicSettings& settings,

@@ -17,9 +17,12 @@
 #include <limits>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 
 #include "hairgpu/ActiveSet.h"
 #include "hairgpu/AssetIO.h"
+#include "hairgpu/BoneAnimation.h"
+#include "hairgpu/Binding.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/Math.h"
 #include "hairgpu/Wig.h"
@@ -1148,6 +1151,38 @@ namespace hairgpu::viewer
             std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
             return ext;
         }
+
+        bool EnsureAssetScalpConformance(hairgpu::HairAsset& asset, std::wstring* statusOut = nullptr)
+        {
+            if (asset.strands.empty() || asset.restPoints.empty() || asset.scalpMesh.positions.empty() || asset.scalpMesh.triangles.empty())
+            {
+                if (statusOut != nullptr)
+                {
+                    *statusOut = L"No scalp conformance pass applied";
+                }
+                return false;
+            }
+
+            hairgpu::RootBindingQualityReport report = {};
+            if (!hairgpu::RepairHairAssetSkinning(asset, true, &report))
+            {
+                if (statusOut != nullptr)
+                {
+                    *statusOut = L"Scalp conformance repair failed";
+                }
+                return false;
+            }
+
+            if (statusOut != nullptr)
+            {
+                std::wstringstream ss;
+                ss << L"Roots snapped to scalp (avg=" << std::fixed << std::setprecision(4)
+                   << report.averageRootDistance << L", max=" << report.maxRootDistance
+                   << L", invalid=" << report.invalidStrandCount << L")";
+                *statusOut = ss.str();
+            }
+            return true;
+        }
     }
 
     bool GpuHairViewer::Initialize(HINSTANCE instance, int showCommand)
@@ -1158,28 +1193,23 @@ namespace hairgpu::viewer
         InitCommonControlsEx(&icc);
 
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
-        {
-            WigStyleSettings wig;
-            wig.strength = 0.0f;
-            wig.capRegion = 0.12f;
-            wig.shellOffset = 0.0f;
-            wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.0f;
-            wig.restoreOriginalTowardsTip = 0.0f;
-            StyleAssetToScalpWig(m_asset, wig);
-        }
+        // Sample asset building/import already handles wig styling.
+        EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
-        m_lastImportStatus = L"Sample asset active";
+        if (m_lastImportStatus.empty())
+        {
+            m_lastImportStatus = L"Sample asset active";
+        }
         m_activeSetBudget.maxActiveClusters = 6u;
         m_activeSetBudget.maxActiveGuides = 256u;
         m_activeSetBudget.promoteScoreThreshold = 0.52f;
-        m_simConfig.solverIterations = 5;
+        m_simConfig.solverIterations = 4;
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 18.5f;
         m_simConfig.globalDamping = 0.085f;
         m_simConfig.segmentLength = 0.036f;
         m_simConfig.bendStiffness = 0.14f;
-        m_simConfig.followStiffness = 0.988f;
+        m_simConfig.followStiffness = 0.96f;
         m_simConfig.windStrength = 0.03f;
         m_simConfig.windDirection = { 0.90f, 0.0f, 0.25f };
         m_simConfig.floorY = -1.05f;
@@ -1203,7 +1233,7 @@ namespace hairgpu::viewer
         m_runtimeAngularBendStiffness = 0.36f;
         m_runtimeAngularBendDamping = 0.08f;
         m_widthScale = 0.56f;
-        m_renderMode = RenderMode::StrandRibbon;
+        m_renderMode = RenderMode::ParticleBillboard;
         m_showScalpMesh = true;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
@@ -1492,6 +1522,10 @@ namespace hairgpu::viewer
 
     bool GpuHairViewer::CreateSimulationResources()
     {
+        if (m_asset.rootBindings.size() != m_asset.strands.size())
+        {
+            EnsureAssetScalpConformance(m_asset, nullptr);
+        }
         m_initialParticles.clear();
         m_followGpuData.clear();
         m_restScalpParticles.clear();
@@ -1622,9 +1656,32 @@ namespace hairgpu::viewer
             return false;
         }
 
+        m_guideDispatchArgsBuffer.Reset();
+        m_guideDispatchArgsUav.Reset();
+        if (FAILED(m_device->CreateBuffer(&indirectArgsDesc, nullptr, &m_guideDispatchArgsBuffer)))
+        {
+            return false;
+        }
+        if (FAILED(m_device->CreateUnorderedAccessView(m_guideDispatchArgsBuffer.Get(), &indirectArgsUavDesc, &m_guideDispatchArgsUav)))
+        {
+            return false;
+        }
+        m_guidePointDispatchArgsBuffer.Reset();
+        m_guidePointDispatchArgsUav.Reset();
+        if (FAILED(m_device->CreateBuffer(&indirectArgsDesc, nullptr, &m_guidePointDispatchArgsBuffer)))
+        {
+            return false;
+        }
+        if (FAILED(m_device->CreateUnorderedAccessView(m_guidePointDispatchArgsBuffer.Get(), &indirectArgsUavDesc, &m_guidePointDispatchArgsUav)))
+        {
+            return false;
+        }
+
         m_scalpPositions = CreateStructuredBuffer(sizeof(GpuParticle), static_cast<UINT>(m_animatedScalpParticles.size()), m_animatedScalpParticles.data(), false);
         m_scalpTrianglesBuffer = CreateStructuredBuffer(sizeof(TriangleGpuData), static_cast<UINT>(m_scalpTriangles.size()), m_scalpTriangles.data(), false);
         m_rootBindingsBuffer = CreateStructuredBuffer(sizeof(RootBindingGpuData), static_cast<UINT>(m_rootBindingGpuData.size()), m_rootBindingGpuData.data(), false);
+        std::vector<float> sdfValues = (!m_colliders.sdfGrids.empty() && !m_colliders.sdfGrids.front().values.empty()) ? m_colliders.sdfGrids.front().values : std::vector<float>{ 0.0f };
+        m_sdfValuesBuffer = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(sdfValues.size()), sdfValues.data(), false);
         m_distanceLambdaBuffer = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(m_zeroDistanceLambdas.size()), m_zeroDistanceLambdas.data(), true);
         m_bendLambdaBuffer = CreateStructuredBuffer(sizeof(float), static_cast<UINT>(m_zeroBendLambdas.size()), m_zeroBendLambdas.data(), true);
 
@@ -2016,7 +2073,13 @@ namespace hairgpu::viewer
             !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "CompactFollowerDispatchCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_compactFollowerDispatchCS)) ||
             !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "BuildFollowDispatchArgsCS", "cs_5_0", &csBlob, errorText) ||
-            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildFollowDispatchArgsCS)))
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildFollowDispatchArgsCS)) ||
+            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "CompactGuideDispatchCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_compactGuideDispatchCS)) ||
+            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "BuildGuideDispatchArgsCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildGuideDispatchArgsCS)) ||
+            !CompileShaderFromFile(L"HairIndirectArgs.hlsl", "BuildGuidePointDispatchArgsCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_buildGuidePointDispatchArgsCS)))
         {
             MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
             return false;
@@ -2136,7 +2199,7 @@ namespace hairgpu::viewer
         m_visibilityReadbackFailureCount = 0u;
         m_consecutiveInvisibleFrames = 0u;
         m_visibilityRecoveryCount = 0u;
-        m_renderMode = RenderMode::StrandRibbon;
+        m_renderMode = RenderMode::ParticleBillboard;
         m_widthScale = std::max(m_widthScale, 0.65f);
         QueueVisibilityRecovery();
         SyncControlsFromState();
@@ -2218,10 +2281,52 @@ namespace hairgpu::viewer
         return blended;
     }
 
-    void GpuHairViewer::UpdateAnimatedScalp(float /*elapsedSeconds*/)
+    void GpuHairViewer::UpdateAnimatedScalp(float elapsedSeconds)
     {
-        // Particle runtime keeps scalp roots static on the GPU side.
-        // No per-frame CPU skinning or readback path is used here.
+        if (!m_scalpPositions.buffer || m_restScalpParticles.empty())
+        {
+            return;
+        }
+
+        if (m_animatedScalpParticles.size() != m_restScalpParticles.size())
+        {
+            m_animatedScalpParticles = m_restScalpParticles;
+        }
+
+        const bool hasWeights = m_asset.scalpMesh.skinWeights.size() == m_asset.scalpMesh.positions.size() && !m_asset.scalpMesh.positions.empty();
+        const bool hasBoneClip = hasWeights && !m_scalpAnimationClip.Empty() && m_scalpAnimationClip.boneCount > 0u;
+        std::vector<Vec3> skinnedPositions;
+        if (hasBoneClip)
+        {
+            if (hairgpu::EvaluateBoneAnimation(m_scalpAnimationClip, elapsedSeconds, true, m_currentScalpBoneMatrices))
+            {
+                skinnedPositions = hairgpu::ComputeSkinnedScalpPositions(m_asset.scalpMesh, m_currentScalpBoneMatrices);
+            }
+        }
+
+        for (size_t i = 0; i < m_restScalpParticles.size(); ++i)
+        {
+            Vec3 p(m_restScalpParticles[i].x, m_restScalpParticles[i].y, m_restScalpParticles[i].z);
+            if (!skinnedPositions.empty() && i < skinnedPositions.size())
+            {
+                p = skinnedPositions[i];
+            }
+            else if (hasWeights)
+            {
+                p = ApplySampleScalpSkinning(p, m_asset.scalpMesh.skinWeights[i], elapsedSeconds);
+            }
+            else if (m_enableScalpMotion)
+            {
+                const float phase = elapsedSeconds * 0.9f + static_cast<float>(i % 31u) * 0.071f;
+                p.y += std::sin(phase) * 0.0025f;
+                p.x += std::cos(phase * 0.7f) * 0.0015f;
+            }
+            m_animatedScalpParticles[i].x = p.x;
+            m_animatedScalpParticles[i].y = p.y;
+            m_animatedScalpParticles[i].z = p.z;
+        }
+
+        m_context->UpdateSubresource(m_scalpPositions.buffer.Get(), 0, nullptr, m_animatedScalpParticles.data(), 0, 0);
     }
     namespace
     {
@@ -2329,10 +2434,10 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
-        const bool activeSetReady = m_enableActiveSetRuntime && !m_activeSetPlan.recommendedSimulationTiers.empty();
-        const uint32_t reducedOrCachedCount = m_activeSetPlan.summary.reducedTierCount + m_activeSetPlan.summary.cachedTierCount;
-        constants.followerUpdateStride = activeSetReady ? ((m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((reducedOrCachedCount > 0u) ? 2u : 1u)) : 1u;
-        constants.followerUpdatePhase = (constants.followerUpdateStride > 1u) ? (m_runtimeFollowerUpdatePhase % constants.followerUpdateStride) : 0u;
+        // Stability-first path for graduation-project builds:
+        // disable active-set compaction and indirect dispatch, and update all strands every frame.
+        constants.followerUpdateStride = 1u;
+        constants.followerUpdatePhase = 0u;
         constants.useCompactedGuideDispatch = 0u;
         constants.compactedGuideCount = 0u;
         constants.useCompactedFollowerDispatch = 0u;
@@ -2406,10 +2511,9 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
-        const bool activeSetReady = m_enableActiveSetRuntime && !m_activeSetPlan.recommendedSimulationTiers.empty();
-        const uint32_t reducedOrCachedCount = m_activeSetPlan.summary.reducedTierCount + m_activeSetPlan.summary.cachedTierCount;
-        constants.followerUpdateStride = activeSetReady ? ((m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((reducedOrCachedCount > 0u) ? 2u : 1u)) : 1u;
-        constants.followerUpdatePhase = (constants.followerUpdateStride > 1u) ? (m_runtimeFollowerUpdatePhase % constants.followerUpdateStride) : 0u;
+        // Stability-first path for graduation-project builds.
+        constants.followerUpdateStride = 1u;
+        constants.followerUpdatePhase = 0u;
         constants.useCompactedFollowerDispatch = 0u;
         constants.compactedFollowerCount = 0u;
     }
@@ -2884,14 +2988,20 @@ namespace hairgpu::viewer
         m_context->CSSetUnorderedAccessViews(0, 2, nullBindUavs, nullptr);
 
         const uint32_t nextBufferIndex = 1u - m_currentBufferIndex;
-        ID3D11ShaderResourceView* integrateSrvs[] = {
+        ID3D11ShaderResourceView* simSrvs[] = {
             m_positions[m_currentBufferIndex].srv.Get(),
             m_previousPositions[m_currentBufferIndex].srv.Get(),
             m_restPositions.srv.Get(),
             m_followBuffer.srv.Get(),
             m_scalpPositions.srv.Get(),
             m_scalpTrianglesBuffer.srv.Get(),
-            m_rootBindingsBuffer.srv.Get()
+            m_rootBindingsBuffer.srv.Get(),
+            m_compactedFollowerIndicesBuffer.srv.Get(),
+            m_followerTierAssignmentsBuffer.srv.Get(),
+            nullptr,
+            nullptr,
+            m_compactedFollowerCounterBuffer.srv.Get(),
+            m_sdfValuesBuffer.srv.Get()
         };
         ID3D11UnorderedAccessView* broadphaseUav4 = nullptr;
         ID3D11UnorderedAccessView* broadphaseUav5 = nullptr;
@@ -2927,24 +3037,121 @@ namespace hairgpu::viewer
         };
 
         m_context->CSSetConstantBuffers(0, 1, &simCb);
-        m_context->CSSetShaderResources(0, 7, integrateSrvs);
+        m_context->CSSetShaderResources(0, 13, simSrvs);
         m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
 
         m_context->CSSetShader(m_integrateCS.Get(), nullptr, 0);
         m_context->Dispatch(DispatchGroups(totalParticleCount, 64u), 1, 1);
 
+        const bool activeSetReady = false;
+        if (activeSetReady)
+        {
+            const std::array<uint32_t, 4> zeroCounters = { 0u, 0u, 0u, 0u };
+            m_context->UpdateSubresource(m_compactedFollowerCounterBuffer.buffer.Get(), 0, nullptr, zeroCounters.data(), 0, 0);
+
+            ID3D11ShaderResourceView* compactFollowerSrvs[7] = {};
+            compactFollowerSrvs[0] = m_followerTierAssignmentsBuffer.srv.Get();
+            m_context->CSSetShaderResources(0, 7, compactFollowerSrvs);
+            ID3D11UnorderedAccessView* compactFollowerUavs[7] = {};
+            compactFollowerUavs[0] = m_compactedFollowerIndicesBuffer.uav.Get();
+            compactFollowerUavs[1] = m_compactedFollowerCounterBuffer.uav.Get();
+            m_context->CSSetUnorderedAccessViews(0, 7, compactFollowerUavs, nullptr);
+            m_context->CSSetShader(m_compactFollowerDispatchCS.Get(), nullptr, 0);
+            m_context->Dispatch(followerGroups, 1, 1);
+
+            ID3D11UnorderedAccessView* nullCompactUavs[7] = {};
+            m_context->CSSetUnorderedAccessViews(0, 7, nullCompactUavs, nullptr);
+            ID3D11ShaderResourceView* followerCounterSrv[1] = { m_compactedFollowerCounterBuffer.srv.Get() };
+            m_context->CSSetShaderResources(1, 1, followerCounterSrv);
+            ID3D11UnorderedAccessView* followArgsUavs[7] = {};
+            followArgsUavs[6] = m_followDispatchArgsUav.Get();
+            m_context->CSSetUnorderedAccessViews(0, 7, followArgsUavs, nullptr);
+            m_context->CSSetShader(m_buildFollowDispatchArgsCS.Get(), nullptr, 0);
+            m_context->Dispatch(1, 1, 1);
+
+            ID3D11ShaderResourceView* nullCounterSrv[1] = {};
+            m_context->CSSetShaderResources(1, 1, nullCounterSrv);
+            m_context->CSSetShaderResources(0, 7, compactFollowerSrvs);
+            m_context->CSSetUnorderedAccessViews(0, 7, nullCompactUavs, nullptr);
+            m_context->CSSetConstantBuffers(0, 1, &simCb);
+            m_context->CSSetShaderResources(0, 13, simSrvs);
+            m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
+        }
+
         if (guideStrandCount > 0u)
         {
+            if (activeSetReady)
+            {
+                const std::array<uint32_t, 4> zeroCounters = { 0u, 0u, 0u, 0u };
+                m_context->UpdateSubresource(m_compactedGuideCounterBuffer.buffer.Get(), 0, nullptr, zeroCounters.data(), 0, 0);
+
+                ID3D11ShaderResourceView* compactGuideSrvs[7] = {};
+                compactGuideSrvs[2] = m_guideTierAssignmentsBuffer.srv.Get();
+                m_context->CSSetShaderResources(0, 7, compactGuideSrvs);
+                ID3D11UnorderedAccessView* compactGuideUavs[7] = {};
+                compactGuideUavs[2] = m_compactedGuideIndicesBuffer.uav.Get();
+                compactGuideUavs[3] = m_compactedGuideCounterBuffer.uav.Get();
+                m_context->CSSetUnorderedAccessViews(0, 7, compactGuideUavs, nullptr);
+                m_context->CSSetShader(m_compactGuideDispatchCS.Get(), nullptr, 0);
+                m_context->Dispatch(guideStrandGroups, 1, 1);
+
+                ID3D11UnorderedAccessView* nullCompactGuideUavs[7] = {};
+                m_context->CSSetUnorderedAccessViews(0, 7, nullCompactGuideUavs, nullptr);
+                ID3D11ShaderResourceView* guideCounterSrv[1] = { m_compactedGuideCounterBuffer.srv.Get() };
+                m_context->CSSetShaderResources(3, 1, guideCounterSrv);
+                ID3D11UnorderedAccessView* guideArgsUavs[7] = {};
+                guideArgsUavs[6] = m_guideDispatchArgsUav.Get();
+                m_context->CSSetUnorderedAccessViews(0, 7, guideArgsUavs, nullptr);
+                m_context->CSSetShader(m_buildGuideDispatchArgsCS.Get(), nullptr, 0);
+                m_context->Dispatch(1, 1, 1);
+
+                ID3D11UnorderedAccessView* guidePointArgsUavs[7] = {};
+                guidePointArgsUavs[6] = m_guidePointDispatchArgsUav.Get();
+                m_context->CSSetUnorderedAccessViews(0, 7, guidePointArgsUavs, nullptr);
+                m_context->CSSetShader(m_buildGuidePointDispatchArgsCS.Get(), nullptr, 0);
+                m_context->Dispatch(1, 1, 1);
+
+                ID3D11ShaderResourceView* nullGuideCounterSrv[1] = {};
+                m_context->CSSetShaderResources(3, 1, nullGuideCounterSrv);
+                ID3D11ShaderResourceView* nullGuideDispatchSrvs[7] = {};
+                m_context->CSSetShaderResources(0, 7, nullGuideDispatchSrvs);
+                m_context->CSSetUnorderedAccessViews(0, 7, nullCompactGuideUavs, nullptr);
+                m_context->CSSetConstantBuffers(0, 1, &simCb);
+                m_context->CSSetShaderResources(0, 13, simSrvs);
+                m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
+            }
+
             for (uint32_t iteration = 0; iteration < m_simConfig.solverIterations; ++iteration)
             {
                 m_context->CSSetShader(m_distanceCS.Get(), nullptr, 0);
-                m_context->Dispatch(guideStrandGroups, 1, 1);
+                if (activeSetReady)
+                {
+                    m_context->DispatchIndirect(m_guideDispatchArgsBuffer.Get(), 0);
+                }
+                else
+                {
+                    m_context->Dispatch(guideStrandGroups, 1, 1);
+                }
 
                 m_context->CSSetShader(m_bendCS.Get(), nullptr, 0);
-                m_context->Dispatch(guideStrandGroups, 1, 1);
+                if (activeSetReady)
+                {
+                    m_context->DispatchIndirect(m_guideDispatchArgsBuffer.Get(), 0);
+                }
+                else
+                {
+                    m_context->Dispatch(guideStrandGroups, 1, 1);
+                }
 
                 m_context->CSSetShader(m_collisionCS.Get(), nullptr, 0);
-                m_context->Dispatch(guideParticleGroups, 1, 1);
+                if (activeSetReady)
+                {
+                    m_context->DispatchIndirect(m_guidePointDispatchArgsBuffer.Get(), 0);
+                }
+                else
+                {
+                    m_context->Dispatch(guideParticleGroups, 1, 1);
+                }
 
                 if (m_enableSelfCollision)
                 {
@@ -2956,7 +3163,14 @@ namespace hairgpu::viewer
                             m_context->Dispatch(gridCellGroups, 1, 1);
 
                             m_context->CSSetShader(m_buildGridCS.Get(), nullptr, 0);
-                            m_context->Dispatch(guideParticleGroups, 1, 1);
+                            if (activeSetReady)
+                            {
+                                m_context->DispatchIndirect(m_guidePointDispatchArgsBuffer.Get(), 0);
+                            }
+                            else
+                            {
+                                m_context->Dispatch(guideParticleGroups, 1, 1);
+                            }
                         }
                         else if (m_selfCollisionBroadphaseMode == 3u)
                         {
@@ -2997,40 +3211,50 @@ namespace hairgpu::viewer
                             m_context->Dispatch(hashClearGroups, 1, 1);
 
                             m_context->CSSetShader(m_buildHashGridCS.Get(), nullptr, 0);
-                            m_context->Dispatch(guideParticleGroups, 1, 1);
+                            if (activeSetReady)
+                            {
+                                m_context->DispatchIndirect(m_guidePointDispatchArgsBuffer.Get(), 0);
+                            }
+                            else
+                            {
+                                m_context->Dispatch(guideParticleGroups, 1, 1);
+                            }
                         }
                     }
 
                     m_context->CSSetShader(m_selfCollisionCS.Get(), nullptr, 0);
-                    m_context->Dispatch(guideParticleGroups, 1, 1);
+                    if (activeSetReady)
+                    {
+                        m_context->DispatchIndirect(m_guidePointDispatchArgsBuffer.Get(), 0);
+                    }
+                    else
+                    {
+                        m_context->Dispatch(guideParticleGroups, 1, 1);
+                    }
                 }
             }
         }
 
         if (followerStrandCount > 0u)
         {
-            ID3D11ShaderResourceView* followSrvs[] = {
-                m_positions[m_currentBufferIndex].srv.Get(),
-                m_previousPositions[m_currentBufferIndex].srv.Get(),
-                m_restPositions.srv.Get(),
-                m_followBuffer.srv.Get(),
-                m_scalpPositions.srv.Get(),
-                m_scalpTrianglesBuffer.srv.Get(),
-                m_rootBindingsBuffer.srv.Get(),
-                nullptr,
-                m_followerTierAssignmentsBuffer.srv.Get()
-            };
-            m_context->CSSetShaderResources(0, 9, followSrvs);
+            m_context->CSSetShaderResources(0, 13, simSrvs);
             m_context->CSSetUnorderedAccessViews(0, 8, simUavs, nullptr);
             m_context->CSSetShader(m_followCS.Get(), nullptr, 0);
-            m_context->Dispatch(followerGroups, 1, 1);
+            if (activeSetReady)
+            {
+                m_context->DispatchIndirect(m_followDispatchArgsBuffer.Get(), 0);
+            }
+            else
+            {
+                m_context->Dispatch(followerGroups, 1, 1);
+            }
         }
 
-        ID3D11ShaderResourceView* nullSrvs[9] = {};
+        ID3D11ShaderResourceView* nullSrvs[13] = {};
         ID3D11UnorderedAccessView* nullUavs[8] = {};
         ID3D11Buffer* nullCb = nullptr;
         m_context->CSSetShader(nullptr, nullptr, 0);
-        m_context->CSSetShaderResources(0, 9, nullSrvs);
+        m_context->CSSetShaderResources(0, 13, nullSrvs);
         m_context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
         m_context->CSSetConstantBuffers(1, 1, &nullCb);
 
@@ -3223,7 +3447,7 @@ namespace hairgpu::viewer
         {
             ++m_visibilityRecoveryCount;
             AutoFrameCameraToAsset(true);
-            m_renderMode = RenderMode::StrandRibbon;
+            m_renderMode = RenderMode::ParticleBillboard;
             m_widthScale = std::max(m_widthScale, 0.78f);
 
             if (!readbackValid)
@@ -3590,7 +3814,7 @@ namespace hairgpu::viewer
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer ActiveSet Runtime [GPU_LAYOUT_FIX_V3_NO_COMPACTION]  |  preset=" << m_activePresetName
+        ss << L"Hair GPU Viewer ActiveSet Runtime [FOLLOWER_COMPACTION + STRAND_PICK + SDF]  |  preset=" << m_activePresetName
            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
            << L"  guides=" << m_asset.guideStrandCount
            << L"  followers=" << m_asset.followerStrandCount
@@ -3612,6 +3836,9 @@ namespace hairgpu::viewer
            << L"  selfCollision=" << (m_enableSelfCollision ? L"density-grid" : L"off")
            << L"  angularXPBD=" << (m_enableRuntimeAngularBend ? L"on" : L"off")
            << L"  scalpRoots=static-gpu"
+           << L"  selectedStrand=" << ((m_selectedStrandIndex >= 0) ? std::to_wstring(m_selectedStrandIndex) : L"none")
+           << L"  gizmo=" << ((m_strandGizmoMode == StrandGizmoMode::TipTranslate) ? L"tip" : ((m_strandGizmoMode == StrandGizmoMode::WholeTranslate) ? L"whole" : L"root"))
+           << L"  scalpAnim=" << (m_lastScalpAnimationSource.empty() ? L"sample" : std::filesystem::path(m_lastScalpAnimationSource).filename().wstring())
            << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
     }
@@ -3633,7 +3860,7 @@ namespace hairgpu::viewer
         ComPtr<ID3DBlob> shaderBlob;
         ComPtr<ID3DBlob> errorBlob;
 
-                wchar_t modulePath[MAX_PATH] = {};
+        wchar_t modulePath[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
         const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
 
@@ -3675,15 +3902,53 @@ namespace hairgpu::viewer
             searchRoot = parent;
         }
 
-        HRESULT hr = E_FAIL;
+        auto loadFileBytes = [](const std::filesystem::path& path, std::string& bytes) -> bool
+        {
+            std::ifstream in(path, std::ios::binary);
+            if (!in)
+            {
+                return false;
+            }
+            in.seekg(0, std::ios::end);
+            const std::streamoff size = in.tellg();
+            if (size < 0)
+            {
+                return false;
+            }
+            in.seekg(0, std::ios::beg);
+            bytes.resize(static_cast<size_t>(size));
+            if (size > 0)
+            {
+                in.read(bytes.data(), size);
+            }
+            return static_cast<bool>(in) || size == 0;
+        };
+
+        HRESULT hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
         std::wstringstream tried;
+        std::wstring compiledPath;
         for (const auto& candidate : candidates)
         {
+            const bool exists = std::filesystem::exists(candidate);
             tried << candidate.c_str();
-            tried << (std::filesystem::exists(candidate) ? L"  [exists]" : L"  [missing]") << L"\r\n";
+            tried << (exists ? L"  [exists]" : L"  [missing]") << L"\r\n";
+            if (!exists)
+            {
+                continue;
+            }
+
+            std::string sourceBytes;
+            if (!loadFileBytes(candidate, sourceBytes))
+            {
+                hr = HRESULT_FROM_WIN32(ERROR_READ_FAULT);
+                continue;
+            }
+
             errorBlob.Reset();
             shaderBlob.Reset();
-            hr = D3DCompileFromFile(candidate.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPoint, target, flags, 0, &shaderBlob, &errorBlob);
+            compiledPath = candidate.wstring();
+            const std::string sourceName = candidate.string();
+            hr = D3DCompile(sourceBytes.data(), sourceBytes.size(), sourceName.c_str(), nullptr, nullptr, entryPoint, target, flags, 0, &shaderBlob, &errorBlob);
             if (SUCCEEDED(hr))
             {
                 break;
@@ -3703,6 +3968,11 @@ namespace hairgpu::viewer
                 hrHex << std::hex << std::uppercase << static_cast<unsigned long>(hr);
                 errorText += L"\r\nHRESULT: 0x";
                 errorText += hrHex.str();
+            }
+            if (!compiledPath.empty())
+            {
+                errorText += L"\r\nShader source path: ";
+                errorText += compiledPath;
             }
             errorText += L"\r\n\r\nTried paths:\r\n";
             errorText += tried.str();
@@ -4460,7 +4730,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
     {
-        m_renderMode = RenderMode::StrandRibbon;
+        m_renderMode = RenderMode::ParticleBillboard;
         m_showScalpMesh = true;
         m_showGuideSkeleton = false;
         m_showFollowerSkeleton = false;
@@ -4481,7 +4751,7 @@ namespace hairgpu::viewer
             m_simConfig.globalDamping = 0.085f;
             m_simConfig.windStrength = 0.03f;
             m_simConfig.solverIterations = 8;
-            m_simConfig.followStiffness = 0.988f;
+            m_simConfig.followStiffness = 0.96f;
             m_selfCollisionRadius = 0.0055f;
             m_selfCollisionStiffness = 0.10f;
             m_simConfig.selfCollisionCellSize = 0.060f;
@@ -4577,19 +4847,14 @@ namespace hairgpu::viewer
 
         ApplySampleMaskOverrides();
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
-        {
-            WigStyleSettings wig;
-            wig.strength = 0.0f;
-            wig.capRegion = 0.12f;
-            wig.shellOffset = 0.0f;
-            wig.flowBlend = 1.0f;
-            wig.outwardBlend = 0.0f;
-            wig.restoreOriginalTowardsTip = 0.0f;
-            StyleAssetToScalpWig(m_asset, wig);
-        }
+        // Sample asset building/import already handles wig styling.
+        EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Procedural sample asset rebuilt";
         m_baseAsset = m_asset;
+        m_selectedStrandIndex = -1;
+        m_strandUndoStack.clear();
+        m_strandRedoStack.clear();
         hairgpu::HairAsset editedAsset = m_baseAsset;
         if (m_editStackPath.empty())
         {
@@ -6240,6 +6505,261 @@ namespace hairgpu::viewer
         return true;
     }
 
+    bool GpuHairViewer::ProjectWorldToScreen(const Vec3& world, float& outX, float& outY) const
+    {
+        const RECT renderRect = GetRenderViewportRect();
+        const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
+        const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
+        const float aspectRatio = std::max(renderWidth / std::max(renderHeight, 1.0f), 0.6f);
+        Vec3 ndc;
+        if (!ProjectWorldToNdc(world, m_cameraPosition, m_cameraTarget, aspectRatio, ndc))
+        {
+            return false;
+        }
+        outX = renderRect.left + (ndc.x * 0.5f + 0.5f) * renderWidth;
+        outY = renderRect.top + (-ndc.y * 0.5f + 0.5f) * renderHeight;
+        return true;
+    }
+
+    Vec3 GpuHairViewer::GetSelectedStrandAnchorPoint(bool root) const
+    {
+        if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
+        {
+            return Vec3(0.0f, 0.0f, 0.0f);
+        }
+        const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
+        if (strand.pointCount == 0u)
+        {
+            return Vec3(0.0f, 0.0f, 0.0f);
+        }
+        const uint32_t pointIndex = strand.pointOffset + (root ? 0u : (strand.pointCount - 1u));
+        return m_asset.restPoints[pointIndex];
+    }
+
+    bool GpuHairViewer::BeginStrandGizmoDrag(POINT clientPoint)
+    {
+        if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
+        {
+            return false;
+        }
+        const bool rootMode = (m_strandGizmoMode == StrandGizmoMode::RootTranslate);
+        const Vec3 anchor = GetSelectedStrandAnchorPoint(rootMode);
+        float ax = 0.0f, ay = 0.0f;
+        if (!ProjectWorldToScreen(anchor, ax, ay))
+        {
+            return false;
+        }
+        const float gizmoScale = std::max(0.06f, m_cameraDistance * 0.10f);
+        struct Candidate { GizmoAxis axis; float distSq; } best = { GizmoAxis::None, 20.0f * 20.0f };
+        const std::array<std::pair<GizmoAxis, Vec3>, 3> axes = { std::make_pair(GizmoAxis::X, Vec3(gizmoScale, 0.0f, 0.0f)), std::make_pair(GizmoAxis::Y, Vec3(0.0f, gizmoScale, 0.0f)), std::make_pair(GizmoAxis::Z, Vec3(0.0f, 0.0f, gizmoScale)) };
+        for (const auto& candidate : axes)
+        {
+            float bx = 0.0f, by = 0.0f;
+            if (!ProjectWorldToScreen(anchor + candidate.second, bx, by))
+            {
+                continue;
+            }
+            const float abx = bx - ax;
+            const float aby = by - ay;
+            const float denom = std::max(abx * abx + aby * aby, 1.0e-5f);
+            const float t = std::clamp(((clientPoint.x - ax) * abx + (clientPoint.y - ay) * aby) / denom, 0.0f, 1.0f);
+            const float px = ax + abx * t;
+            const float py = ay + aby * t;
+            const float dx = static_cast<float>(clientPoint.x) - px;
+            const float dy = static_cast<float>(clientPoint.y) - py;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq < best.distSq)
+            {
+                best = { candidate.first, distSq };
+            }
+        }
+        if (best.axis == GizmoAxis::None)
+        {
+            return false;
+        }
+        PushStrandEditUndoSnapshot();
+        m_gizmoDragBaseRestPoints = m_asset.restPoints;
+        m_activeGizmoAxis = best.axis;
+        m_gizmoDragStartPoint = clientPoint;
+        m_gizmoDragging = true;
+        return true;
+    }
+
+    void GpuHairViewer::UpdateStrandGizmoDrag(POINT clientPoint)
+    {
+        if (!m_gizmoDragging || m_activeGizmoAxis == GizmoAxis::None || m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
+        {
+            return;
+        }
+        const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
+        if (m_gizmoDragBaseRestPoints.size() != m_asset.restPoints.size() || strand.pointCount == 0u)
+        {
+            return;
+        }
+        m_asset.restPoints = m_gizmoDragBaseRestPoints;
+        const float dx = static_cast<float>(clientPoint.x - m_gizmoDragStartPoint.x);
+        const float dy = static_cast<float>(clientPoint.y - m_gizmoDragStartPoint.y);
+        const float signedPixels = (m_activeGizmoAxis == GizmoAxis::Y) ? (-dy) : dx;
+        const float scale = std::max(0.0008f, m_cameraDistance * 0.0009f);
+        Vec3 delta(0.0f, 0.0f, 0.0f);
+        switch (m_activeGizmoAxis)
+        {
+        case GizmoAxis::X: delta.x = signedPixels * scale; break;
+        case GizmoAxis::Y: delta.y = signedPixels * scale; break;
+        case GizmoAxis::Z: delta.z = signedPixels * scale; break;
+        default: break;
+        }
+        Vec3 rootDelta(0.0f, 0.0f, 0.0f);
+        Vec3 tipDelta(0.0f, 0.0f, 0.0f);
+        if (m_strandGizmoMode == StrandGizmoMode::WholeTranslate)
+        {
+            rootDelta = delta;
+            tipDelta = delta;
+        }
+        else if (m_strandGizmoMode == StrandGizmoMode::RootTranslate)
+        {
+            rootDelta = delta;
+        }
+        else
+        {
+            tipDelta = delta;
+        }
+        for (uint32_t i = 0; i < strand.pointCount; ++i)
+        {
+            const uint32_t pointIndex = strand.pointOffset + i;
+            const float t = (strand.pointCount > 1u) ? (static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u)) : 0.0f;
+            m_asset.restPoints[pointIndex] += Lerp(rootDelta, tipDelta, t);
+            if (pointIndex < m_initialParticles.size())
+            {
+                m_initialParticles[pointIndex].x = m_asset.restPoints[pointIndex].x;
+                m_initialParticles[pointIndex].y = m_asset.restPoints[pointIndex].y;
+                m_initialParticles[pointIndex].z = m_asset.restPoints[pointIndex].z;
+            }
+        }
+        CommitEditedRestState();
+    }
+
+    void GpuHairViewer::EndStrandGizmoDrag(bool cancelDrag)
+    {
+        if (!m_gizmoDragging)
+        {
+            return;
+        }
+        if (cancelDrag && m_gizmoDragBaseRestPoints.size() == m_asset.restPoints.size())
+        {
+            m_asset.restPoints = m_gizmoDragBaseRestPoints;
+            for (size_t i = 0; i < m_asset.restPoints.size() && i < m_initialParticles.size(); ++i)
+            {
+                m_initialParticles[i].x = m_asset.restPoints[i].x;
+                m_initialParticles[i].y = m_asset.restPoints[i].y;
+                m_initialParticles[i].z = m_asset.restPoints[i].z;
+            }
+            CommitEditedRestState();
+        }
+        m_gizmoDragging = false;
+        m_activeGizmoAxis = GizmoAxis::None;
+        m_gizmoDragBaseRestPoints.clear();
+    }
+
+    bool GpuHairViewer::PickStrandAtPoint(POINT clientPoint)
+    {
+        std::vector<GpuParticle> particles;
+        if (!ReadBackCurrentParticlePositions(particles))
+        {
+            particles = m_initialParticles;
+        }
+        if (particles.size() < m_asset.restPoints.size() || m_asset.strands.empty())
+        {
+            m_selectedStrandIndex = -1;
+            return false;
+        }
+
+        const RECT renderRect = GetRenderViewportRect();
+        const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
+        const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
+        const float aspectRatio = std::max(renderWidth / std::max(renderHeight, 1.0f), 0.6f);
+
+        float bestDistSq = 18.0f * 18.0f;
+        int32_t bestStrand = -1;
+        for (uint32_t strandIndex = 0; strandIndex < static_cast<uint32_t>(m_asset.strands.size()); ++strandIndex)
+        {
+            const StrandRange& strand = m_asset.strands[strandIndex];
+            for (uint32_t i = 0; i + 1u < strand.pointCount; ++i)
+            {
+                const GpuParticle& a = particles[strand.pointOffset + i];
+                const GpuParticle& b = particles[strand.pointOffset + i + 1u];
+                Vec3 ndcA, ndcB;
+                if (!ProjectWorldToNdc(Vec3(a.x, a.y, a.z), m_cameraPosition, m_cameraTarget, aspectRatio, ndcA) ||
+                    !ProjectWorldToNdc(Vec3(b.x, b.y, b.z), m_cameraPosition, m_cameraTarget, aspectRatio, ndcB))
+                {
+                    continue;
+                }
+                const float ax = renderRect.left + (ndcA.x * 0.5f + 0.5f) * renderWidth;
+                const float ay = renderRect.top + (-ndcA.y * 0.5f + 0.5f) * renderHeight;
+                const float bx = renderRect.left + (ndcB.x * 0.5f + 0.5f) * renderWidth;
+                const float by = renderRect.top + (-ndcB.y * 0.5f + 0.5f) * renderHeight;
+                const float abx = bx - ax;
+                const float aby = by - ay;
+                const float denom = std::max(abx * abx + aby * aby, 1.0e-5f);
+                const float t = std::clamp(((clientPoint.x - ax) * abx + (clientPoint.y - ay) * aby) / denom, 0.0f, 1.0f);
+                const float px = ax + abx * t;
+                const float py = ay + aby * t;
+                const float dx = static_cast<float>(clientPoint.x) - px;
+                const float dy = static_cast<float>(clientPoint.y) - py;
+                const float distSq = dx * dx + dy * dy;
+                if (distSq < bestDistSq)
+                {
+                    bestDistSq = distSq;
+                    bestStrand = static_cast<int32_t>(strandIndex);
+                }
+            }
+        }
+
+        m_selectedStrandIndex = bestStrand;
+        m_lastSelectedStrandScreenDistance = (bestStrand >= 0) ? std::sqrt(bestDistSq) : 0.0f;
+        return bestStrand >= 0;
+    }
+
+    bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3& tipOffset)
+    {
+        if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
+        {
+            return false;
+        }
+        const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
+        if (strand.pointCount == 0u)
+        {
+            return false;
+        }
+        PushStrandEditUndoSnapshot();
+        for (uint32_t i = 0; i < strand.pointCount; ++i)
+        {
+            const uint32_t pointIndex = strand.pointOffset + i;
+            const float t = (strand.pointCount > 1u) ? (static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u)) : 0.0f;
+            const Vec3 delta = Lerp(rootOffset, tipOffset, t);
+            m_asset.restPoints[pointIndex] += delta;
+            if (pointIndex < m_initialParticles.size())
+            {
+                m_initialParticles[pointIndex].x = m_asset.restPoints[pointIndex].x;
+                m_initialParticles[pointIndex].y = m_asset.restPoints[pointIndex].y;
+                m_initialParticles[pointIndex].z = m_asset.restPoints[pointIndex].z;
+            }
+        }
+        CommitEditedRestState();
+        return true;
+    }
+
+    void GpuHairViewer::CommitEditedRestState()
+    {
+        if (m_restPositions.buffer && !m_initialParticles.empty())
+        {
+            m_context->UpdateSubresource(m_restPositions.buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+        }
+        ResetSimulation();
+        QueueVisibilityRecovery();
+        UpdateWindowTitle();
+    }
+
     bool GpuHairViewer::ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles)
     {
         if (!m_positions[m_currentBufferIndex].buffer)
@@ -6273,6 +6793,134 @@ namespace hairgpu::viewer
         outParticles.resize(m_asset.restPoints.size());
         std::memcpy(outParticles.data(), mapped.pData, outParticles.size() * sizeof(GpuParticle));
         m_context->Unmap(staging.Get(), 0);
+        return true;
+    }
+
+    void GpuHairViewer::PushStrandEditUndoSnapshot()
+    {
+        StrandEditSnapshot snapshot = {};
+        snapshot.restPoints = m_asset.restPoints;
+        snapshot.initialParticles = m_initialParticles;
+        snapshot.selectedStrandIndex = m_selectedStrandIndex;
+        m_strandUndoStack.push_back(std::move(snapshot));
+        if (m_strandUndoStack.size() > 64u)
+        {
+            m_strandUndoStack.erase(m_strandUndoStack.begin());
+        }
+        m_strandRedoStack.clear();
+    }
+
+    bool GpuHairViewer::UndoStrandEdit()
+    {
+        if (m_strandUndoStack.empty())
+        {
+            return false;
+        }
+
+        StrandEditSnapshot current = {};
+        current.restPoints = m_asset.restPoints;
+        current.initialParticles = m_initialParticles;
+        current.selectedStrandIndex = m_selectedStrandIndex;
+        m_strandRedoStack.push_back(std::move(current));
+
+        StrandEditSnapshot snapshot = std::move(m_strandUndoStack.back());
+        m_strandUndoStack.pop_back();
+        m_asset.restPoints = std::move(snapshot.restPoints);
+        m_initialParticles = std::move(snapshot.initialParticles);
+        m_selectedStrandIndex = snapshot.selectedStrandIndex;
+        CommitEditedRestState();
+        return true;
+    }
+
+    bool GpuHairViewer::RedoStrandEdit()
+    {
+        if (m_strandRedoStack.empty())
+        {
+            return false;
+        }
+
+        StrandEditSnapshot current = {};
+        current.restPoints = m_asset.restPoints;
+        current.initialParticles = m_initialParticles;
+        current.selectedStrandIndex = m_selectedStrandIndex;
+        m_strandUndoStack.push_back(std::move(current));
+
+        StrandEditSnapshot snapshot = std::move(m_strandRedoStack.back());
+        m_strandRedoStack.pop_back();
+        m_asset.restPoints = std::move(snapshot.restPoints);
+        m_initialParticles = std::move(snapshot.initialParticles);
+        m_selectedStrandIndex = snapshot.selectedStrandIndex;
+        CommitEditedRestState();
+        return true;
+    }
+
+    bool GpuHairViewer::SaveStrandEditSessionToPath(const std::filesystem::path& path) const
+    {
+        std::ofstream out(path);
+        if (!out)
+        {
+            return false;
+        }
+        out << "version=1\n";
+        out << "selected=" << m_selectedStrandIndex << "\n";
+        out << "pointCount=" << m_asset.restPoints.size() << "\n";
+        for (const Vec3& p : m_asset.restPoints)
+        {
+            out << std::setprecision(9) << p.x << ',' << p.y << ',' << p.z << "\n";
+        }
+        return static_cast<bool>(out);
+    }
+
+    bool GpuHairViewer::LoadStrandEditSessionFromPath(const std::filesystem::path& path)
+    {
+        std::ifstream in(path);
+        if (!in)
+        {
+            return false;
+        }
+        std::string line;
+        int32_t selected = -1;
+        size_t pointCount = 0;
+        std::vector<Vec3> restPoints;
+        while (std::getline(in, line))
+        {
+            if (line.rfind("version=", 0) == 0)
+            {
+                continue;
+            }
+            if (line.rfind("selected=", 0) == 0)
+            {
+                selected = static_cast<int32_t>(std::stoi(line.substr(9)));
+                continue;
+            }
+            if (line.rfind("pointCount=", 0) == 0)
+            {
+                pointCount = static_cast<size_t>(std::stoull(line.substr(11)));
+                restPoints.reserve(pointCount);
+                continue;
+            }
+            std::stringstream ss(line);
+            std::string sx, sy, sz;
+            if (!std::getline(ss, sx, ',') || !std::getline(ss, sy, ',') || !std::getline(ss, sz, ','))
+            {
+                continue;
+            }
+            restPoints.push_back({ std::stof(sx), std::stof(sy), std::stof(sz) });
+        }
+        if (pointCount == 0u || restPoints.size() != pointCount || pointCount != m_asset.restPoints.size())
+        {
+            return false;
+        }
+        PushStrandEditUndoSnapshot();
+        m_asset.restPoints = std::move(restPoints);
+        for (size_t i = 0; i < m_asset.restPoints.size() && i < m_initialParticles.size(); ++i)
+        {
+            m_initialParticles[i].x = m_asset.restPoints[i].x;
+            m_initialParticles[i].y = m_asset.restPoints[i].y;
+            m_initialParticles[i].z = m_asset.restPoints[i].z;
+        }
+        m_selectedStrandIndex = selected;
+        CommitEditedRestState();
         return true;
     }
 
@@ -6313,23 +6961,24 @@ namespace hairgpu::viewer
         }
 
         m_asset = std::move(importedAsset);
-        {
-            WigStyleSettings wig;
-            wig.strength = 0.72f;
-            wig.capRegion = 0.36f;
-            wig.shellOffset = 0.0035f;
-            wig.flowBlend = 0.86f;
-            wig.outwardBlend = 0.10f;
-            wig.restoreOriginalTowardsTip = 0.72f;
-            StyleAssetToScalpWig(m_asset, wig);
-        }
+        std::wstring scalpRepairStatus;
+        EnsureAssetScalpConformance(m_asset, &scalpRepairStatus);
+        // Sample asset building/import already handles wig styling.
         m_builderGuideCount = m_asset.guideStrandCount;
         m_builderFollowersPerGuide = (m_asset.guideStrandCount > 0) ? (m_asset.followerStrandCount / m_asset.guideStrandCount) : 0u;
         m_builderParticlesPerStrand = m_asset.particlesPerStrand;
         m_activePresetName = L"Imported Asset";
         m_lastAssetSource = path.filename().wstring();
-        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : ((ext == L".usd" || ext == L".usda") ? L"USD ASCII imported" : ((ext == L".hairbin" || ext == L".hair") ? L"Hair binary imported" : L"Alembic imported"));
+        m_lastImportStatus = (ext == L".csv") ? L"Curves CSV imported" : ((ext == L".usd" || ext == L".usda") ? L"USD ASCII imported" : ((ext == L".hairbin" || ext == L".hair") ? L"Hair binary imported" : (std::wstring(L"Alembic imported (") + std::wstring(hairgpu::GetAlembicBackendDescription(), hairgpu::GetAlembicBackendDescription() + std::strlen(hairgpu::GetAlembicBackendDescription())) + L")")));
+        if (!scalpRepairStatus.empty())
+        {
+            m_lastImportStatus += L" | ";
+            m_lastImportStatus += scalpRepairStatus;
+        }
         m_baseAsset = m_asset;
+        m_selectedStrandIndex = -1;
+        m_strandUndoStack.clear();
+        m_strandRedoStack.clear();
         hairgpu::HairAsset editedAsset = m_baseAsset;
         if (m_editStackPath.empty())
         {
@@ -6397,6 +7046,10 @@ namespace hairgpu::viewer
             {
                 const float t = Clamp(widthN, 0.0f, 1.0f);
                 return Vec3(Lerp(0.12f, 1.00f, t), Lerp(0.35f, 0.20f, t), Lerp(1.00f, 0.10f, t));
+            }
+            if (static_cast<int32_t>(strandIndex) == m_selectedStrandIndex)
+            {
+                return Vec3(1.00f, 0.12f, 0.82f);
             }
             const Vec3 rootColor(1.00f, 0.88f, 0.38f);
             const Vec3 tipColor(0.78f, 0.58f, 0.18f);
@@ -6813,6 +7466,16 @@ namespace hairgpu::viewer
             }
         }
 
+        if (m_selectedStrandIndex >= 0 && static_cast<size_t>(m_selectedStrandIndex) < m_asset.strands.size())
+        {
+            const bool rootMode = (m_strandGizmoMode == StrandGizmoMode::RootTranslate);
+            const Vec3 anchor = GetSelectedStrandAnchorPoint(rootMode);
+            const float gizmoScale = std::max(0.06f, m_cameraDistance * 0.10f);
+            addWorldLine(anchor, anchor + Vec3(gizmoScale, 0.0f, 0.0f), 1.0f, 0.22f, 0.22f, 0.95f);
+            addWorldLine(anchor, anchor + Vec3(0.0f, gizmoScale, 0.0f), 0.22f, 1.0f, 0.22f, 0.95f);
+            addWorldLine(anchor, anchor + Vec3(0.0f, 0.0f, gizmoScale), 0.22f, 0.52f, 1.0f, 0.95f);
+        }
+
         if (m_showColliderDebug)
         {
             constexpr int segments = 24;
@@ -6994,20 +7657,42 @@ namespace hairgpu::viewer
             const POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             if (PtInRect(&renderRect, p))
             {
-                m_dragging = true;
+                m_mouseDownPoint = p;
                 m_lastMouse = p;
+                if (!BeginStrandGizmoDrag(p))
+                {
+                    m_dragging = true;
+                }
                 SetCapture(m_hwnd);
             }
             return 0;
         }
         case WM_LBUTTONUP:
+        {
+            const POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            const int dx = p.x - m_mouseDownPoint.x;
+            const int dy = p.y - m_mouseDownPoint.y;
+            const bool wasClick = (dx * dx + dy * dy) <= 16;
+            const bool wasGizmoDrag = m_gizmoDragging;
+            EndStrandGizmoDrag(false);
             m_dragging = false;
             ReleaseCapture();
-            return 0;
-        case WM_MOUSEMOVE:
-            if (m_dragging)
+            if (wasClick && !wasGizmoDrag)
             {
-                POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                PickStrandAtPoint(p);
+                UpdateWindowTitle();
+            }
+            return 0;
+        }
+        case WM_MOUSEMOVE:
+        {
+            POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (m_gizmoDragging)
+            {
+                UpdateStrandGizmoDrag(p);
+            }
+            else if (m_dragging)
+            {
                 const float dx = static_cast<float>(p.x - m_lastMouse.x);
                 const float dy = static_cast<float>(p.y - m_lastMouse.y);
                 m_lastMouse = p;
@@ -7015,6 +7700,7 @@ namespace hairgpu::viewer
                 m_cameraPitch = Clamp(m_cameraPitch + dy * 0.01f, -1.2f, 1.2f);
             }
             return 0;
+        }
         case WM_MOUSEWHEEL:
         {
             POINT screenPoint = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -7372,6 +8058,52 @@ namespace hairgpu::viewer
             break;
         }
         case WM_KEYDOWN:
+            if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
+            {
+                switch (wParam)
+                {
+                case 'Z':
+                    UndoStrandEdit();
+                    return 0;
+                case 'Y':
+                    RedoStrandEdit();
+                    return 0;
+                case 'S':
+                {
+                    wchar_t fileName[MAX_PATH] = L"viewer_strand_edits.strandedit";
+                    OPENFILENAMEW ofn = {};
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = hwnd;
+                    ofn.lpstrFilter = L"Strand Edit Session (*.strandedit)\0*.strandedit\0All Files\0*.*\0";
+                    ofn.lpstrFile = fileName;
+                    ofn.nMaxFile = MAX_PATH;
+                    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+                    if (GetSaveFileNameW(&ofn) && !SaveStrandEditSessionToPath(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to save the strand edit session.", L"Strand Edit", MB_OK | MB_ICONERROR);
+                    }
+                    return 0;
+                }
+                case 'O':
+                {
+                    wchar_t fileName[MAX_PATH] = L"";
+                    OPENFILENAMEW ofn = {};
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = hwnd;
+                    ofn.lpstrFilter = L"Strand Edit Session (*.strandedit)\0*.strandedit\0All Files\0*.*\0";
+                    ofn.lpstrFile = fileName;
+                    ofn.nMaxFile = MAX_PATH;
+                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                    if (GetOpenFileNameW(&ofn) && !LoadStrandEditSessionFromPath(fileName))
+                    {
+                        MessageBoxW(hwnd, L"Failed to load the strand edit session.", L"Strand Edit", MB_OK | MB_ICONERROR);
+                    }
+                    return 0;
+                }
+                default:
+                    break;
+                }
+            }
             switch (wParam)
             {
             case VK_SPACE:
@@ -7481,6 +8213,24 @@ namespace hairgpu::viewer
                 m_simConfig.selfCollisionCellSize = Clamp(m_simConfig.selfCollisionCellSize * 1.08f, 0.03f, 0.20f);
                 SyncControlsFromState();
                 return 0;
+            case VK_LEFT:
+                if (m_selectedStrandIndex >= 0) { ApplySelectedStrandOffset(Vec3(0.0f, 0.0f, 0.0f), Vec3(-0.010f, 0.0f, 0.0f)); }
+                return 0;
+            case VK_RIGHT:
+                if (m_selectedStrandIndex >= 0) { ApplySelectedStrandOffset(Vec3(0.0f, 0.0f, 0.0f), Vec3(0.010f, 0.0f, 0.0f)); }
+                return 0;
+            case VK_UP:
+                if (m_selectedStrandIndex >= 0) { ApplySelectedStrandOffset(Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.010f, 0.0f)); }
+                return 0;
+            case VK_DOWN:
+                if (m_selectedStrandIndex >= 0) { ApplySelectedStrandOffset(Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, -0.010f, 0.0f)); }
+                return 0;
+            case VK_PRIOR:
+                if (m_selectedStrandIndex >= 0) { ApplySelectedStrandOffset(Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, -0.010f)); }
+                return 0;
+            case VK_NEXT:
+                if (m_selectedStrandIndex >= 0) { ApplySelectedStrandOffset(Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 0.010f)); }
+                return 0;
             default:
                 break;
             }
@@ -7490,4 +8240,25 @@ namespace hairgpu::viewer
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
+
+    bool GpuHairViewer::LoadScalpAnimationFromPath(const std::wstring& filePath, bool showMessageOnFailure)
+    {
+        std::string error;
+        hairgpu::BoneAnimationClip clip = {};
+        if (!hairgpu::LoadBoneAnimationCsv(std::filesystem::path(filePath), clip, error))
+        {
+            if (showMessageOnFailure)
+            {
+                const std::wstring werr(error.begin(), error.end());
+                MessageBoxW(m_hwnd, werr.c_str(), L"Scalp Bone Animation", MB_OK | MB_ICONERROR);
+            }
+            return false;
+        }
+        m_scalpAnimationClip = std::move(clip);
+        m_lastScalpAnimationSource = filePath;
+        return true;
+    }
+
+
+
 }

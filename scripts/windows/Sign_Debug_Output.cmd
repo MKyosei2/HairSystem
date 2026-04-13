@@ -1,2 +1,4 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0..\tools\signing\Sign-HairSystemBuild.ps1" -BuildRoot "%~dp0..\build" %*
+setlocal
+for %%I in ("%~dp0\..\..") do set ROOT=%%~fI
+powershell -ExecutionPolicy Bypass -File "%ROOT%\tools\signing\Sign-HairSystemBuild.ps1" -BuildRoot "%ROOT%\build" %*

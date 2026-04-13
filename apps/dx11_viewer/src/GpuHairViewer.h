@@ -18,6 +18,7 @@
 
 #include "hairgpu/ActiveSet.h"
 #include "hairgpu/Authoring.h"
+#include "hairgpu/BoneAnimation.h"
 #include "hairgpu/HybridRuntime.h"
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
@@ -235,8 +236,8 @@ namespace hairgpu::viewer
             uint32_t followerUpdatePhase = 0u;
             uint32_t useCompactedFollowerDispatch = 0u;
             uint32_t compactedFollowerCount = 0u;
-            uint32_t dispatchPadding0 = 0u;
-            uint32_t dispatchPadding1 = 0u;
+            uint32_t useCompactedGuidePointDispatch = 0u;
+            uint32_t compactedGuidePointCount = 0u;
         };
 
         struct alignas(16) SimConstantsActiveSet
@@ -452,6 +453,21 @@ namespace hairgpu::viewer
             FullParticlesDebug = 2,
         };
 
+        enum class StrandGizmoMode : uint32_t
+        {
+            TipTranslate = 0,
+            WholeTranslate = 1,
+            RootTranslate = 2,
+        };
+
+        enum class GizmoAxis : uint32_t
+        {
+            None = 0,
+            X = 1,
+            Y = 2,
+            Z = 3,
+        };
+
         struct alignas(16) RenderConstants
         {
             float viewProjection[16] = {};
@@ -553,7 +569,21 @@ namespace hairgpu::viewer
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
         bool ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles);
+        bool PickStrandAtPoint(POINT clientPoint);
+        bool ApplySelectedStrandOffset(const hairgpu::Vec3& rootOffset, const hairgpu::Vec3& tipOffset);
+        bool BeginStrandGizmoDrag(POINT clientPoint);
+        void UpdateStrandGizmoDrag(POINT clientPoint);
+        void EndStrandGizmoDrag(bool cancelDrag);
+        hairgpu::Vec3 GetSelectedStrandAnchorPoint(bool root) const;
+        bool ProjectWorldToScreen(const hairgpu::Vec3& world, float& outX, float& outY) const;
+        void CommitEditedRestState();
+        void PushStrandEditUndoSnapshot();
+        bool UndoStrandEdit();
+        bool RedoStrandEdit();
+        bool SaveStrandEditSessionToPath(const std::filesystem::path& path) const;
+        bool LoadStrandEditSessionFromPath(const std::filesystem::path& path);
         bool LoadHairAssetFromPath(const std::wstring& filePath);
+        bool LoadScalpAnimationFromPath(const std::wstring& filePath, bool showMessageOnFailure);
         bool BrowseAndSetEditStackPath();
         bool ClearEditStackAndRestoreAsset();
         bool ApplyEditStackToCurrentAsset(bool showMessageOnFailure);
@@ -604,6 +634,7 @@ namespace hairgpu::viewer
         bool m_running = true;
         bool m_paused = false;
         bool m_dragging = false;
+        POINT m_mouseDownPoint = {};
         bool m_syncingControls = false;
         bool m_enableSelfCollision = true;
         bool m_enableScalpMotion = false;
@@ -618,6 +649,25 @@ namespace hairgpu::viewer
         bool m_showFollowLinks = false;
         bool m_showTestMesh = false; // legacy CPU test mesh path disabled in runtime UI
         POINT m_lastMouse = {};
+        struct StrandEditSnapshot
+        {
+            std::vector<hairgpu::Vec3> restPoints;
+            std::vector<GpuParticle> initialParticles;
+            int32_t selectedStrandIndex = -1;
+        };
+
+        int32_t m_selectedStrandIndex = -1;
+        float m_lastSelectedStrandScreenDistance = 0.0f;
+        StrandGizmoMode m_strandGizmoMode = StrandGizmoMode::TipTranslate;
+        GizmoAxis m_activeGizmoAxis = GizmoAxis::None;
+        bool m_gizmoDragging = false;
+        POINT m_gizmoDragStartPoint = {};
+        std::vector<hairgpu::Vec3> m_gizmoDragBaseRestPoints;
+        std::vector<StrandEditSnapshot> m_strandUndoStack;
+        std::vector<StrandEditSnapshot> m_strandRedoStack;
+        hairgpu::BoneAnimationClip m_scalpAnimationClip;
+        std::vector<hairgpu::Mat4> m_currentScalpBoneMatrices;
+        std::wstring m_lastScalpAnimationSource;
 
         float m_cameraYaw = 0.1f;
         float m_cameraPitch = 0.35f;
@@ -713,7 +763,7 @@ namespace hairgpu::viewer
         std::vector<HairMeshVertex> m_hairMeshVertices;
         std::vector<GpuDebugLineEntry> m_gpuDebugLineEntries;
         std::vector<GpuParticle> m_debugReadbackParticles;
-        bool m_enableActiveSetRuntime = true;
+        bool m_enableActiveSetRuntime = false;
         hairgpu::ActiveSetClusterSettings m_activeSetClusterSettings;
         hairgpu::ActiveSetScoringSettings m_activeSetScoringSettings;
         hairgpu::ActiveSetBudget m_activeSetBudget;
@@ -765,6 +815,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_followCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactFollowerDispatchCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildFollowDispatchArgsCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactGuideDispatchCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildGuideDispatchArgsCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildGuidePointDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_segmentInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_debugInputLayout;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_scalpInputLayout;
@@ -785,6 +838,7 @@ namespace hairgpu::viewer
         StructuredBuffer m_scalpPositions;
         StructuredBuffer m_scalpTrianglesBuffer;
         StructuredBuffer m_rootBindingsBuffer;
+        StructuredBuffer m_sdfValuesBuffer;
         StructuredBuffer m_distanceLambdaBuffer;
         StructuredBuffer m_bendLambdaBuffer;
         StructuredBuffer m_gridCellCountsBuffer;
@@ -805,6 +859,10 @@ namespace hairgpu::viewer
         StructuredBuffer m_debugLineEntriesBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_followDispatchArgsBuffer;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_followDispatchArgsUav;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_guideDispatchArgsBuffer;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_guideDispatchArgsUav;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_guidePointDispatchArgsBuffer;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_guidePointDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpIndexBuffer;
         uint32_t m_scalpIndexCount = 0u;

@@ -1320,6 +1320,15 @@ namespace hairgpu
         return true;
     }
 
+    const char* GetAlembicBackendDescription()
+    {
+#ifdef HAIRGPU_WITH_ALEMBIC
+        return "alembic_sdk";
+#else
+        return "compatibility_usda_sidecar";
+#endif
+    }
+
     bool LoadHairAssetFromAlembic(const std::filesystem::path& filePath, HairAsset& outAsset, std::string& outError)
     {
         std::ifstream sniff(filePath, std::ios::binary);
@@ -1350,7 +1359,7 @@ namespace hairgpu
         return LoadHairAssetFromAlembicSdk(filePath, outAsset, outError);
 #else
         (void)outAsset;
-        outError = "This build still does not include the Alembic SDK, but the loader now sniffs .abc files and will transparently import USDA / hairbin / curves-CSV content when files were renamed or exported through compatibility workflows. Real binary Alembic still requires HAIRGPU_WITH_ALEMBIC plus a wired AbcGeom reader.";
+        outError = "This build does not have the Alembic SDK linked. The loader will still sniff compatibility .abc files that contain USDA / hairbin / curves-CSV payloads, but real binary Alembic requires HAIRGPU_WITH_ALEMBIC=ON and a valid Alembic SDK (set ALEMBIC_ROOT / ALEMBIC_DIR).";
         return false;
 #endif
     }

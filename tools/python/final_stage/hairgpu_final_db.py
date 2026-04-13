@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Iterable
 
 
 @dataclass
@@ -50,13 +50,31 @@ class FinalStageDatabase:
         self.connection.commit()
         return int(cursor.lastrowid)
 
+    @staticmethod
+    def _read_summary(summary_json_path: Path) -> dict:
+        return json.loads(Path(summary_json_path).read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _resolve_summary_value(summary: dict, *keys: str, default=0.0):
+        for key in keys:
+            if key in summary and summary[key] is not None:
+                return summary[key]
+        return default
+
+    @staticmethod
+    def _pick_csv_value(row: dict, *keys: str, default: str = "0") -> str:
+        for key in keys:
+            if key in row and row[key] not in (None, ""):
+                return row[key]
+        return default
+
     def import_runtime_run(
         self,
         metadata: RuntimeRunMetadata,
         summary_json_path: Path,
         frame_csv_path: Path,
     ) -> int:
-        summary = json.loads(Path(summary_json_path).read_text(encoding="utf-8"))
+        summary = self._read_summary(summary_json_path)
         experiment_id = self.upsert_experiment(metadata.experiment_name, metadata.operator_name, metadata.notes)
         cursor = self.connection.execute(
             """
@@ -76,17 +94,17 @@ class FinalStageDatabase:
                 metadata.runtime_source,
                 str(summary_json_path),
                 str(frame_csv_path),
-                int(summary.get("sample_count", 0)),
-                float(summary.get("avg_frame_ms", 0.0)),
-                float(summary.get("p95_frame_ms", 0.0)),
-                float(summary.get("worst_frame_ms", 0.0)),
-                float(summary.get("avg_simulation_ms", 0.0)),
-                float(summary.get("avg_fps", 0.0)),
-                float(summary.get("sixty_fps_ratio", 0.0)),
-                int(summary.get("guide_count", 0)),
-                int(summary.get("follower_count", 0)),
-                int(summary.get("total_strand_count", 0)),
-                int(summary.get("total_particle_count", 0)),
+                int(self._resolve_summary_value(summary, "sample_count", "sampleCount", default=0)),
+                float(self._resolve_summary_value(summary, "avg_frame_ms", "avgFrameMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p95_frame_ms", "p95FrameMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "worst_frame_ms", "worstFrameMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_simulation_ms", "avgSimulationMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_fps", "avgFps", default=0.0)),
+                float(self._resolve_summary_value(summary, "sixty_fps_ratio", "sixtyFpsRatio", default=0.0)),
+                int(self._resolve_summary_value(summary, "guide_count", "guideCount", default=0)),
+                int(self._resolve_summary_value(summary, "follower_count", "followerCount", default=0)),
+                int(self._resolve_summary_value(summary, "total_strand_count", "totalStrandCount", default=0)),
+                int(self._resolve_summary_value(summary, "total_particle_count", "totalParticleCount", default=0)),
                 datetime.utcnow().isoformat(timespec="seconds"),
             ),
         )
@@ -97,15 +115,15 @@ class FinalStageDatabase:
             rows = [
                 (
                     run_id,
-                    int(row["sampleIndex"]),
-                    float(row["elapsedSeconds"]),
-                    float(row["frameMilliseconds"]),
-                    float(row["simulationMilliseconds"]),
-                    float(row["fps"]),
-                    int(row["guideCount"]),
-                    int(row["followerCount"]),
-                    int(row["totalStrandCount"]),
-                    int(row["totalParticleCount"]),
+                    int(self._pick_csv_value(row, "sampleIndex", "sample_index", default="0")),
+                    float(self._pick_csv_value(row, "elapsedSeconds", "elapsed_seconds", default="0")),
+                    float(self._pick_csv_value(row, "frameMilliseconds", "frame_ms", default="0")),
+                    float(self._pick_csv_value(row, "simulationMilliseconds", "simulation_ms", default="0")),
+                    float(self._pick_csv_value(row, "fps", default="0")),
+                    int(self._pick_csv_value(row, "guideCount", "guide_count", default="0")),
+                    int(self._pick_csv_value(row, "followerCount", "follower_count", default="0")),
+                    int(self._pick_csv_value(row, "totalStrandCount", "total_strand_count", default="0")),
+                    int(self._pick_csv_value(row, "totalParticleCount", "total_particle_count", default="0")),
                 )
                 for row in reader
             ]
@@ -120,6 +138,10 @@ class FinalStageDatabase:
         )
         self.connection.commit()
         return run_id
+
+    @staticmethod
+    def _rows_to_dicts(rows: Iterable[sqlite3.Row]):
+        return [dict(row) for row in rows]
 
     def fetch_runs(self):
         return self.connection.execute(
@@ -164,3 +186,59 @@ class FinalStageDatabase:
             ORDER BY method_code
             """
         ).fetchall()
+
+    def fetch_method_summary_rows(self):
+        rows = self.connection.execute(
+            """
+            SELECT
+                method_code,
+                COUNT(*) AS run_count,
+                AVG(avg_frame_ms) AS avg_frame_ms,
+                AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(worst_frame_ms) AS avg_worst_frame_ms,
+                AVG(avg_fps) AS avg_fps,
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
+                AVG(avg_simulation_ms) AS avg_simulation_ms
+            FROM runtime_runs
+            GROUP BY method_code
+            ORDER BY avg_sixty_fps_ratio DESC, avg_p95_frame_ms ASC, method_code ASC
+            """
+        ).fetchall()
+        return self._rows_to_dicts(rows)
+
+    def fetch_scenario_summary_rows(self):
+        rows = self.connection.execute(
+            """
+            SELECT
+                scenario_code,
+                COUNT(*) AS run_count,
+                AVG(avg_frame_ms) AS avg_frame_ms,
+                AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(worst_frame_ms) AS avg_worst_frame_ms,
+                AVG(avg_fps) AS avg_fps,
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio
+            FROM runtime_runs
+            GROUP BY scenario_code
+            ORDER BY scenario_code ASC
+            """
+        ).fetchall()
+        return self._rows_to_dicts(rows)
+
+    def fetch_experiment_summary(self) -> dict:
+        row = self.connection.execute(
+            """
+            SELECT
+                COUNT(*) AS run_count,
+                COUNT(DISTINCT method_code) AS method_count,
+                COUNT(DISTINCT scenario_code) AS scenario_count,
+                MIN(created_at) AS first_created_at,
+                MAX(created_at) AS last_created_at,
+                AVG(avg_frame_ms) AS avg_frame_ms,
+                AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(worst_frame_ms) AS avg_worst_frame_ms,
+                AVG(avg_fps) AS avg_fps,
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio
+            FROM runtime_runs
+            """
+        ).fetchone()
+        return dict(row) if row else {}

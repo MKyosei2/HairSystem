@@ -793,7 +793,7 @@ namespace hairgpu
             const float lengthJitter = 0.95f + 0.10f * Hash01(seed + 41u);
             const float lengthScale = Clamp(0.96f + 0.16f * sideFactor + 0.26f * backFactor - 0.18f * fringeFactor, 0.72f, 1.42f);
             const float strandLength = baseChainLength * parameters.overallLength * lengthScale * lengthJitter;
-            const float rootTravel = strandLength * (0.17f + 0.03f * sideFactor + 0.03f * backFactor);
+            const float rootTravel = strandLength * (0.08f + 0.02f * sideFactor + 0.02f * backFactor);
             const float sideDrift = (0.0050f + 0.0080f * sideFactor + 0.0040f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u));
             const float forwardDrift = 0.015f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u));
             const float curlNoise = parameters.strandNoise * 0.20f;
@@ -804,16 +804,16 @@ namespace hairgpu
             for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
             {
                 const float t = static_cast<float>(pointIndex) / static_cast<float>(std::max(pointCount - 1u, 1u));
-                const float rootPhase = Clamp(t / 0.22f, 0.0f, 1.0f);
-                const float fallPhase = Clamp((t - 0.22f) / 0.78f, 0.0f, 1.0f);
+                const float rootPhase = Clamp(t / 0.36f, 0.0f, 1.0f);
+                const float fallPhase = Clamp((t - 0.36f) / 0.64f, 0.0f, 1.0f);
 
                 Vec3 p = root;
                 p += tangentDown * (rootTravel * Smooth01(rootPhase));
-                p += Vec3(0.0f, -1.0f, 0.0f) * (strandLength * 0.82f * Smooth01(fallPhase));
-                p += tangentDown * (strandLength * 0.08f * (1.0f - fallPhase) * fallPhase);
-                p += lateral * (sideDrift * Smooth01(fallPhase));
-                p += frontDir * (forwardDrift * (1.0f - 0.55f * fallPhase));
-                p += normal * (0.0030f * (1.0f - rootPhase));
+                p += Vec3(0.0f, -1.0f, 0.0f) * (strandLength * 0.64f * Smooth01(fallPhase));
+                p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase);
+                p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
+                p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
+                p += normal * (0.0050f * (1.0f - rootPhase));
 
                 if (t > 0.35f)
                 {
@@ -1129,12 +1129,12 @@ namespace hairgpu
         RebuildRootRestPositionsFromScalp(asset);
 
         WigStyleSettings wigSettings;
-        wigSettings.strength = 0.0f;
-        wigSettings.capRegion = 0.12f;
-        wigSettings.shellOffset = 0.0f;
-        wigSettings.flowBlend = 1.0f;
-        wigSettings.outwardBlend = 0.0f;
-        wigSettings.restoreOriginalTowardsTip = 0.0f;
+        wigSettings.strength = 1.0f;
+        wigSettings.capRegion = 0.34f;
+        wigSettings.shellOffset = 0.004f;
+        wigSettings.flowBlend = 0.78f;
+        wigSettings.outwardBlend = 0.18f;
+        wigSettings.restoreOriginalTowardsTip = 0.62f;
         StyleAssetToScalpWig(asset, wigSettings);
         return asset;
     }
