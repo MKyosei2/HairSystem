@@ -192,6 +192,12 @@ namespace hairgpu
         float averageSelectedClusterCount = 0.0f;
         float averageSelectedGuideCount = 0.0f;
         float averageCorrectedPointCount = 0.0f;
+        float averageSelectedNaturalnessGain = 0.0f;
+        float averageEfficiencyScore = 0.0f;
+        float averageEditCoverageRatio = 0.0f;
+        float averageSelectedParticlesPerStrand = 0.0f;
+        uint32_t maxSelectedParticlesPerStrand = 0u;
+        float averageEstimatedPlanMemoryMegabytes = 0.0f;
         float averagePenetration = 0.0f;
         float maxPenetration = 0.0f;
         float averageGuidePredictorRisk = 0.0f;

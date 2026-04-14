@@ -1077,11 +1077,13 @@ namespace
   hairgpu_cli hybrid-bundle-import-interop <base_bundle_dir> <interop_dir> <output_bundle_dir>
   hairgpu_cli hybrid-run-bundle <teacher_dir> <bundle_dir> <output_dir> [residualBlendOverride] [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [exportPerFrameHairBins] [--colliders colliders.csv]
   hairgpu_cli hybrid-compare <teacher_dir> <bundle_dir> <output_dir> [maxActiveClusters] [maxActiveGuides] [targetFrameMs] [--colliders colliders.csv]
+  hairgpu_cli hybrid-profile-compare <teacher_dir> <bundle_dir> <output_dir> [profileSet=dev16,standard128,ideal1024,max2048] [--colliders colliders.csv]
+  hairgpu_cli hybrid-final-report <profile_compare_dir>
 )USAGE";
     }
     uint32_t ClampParticlesPerStrandValue(uint32_t value)
     {
-        return std::max<uint32_t>(4u, std::min<uint32_t>(value, 64u));
+        return ClampRuntimeParticlesPerStrand(value);
     }
 
     uint32_t ResolveSegmentProfileTarget(const HairAsset& asset, const std::string& profileName, uint32_t overrideParticles)
@@ -1093,15 +1095,31 @@ namespace
 
         const uint32_t current = std::max<uint32_t>(asset.particlesPerStrand, 4u);
         const std::string lowered = ToLower(profileName);
+        if (lowered == "dev16" || lowered == "development" || lowered == "debug")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, kDevelopmentParticlesPerStrand));
+        }
         if (lowered == "smooth")
         {
-            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 15u));
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 33u));
         }
         if (lowered == "cinematic")
         {
-            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 17u));
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 65u));
         }
-        return ClampParticlesPerStrandValue(std::max<uint32_t>(current, 13u));
+        if (lowered == "standard128" || lowered == "standard" || lowered == "submission")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, kStandardParticlesPerStrand));
+        }
+        if (lowered == "ideal1024" || lowered == "ideal" || lowered == "1024")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, kIdealParticlesPerStrand));
+        }
+        if (lowered == "max2048" || lowered == "maximum" || lowered == "extreme" || lowered == "ultimate" || lowered == "2048")
+        {
+            return ClampParticlesPerStrandValue(std::max<uint32_t>(current, kMaximumParticlesPerStrand));
+        }
+        return ClampParticlesPerStrandValue(std::max<uint32_t>(current, kDevelopmentParticlesPerStrand));
     }
 
     int PrintLoadFailure(const std::string& context, const std::string& error, int code)
@@ -1110,6 +1128,191 @@ namespace
         return code;
     }
 }
+
+    struct HybridProfileSpec
+    {
+        std::string code;
+        std::string label;
+        uint32_t standardParticles = kDevelopmentParticlesPerStrand;
+        uint32_t maxParticles = kDevelopmentParticlesPerStrand;
+        uint32_t maxRefinementLevel = 0u;
+        float targetFrameMs = 16.67f;
+    };
+
+
+    std::vector<std::filesystem::path> CollectImageCandidates(const std::filesystem::path& directoryPath)
+    {
+        std::vector<std::filesystem::path> images;
+        std::error_code ec;
+        if (!std::filesystem::exists(directoryPath, ec))
+        {
+            return images;
+        }
+        for (const auto& entry : std::filesystem::directory_iterator(directoryPath, ec))
+        {
+            if (ec || !entry.is_regular_file())
+            {
+                continue;
+            }
+            std::string ext = ToLower(entry.path().extension().string());
+            if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp")
+            {
+                images.push_back(entry.path().filename());
+            }
+        }
+        std::sort(images.begin(), images.end());
+        return images;
+    }
+
+
+    void WriteProfileCompareArtifacts(const std::filesystem::path& outputDir,
+                                      const std::vector<HybridProfileSpec>& profiles,
+                                      const std::vector<FullHybridRuntimeReport>& reports)
+    {
+        if (profiles.size() != reports.size())
+        {
+            return;
+        }
+        std::ofstream html(outputDir / "hybrid_profile_compare_report.html");
+        if (html)
+        {
+            html << "<!doctype html><html><head><meta charset=\"utf-8\"><title>Hybrid Profile Compare</title>"
+                 << "<style>body{font-family:Arial,sans-serif;margin:24px;}table{border-collapse:collapse;margin:16px 0;}th,td{border:1px solid #ccc;padding:6px 10px;text-align:right;}th:first-child,td:first-child{text-align:left;}img{max-width:480px;border:1px solid #ccc;margin:8px 12px 8px 0;} .card{border:1px solid #ddd;padding:12px;margin:16px 0;border-radius:8px;}code{background:#f4f4f4;padding:2px 4px;}</style></head><body>";
+            html << "<h1>Hybrid Profile Compare Report</h1>";
+            html << "<table><tr><th>Profile</th><th>Base Pts</th><th>Max Pts</th><th>Avg RMS After</th><th>Avg Naturalness</th><th>Avg Selected Pts</th><th>Max Selected Pts</th><th>Avg Plan Memory MB</th><th>p95 ms</th><th>60 FPS Hit Rate</th><th>Avg Penetration</th></tr>";
+            for (size_t i = 0; i < profiles.size(); ++i)
+            {
+                const auto& profile = profiles[i];
+                const auto& report = reports[i];
+                html << "<tr><td>" << profile.label << "</td><td>" << profile.standardParticles << "</td><td>" << profile.maxParticles
+                     << "</td><td>" << report.averageHybridRmsErrorAfterCorrection << "</td><td>" << report.averageSelectedNaturalnessGain
+                     << "</td><td>" << report.averageSelectedParticlesPerStrand << "</td><td>" << report.maxSelectedParticlesPerStrand
+                     << "</td><td>" << report.averageEstimatedPlanMemoryMegabytes << "</td><td>" << report.p95EstimatedFrameMilliseconds
+                     << "</td><td>" << (report.hitRate60Fps * 100.0f) << "%</td><td>" << report.averagePenetration << "</td></tr>";
+            }
+            html << "</table>";
+            for (size_t i = 0; i < profiles.size(); ++i)
+            {
+                const auto& profile = profiles[i];
+                const auto images = CollectImageCandidates(outputDir / profile.label);
+                html << "<div class=\"card\"><h2>" << profile.label << "</h2>";
+                html << "<p><code>basePts=" << profile.standardParticles << " maxPts=" << profile.maxParticles << " refinement=" << profile.maxRefinementLevel << "</code></p>";
+                if (images.empty())
+                {
+                    html << "<p>No viewer screenshots found in this profile directory yet.</p>";
+                }
+                else
+                {
+                    for (const auto& image : images)
+                    {
+                        html << "<div><img src=\"" << profile.label << "/" << image.generic_string() << "\" alt=\"" << image.generic_string() << "\"></div>";
+                    }
+                }
+                html << "</div>";
+            }
+            html << "</body></html>";
+        }
+
+        std::ofstream tex(outputDir / "hybrid_profile_compare_table.tex");
+        if (tex)
+        {
+            tex << "\\begin{tabular}{lrrrrrr}\n";
+            tex << "Profile & BasePts & MaxPts & AvgNat & AvgSelPts & p95ms & HitRate \\\\ \\hline\n";
+            for (size_t i = 0; i < profiles.size(); ++i)
+            {
+                const auto& profile = profiles[i];
+                const auto& report = reports[i];
+                tex << profile.label << " & " << profile.standardParticles << " & " << profile.maxParticles << " & "
+                    << report.averageSelectedNaturalnessGain << " & " << report.averageSelectedParticlesPerStrand << " & "
+                    << report.p95EstimatedFrameMilliseconds << " & " << (report.hitRate60Fps * 100.0f) << "\\\\\n";
+            }
+            tex << "\\end{tabular}\n";
+        }
+
+        std::ofstream manifest(outputDir / "hybrid_profile_compare_manifest.json");
+        if (manifest)
+        {
+            manifest << "{\n  \"profiles\": [\n";
+            for (size_t i = 0; i < profiles.size(); ++i)
+            {
+                const auto& profile = profiles[i];
+                const auto& report = reports[i];
+                const auto images = CollectImageCandidates(outputDir / profile.label);
+                if (i > 0)
+                {
+                    manifest << ",\n";
+                }
+                manifest << "    {\n"
+                         << "      \"profileCode\": \"" << JsonEscape(profile.code) << "\",\n"
+                         << "      \"profileLabel\": \"" << JsonEscape(profile.label) << "\",\n"
+                         << "      \"standardParticles\": " << profile.standardParticles << ",\n"
+                         << "      \"maxParticles\": " << profile.maxParticles << ",\n"
+                         << "      \"avgNaturalnessGain\": " << report.averageSelectedNaturalnessGain << ",\n"
+                         << "      \"p95EstimatedFrameMs\": " << report.p95EstimatedFrameMilliseconds << ",\n"
+                         << "      \"hitRate60Fps\": " << report.hitRate60Fps << ",\n"
+                         << "      \"images\": [";
+                for (size_t j = 0; j < images.size(); ++j)
+                {
+                    if (j > 0)
+                    {
+                        manifest << ", ";
+                    }
+                    manifest << "\"" << JsonEscape(images[j].generic_string()) << "\"";
+                }
+                manifest << "]\n    }";
+            }
+            manifest << "\n  ]\n}\n";
+        }
+    }
+
+    std::vector<HybridProfileSpec> BuildHybridProfileSet(const std::string& profileSet)
+    {
+        std::vector<HybridProfileSpec> specs;
+        const auto addProfile = [&](std::string code,
+                                    std::string label,
+                                    uint32_t standardParticles,
+                                    uint32_t maxParticles,
+                                    uint32_t maxRefinementLevel)
+        {
+            HybridProfileSpec spec = {};
+            spec.code = std::move(code);
+            spec.label = std::move(label);
+            spec.standardParticles = ClampRuntimeParticlesPerStrand(standardParticles);
+            spec.maxParticles = ClampRuntimeParticlesPerStrand(std::max(maxParticles, spec.standardParticles));
+            spec.maxRefinementLevel = maxRefinementLevel;
+            specs.push_back(spec);
+        };
+
+        std::string lowered = ToLower(profileSet);
+        lowered.erase(std::remove_if(lowered.begin(), lowered.end(), [](unsigned char ch) { return std::isspace(ch) != 0; }), lowered.end());
+        if (lowered.empty() || lowered == "default" || lowered == "submission")
+        {
+            lowered = "dev16,standard128,ideal1024,max2048";
+        }
+
+        if (lowered.find("dev16") != std::string::npos || lowered.find("development") != std::string::npos || lowered.find("debug") != std::string::npos)
+        {
+            addProfile("P0", "dev16", kDevelopmentParticlesPerStrand, kDevelopmentParticlesPerStrand, 0u);
+        }
+        if (lowered.find("standard128") != std::string::npos || lowered.find("standard") != std::string::npos || lowered.find("submission") != std::string::npos)
+        {
+            addProfile("P1", "standard128", kStandardParticlesPerStrand, kStandardParticlesPerStrand * 2u - 1u, 1u);
+        }
+        if (lowered.find("ideal1024") != std::string::npos || lowered.find("ideal") != std::string::npos || lowered.find("1024") != std::string::npos)
+        {
+            addProfile("P2", "ideal1024", kStandardParticlesPerStrand, kIdealParticlesPerStrand, 3u);
+        }
+        if (lowered.find("max2048") != std::string::npos || lowered.find("maximum") != std::string::npos || lowered.find("extreme") != std::string::npos || lowered.find("ultimate") != std::string::npos || lowered.find("2048") != std::string::npos)
+        {
+            addProfile("P3", "max2048", kStandardParticlesPerStrand, kMaximumParticlesPerStrand, 4u);
+        }
+        if (specs.empty())
+        {
+            addProfile("P1", "standard128", kStandardParticlesPerStrand, kStandardParticlesPerStrand * 2u - 1u, 1u);
+        }
+        return specs;
+    }
+
 int main(int argc, char** argv)
 {
     using namespace hairgpu;
@@ -1715,13 +1918,21 @@ int main(int argc, char** argv)
         {
             return PrintLoadFailure("Compare output failed", "Failed to open hybrid_compare_summary.csv.", 185);
         }
-        csv << "methodCode,methodLabel,frameCount,avgPriorRms,avgHybridRmsBefore,avgHybridRmsAfter,avgSelectedClusters,avgSelectedGuides,avgCorrectedPoints,avgPenetration,maxPenetration,avgPredictorRisk,p95EstimatedFrameMs,maxEstimatedFrameMs,hitRate60Fps\n";
+        csv << "methodCode,methodLabel,frameCount,avgPriorRms,avgHybridRmsBefore,avgHybridRmsAfter,avgSelectedClusters,avgSelectedGuides,avgCorrectedPoints,avgNaturalnessGain,avgEfficiency,avgEditCoverage,avgSelectedParticles,maxSelectedParticles,avgPlanMemoryMB,avgPenetration,maxPenetration,avgPredictorRisk,p95EstimatedFrameMs,maxEstimatedFrameMs,hitRate60Fps\n";
         std::ofstream json(std::filesystem::path(argv[4]) / "hybrid_compare_summary.json");
+        std::ofstream md(std::filesystem::path(argv[4]) / "hybrid_compare_summary.md");
         if (!json)
         {
             return PrintLoadFailure("Compare output failed", "Failed to open hybrid_compare_summary.json.", 186);
         }
+        if (!md)
+        {
+            return PrintLoadFailure("Compare output failed", "Failed to open hybrid_compare_summary.md.", 186);
+        }
         json << "{\n  \"variants\": [\n";
+        md << "# Hybrid Compare Summary\n\n";
+        md << "| Method | Avg RMS After | p95 ms | 60 FPS Hit Rate | Avg Naturalness | Avg Selected Segments | Max Selected Segments | Avg Plan Memory MB | Avg Penetration |\n";
+        md << "|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
         bool first = true;
         for (const VariantSpec& variant : variants)
         {
@@ -1735,9 +1946,24 @@ int main(int argc, char** argv)
                 << report.averagePriorRmsError << "," << report.averageHybridRmsErrorBeforeCorrection << ","
                 << report.averageHybridRmsErrorAfterCorrection << "," << report.averageSelectedClusterCount << ","
                 << report.averageSelectedGuideCount << "," << report.averageCorrectedPointCount << ","
+                << report.averageSelectedNaturalnessGain << ","
+                << report.averageEfficiencyScore << ","
+                << report.averageEditCoverageRatio << ","
+                << report.averageSelectedParticlesPerStrand << ","
+                << report.maxSelectedParticlesPerStrand << ","
+                << report.averageEstimatedPlanMemoryMegabytes << ","
                 << report.averagePenetration << "," << report.maxPenetration << ","
                 << report.averageGuidePredictorRisk << "," << report.p95EstimatedFrameMilliseconds << ","
                 << report.maxEstimatedFrameMilliseconds << "," << report.hitRate60Fps << "\n";
+            md << "| " << variant.label << " | "
+               << report.averageHybridRmsErrorAfterCorrection << " | "
+               << report.p95EstimatedFrameMilliseconds << " | "
+               << (report.hitRate60Fps * 100.0f) << "% | "
+               << report.averageSelectedNaturalnessGain << " | "
+               << report.averageSelectedParticlesPerStrand << " | "
+               << report.maxSelectedParticlesPerStrand << " | "
+               << report.averageEstimatedPlanMemoryMegabytes << " | "
+               << report.averagePenetration << " |\n";
             if (!first)
             {
                 json << ",\n";
@@ -1753,6 +1979,12 @@ int main(int argc, char** argv)
                  << "      \"avgSelectedClusters\": " << report.averageSelectedClusterCount << ",\n"
                  << "      \"avgSelectedGuides\": " << report.averageSelectedGuideCount << ",\n"
                  << "      \"avgCorrectedPoints\": " << report.averageCorrectedPointCount << ",\n"
+                 << "      \"avgNaturalnessGain\": " << report.averageSelectedNaturalnessGain << ",\n"
+                 << "      \"avgEfficiencyScore\": " << report.averageEfficiencyScore << ",\n"
+                 << "      \"avgEditCoverageRatio\": " << report.averageEditCoverageRatio << ",\n"
+                 << "      \"avgSelectedParticlesPerStrand\": " << report.averageSelectedParticlesPerStrand << ",\n"
+                 << "      \"maxSelectedParticlesPerStrand\": " << report.maxSelectedParticlesPerStrand << ",\n"
+                 << "      \"avgEstimatedPlanMemoryMegabytes\": " << report.averageEstimatedPlanMemoryMegabytes << ",\n"
                  << "      \"avgPenetration\": " << report.averagePenetration << ",\n"
                  << "      \"maxPenetration\": " << report.maxPenetration << ",\n"
                  << "      \"avgPredictorRisk\": " << report.averageGuidePredictorRisk << ",\n"
@@ -1765,6 +1997,131 @@ int main(int argc, char** argv)
         std::cout << "comparisonWritten=" << (std::filesystem::path(argv[4]) / "hybrid_compare_summary.csv").string() << "\n";
         return 0;
     }
+    if (command == "hybrid-profile-compare")
+    {
+        if (argc < 5)
+        {
+            PrintUsage();
+            return 1;
+        }
+        ReducedModelTrainingSequence teacherSequence;
+        HybridModelBundle bundle;
+        std::string error;
+        if (!LoadHybridTeacherSequenceFromDirectory(argv[2], teacherSequence, error))
+        {
+            return PrintLoadFailure("Hybrid teacher sequence load failed", error, 188);
+        }
+        if (!LoadHybridModelBundle(argv[3], bundle, error))
+        {
+            return PrintLoadFailure("Hybrid bundle load failed", error, 189);
+        }
+        const std::string profileSet = (argc >= 6 && std::string(argv[5]).rfind("--", 0) != 0) ? argv[5] : "";
+        const std::vector<HybridProfileSpec> profiles = BuildHybridProfileSet(profileSet);
+        ColliderSet colliders = {};
+        if (!LoadOptionalColliders(argc, argv, colliders, error))
+        {
+            return PrintLoadFailure("Collider config load failed", error, 190);
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(argv[4], ec);
+        if (ec)
+        {
+            return PrintLoadFailure("Profile compare output failed", "Failed to create comparison output directory.", 191);
+        }
+        std::ofstream csv(std::filesystem::path(argv[4]) / "hybrid_profile_compare_summary.csv");
+        if (!csv)
+        {
+            return PrintLoadFailure("Profile compare output failed", "Failed to open hybrid_profile_compare_summary.csv.", 192);
+        }
+        csv << "profileCode,profileLabel,standardParticles,maxParticles,maxRefinementLevel,frameCount,avgHybridRmsAfter,avgNaturalnessGain,avgEfficiency,avgEditCoverage,avgSelectedParticles,maxSelectedParticles,avgPlanMemoryMB,avgEstimatedFrameMs,p95EstimatedFrameMs,maxEstimatedFrameMs,hitRate60Fps,avgPenetration,maxPenetration\n";
+        std::ofstream json(std::filesystem::path(argv[4]) / "hybrid_profile_compare_summary.json");
+        if (!json)
+        {
+            return PrintLoadFailure("Profile compare output failed", "Failed to open hybrid_profile_compare_summary.json.", 193);
+        }
+        std::ofstream md(std::filesystem::path(argv[4]) / "hybrid_profile_compare_summary.md");
+        if (!md)
+        {
+            return PrintLoadFailure("Profile compare output failed", "Failed to open hybrid_profile_compare_summary.md.", 194);
+        }
+        json << "{\n  \"profiles\": [\n";
+        md << "# Hybrid Profile Compare Summary\n\n";
+        md << "| Profile | Base Pts | Max Pts | Avg RMS After | Avg Naturalness | Avg Selected Pts | Max Selected Pts | Avg Plan Memory MB | p95 ms | 60 FPS Hit Rate | Avg Penetration |\n";
+        md << "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+        bool firstProfile = true;
+        std::vector<FullHybridRuntimeReport> profileReports;
+        profileReports.reserve(profiles.size());
+        for (const HybridProfileSpec& profile : profiles)
+        {
+            FullHybridRuntimeSettings runtimeSettings = {};
+            runtimeSettings.useBudgetOverride = true;
+            runtimeSettings.budgetOverride = bundle.budget;
+            runtimeSettings.budgetOverride.targetFrameMilliseconds = profile.targetFrameMs;
+            runtimeSettings.budgetOverride.frameBudgetMilliseconds = profile.targetFrameMs;
+            runtimeSettings.budgetOverride.standardParticlesPerStrand = profile.standardParticles;
+            runtimeSettings.budgetOverride.maxParticlesPerStrand = profile.maxParticles;
+            runtimeSettings.budgetOverride.maxRefinementLevel = profile.maxRefinementLevel;
+            runtimeSettings.enableResidualModel = true;
+            runtimeSettings.enableSparseCorrectivePhysics = true;
+            runtimeSettings.enableTemporalNetworks = true;
+            runtimeSettings.enableActiveSetPredictor = true;
+            const std::filesystem::path variantDir = std::filesystem::path(argv[4]) / profile.label;
+            FullHybridRuntimeReport report = {};
+            if (!RunFullHybridRuntime(teacherSequence, colliders, bundle, runtimeSettings, variantDir, report, error))
+            {
+                return PrintLoadFailure("Hybrid profile compare runtime failed", error, 195);
+            }
+            csv << profile.code << "," << profile.label << ","
+                << profile.standardParticles << "," << profile.maxParticles << "," << profile.maxRefinementLevel << ","
+                << report.frameCount << "," << report.averageHybridRmsErrorAfterCorrection << ","
+                << report.averageSelectedNaturalnessGain << "," << report.averageEfficiencyScore << ","
+                << report.averageEditCoverageRatio << "," << report.averageSelectedParticlesPerStrand << ","
+                << report.maxSelectedParticlesPerStrand << "," << report.averageEstimatedPlanMemoryMegabytes << ","
+                << report.averageEstimatedFrameMilliseconds << "," << report.p95EstimatedFrameMilliseconds << ","
+                << report.maxEstimatedFrameMilliseconds << "," << report.hitRate60Fps << ","
+                << report.averagePenetration << "," << report.maxPenetration << "\n";
+            md << "| " << profile.label << " | "
+               << profile.standardParticles << " | " << profile.maxParticles << " | "
+               << report.averageHybridRmsErrorAfterCorrection << " | "
+               << report.averageSelectedNaturalnessGain << " | "
+               << report.averageSelectedParticlesPerStrand << " | "
+               << report.maxSelectedParticlesPerStrand << " | "
+               << report.averageEstimatedPlanMemoryMegabytes << " | "
+               << report.p95EstimatedFrameMilliseconds << " | "
+               << (report.hitRate60Fps * 100.0f) << "% | "
+               << report.averagePenetration << " |\n";
+            if (!firstProfile)
+            {
+                json << ",\n";
+            }
+            firstProfile = false;
+            json << "    {\n"
+                 << "      \"profileCode\": \"" << profile.code << "\",\n"
+                 << "      \"profileLabel\": \"" << profile.label << "\",\n"
+                 << "      \"standardParticles\": " << profile.standardParticles << ",\n"
+                 << "      \"maxParticles\": " << profile.maxParticles << ",\n"
+                 << "      \"maxRefinementLevel\": " << profile.maxRefinementLevel << ",\n"
+                 << "      \"frameCount\": " << report.frameCount << ",\n"
+                 << "      \"avgHybridRmsAfter\": " << report.averageHybridRmsErrorAfterCorrection << ",\n"
+                 << "      \"avgNaturalnessGain\": " << report.averageSelectedNaturalnessGain << ",\n"
+                 << "      \"avgEfficiencyScore\": " << report.averageEfficiencyScore << ",\n"
+                 << "      \"avgEditCoverageRatio\": " << report.averageEditCoverageRatio << ",\n"
+                 << "      \"avgSelectedParticlesPerStrand\": " << report.averageSelectedParticlesPerStrand << ",\n"
+                 << "      \"maxSelectedParticlesPerStrand\": " << report.maxSelectedParticlesPerStrand << ",\n"
+                 << "      \"avgEstimatedPlanMemoryMegabytes\": " << report.averageEstimatedPlanMemoryMegabytes << ",\n"
+                 << "      \"avgEstimatedFrameMs\": " << report.averageEstimatedFrameMilliseconds << ",\n"
+                 << "      \"p95EstimatedFrameMs\": " << report.p95EstimatedFrameMilliseconds << ",\n"
+                 << "      \"maxEstimatedFrameMs\": " << report.maxEstimatedFrameMilliseconds << ",\n"
+                 << "      \"hitRate60Fps\": " << report.hitRate60Fps << ",\n"
+                 << "      \"avgPenetration\": " << report.averagePenetration << ",\n"
+                 << "      \"maxPenetration\": " << report.maxPenetration << "\n"
+                 << "    }";
+        }
+        json << "\n  ]\n}\n";
+        std::cout << "profileComparisonWritten=" << (std::filesystem::path(argv[4]) / "hybrid_profile_compare_summary.csv").string() << "\n";
+        return 0;
+    }
+
     if (command == "guidecache-info")
     {
         if (argc < 3)

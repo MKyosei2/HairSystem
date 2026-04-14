@@ -1145,6 +1145,52 @@ namespace hairgpu::viewer
             return utf8;
         }
 
+        std::string JsonEscapeLocal(const std::string& text)
+        {
+            std::string escaped;
+            escaped.reserve(text.size() + 8u);
+            for (const unsigned char ch : text)
+            {
+                switch (ch)
+                {
+                case '\\': escaped += "\\\\"; break;
+                case '"': escaped += "\\\""; break;
+                case '\b': escaped += "\\b"; break;
+                case '\f': escaped += "\\f"; break;
+                case '\n': escaped += "\\n"; break;
+                case '\r': escaped += "\\r"; break;
+                case '\t': escaped += "\\t"; break;
+                default:
+                    if (ch < 0x20u)
+                    {
+                        char buffer[7] = {};
+                        std::snprintf(buffer, sizeof(buffer), "\\u%04X", static_cast<unsigned int>(ch));
+                        escaped += buffer;
+                    }
+                    else
+                    {
+                        escaped.push_back(static_cast<char>(ch));
+                    }
+                    break;
+                }
+            }
+            return escaped;
+        }
+
+        std::filesystem::path BuildAutoReportCapturePath(uint32_t captureIndex)
+        {
+            wchar_t modulePath[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+            const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+            const std::filesystem::path captureDir = exeDir / L"report_captures";
+            std::error_code ec;
+            std::filesystem::create_directories(captureDir, ec);
+
+            std::wstringstream name;
+            name << L"viewer_report_" << std::setfill(L'0') << std::setw(4) << captureIndex << L".csv";
+            return captureDir / name.str();
+        }
+
         std::wstring NormalizePathExtensionLower(const std::filesystem::path& path)
         {
             std::wstring ext = path.extension().wstring();
@@ -2850,7 +2896,11 @@ namespace hairgpu::viewer
         std::vector<float> guideTemporalScores(guideCount, 0.0f);
         std::vector<float> guideLeakageScores(guideCount, 0.0f);
         std::vector<float> guideModelErrorScores(guideCount, 0.0f);
+        std::vector<float> guideWindExposureScores(guideCount, 0.0f);
+        std::vector<float> guideEnvironmentComplexityScores(guideCount, 0.0f);
         const float safeDt = std::max(m_simConfig.fixedTimeStep, 1.0e-4f);
+        const hairgpu::Vec3 windDirection = hairgpu::Normalize((hairgpu::Length(m_simConfig.windDirection) > 1.0e-6f) ? m_simConfig.windDirection : hairgpu::Vec3(1.0f, 0.0f, 0.0f));
+        const float windStrengthProxy = hairgpu::Clamp(m_simConfig.windStrength / 1.5f, 0.0f, 1.0f);
         for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
         {
             const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
@@ -2863,17 +2913,28 @@ namespace hairgpu::viewer
             const float displacementProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - restRoot) / 0.030f, 0.0f, 1.0f);
             const float contactProxy = (guideIndex < m_activeSetGuideContactScores.size()) ? m_activeSetGuideContactScores[guideIndex] : 0.0f;
             const float editProxy = hairgpu::Clamp(guideEditScores[guideIndex], 0.0f, 1.0f);
+            hairgpu::Vec3 strandDirection = hairgpu::Vec3(0.0f, 1.0f, 0.0f);
+            if (strand.pointCount > 1u && strand.pointOffset + 1u < particles.size())
+            {
+                const hairgpu::Vec3 nextPoint(particles[strand.pointOffset + 1u].x, particles[strand.pointOffset + 1u].y, particles[strand.pointOffset + 1u].z);
+                strandDirection = hairgpu::Normalize(nextPoint - currentRoot);
+            }
+            const float crossWind = 1.0f - std::fabs(hairgpu::Dot(strandDirection, windDirection));
             const float boundaryProxy = hairgpu::Clamp(4.0f * editProxy * (1.0f - editProxy), 0.0f, 1.0f);
             const float temporalProxy = hairgpu::Clamp(velocityProxy * 0.65f + contactProxy * 0.20f + boundaryProxy * 0.15f, 0.0f, 1.0f);
             const float leakageProxy = hairgpu::Clamp((1.0f - editProxy) * displacementProxy, 0.0f, 1.0f);
             const float penetrationProxy = hairgpu::Clamp(contactProxy * 1.15f, 0.0f, 1.0f);
-            const float uncertaintyProxy = hairgpu::Clamp(velocityProxy * 0.38f + displacementProxy * 0.22f + contactProxy * 0.18f + boundaryProxy * 0.10f + leakageProxy * 0.12f, 0.0f, 1.0f);
-            const float modelErrorProxy = hairgpu::Clamp(displacementProxy * 0.55f + temporalProxy * 0.25f + leakageProxy * 0.20f, 0.0f, 1.0f);
+            const float windExposureProxy = hairgpu::Clamp(windStrengthProxy * (0.55f * crossWind + 0.25f * velocityProxy + 0.20f * displacementProxy), 0.0f, 1.0f);
+            const float environmentComplexityProxy = hairgpu::Clamp(contactProxy * 0.35f + penetrationProxy * 0.20f + windExposureProxy * 0.30f + boundaryProxy * 0.15f, 0.0f, 1.0f);
+            const float uncertaintyProxy = hairgpu::Clamp(velocityProxy * 0.30f + displacementProxy * 0.18f + contactProxy * 0.15f + boundaryProxy * 0.08f + leakageProxy * 0.10f + windExposureProxy * 0.10f + environmentComplexityProxy * 0.09f, 0.0f, 1.0f);
+            const float modelErrorProxy = hairgpu::Clamp(displacementProxy * 0.45f + temporalProxy * 0.20f + leakageProxy * 0.15f + windExposureProxy * 0.10f + environmentComplexityProxy * 0.10f, 0.0f, 1.0f);
             guideBoundaryScores[guideIndex] = boundaryProxy;
             guideTemporalScores[guideIndex] = temporalProxy;
             guideLeakageScores[guideIndex] = leakageProxy;
             guidePenetrationScores[guideIndex] = penetrationProxy;
             guideModelErrorScores[guideIndex] = modelErrorProxy;
+            guideWindExposureScores[guideIndex] = windExposureProxy;
+            guideEnvironmentComplexityScores[guideIndex] = environmentComplexityProxy;
             m_activeSetGuideUncertainty[guideIndex] = uncertaintyProxy;
         }
 
@@ -2888,6 +2949,8 @@ namespace hairgpu::viewer
         runtimeInput.guideTemporalScores = guideTemporalScores;
         runtimeInput.guideLeakageScores = guideLeakageScores;
         runtimeInput.guideModelErrorScores = guideModelErrorScores;
+        runtimeInput.guideWindExposureScores = guideWindExposureScores;
+        runtimeInput.guideEnvironmentComplexityScores = guideEnvironmentComplexityScores;
         runtimeInput.cameraPosition = m_cameraPosition;
         runtimeInput.cameraForward = hairgpu::Normalize(m_cameraTarget - m_cameraPosition);
         runtimeInput.fixedTimeStep = safeDt;
@@ -2923,6 +2986,8 @@ namespace hairgpu::viewer
                << L"  editCov=" << std::fixed << std::setprecision(2) << (m_activeSetPlan.summary.editCoverageRatio * 100.0f) << L"%"
                << L"  estFrame=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.estimatedFrameMilliseconds << L"ms"
                << L"  estMem=" << std::fixed << std::setprecision(0) << m_activeSetPlan.summary.estimatedMemoryMegabytes << L"MB"
+               << L"  seg(avg/max)=" << hairgpu::ParticleCountToSegmentCount(std::max<uint32_t>(static_cast<uint32_t>(std::lround(m_activeSetPlan.summary.averageSelectedParticlesPerStrand)), 2u))
+               << L"/" << hairgpu::ParticleCountToSegmentCount(std::max<uint32_t>(m_activeSetPlan.summary.maxSelectedParticlesPerStrand, 2u))
                << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations;
             m_activeSetLastStatus = ss.str();
         }
@@ -4084,6 +4149,8 @@ namespace hairgpu::viewer
         SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windy Demo"));
         SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Heavy Grounded"));
         SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Game-ish LOD"));
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Submission 128 Standard"));
+        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Maximum Adaptive 2048"));
 
         m_btnPlayPause = createControl(0, L"BUTTON", L"Pause", BS_PUSHBUTTON, IDC_BTN_PLAYPAUSE);
         m_btnReset = createControl(0, L"BUTTON", L"Reset", BS_PUSHBUTTON, IDC_BTN_RESET);
@@ -4165,6 +4232,10 @@ namespace hairgpu::viewer
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Contact"));
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Uncertainty"));
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Edit"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Wind"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Environment"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Refinement Level"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Selected Segments"));
         SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, 0, 0);
         m_labelPartingMask = createControl(0, L"STATIC", L"Parting preview", SS_LEFT, IDC_LABEL_PARTING_MASK_NAME);
         m_previewPartingMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_PARTING_MASK);
@@ -4565,7 +4636,9 @@ namespace hairgpu::viewer
             (m_activePresetName == L"Calm Studio") ? 1 :
             (m_activePresetName == L"Windy Demo") ? 2 :
             (m_activePresetName == L"Heavy Grounded") ? 3 :
-            (m_activePresetName == L"Game-ish LOD") ? 4 : 0, 0);
+            (m_activePresetName == L"Game-ish LOD") ? 4 :
+            (m_activePresetName == L"Submission 128 Standard") ? 5 :
+            (m_activePresetName == L"Maximum Adaptive 2048") ? 6 : 0, 0);
         SendMessageW(m_comboRenderMode, CB_SETCURSEL,
             (m_renderMode == RenderMode::ParticlePointSprite) ? 0 :
             (m_renderMode == RenderMode::ParticleBillboard) ? 1 : 2, 0);
@@ -4741,7 +4814,7 @@ namespace hairgpu::viewer
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_FOLLOWERS, &ok, FALSE);
         if (ok) { m_builderFollowersPerGuide = std::min<UINT>(value, 64u); }
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, &ok, FALSE);
-        if (ok) { m_builderParticlesPerStrand = std::max<UINT>(4u, std::min<UINT>(value, 64u)); }
+        if (ok) { m_builderParticlesPerStrand = hairgpu::ClampRuntimeParticlesPerStrand(static_cast<uint32_t>(value)); }
 
         m_gpuDebugLinesDirty = true;
         SyncControlsFromState();
@@ -4769,14 +4842,17 @@ namespace hairgpu::viewer
         m_showFollowLinks = false;
         m_showFloorGuide = false;
         m_showColliderDebug = false;
+        m_activeSetBudget.standardParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
+        m_activeSetBudget.maxParticlesPerStrand = hairgpu::kIdealParticlesPerStrand;
+        m_activeSetBudget.maxRefinementLevel = 3u;
         switch (presetIndex)
         {
         default:
         case 0:
             m_activePresetName = L"Rapunzel Preview";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 9;
-            m_builderParticlesPerStrand = 17;
+            m_builderGuideCount = 896;
+            m_builderFollowersPerGuide = 5;
+            m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
             m_widthScale = 0.56f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.085f;
@@ -4791,9 +4867,9 @@ namespace hairgpu::viewer
             break;
         case 1:
             m_activePresetName = L"Calm Studio";
-            m_builderGuideCount = 2200;
-            m_builderFollowersPerGuide = 10;
-            m_builderParticlesPerStrand = 15;
+            m_builderGuideCount = 832;
+            m_builderFollowersPerGuide = 6;
+            m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
             m_widthScale = 0.60f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
@@ -4808,9 +4884,9 @@ namespace hairgpu::viewer
             break;
         case 2:
             m_activePresetName = L"Windy Demo";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 9;
-            m_builderParticlesPerStrand = 17;
+            m_builderGuideCount = 768;
+            m_builderFollowersPerGuide = 5;
+            m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
             m_widthScale = 0.58f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.030f;
@@ -4825,9 +4901,9 @@ namespace hairgpu::viewer
             break;
         case 3:
             m_activePresetName = L"Heavy Grounded";
-            m_builderGuideCount = 2800;
-            m_builderFollowersPerGuide = 8;
-            m_builderParticlesPerStrand = 17;
+            m_builderGuideCount = 960;
+            m_builderFollowersPerGuide = 4;
+            m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
             m_widthScale = 0.62f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
@@ -4842,9 +4918,9 @@ namespace hairgpu::viewer
             break;
         case 4:
             m_activePresetName = L"Game-ish LOD";
-            m_builderGuideCount = 1800;
-            m_builderFollowersPerGuide = 6;
-            m_builderParticlesPerStrand = 15;
+            m_builderGuideCount = 640;
+            m_builderFollowersPerGuide = 4;
+            m_builderParticlesPerStrand = 65;
             m_widthScale = 0.54f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
@@ -4856,6 +4932,46 @@ namespace hairgpu::viewer
             m_simConfig.selfCollisionCellSize = 0.090f;
             m_simConfig.stretchCompliance = 3.5e-7f;
             m_simConfig.bendCompliance = 2.5e-5f;
+            break;
+        case 5:
+            m_activePresetName = L"Submission 128 Standard";
+            m_builderGuideCount = 832;
+            m_builderFollowersPerGuide = 6;
+            m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
+            m_widthScale = 0.60f;
+            m_simConfig.gravity = 18.0f;
+            m_simConfig.globalDamping = 0.055f;
+            m_simConfig.windStrength = 0.10f;
+            m_simConfig.solverIterations = 8;
+            m_simConfig.followStiffness = 0.965f;
+            m_selfCollisionRadius = 0.0115f;
+            m_selfCollisionStiffness = 0.36f;
+            m_simConfig.selfCollisionCellSize = 0.085f;
+            m_simConfig.stretchCompliance = 1.0e-7f;
+            m_simConfig.bendCompliance = 1.2e-5f;
+            m_activeSetBudget.standardParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
+            m_activeSetBudget.maxParticlesPerStrand = hairgpu::kIdealParticlesPerStrand;
+            m_activeSetBudget.maxRefinementLevel = 3u;
+            break;
+        case 6:
+            m_activePresetName = L"Maximum Adaptive 2048";
+            m_builderGuideCount = 896;
+            m_builderFollowersPerGuide = 5;
+            m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
+            m_widthScale = 0.58f;
+            m_simConfig.gravity = 18.5f;
+            m_simConfig.globalDamping = 0.040f;
+            m_simConfig.windStrength = 0.85f;
+            m_simConfig.solverIterations = 9;
+            m_simConfig.followStiffness = 0.975f;
+            m_selfCollisionRadius = 0.011f;
+            m_selfCollisionStiffness = 0.34f;
+            m_simConfig.selfCollisionCellSize = 0.082f;
+            m_simConfig.stretchCompliance = 9.0e-8f;
+            m_simConfig.bendCompliance = 1.0e-5f;
+            m_activeSetBudget.standardParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
+            m_activeSetBudget.maxParticlesPerStrand = hairgpu::kMaximumParticlesPerStrand;
+            m_activeSetBudget.maxRefinementLevel = 4u;
             break;
         }
         m_enableSelfCollision = false;
@@ -4966,6 +5082,8 @@ namespace hairgpu::viewer
            << L"  status=" << m_activeSetLastStatus << L"\n";
         ss << L"Budget: scale=" << m_activeSetPlan.summary.budgetScale
            << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations
+           << L"  seg(avg/max)=" << hairgpu::ParticleCountToSegmentCount(std::max<uint32_t>(static_cast<uint32_t>(std::lround(m_activeSetPlan.summary.averageSelectedParticlesPerStrand)), 2u)) << L"/"
+           << hairgpu::ParticleCountToSegmentCount(std::max<uint32_t>(m_activeSetPlan.summary.maxSelectedParticlesPerStrand, 2u))
            << L"  tiers F/R/Fz/C=" << m_activeSetPlan.summary.fullTierCount << L"/"
            << m_activeSetPlan.summary.reducedTierCount << L"/"
            << m_activeSetPlan.summary.frozenTierCount << L"/"
@@ -5047,6 +5165,9 @@ namespace hairgpu::viewer
         out << "activeSetMaxGuides=" << m_activeSetBudget.maxActiveGuides << "\n";
         out << "activeSetPromoteThreshold=" << m_activeSetBudget.promoteScoreThreshold << "\n";
         out << "activeSetTargetFrameMs=" << m_activeSetBudget.targetFrameMilliseconds << "\n";
+        out << "activeSetStandardParticles=" << m_activeSetBudget.standardParticlesPerStrand << "\n";
+        out << "activeSetMaxParticles=" << m_activeSetBudget.maxParticlesPerStrand << "\n";
+        out << "activeSetMaxRefinementLevel=" << m_activeSetBudget.maxRefinementLevel << "\n";
         out << "activeSetFixedCostMs=" << m_activeSetBudget.estimatedFixedCostMilliseconds << "\n";
         out << "activeSetClusterCostMs=" << m_activeSetBudget.estimatedClusterCostMilliseconds << "\n";
         out << "activeSetMotionWeight=" << m_activeSetScoringSettings.motionWeight << "\n";
@@ -5139,7 +5260,7 @@ namespace hairgpu::viewer
         if (auto it = values.find("inlineEditStackText"); it != values.end()) inlineEditStackText = Utf8ToWide(UnescapeSettingsText(it->second));
         if (auto it = values.find("selectedInlineLayerIndex"); it != values.end()) m_selectedInlineLayerIndex = std::max(0, std::stoi(it->second));
         m_maskSourceMode = static_cast<MaskSourceMode>(std::min<uint32_t>(getUInt("maskSourceMode", static_cast<uint32_t>(m_maskSourceMode)), 2u));
-        m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 9u));
+        m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 13u));
         m_activeSetBudget.enableBudgetAdaptation = getBool("activeSetAdaptiveBudget", m_activeSetBudget.enableBudgetAdaptation);
         m_activeSetBudget.enableHardBudgetClamp = getBool("activeSetHardClamp", m_activeSetBudget.enableHardBudgetClamp);
         m_activeSetBudget.maxActiveClusters = std::max<uint32_t>(1u, getUInt("activeSetMaxClusters", m_activeSetBudget.maxActiveClusters));
@@ -5450,7 +5571,7 @@ namespace hairgpu::viewer
                     L", radius " + FormatFloat(m_quickEditBoundaryRadiusUv, 2) +
                     L", group " + FormatOptionalGroupId(m_quickEditGroupId) +
                     (m_quickEditGuidesOnly ? L", guides only" : L", guides+followers") +
-                    (IsBoundaryBeforeAfterOverlayMode() ? L" (Boundary Before/After: left raw, right tinted)" : (IsActiveSetRiskOverlayMode() ? L" (Active-Set overlay shows risk heat + selected clusters)" : L" (Edit Influence overlay adds boundary tint)"));
+                    (IsBoundaryBeforeAfterOverlayMode() ? L" (Boundary Before/After: left raw, right tinted)" : (IsActiveSetRiskOverlayMode() ? L" (Active-Set overlay shows runtime metric + selected clusters)" : L" (Edit Influence overlay adds boundary tint)"));
             }
         }
         SetWindowTextFormat(m_labelQuickEditVisualization, previewLabel);
@@ -5698,7 +5819,11 @@ namespace hairgpu::viewer
                m_maskOverlayMode == MaskOverlayMode::ActiveSetMotion ||
                m_maskOverlayMode == MaskOverlayMode::ActiveSetContact ||
                m_maskOverlayMode == MaskOverlayMode::ActiveSetUncertainty ||
-               m_maskOverlayMode == MaskOverlayMode::ActiveSetEdit;
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetEdit ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetWind ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetEnvironment ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetRefinement ||
+               m_maskOverlayMode == MaskOverlayMode::ActiveSetSelectedSegments;
     }
 
     const wchar_t* GpuHairViewer::GetMaskOverlayModeDisplayName() const
@@ -5714,6 +5839,10 @@ namespace hairgpu::viewer
         case MaskOverlayMode::ActiveSetContact: return L"Active-Set Contact";
         case MaskOverlayMode::ActiveSetUncertainty: return L"Active-Set Uncertainty";
         case MaskOverlayMode::ActiveSetEdit: return L"Active-Set Edit";
+        case MaskOverlayMode::ActiveSetWind: return L"Active-Set Wind";
+        case MaskOverlayMode::ActiveSetEnvironment: return L"Active-Set Environment";
+        case MaskOverlayMode::ActiveSetRefinement: return L"Active-Set Refinement";
+        case MaskOverlayMode::ActiveSetSelectedSegments: return L"Active-Set Selected Segments";
         default: return L"None";
         }
     }
@@ -5730,6 +5859,21 @@ namespace hairgpu::viewer
             return hairgpu::Clamp(score.uncertaintyScore, 0.0f, 1.0f);
         case MaskOverlayMode::ActiveSetEdit:
             return hairgpu::Clamp(score.editScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetWind:
+            return hairgpu::Clamp(score.windExposureScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetEnvironment:
+            return hairgpu::Clamp(score.environmentComplexityScore, 0.0f, 1.0f);
+        case MaskOverlayMode::ActiveSetRefinement:
+        {
+            const float denom = static_cast<float>(std::max<uint32_t>(m_activeSetBudget.maxRefinementLevel, 1u));
+            return hairgpu::Clamp(static_cast<float>(score.refinementLevel) / denom, 0.0f, 1.0f);
+        }
+        case MaskOverlayMode::ActiveSetSelectedSegments:
+        {
+            const float maxSegments = static_cast<float>(std::max<uint32_t>(hairgpu::ParticleCountToSegmentCount(std::max<uint32_t>(m_activeSetBudget.maxParticlesPerStrand, 2u)), 1u));
+            const float selectedSegments = static_cast<float>(std::max<uint32_t>(hairgpu::ParticleCountToSegmentCount(std::max<uint32_t>(score.selectedParticlesPerStrand, 2u)), 1u));
+            return hairgpu::Clamp(selectedSegments / maxSegments, 0.0f, 1.0f);
+        }
         case MaskOverlayMode::ActiveSetRiskSelection:
         default:
             return hairgpu::Clamp(score.finalScore, 0.0f, 1.0f);
@@ -6298,7 +6442,32 @@ namespace hairgpu::viewer
                 r = 0.16f + 0.84f * risk;
                 g = 0.24f + 0.56f * (1.0f - risk);
                 b = 0.96f - 0.82f * risk;
-                if (m_maskOverlayMode == MaskOverlayMode::ActiveSetMotion)
+                if (m_maskOverlayMode == MaskOverlayMode::ActiveSetRefinement ||
+                    m_maskOverlayMode == MaskOverlayMode::ActiveSetSelectedSegments)
+                {
+                    const float v = risk;
+                    if (v < 0.125f)
+                    {
+                        r = 0.20f; g = 0.72f; b = 0.98f;
+                    }
+                    else if (v < 0.25f)
+                    {
+                        r = 0.18f; g = 0.88f; b = 0.46f;
+                    }
+                    else if (v < 0.50f)
+                    {
+                        r = 0.94f; g = 0.88f; b = 0.22f;
+                    }
+                    else if (v < 0.75f)
+                    {
+                        r = 0.98f; g = 0.58f; b = 0.16f;
+                    }
+                    else
+                    {
+                        r = 0.92f; g = 0.24f; b = 0.78f;
+                    }
+                }
+                else if (m_maskOverlayMode == MaskOverlayMode::ActiveSetMotion)
                 {
                     g = Clamp(g + 0.06f * risk, 0.0f, 1.0f);
                     b = Clamp(b + 0.04f * (1.0f - risk), 0.0f, 1.0f);
@@ -6439,6 +6608,7 @@ namespace hairgpu::viewer
         return hairgpu::WriteActiveSetPlanJson(std::filesystem::path(filePath), m_asset, m_activeSetPlan, error);
     }
 
+
     bool GpuHairViewer::ExportRuntimeReport(const std::wstring& filePath) const
     {
         const std::filesystem::path summaryPath(filePath);
@@ -6486,9 +6656,13 @@ namespace hairgpu::viewer
         const std::filesystem::path perfPath = baseDir / (stem + L"_performance.csv");
         const std::filesystem::path planPath = baseDir / (stem + L"_activeset_plan.json");
         const std::filesystem::path settingsPath = baseDir / (stem + L"_viewer_settings.ini");
+        const std::filesystem::path bundleJsonPath = baseDir / (stem + L"_viewer_snapshot.json");
+        const std::filesystem::path bundleMdPath = baseDir / (stem + L"_viewer_snapshot.md");
+        const std::filesystem::path bundleBmpPath = baseDir / (stem + L"_viewer.bmp");
         const bool perfOk = ExportPerformanceCsv(perfPath.wstring());
         const bool planOk = ExportActiveSetPlanJson(planPath.wstring());
         const bool settingsOk = SaveSettingsToFile(settingsPath.wstring());
+        const bool bundleOk = ExportRuntimeReportBundleArtifacts(summaryPath);
 
         const float frameMax = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
         const float simMax = simMs.empty() ? 0.0f : *std::max_element(simMs.begin(), simMs.end());
@@ -6498,6 +6672,14 @@ namespace hairgpu::viewer
         const std::string perfPathUtf8 = WideToUtf8(perfPath.wstring());
         const std::string planPathUtf8 = WideToUtf8(planPath.wstring());
         const std::string settingsPathUtf8 = WideToUtf8(settingsPath.wstring());
+        const std::string bundleJsonUtf8 = WideToUtf8(bundleJsonPath.wstring());
+        const std::string bundleMdUtf8 = WideToUtf8(bundleMdPath.wstring());
+        const std::string bundleBmpUtf8 = WideToUtf8(bundleBmpPath.wstring());
+
+        const uint32_t avgPts = std::max<uint32_t>(static_cast<uint32_t>(std::lround(m_activeSetPlan.summary.averageSelectedParticlesPerStrand)), 2u);
+        const uint32_t maxPts = std::max<uint32_t>(m_activeSetPlan.summary.maxSelectedParticlesPerStrand, 2u);
+        const uint32_t avgSeg = hairgpu::ParticleCountToSegmentCount(avgPts);
+        const uint32_t maxSeg = hairgpu::ParticleCountToSegmentCount(maxPts);
 
         out << "HairGPU Viewer Runtime Report\n";
         out << "=============================\n";
@@ -6517,6 +6699,7 @@ namespace hairgpu::viewer
         out << "activeset.avgSelectedClusters=" << average(selectedClusters);
         out << " currentSelectedClusters=" << m_activeSetPlan.summary.selectedClusterCount;
         out << " currentSelectedGuides=" << m_activeSetPlan.summary.selectedGuideCount;
+        out << " currentSelectedStrands=" << m_activeSetPlan.summary.selectedStrandCount;
         out << " budgetScale=" << m_activeSetPlan.summary.budgetScale << "\n";
         out << "budget.maxClusters=" << m_activeSetBudget.maxActiveClusters;
         out << " budget.maxGuides=" << m_activeSetBudget.maxActiveGuides;
@@ -6524,16 +6707,184 @@ namespace hairgpu::viewer
         out << " budget.targetFrameMs=" << m_activeSetBudget.targetFrameMilliseconds;
         out << " budget.fixedCostMs=" << m_activeSetBudget.estimatedFixedCostMilliseconds;
         out << " budget.clusterCostMs=" << m_activeSetBudget.estimatedClusterCostMilliseconds;
+        out << " budget.standardParticles=" << m_activeSetBudget.standardParticlesPerStrand;
+        out << " budget.maxParticles=" << m_activeSetBudget.maxParticlesPerStrand;
+        out << " budget.maxRefinementLevel=" << m_activeSetBudget.maxRefinementLevel;
         out << " budget.adaptive=" << (m_activeSetBudget.enableBudgetAdaptation ? 1 : 0);
         out << " budget.hardClamp=" << (m_activeSetBudget.enableHardBudgetClamp ? 1 : 0) << "\n";
         out << "weights.motion=" << m_activeSetScoringSettings.motionWeight;
         out << " weights.contact=" << m_activeSetScoringSettings.contactWeight;
         out << " weights.uncertainty=" << m_activeSetScoringSettings.uncertaintyWeight;
-        out << " weights.edit=" << m_activeSetScoringSettings.editWeight << "\n";
+        out << " weights.edit=" << m_activeSetScoringSettings.editWeight;
+        out << " weights.wind=" << m_activeSetScoringSettings.windWeight;
+        out << " weights.environment=" << m_activeSetScoringSettings.environmentWeight << "\n";
+        out << "overlay.current=" << WideToUtf8(GetMaskOverlayModeDisplayName()) << "\n";
+        out << "plan.avgSelectedParticles=" << avgPts;
+        out << " plan.maxSelectedParticles=" << maxPts;
+        out << " plan.avgSelectedSegments=" << avgSeg;
+        out << " plan.maxSelectedSegments=" << maxSeg;
+        out << " plan.naturalness=" << m_activeSetPlan.summary.selectedNaturalnessGain;
+        out << " plan.editCoverage=" << m_activeSetPlan.summary.editCoverageRatio;
+        out << " plan.estimatedFrameMs=" << m_activeSetPlan.summary.estimatedFrameMilliseconds;
+        out << " plan.estimatedMemoryMB=" << m_activeSetPlan.summary.estimatedMemoryMegabytes << "\n";
         out << "exports.performanceCsv=" << (perfOk ? 1 : 0) << " path=" << perfPathUtf8 << "\n";
         out << "exports.activeSetJson=" << (planOk ? 1 : 0) << " path=" << planPathUtf8 << "\n";
         out << "exports.viewerSettings=" << (settingsOk ? 1 : 0) << " path=" << settingsPathUtf8 << "\n";
+        out << "exports.viewerSnapshotJson=" << (bundleOk ? 1 : 0) << " path=" << bundleJsonUtf8 << "\n";
+        out << "exports.viewerSnapshotMarkdown=" << (bundleOk ? 1 : 0) << " path=" << bundleMdUtf8 << "\n";
+        out << "exports.viewerScreenshotBmp=" << (bundleOk ? 1 : 0) << " path=" << bundleBmpUtf8 << "\n";
         return true;
+    }
+
+    bool GpuHairViewer::SaveBackBufferBmp(const std::filesystem::path& filePath) const
+    {
+        if (!m_swapChain || !m_device || !m_context)
+        {
+            return false;
+        }
+
+        ComPtr<ID3D11Texture2D> backBuffer;
+        HRESULT hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+        if (FAILED(hr) || !backBuffer)
+        {
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC desc = {};
+        backBuffer->GetDesc(&desc);
+        D3D11_TEXTURE2D_DESC stagingDesc = desc;
+        stagingDesc.BindFlags = 0u;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.MiscFlags = 0u;
+        ComPtr<ID3D11Texture2D> staging;
+        hr = m_device->CreateTexture2D(&stagingDesc, nullptr, &staging);
+        if (FAILED(hr) || !staging)
+        {
+            return false;
+        }
+
+        m_context->CopyResource(staging.Get(), backBuffer.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        hr = m_context->Map(staging.Get(), 0u, D3D11_MAP_READ, 0u, &mapped);
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
+        const uint32_t width = desc.Width;
+        const uint32_t height = desc.Height;
+        const uint32_t rowStride = ((width * 3u) + 3u) & ~3u;
+        const uint32_t imageSize = rowStride * height;
+        const uint32_t fileSize = 54u + imageSize;
+        std::vector<unsigned char> bytes(static_cast<size_t>(fileSize), 0u);
+        bytes[0] = 'B'; bytes[1] = 'M';
+        auto w32 = [&](size_t offset, uint32_t value)
+        {
+            bytes[offset + 0] = static_cast<unsigned char>(value & 0xFFu);
+            bytes[offset + 1] = static_cast<unsigned char>((value >> 8) & 0xFFu);
+            bytes[offset + 2] = static_cast<unsigned char>((value >> 16) & 0xFFu);
+            bytes[offset + 3] = static_cast<unsigned char>((value >> 24) & 0xFFu);
+        };
+        auto w16 = [&](size_t offset, uint16_t value)
+        {
+            bytes[offset + 0] = static_cast<unsigned char>(value & 0xFFu);
+            bytes[offset + 1] = static_cast<unsigned char>((value >> 8) & 0xFFu);
+        };
+        w32(2, fileSize);
+        w32(10, 54u);
+        w32(14, 40u);
+        w32(18, width);
+        w32(22, height);
+        w16(26, 1u);
+        w16(28, 24u);
+        w32(34, imageSize);
+
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            const unsigned char* srcRow = static_cast<const unsigned char*>(mapped.pData) + mapped.RowPitch * y;
+            unsigned char* dstRow = bytes.data() + 54u + rowStride * (height - 1u - y);
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const unsigned char* srcPx = srcRow + x * 4u;
+                unsigned char* dstPx = dstRow + x * 3u;
+                // DXGI_FORMAT_R8G8B8A8_UNORM -> BMP BGR
+                dstPx[0] = srcPx[2];
+                dstPx[1] = srcPx[1];
+                dstPx[2] = srcPx[0];
+            }
+        }
+
+        m_context->Unmap(staging.Get(), 0u);
+        std::ofstream out(filePath, std::ios::binary);
+        if (!out)
+        {
+            return false;
+        }
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        return static_cast<bool>(out);
+    }
+
+
+    bool GpuHairViewer::ExportRuntimeReportBundleArtifacts(const std::filesystem::path& summaryPath) const
+    {
+        const std::filesystem::path baseDir = summaryPath.parent_path();
+        const std::wstring stem = summaryPath.stem().wstring();
+        const std::filesystem::path screenshotPath = baseDir / (stem + L"_viewer.bmp");
+        const std::filesystem::path jsonPath = baseDir / (stem + L"_viewer_snapshot.json");
+        const std::filesystem::path mdPath = baseDir / (stem + L"_viewer_snapshot.md");
+        const bool screenshotOk = SaveBackBufferBmp(screenshotPath);
+
+        const uint32_t avgPts = std::max<uint32_t>(static_cast<uint32_t>(std::lround(m_activeSetPlan.summary.averageSelectedParticlesPerStrand)), 2u);
+        const uint32_t maxPts = std::max<uint32_t>(m_activeSetPlan.summary.maxSelectedParticlesPerStrand, 2u);
+        std::ofstream json(jsonPath);
+        if (json)
+        {
+            json << "{\n"
+                 << "  \"assetSource\": \"" << JsonEscapeLocal(WideToUtf8(m_lastAssetSource)) << "\",\n"
+                 << "  \"preset\": \"" << JsonEscapeLocal(WideToUtf8(m_activePresetName)) << "\",\n"
+                 << "  \"overlayMode\": \"" << JsonEscapeLocal(WideToUtf8(GetMaskOverlayModeDisplayName())) << "\",\n"
+                 << "  \"selectedClusters\": " << m_activeSetPlan.summary.selectedClusterCount << ",\n"
+                 << "  \"selectedGuides\": " << m_activeSetPlan.summary.selectedGuideCount << ",\n"
+                 << "  \"selectedStrands\": " << m_activeSetPlan.summary.selectedStrandCount << ",\n"
+                 << "  \"selectedNaturalnessGain\": " << m_activeSetPlan.summary.selectedNaturalnessGain << ",\n"
+                 << "  \"editCoverageRatio\": " << m_activeSetPlan.summary.editCoverageRatio << ",\n"
+                 << "  \"estimatedFrameMilliseconds\": " << m_activeSetPlan.summary.estimatedFrameMilliseconds << ",\n"
+                 << "  \"estimatedMemoryMegabytes\": " << m_activeSetPlan.summary.estimatedMemoryMegabytes << ",\n"
+                 << "  \"averageSelectedParticlesPerStrand\": " << avgPts << ",\n"
+                 << "  \"maxSelectedParticlesPerStrand\": " << maxPts << ",\n"
+                 << "  \"averageSelectedSegmentsPerStrand\": " << hairgpu::ParticleCountToSegmentCount(avgPts) << ",\n"
+                 << "  \"maxSelectedSegmentsPerStrand\": " << hairgpu::ParticleCountToSegmentCount(maxPts) << ",\n"
+                 << "  \"recommendedSolverIterations\": " << m_activeSetPlan.summary.recommendedSolverIterations << ",\n"
+                 << "  \"screenshotPath\": \"" << JsonEscapeLocal(WideToUtf8(screenshotPath.filename().wstring())) << "\",\n"
+                 << "  \"screenshotWritten\": " << (screenshotOk ? "true" : "false") << "\n"
+                 << "}\n";
+        }
+
+        std::ofstream md(mdPath);
+        if (md)
+        {
+            md << "# Viewer Snapshot\n\n";
+            md << "- Preset: " << WideToUtf8(m_activePresetName) << "\n";
+            md << "- Overlay: " << WideToUtf8(GetMaskOverlayModeDisplayName()) << "\n";
+            md << "- Selected clusters: " << m_activeSetPlan.summary.selectedClusterCount << "\n";
+            md << "- Selected segments avg/max: "
+               << hairgpu::ParticleCountToSegmentCount(avgPts) << "/"
+               << hairgpu::ParticleCountToSegmentCount(maxPts) << "\n";
+            md << "- Naturalness gain: " << m_activeSetPlan.summary.selectedNaturalnessGain << "\n";
+            md << "- Edit coverage: " << (m_activeSetPlan.summary.editCoverageRatio * 100.0f) << "%\n";
+            md << "- Estimated frame ms: " << m_activeSetPlan.summary.estimatedFrameMilliseconds << "\n";
+            md << "- Estimated memory MB: " << m_activeSetPlan.summary.estimatedMemoryMegabytes << "\n\n";
+            if (screenshotOk)
+            {
+                md << "![viewer](" << WideToUtf8(screenshotPath.filename().wstring()) << ")\n";
+            }
+            else
+            {
+                md << "Screenshot export failed.\n";
+            }
+        }
+        return screenshotOk;
     }
 
     bool GpuHairViewer::ProjectWorldToScreen(const Vec3& world, float& outX, float& outY) const
@@ -8236,6 +8587,19 @@ namespace hairgpu::viewer
                                RenderMode::ParticlePointSprite;
                 SyncControlsFromState();
                 return 0;
+            case VK_F9:
+            {
+                const std::filesystem::path capturePath = BuildAutoReportCapturePath(++m_reportCaptureCounter);
+                if (ExportRuntimeReport(capturePath.wstring()))
+                {
+                    m_lastReportBundleStatus = std::wstring(L"Saved report bundle: ") + capturePath.filename().wstring();
+                }
+                else
+                {
+                    m_lastReportBundleStatus = std::wstring(L"Failed report bundle: ") + capturePath.filename().wstring();
+                }
+                return 0;
+            }
             case VK_OEM_MINUS:
                 m_simConfig.selfCollisionCellSize = Clamp(m_simConfig.selfCollisionCellSize * 0.92f, 0.03f, 0.20f);
                 SyncControlsFromState();

@@ -444,6 +444,10 @@ namespace hairgpu::viewer
             ActiveSetContact = 7,
             ActiveSetUncertainty = 8,
             ActiveSetEdit = 9,
+            ActiveSetWind = 10,
+            ActiveSetEnvironment = 11,
+            ActiveSetRefinement = 12,
+            ActiveSetSelectedSegments = 13,
         };
 
         enum class CpuReadbackMode : uint32_t
@@ -568,6 +572,8 @@ namespace hairgpu::viewer
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
+        bool SaveBackBufferBmp(const std::filesystem::path& filePath) const;
+        bool ExportRuntimeReportBundleArtifacts(const std::filesystem::path& summaryPath) const;
         bool ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles);
         bool PickStrandAtPoint(POINT clientPoint);
         bool ApplySelectedStrandOffset(const hairgpu::Vec3& rootOffset, const hairgpu::Vec3& tipOffset);
@@ -692,9 +698,9 @@ namespace hairgpu::viewer
         float m_runtimeAngularBendDamping = 0.08f;
         uint32_t m_sortedBroadphasePaddedCount = 1u;
 
-        uint32_t m_builderGuideCount = 2500;
-        uint32_t m_builderFollowersPerGuide = 9;
-        uint32_t m_builderParticlesPerStrand = 15;
+        uint32_t m_builderGuideCount = 896;
+        uint32_t m_builderFollowersPerGuide = 5;
+        uint32_t m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
@@ -747,6 +753,8 @@ namespace hairgpu::viewer
         float m_lastFrameSeconds = 0.0f;
         float m_lastSimulationStepMilliseconds = 0.0f;
         float m_statsUpdateAccumulator = 0.0f;
+        uint32_t m_reportCaptureCounter = 0u;
+        std::wstring m_lastReportBundleStatus = L"No report capture yet";
 
         hairgpu::HairAsset m_asset;
         hairgpu::GpuSimulationConfig m_simConfig;

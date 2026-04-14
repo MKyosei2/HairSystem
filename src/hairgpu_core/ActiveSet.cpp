@@ -348,6 +348,8 @@ namespace hairgpu
                                      float temporal,
                                      float leakage,
                                      float modelError,
+                                     float windExposure,
+                                     float environmentComplexity,
                                      float edit,
                                      float clusterSizeScore)
         {
@@ -363,6 +365,8 @@ namespace hairgpu
                 temporal * std::max(scoringSettings.temporalWeight, 0.0f) +
                 leakage * std::max(scoringSettings.leakageWeight, 0.0f) +
                 modelError * std::max(scoringSettings.modelErrorWeight, 0.0f) +
+                windExposure * std::max(scoringSettings.windWeight, 0.0f) +
+                environmentComplexity * std::max(scoringSettings.environmentWeight, 0.0f) +
                 edit * std::max(scoringSettings.editWeight, 0.0f) +
                 clusterSizeScore * std::max(scoringSettings.clusterSizeWeight, 0.0f);
             const float weightSum =
@@ -377,6 +381,8 @@ namespace hairgpu
                 std::max(scoringSettings.temporalWeight, 0.0f) +
                 std::max(scoringSettings.leakageWeight, 0.0f) +
                 std::max(scoringSettings.modelErrorWeight, 0.0f) +
+                std::max(scoringSettings.windWeight, 0.0f) +
+                std::max(scoringSettings.environmentWeight, 0.0f) +
                 std::max(scoringSettings.editWeight, 0.0f) +
                 std::max(scoringSettings.clusterSizeWeight, 0.0f);
             if (weightSum <= 1.0e-6f)
@@ -413,6 +419,70 @@ namespace hairgpu
                 ? Clamp(static_cast<float>(pointCount) / static_cast<float>(maxClusterPoints), 0.0f, 1.0f)
                 : strandFactor;
             return baseCost * (0.55f + 0.30f * strandFactor + 0.15f * pointFactor);
+        }
+
+        uint32_t ComputeRefinementLevel(const ActiveSetBudget& budget,
+                                        float naturalnessGain,
+                                        float edit,
+                                        float contact,
+                                        float penetration,
+                                        float windExposure,
+                                        float environmentComplexity,
+                                        bool mandatoryEdit)
+        {
+            if (!budget.enableSegmentAdaptation)
+            {
+                return 0u;
+            }
+            const float signal = Clamp(naturalnessGain * 0.45f + edit * 0.18f + contact * 0.12f +
+                                       penetration * 0.10f + windExposure * 0.10f + environmentComplexity * 0.05f,
+                                       0.0f,
+                                       1.0f);
+            uint32_t level = 0u;
+            if (signal >= 0.55f) level = 1u;
+            if (signal >= 0.72f) level = 2u;
+            if (signal >= 0.86f) level = 3u;
+            if (mandatoryEdit && level < 1u) level = 1u;
+            if ((penetration >= 0.70f || contact >= 0.75f || windExposure >= 0.80f) && level < 2u) level = 2u;
+            return std::min<uint32_t>(level, budget.maxRefinementLevel);
+        }
+
+        float EstimateSegmentAdaptedTimeCost(const ActiveSetBudget& budget,
+                                             float clusterSizeScore,
+                                             float naturalnessGain,
+                                             bool mandatoryEdit,
+                                             uint32_t selectedParticlesPerStrand,
+                                             uint32_t baseParticlesPerStrand,
+                                             float windExposure,
+                                             float environmentComplexity)
+        {
+            const float baseCost = EstimateClusterTimeCost(budget, clusterSizeScore, naturalnessGain, mandatoryEdit);
+            const float baseSegments = static_cast<float>(std::max<uint32_t>(ParticleCountToSegmentCount(baseParticlesPerStrand), 1u));
+            const float selectedSegments = static_cast<float>(std::max<uint32_t>(ParticleCountToSegmentCount(selectedParticlesPerStrand), 1u));
+            const float segmentScale = std::max(1.0f, selectedSegments / baseSegments);
+            const float environmentScale = 1.0f + 0.22f * Clamp(windExposure, 0.0f, 1.0f) + 0.14f * Clamp(environmentComplexity, 0.0f, 1.0f);
+            return baseCost * segmentScale * environmentScale;
+        }
+
+        float EstimateSegmentAdaptedMemoryCost(const ActiveSetBudget& budget,
+                                               float clusterSizeScore,
+                                               uint32_t strandCount,
+                                               uint32_t pointCount,
+                                               uint32_t maxClusterStrands,
+                                               uint32_t maxClusterPoints,
+                                               uint32_t selectedParticlesPerStrand,
+                                               uint32_t baseParticlesPerStrand)
+        {
+            const float baseCost = EstimateClusterMemoryCost(budget,
+                                                             clusterSizeScore,
+                                                             strandCount,
+                                                             pointCount,
+                                                             maxClusterStrands,
+                                                             maxClusterPoints);
+            const float scale = std::max(1.0f,
+                static_cast<float>(std::max<uint32_t>(selectedParticlesPerStrand, 2u)) /
+                static_cast<float>(std::max<uint32_t>(baseParticlesPerStrand, 2u)));
+            return baseCost * scale;
         }
     }
 
@@ -602,6 +672,7 @@ namespace hairgpu
         const float adaptedTimeBudget = availableTimeBudget * std::min(1.0f, ComputeBudgetScale(budget));
         const float selectionTimeBudget = (budget.enableHardBudgetClamp ? adaptedTimeBudget : availableTimeBudget);
         const float selectionMemoryBudget = std::max(0.0f, budget.memoryBudgetMegabytes - budget.estimatedFixedMemoryMegabytes);
+        const uint32_t baseParticlesPerStrand = ClampRuntimeParticlesPerStrand(std::max<uint32_t>(asset.particlesPerStrand, budget.standardParticlesPerStrand));
 
         outPlan.scores.reserve(clusters.size());
         struct RankedCluster
@@ -616,6 +687,8 @@ namespace hairgpu
             bool mandatoryEdit = false;
             uint32_t guideCount = 0u;
             uint32_t strandCount = 0u;
+            uint32_t refinementLevel = 0u;
+            uint32_t selectedParticlesPerStrand = 0u;
         };
         std::vector<RankedCluster> mandatoryCandidates;
         std::vector<RankedCluster> optionalCandidates;
@@ -656,6 +729,8 @@ namespace hairgpu
             const float temporal = AverageOptionalScalar(runtimeInput.guideTemporalScores, cluster.guideStrandIndices, derivedTemporal);
             const float derivedLeakage = Clamp((1.0f - edit) * displacement * 0.70f + boundary * 0.30f, 0.0f, 1.0f);
             const float leakage = AverageOptionalScalar(runtimeInput.guideLeakageScores, cluster.guideStrandIndices, derivedLeakage);
+            const float windExposure = AverageOptionalScalar(runtimeInput.guideWindExposureScores, cluster.guideStrandIndices, temporal * 0.5f);
+            const float environmentComplexity = AverageOptionalScalar(runtimeInput.guideEnvironmentComplexityScores, cluster.guideStrandIndices, Clamp(contact * 0.5f + windExposure * 0.5f, 0.0f, 1.0f));
             const float clusterSizeScore = Clamp(static_cast<float>(cluster.strandIndices.size()) / maxClusterStrandsF, 0.0f, 1.0f);
             const bool mandatoryEdit = budget.enforceEditCoverage && edit >= Clamp(budget.mandatoryEditThreshold, 0.0f, 1.0f);
             if (mandatoryEdit)
@@ -683,15 +758,35 @@ namespace hairgpu
                                                                  temporal,
                                                                  leakage,
                                                                  modelError,
+                                                                 windExposure,
+                                                                 environmentComplexity,
                                                                  edit,
                                                                  clusterSizeScore);
-            const float timeCostMs = EstimateClusterTimeCost(budget, clusterSizeScore, naturalnessGain, mandatoryEdit);
-            const float memoryCostMb = EstimateClusterMemoryCost(budget,
-                                                                 clusterSizeScore,
-                                                                 static_cast<uint32_t>(cluster.strandIndices.size()),
-                                                                 pointCount,
-                                                                 maxClusterStrands,
-                                                                 maxClusterPoints);
+            const uint32_t refinementLevel = ComputeRefinementLevel(budget,
+                                                                    naturalnessGain,
+                                                                    edit,
+                                                                    contact,
+                                                                    penetration,
+                                                                    windExposure,
+                                                                    environmentComplexity,
+                                                                    mandatoryEdit);
+            const uint32_t selectedParticlesPerStrand = ResolveAdaptiveParticlesPerStrand(baseParticlesPerStrand, refinementLevel, budget.maxParticlesPerStrand);
+            const float timeCostMs = EstimateSegmentAdaptedTimeCost(budget,
+                                                                    clusterSizeScore,
+                                                                    naturalnessGain,
+                                                                    mandatoryEdit,
+                                                                    selectedParticlesPerStrand,
+                                                                    baseParticlesPerStrand,
+                                                                    windExposure,
+                                                                    environmentComplexity);
+            const float memoryCostMb = EstimateSegmentAdaptedMemoryCost(budget,
+                                                                        clusterSizeScore,
+                                                                        static_cast<uint32_t>(cluster.strandIndices.size()),
+                                                                        pointCount,
+                                                                        maxClusterStrands,
+                                                                        maxClusterPoints,
+                                                                        selectedParticlesPerStrand,
+                                                                        baseParticlesPerStrand);
             const float normalizedTimeCost = (selectionTimeBudget > 1.0e-4f) ? (timeCostMs / selectionTimeBudget) : ((timeCostMs > 0.0f) ? 1.0f : 0.0f);
             const float normalizedMemoryCost = (selectionMemoryBudget > 1.0e-4f) ? (memoryCostMb / selectionMemoryBudget) : ((memoryCostMb > 0.0f) ? 1.0f : 0.0f);
             const float combinedCost = std::max(0.05f,
@@ -717,6 +812,8 @@ namespace hairgpu
             score.temporalScore = temporal;
             score.leakageScore = leakage;
             score.modelErrorScore = modelError;
+            score.windExposureScore = windExposure;
+            score.environmentComplexityScore = environmentComplexity;
             score.editScore = edit;
             score.clusterSizeScore = clusterSizeScore;
             score.naturalnessGain = naturalnessGain;
@@ -725,6 +822,8 @@ namespace hairgpu
             score.efficiencyScore = efficiencyScore;
             score.finalScore = finalScore;
             score.mandatoryEditCluster = mandatoryEdit;
+            score.refinementLevel = refinementLevel;
+            score.selectedParticlesPerStrand = selectedParticlesPerStrand;
             outPlan.scores.push_back(score);
 
             RankedCluster rankedCluster = {};
@@ -738,6 +837,8 @@ namespace hairgpu
             rankedCluster.mandatoryEdit = mandatoryEdit;
             rankedCluster.guideCount = static_cast<uint32_t>(cluster.guideStrandIndices.size());
             rankedCluster.strandCount = static_cast<uint32_t>(cluster.strandIndices.size());
+            rankedCluster.refinementLevel = refinementLevel;
+            rankedCluster.selectedParticlesPerStrand = selectedParticlesPerStrand;
 
             if (mandatoryEdit)
             {
@@ -785,6 +886,7 @@ namespace hairgpu
 
         outPlan.strandCorrectiveMask.assign(asset.strands.size(), 0u);
         outPlan.recommendedSimulationTiers.assign(asset.strands.size(), SimTier::Reduced);
+        outPlan.recommendedParticlesPerStrand.assign(asset.strands.size(), baseParticlesPerStrand);
 
         uint32_t selectedGuideCount = 0u;
         uint32_t selectedStrandCount = 0u;
@@ -792,6 +894,8 @@ namespace hairgpu
         float selectedScoreSum = 0.0f;
         float selectedNaturalnessSum = 0.0f;
         float selectedEfficiencySum = 0.0f;
+        uint64_t selectedParticlesSum = 0u;
+        uint32_t maxSelectedParticlesPerStrand = 0u;
         float lowestSelectedScore = 0.0f;
         const float budgetScale = ComputeBudgetScale(budget);
         const uint32_t configuredMinActiveClusters = budget.minActiveClusters;
@@ -1078,6 +1182,8 @@ namespace hairgpu
             << " hardMaxClusters=" << plan.summary.hardMaxActiveClusters
             << " estFrameMs=" << plan.summary.estimatedFrameMilliseconds
             << " estMemoryMB=" << plan.summary.estimatedMemoryMegabytes
+            << " avgSelectedParticles=" << plan.summary.averageSelectedParticlesPerStrand
+            << " maxSelectedParticles=" << plan.summary.maxSelectedParticlesPerStrand
             << " recommendedSolverIterations=" << plan.summary.recommendedSolverIterations
             << " tierCounts=" << plan.summary.fullTierCount << "/" << plan.summary.reducedTierCount << "/"
             << plan.summary.frozenTierCount << "/" << plan.summary.cachedTierCount;

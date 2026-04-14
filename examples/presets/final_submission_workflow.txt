@@ -1,0 +1,13 @@
+# Example final submission workflow
+
+# 1) Run profile compare
+hairgpu_cli hybrid-profile-compare teacher_dir bundle_dir out_compare standard128,ideal1024,max2048
+
+# 2) In the viewer, load matching preset/config and press F9 to export report bundles
+#    Copy exported BMP screenshots into:
+#    out_compare/standard128/
+#    out_compare/ideal1024/
+#    out_compare/max2048/
+
+# 3) Rebuild final HTML/LaTeX report
+hairgpu_cli hybrid-final-report out_compare

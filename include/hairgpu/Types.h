@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -89,6 +90,45 @@ namespace hairgpu
         uint32_t followerStrandCount = 0;
         uint32_t particlesPerStrand = 0;
     };
+
+    constexpr uint32_t kDevelopmentParticlesPerStrand = 17u;   // 16 segments
+    constexpr uint32_t kStandardParticlesPerStrand = 129u;     // 128 segments (submission standard)
+    constexpr uint32_t kIdealParticlesPerStrand = 1025u;       // 1024 segments (local high-quality target)
+    constexpr uint32_t kMaximumParticlesPerStrand = 2049u;     // 2048 segments (maximum configuration)
+    constexpr uint32_t kMaxSupportedParticlesPerStrand = kMaximumParticlesPerStrand;
+
+    inline uint32_t ParticleCountToSegmentCount(uint32_t particlesPerStrand)
+    {
+        return (particlesPerStrand > 0u) ? (particlesPerStrand - 1u) : 0u;
+    }
+
+    inline uint32_t SegmentCountToParticleCount(uint32_t segmentCount)
+    {
+        return std::max<uint32_t>(segmentCount + 1u, 2u);
+    }
+
+    inline uint32_t ClampRuntimeParticlesPerStrand(uint32_t particlesPerStrand)
+    {
+        return std::max<uint32_t>(4u, std::min<uint32_t>(particlesPerStrand, kMaxSupportedParticlesPerStrand));
+    }
+
+    inline uint32_t ResolveAdaptiveParticlesPerStrand(uint32_t baseParticlesPerStrand,
+                                                      uint32_t refinementLevel,
+                                                      uint32_t maxParticlesPerStrand = kIdealParticlesPerStrand)
+    {
+        const uint32_t safeBase = ClampRuntimeParticlesPerStrand(baseParticlesPerStrand);
+        const uint32_t safeMax = ClampRuntimeParticlesPerStrand(std::max<uint32_t>(maxParticlesPerStrand, safeBase));
+        uint64_t refined = safeBase;
+        for (uint32_t level = 0u; level < refinementLevel; ++level)
+        {
+            refined = std::min<uint64_t>(static_cast<uint64_t>(safeMax), refined * 2ull - 1ull);
+            if (refined >= safeMax)
+            {
+                break;
+            }
+        }
+        return ClampRuntimeParticlesPerStrand(static_cast<uint32_t>(refined));
+    }
 
 
 

@@ -110,7 +110,7 @@ namespace hairgpu
                 outError = "Failed to write validation report.";
                 return false;
             }
-            out << BuildHairAssetValidationSummary(report, true, 64u) << "\n";
+            out << BuildHairAssetValidationSummary(report, true, kStandardParticlesPerStrand) << "\n";
         }
 
         if (settings.saveMetricsJson && !WriteHairAssetMetricsJson(outputs.metricsJsonPath, asset, error))

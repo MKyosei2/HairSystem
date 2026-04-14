@@ -79,7 +79,7 @@ namespace hairgpu
             {
                 maxPointCount = std::max<uint32_t>(maxPointCount, static_cast<uint32_t>(strand.points.size()));
             }
-            asset.particlesPerStrand = std::max<uint32_t>(4u, std::min<uint32_t>(64u, maxPointCount));
+            asset.particlesPerStrand = ClampRuntimeParticlesPerStrand(std::max<uint32_t>(maxPointCount, 4u));
             std::vector<Vec3> roots;
             roots.reserve(strands.size());
             for (size_t strandIndex = 0; strandIndex < strands.size(); ++strandIndex)
@@ -943,7 +943,7 @@ namespace hairgpu
             }
         }
 
-        const uint32_t particlesPerStrand = std::max<uint32_t>(4u, std::min<uint32_t>(maxPointCount, 64u));
+        const uint32_t particlesPerStrand = ClampRuntimeParticlesPerStrand(std::max<uint32_t>(maxPointCount, 4u));
         HairAsset asset;
         asset.guideStrandCount = guideCount;
         asset.followerStrandCount = static_cast<uint32_t>(inputStrands.size()) - guideCount;
@@ -1222,7 +1222,7 @@ namespace hairgpu
             }
         }
 
-        const uint32_t particlesPerStrand = std::max<uint32_t>(4u, std::min<uint32_t>(maxPointCount, 64u));
+        const uint32_t particlesPerStrand = ClampRuntimeParticlesPerStrand(std::max<uint32_t>(maxPointCount, 4u));
         HairAsset asset;
         asset.guideStrandCount = guideCount;
         asset.followerStrandCount = static_cast<uint32_t>(inputStrands.size()) - guideCount;
@@ -1428,7 +1428,7 @@ namespace hairgpu
             {
                 maxPointCount = std::max<uint32_t>(maxPointCount, static_cast<uint32_t>(strand.points.size()));
             }
-            asset.particlesPerStrand = std::max<uint32_t>(4u, std::min<uint32_t>(64u, maxPointCount));
+            asset.particlesPerStrand = ClampRuntimeParticlesPerStrand(std::max<uint32_t>(maxPointCount, 4u));
             std::vector<Vec3> roots;
             roots.reserve(strands.size());
             for (size_t strandIndex = 0; strandIndex < strands.size(); ++strandIndex)

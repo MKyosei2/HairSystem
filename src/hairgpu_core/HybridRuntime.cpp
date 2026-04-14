@@ -764,6 +764,55 @@ namespace hairgpu
             return scores;
         }
 
+        std::vector<float> BuildGuideWindExposureScores(const HairAsset& asset,
+                                                        const std::vector<Vec3>& currentRoots,
+                                                        const std::vector<Vec3>& previousRoots,
+                                                        float fixedTimeStep,
+                                                        float windStrengthProxy,
+                                                        const Vec3& windDirection)
+        {
+            const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+            std::vector<float> scores(guideCount, 0.0f);
+            const Vec3 safeWindDir = Normalize((Length(windDirection) > 1.0e-6f) ? windDirection : Vec3(1.0f, 0.0f, 0.0f));
+            const float windStrength = Clamp(windStrengthProxy, 0.0f, 1.0f);
+            const float safeDt = std::max(fixedTimeStep, 1.0e-4f);
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                const StrandRange& strand = asset.strands[guideIndex];
+                const Vec3 root = (guideIndex < currentRoots.size()) ? currentRoots[guideIndex] : Vec3(0.0f, 0.0f, 0.0f);
+                const Vec3 previous = (guideIndex < previousRoots.size()) ? previousRoots[guideIndex] : root;
+                Vec3 tangent = Vec3(0.0f, 1.0f, 0.0f);
+                if (strand.pointCount > 1u && strand.pointOffset + 1u < asset.restPoints.size())
+                {
+                    tangent = Normalize(asset.restPoints[strand.pointOffset + 1u] - asset.restPoints[strand.pointOffset]);
+                }
+                const float velocityMagnitude = Clamp(Length(root - previous) / safeDt / 0.35f, 0.0f, 1.0f);
+                const float crossWind = 1.0f - std::fabs(Dot(tangent, safeWindDir));
+                const float heightFactor = Clamp((root.y - 0.9f) / 0.9f, 0.0f, 1.0f);
+                scores[guideIndex] = Clamp(windStrength * (0.55f * crossWind + 0.25f * velocityMagnitude + 0.20f * heightFactor), 0.0f, 1.0f);
+            }
+            return scores;
+        }
+
+        std::vector<float> BuildGuideEnvironmentComplexityScores(const std::vector<float>& contactScores,
+                                                                 const std::vector<float>& penetrationScores,
+                                                                 const std::vector<float>& windExposureScores,
+                                                                 const std::vector<float>& modelErrorScores)
+        {
+            const size_t count = std::max(std::max(contactScores.size(), penetrationScores.size()),
+                                          std::max(windExposureScores.size(), modelErrorScores.size()));
+            std::vector<float> scores(count, 0.0f);
+            for (size_t i = 0u; i < count; ++i)
+            {
+                const float contact = (i < contactScores.size()) ? contactScores[i] : 0.0f;
+                const float penetration = (i < penetrationScores.size()) ? penetrationScores[i] : 0.0f;
+                const float wind = (i < windExposureScores.size()) ? windExposureScores[i] : 0.0f;
+                const float modelError = (i < modelErrorScores.size()) ? modelErrorScores[i] : 0.0f;
+                scores[i] = Clamp(contact * 0.35f + penetration * 0.20f + wind * 0.25f + modelError * 0.20f, 0.0f, 1.0f);
+            }
+            return scores;
+        }
+
         std::vector<float> BuildGuideUncertainty(const HairAsset& asset,
                                                  const std::vector<Vec3>& currentRoots,
                                                  const std::vector<Vec3>& previousRoots,
@@ -1088,6 +1137,17 @@ namespace hairgpu
                                                                               1.0f / std::max(settings.frameRate, 1.0f),
                                                                               1.0f,
                                                                               0.45f);
+            const float teacherWindStrengthProxy = Clamp(settings.swayAmplitude * settings.windCyclesPerSecond * 6.0f, 0.0f, 1.0f);
+            const std::vector<float> guideWindExposureScores = BuildGuideWindExposureScores(asset,
+                                                                                           currentGuideRoots,
+                                                                                           previousGuideRoots,
+                                                                                           1.0f / std::max(settings.frameRate, 1.0f),
+                                                                                           teacherWindStrengthProxy,
+                                                                                           Vec3(1.0f, 0.0f, 0.0f));
+            const std::vector<float> guideEnvironmentComplexityScores = BuildGuideEnvironmentComplexityScores(guideContactScores,
+                                                                                                             guidePenetrationScores,
+                                                                                                             guideWindExposureScores,
+                                                                                                             modelErrorScores);
 
             ActiveSetRuntimeInput runtimeInput = {};
             runtimeInput.currentGuideRoots = currentGuideRoots;
@@ -1097,6 +1157,8 @@ namespace hairgpu
             runtimeInput.guideUncertainty = guideUncertainty;
             runtimeInput.guideTemporalScores = guideUncertainty;
             runtimeInput.guideModelErrorScores = modelErrorScores;
+            runtimeInput.guideWindExposureScores = guideWindExposureScores;
+            runtimeInput.guideEnvironmentComplexityScores = guideEnvironmentComplexityScores;
             runtimeInput.cameraPosition = Vec3(0.0f, 1.55f, -1.85f);
             runtimeInput.cameraForward = Normalize(Vec3(0.0f, -0.05f, 1.0f));
             runtimeInput.fixedTimeStep = 1.0f / std::max(settings.frameRate, 1.0f);
@@ -1151,6 +1213,8 @@ namespace hairgpu
                      << plan.summary.selectedNaturalnessGain << ","
                      << plan.summary.averageEfficiencyScore << ","
                      << plan.summary.editCoverageRatio << ","
+                     << plan.summary.averageSelectedParticlesPerStrand << ","
+                     << plan.summary.maxSelectedParticlesPerStrand << ","
                      << plan.summary.budgetScale << ","
                      << plan.summary.recommendedSolverIterations << ","
                      << plan.summary.fullTierCount << ","
@@ -2106,6 +2170,19 @@ namespace hairgpu
             out << "budgetTargetFrameMs=" << bundle.budget.targetFrameMilliseconds << "\n";
             out << "budgetMinSolverIterations=" << bundle.budget.minSolverIterations << "\n";
             out << "budgetMaxSolverIterations=" << bundle.budget.maxSolverIterations << "\n";
+            out << "budgetStandardParticlesPerStrand=" << bundle.budget.standardParticlesPerStrand << "\n";
+            out << "budgetMaxParticlesPerStrand=" << bundle.budget.maxParticlesPerStrand << "\n";
+            out << "budgetMaxRefinementLevel=" << bundle.budget.maxRefinementLevel << "\n";
+            out << "budgetMemoryBudgetMB=" << bundle.budget.memoryBudgetMegabytes << "\n";
+            out << "budgetFixedMemoryMB=" << bundle.budget.estimatedFixedMemoryMegabytes << "\n";
+            out << "budgetClusterMemoryMB=" << bundle.budget.estimatedClusterMemoryMegabytes << "\n";
+            out << "scoringPenetrationWeight=" << bundle.scoringSettings.penetrationWeight << "\n";
+            out << "scoringBoundaryWeight=" << bundle.scoringSettings.boundaryWeight << "\n";
+            out << "scoringTemporalWeight=" << bundle.scoringSettings.temporalWeight << "\n";
+            out << "scoringLeakageWeight=" << bundle.scoringSettings.leakageWeight << "\n";
+            out << "scoringModelErrorWeight=" << bundle.scoringSettings.modelErrorWeight << "\n";
+            out << "scoringWindWeight=" << bundle.scoringSettings.windWeight << "\n";
+            out << "scoringEnvironmentWeight=" << bundle.scoringSettings.environmentWeight << "\n";
             out << "correctiveShellDistance=" << bundle.correctiveSettings.shellDistance << "\n";
             out << "correctiveContactBlend=" << bundle.correctiveSettings.contactBlend << "\n";
             out << "correctiveStretchBlend=" << bundle.correctiveSettings.stretchBlend << "\n";
@@ -2182,6 +2259,8 @@ namespace hairgpu
             else if (key == "scoringTemporalWeight") ioBundle.scoringSettings.temporalWeight = toFloat(ioBundle.scoringSettings.temporalWeight);
             else if (key == "scoringLeakageWeight") ioBundle.scoringSettings.leakageWeight = toFloat(ioBundle.scoringSettings.leakageWeight);
             else if (key == "scoringModelErrorWeight") ioBundle.scoringSettings.modelErrorWeight = toFloat(ioBundle.scoringSettings.modelErrorWeight);
+            else if (key == "scoringWindWeight") ioBundle.scoringSettings.windWeight = toFloat(ioBundle.scoringSettings.windWeight);
+            else if (key == "scoringEnvironmentWeight") ioBundle.scoringSettings.environmentWeight = toFloat(ioBundle.scoringSettings.environmentWeight);
             else if (key == "scoringNaturalnessGainWeight") ioBundle.scoringSettings.naturalnessGainWeight = toFloat(ioBundle.scoringSettings.naturalnessGainWeight);
             else if (key == "scoringEfficiencyWeight") ioBundle.scoringSettings.efficiencyWeight = toFloat(ioBundle.scoringSettings.efficiencyWeight);
             else if (key == "budgetMaxActiveClusters") ioBundle.budget.maxActiveClusters = toUInt(ioBundle.budget.maxActiveClusters);
@@ -2190,6 +2269,9 @@ namespace hairgpu
             else if (key == "budgetTargetFrameMs") ioBundle.budget.targetFrameMilliseconds = toFloat(ioBundle.budget.targetFrameMilliseconds);
             else if (key == "budgetMinSolverIterations") ioBundle.budget.minSolverIterations = toUInt(ioBundle.budget.minSolverIterations);
             else if (key == "budgetMaxSolverIterations") ioBundle.budget.maxSolverIterations = toUInt(ioBundle.budget.maxSolverIterations);
+            else if (key == "budgetStandardParticlesPerStrand") ioBundle.budget.standardParticlesPerStrand = ClampRuntimeParticlesPerStrand(toUInt(ioBundle.budget.standardParticlesPerStrand));
+            else if (key == "budgetMaxParticlesPerStrand") ioBundle.budget.maxParticlesPerStrand = ClampRuntimeParticlesPerStrand(toUInt(ioBundle.budget.maxParticlesPerStrand));
+            else if (key == "budgetMaxRefinementLevel") ioBundle.budget.maxRefinementLevel = std::min<uint32_t>(toUInt(ioBundle.budget.maxRefinementLevel), 8u);
             else if (key == "budgetMemoryBudgetMB") ioBundle.budget.memoryBudgetMegabytes = toFloat(ioBundle.budget.memoryBudgetMegabytes);
             else if (key == "budgetFixedMemoryMB") ioBundle.budget.estimatedFixedMemoryMegabytes = toFloat(ioBundle.budget.estimatedFixedMemoryMegabytes);
             else if (key == "budgetClusterMemoryMB") ioBundle.budget.estimatedClusterMemoryMegabytes = toFloat(ioBundle.budget.estimatedClusterMemoryMegabytes);
@@ -2864,6 +2946,9 @@ namespace hairgpu
         outBundle.budget.targetFrameMilliseconds = 8.0f;
         outBundle.budget.minSolverIterations = 2u;
         outBundle.budget.maxSolverIterations = 8u;
+        outBundle.budget.standardParticlesPerStrand = kStandardParticlesPerStrand;
+        outBundle.budget.maxParticlesPerStrand = kMaximumParticlesPerStrand;
+        outBundle.budget.maxRefinementLevel = 4u;
         outBundle.budget.memoryBudgetMegabytes = 32768.0f;
         outBundle.budget.estimatedFixedMemoryMegabytes = 768.0f;
         outBundle.budget.estimatedClusterMemoryMegabytes = 12.0f;
@@ -3108,10 +3193,25 @@ namespace hairgpu
                                                                             1.0f / runtimeFrameRate,
                                                                             outBundle.temporalCoherenceGain,
                                                                             outBundle.uncertaintySmoothingAlpha);
+                const float trainingWindStrengthProxy = Clamp(settings.residualBlend * 0.35f + settings.priorGuideSmoothingAlpha * 0.65f, 0.0f, 1.0f);
+                std::vector<float> guideWindExposureScores = BuildGuideWindExposureScores(teacherSequence.referenceAsset,
+                                                                                          currentHybridGuideRoots,
+                                                                                          trainingPreviousHybridGuideRoots,
+                                                                                          1.0f / runtimeFrameRate,
+                                                                                          trainingWindStrengthProxy,
+                                                                                          Vec3(1.0f, 0.0f, 0.0f));
+                std::vector<float> guideEnvironmentComplexityScores = BuildGuideEnvironmentComplexityScores(guideContactScores,
+                                                                                                           guidePenetrationScores,
+                                                                                                           guideWindExposureScores,
+                                                                                                           guideModelErrorScores);
                 ActiveSetRuntimeInput runtimeInput = {};
                 runtimeInput.currentGuideRoots = currentHybridGuideRoots;
                 runtimeInput.previousGuideRoots = trainingPreviousHybridGuideRoots;
                 runtimeInput.guideContactScores = guideContactScores;
+                runtimeInput.guidePenetrationScores = guidePenetrationScores;
+                runtimeInput.guideModelErrorScores = guideModelErrorScores;
+                runtimeInput.guideWindExposureScores = guideWindExposureScores;
+                runtimeInput.guideEnvironmentComplexityScores = guideEnvironmentComplexityScores;
                 runtimeInput.guideUncertainty = guideUncertainty;
                 runtimeInput.cameraPosition = Vec3(0.0f, 1.55f, -1.85f);
                 runtimeInput.cameraForward = Normalize(Vec3(0.0f, -0.05f, 1.0f));
@@ -3329,7 +3429,7 @@ namespace hairgpu
             outError = "Failed to open full_hybrid_frames.csv for writing.";
             return false;
         }
-        frameCsv << "frameIndex,timeSeconds,priorRms,hybridRmsBeforeCorrection,hybridRmsAfterCorrection,finalOutputRms,estimatedFrameMs,estimatedPlanMemoryMegabytes,selectedClusters,selectedGuides,selectedStrands,selectedNaturalnessGain,averageEfficiencyScore,editCoverageRatio,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgGuideModelError,avgGuidePredictorRisk,maxGuidePredictorRisk\n";
+        frameCsv << "frameIndex,timeSeconds,priorRms,hybridRmsBeforeCorrection,hybridRmsAfterCorrection,finalOutputRms,estimatedFrameMs,estimatedPlanMemoryMegabytes,selectedClusters,selectedGuides,selectedStrands,selectedNaturalnessGain,averageEfficiencyScore,editCoverageRatio,avgSelectedParticlesPerStrand,maxSelectedParticlesPerStrand,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgGuideModelError,avgGuidePredictorRisk,maxGuidePredictorRisk\n";
 
         std::vector<Vec3> restPriorGuidePoints;
         std::vector<Vec3> smoothedPriorGuidePoints;
@@ -3368,6 +3468,11 @@ namespace hairgpu
         double selectedClusterSum = 0.0;
         double selectedGuideSum = 0.0;
         double correctedPointSum = 0.0;
+        double selectedNaturalnessGainSum = 0.0;
+        double efficiencyScoreSum = 0.0;
+        double editCoverageRatioSum = 0.0;
+        double selectedParticlesPerStrandSum = 0.0;
+        double estimatedPlanMemorySum = 0.0;
         double penetrationSum = 0.0;
         double predictorRiskSum = 0.0;
         double silhouetteErrorSum = 0.0;
@@ -3378,6 +3483,7 @@ namespace hairgpu
         float maxHybridAfterRms = 0.0f;
         float maxPenetration = 0.0f;
         float maxGuidePredictorRisk = 0.0f;
+        uint32_t maxSelectedParticlesPerStrand = 0u;
         float previousFrameMilliseconds = 0.0f;
         std::vector<float> estimatedFrameMillisecondsHistory;
 
@@ -3597,10 +3703,25 @@ namespace hairgpu
                 guidePredictorRisk.assign(guideUncertainty.size(), 0.0f);
             }
 
+            const float runtimeWindStrengthProxy = Clamp(bundle.contactGain * 0.15f + bundle.uncertaintyGain * 0.35f + bundle.temporalCoherenceGain * 0.35f, 0.0f, 1.0f);
+            std::vector<float> guideWindExposureScores = BuildGuideWindExposureScores(teacherSequence.referenceAsset,
+                                                                                      currentHybridGuideRoots,
+                                                                                      previousHybridGuideRoots,
+                                                                                      1.0f / std::max(runtimeFrameRate, 1.0f),
+                                                                                      runtimeWindStrengthProxy,
+                                                                                      Vec3(1.0f, 0.0f, 0.0f));
+            std::vector<float> guideEnvironmentComplexityScores = BuildGuideEnvironmentComplexityScores(guideContactScores,
+                                                                                                       guidePenetrationScores,
+                                                                                                       guideWindExposureScores,
+                                                                                                       guideModelErrorScores);
             ActiveSetRuntimeInput runtimeInput = {};
             runtimeInput.currentGuideRoots = currentHybridGuideRoots;
             runtimeInput.previousGuideRoots = previousHybridGuideRoots;
             runtimeInput.guideContactScores = guideContactScores;
+            runtimeInput.guidePenetrationScores = guidePenetrationScores;
+            runtimeInput.guideModelErrorScores = guideModelErrorScores;
+            runtimeInput.guideWindExposureScores = guideWindExposureScores;
+            runtimeInput.guideEnvironmentComplexityScores = guideEnvironmentComplexityScores;
             runtimeInput.guideUncertainty = guideUncertainty;
             runtimeInput.cameraPosition = Vec3(0.0f, 1.55f, -1.85f);
             runtimeInput.cameraForward = Normalize(Vec3(0.0f, -0.05f, 1.0f));
@@ -3731,6 +3852,8 @@ namespace hairgpu
                      << plan.summary.selectedNaturalnessGain << ","
                      << plan.summary.averageEfficiencyScore << ","
                      << plan.summary.editCoverageRatio << ","
+                     << plan.summary.averageSelectedParticlesPerStrand << ","
+                     << plan.summary.maxSelectedParticlesPerStrand << ","
                      << plan.summary.budgetScale << ","
                      << plan.summary.recommendedSolverIterations << ","
                      << plan.summary.fullTierCount << ","
@@ -3824,6 +3947,11 @@ namespace hairgpu
             selectedClusterSum += static_cast<double>(plan.summary.selectedClusterCount);
             selectedGuideSum += static_cast<double>(plan.summary.selectedGuideCount);
             correctedPointSum += static_cast<double>(correctiveReport.correctedPointCount);
+            selectedNaturalnessGainSum += static_cast<double>(plan.summary.selectedNaturalnessGain);
+            efficiencyScoreSum += static_cast<double>(plan.summary.averageEfficiencyScore);
+            editCoverageRatioSum += static_cast<double>(plan.summary.editCoverageRatio);
+            selectedParticlesPerStrandSum += static_cast<double>(plan.summary.averageSelectedParticlesPerStrand);
+            estimatedPlanMemorySum += static_cast<double>(plan.summary.estimatedMemoryMegabytes);
             penetrationSum += static_cast<double>(correctiveReport.averagePenetration);
             predictorRiskSum += static_cast<double>(ComputeAverageScalar(guidePredictorRisk));
             silhouetteErrorSum += static_cast<double>(shapeReport.silhouetteError);
@@ -3841,6 +3969,7 @@ namespace hairgpu
             maxHybridAfterRms = std::max(maxHybridAfterRms, finalOutputRms);
             maxPenetration = std::max(maxPenetration, correctiveReport.maxPenetration);
             maxGuidePredictorRisk = std::max(maxGuidePredictorRisk, ComputeMaxScalar(guidePredictorRisk));
+            maxSelectedParticlesPerStrand = std::max(maxSelectedParticlesPerStrand, plan.summary.maxSelectedParticlesPerStrand);
         }
 
         if (!SaveHairCacheToFile(outputDirectory / "full_hybrid_runtime.haircache", hairCache, outError) ||
@@ -3859,6 +3988,12 @@ namespace hairgpu
         outReport.averageSelectedClusterCount = static_cast<float>(selectedClusterSum / frameCountF);
         outReport.averageSelectedGuideCount = static_cast<float>(selectedGuideSum / frameCountF);
         outReport.averageCorrectedPointCount = static_cast<float>(correctedPointSum / frameCountF);
+        outReport.averageSelectedNaturalnessGain = static_cast<float>(selectedNaturalnessGainSum / frameCountF);
+        outReport.averageEfficiencyScore = static_cast<float>(efficiencyScoreSum / frameCountF);
+        outReport.averageEditCoverageRatio = static_cast<float>(editCoverageRatioSum / frameCountF);
+        outReport.averageSelectedParticlesPerStrand = static_cast<float>(selectedParticlesPerStrandSum / frameCountF);
+        outReport.maxSelectedParticlesPerStrand = maxSelectedParticlesPerStrand;
+        outReport.averageEstimatedPlanMemoryMegabytes = static_cast<float>(estimatedPlanMemorySum / frameCountF);
         outReport.averagePenetration = static_cast<float>(penetrationSum / frameCountF);
         outReport.maxPenetration = maxPenetration;
         outReport.averageGuidePredictorRisk = static_cast<float>(predictorRiskSum / frameCountF);

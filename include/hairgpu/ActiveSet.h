@@ -40,6 +40,8 @@ namespace hairgpu
         std::vector<float> guideTemporalScores;
         std::vector<float> guideLeakageScores;
         std::vector<float> guideModelErrorScores;
+        std::vector<float> guideWindExposureScores;
+        std::vector<float> guideEnvironmentComplexityScores;
         Vec3 cameraPosition = { 0.0f, 1.6f, -1.8f };
         Vec3 cameraForward = { 0.0f, 0.0f, 1.0f };
         float fixedTimeStep = 1.0f / 60.0f;
@@ -60,6 +62,8 @@ namespace hairgpu
         float temporalWeight = 0.09f;
         float leakageWeight = 0.08f;
         float modelErrorWeight = 0.10f;
+        float windWeight = 0.09f;
+        float environmentWeight = 0.07f;
         float naturalnessGainWeight = 0.70f;
         float efficiencyWeight = 0.30f;
         float velocitySoftRange = 0.35f;
@@ -92,6 +96,10 @@ namespace hairgpu
         float estimatedClusterMemoryMegabytes = 12.0f;
         bool enforceEditCoverage = true;
         float mandatoryEditThreshold = 0.55f;
+        bool enableSegmentAdaptation = true;
+        uint32_t standardParticlesPerStrand = kStandardParticlesPerStrand;
+        uint32_t maxParticlesPerStrand = kIdealParticlesPerStrand;
+        uint32_t maxRefinementLevel = 3u;
     };
 
     struct ActiveSetClusterScore
@@ -108,6 +116,8 @@ namespace hairgpu
         float temporalScore = 0.0f;
         float leakageScore = 0.0f;
         float modelErrorScore = 0.0f;
+        float windExposureScore = 0.0f;
+        float environmentComplexityScore = 0.0f;
         float editScore = 0.0f;
         float clusterSizeScore = 0.0f;
         float naturalnessGain = 0.0f;
@@ -116,6 +126,8 @@ namespace hairgpu
         float efficiencyScore = 0.0f;
         float finalScore = 0.0f;
         bool mandatoryEditCluster = false;
+        uint32_t refinementLevel = 0u;
+        uint32_t selectedParticlesPerStrand = 0u;
         bool selected = false;
     };
 
@@ -142,6 +154,8 @@ namespace hairgpu
         float estimatedMemoryMegabytes = 0.0f;
         float estimatedFixedMemoryMegabytes = 0.0f;
         float estimatedClusterMemoryMegabytes = 0.0f;
+        float averageSelectedParticlesPerStrand = 0.0f;
+        uint32_t maxSelectedParticlesPerStrand = 0u;
         uint32_t recommendedSolverIterations = 0u;
         uint32_t fullTierCount = 0u;
         uint32_t reducedTierCount = 0u;
@@ -158,6 +172,7 @@ namespace hairgpu
         std::vector<uint32_t> selectedStrandIndices;
         std::vector<uint8_t> strandCorrectiveMask;
         std::vector<SimTier> recommendedSimulationTiers;
+        std::vector<uint32_t> recommendedParticlesPerStrand;
         ActiveSetPlanSummary summary = {};
     };
 
