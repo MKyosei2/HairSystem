@@ -1193,7 +1193,6 @@ namespace hairgpu::viewer
         InitCommonControlsEx(&icc);
 
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
-        // Sample asset building/import already handles wig styling.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
         if (m_lastImportStatus.empty())
@@ -1203,14 +1202,14 @@ namespace hairgpu::viewer
         m_activeSetBudget.maxActiveClusters = 6u;
         m_activeSetBudget.maxActiveGuides = 256u;
         m_activeSetBudget.promoteScoreThreshold = 0.52f;
-        m_simConfig.solverIterations = 4;
+        m_simConfig.solverIterations = 8;
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 18.5f;
         m_simConfig.globalDamping = 0.085f;
         m_simConfig.segmentLength = 0.036f;
         m_simConfig.bendStiffness = 0.14f;
-        m_simConfig.followStiffness = 0.96f;
-        m_simConfig.windStrength = 0.03f;
+        m_simConfig.followStiffness = 0.972f;
+        m_simConfig.windStrength = 0.015f;
         m_simConfig.windDirection = { 0.90f, 0.0f, 0.25f };
         m_simConfig.floorY = -1.05f;
         m_simConfig.selfCollisionRadius = 0.0055f;
@@ -1232,8 +1231,8 @@ namespace hairgpu::viewer
         m_runtimeAngularBendCompliance = 5.0e-6f;
         m_runtimeAngularBendStiffness = 0.36f;
         m_runtimeAngularBendDamping = 0.08f;
-        m_widthScale = 0.56f;
-        m_renderMode = RenderMode::ParticleBillboard;
+        m_widthScale = 1.05f;
+        m_renderMode = RenderMode::StrandRibbon;
         m_showScalpMesh = true;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
@@ -1722,7 +1721,7 @@ namespace hairgpu::viewer
         m_strandTubeVertexBuffer.Reset();
         m_strandTubeIndexBuffer.Reset();
         m_strandTubeIndexCount = 0;
-        m_strandTubeRingSides = 0u;
+        m_strandTubeRingSides = 6u;
 
         std::vector<ScalpVertex> scalpVertices;
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
@@ -2199,7 +2198,7 @@ namespace hairgpu::viewer
         m_visibilityReadbackFailureCount = 0u;
         m_consecutiveInvisibleFrames = 0u;
         m_visibilityRecoveryCount = 0u;
-        m_renderMode = RenderMode::ParticleBillboard;
+        m_renderMode = RenderMode::StrandRibbon;
         m_widthScale = std::max(m_widthScale, 0.65f);
         QueueVisibilityRecovery();
         SyncControlsFromState();
@@ -2434,8 +2433,6 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
-        // Stability-first path for graduation-project builds:
-        // disable active-set compaction and indirect dispatch, and update all strands every frame.
         constants.followerUpdateStride = 1u;
         constants.followerUpdatePhase = 0u;
         constants.useCompactedGuideDispatch = 0u;
@@ -2511,7 +2508,6 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
-        // Stability-first path for graduation-project builds.
         constants.followerUpdateStride = 1u;
         constants.followerUpdatePhase = 0u;
         constants.useCompactedFollowerDispatch = 0u;
@@ -2615,10 +2611,10 @@ namespace hairgpu::viewer
         constants.guideStrandCount = m_asset.guideStrandCount;
         constants.particlesPerStrand = m_asset.particlesPerStrand;
         constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
-        constants.tubeRingSides = m_strandTubeRingSides;
-        constants.renderFollowerStride = std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u));
+        constants.tubeRingSides = std::max<uint32_t>(m_strandTubeRingSides, 6u);
+        constants.renderFollowerStride = 1u;
         constants.renderGuideOnlyAboveTier = 4u;
-        constants.renderReducedWidthBoost = 0.82f;
+        constants.renderReducedWidthBoost = 1.0f;
         constants.renderHiddenWidthThreshold = 0.0f;
         constants.renderStrandAlpha = 1.0f;
         constants.renderPadding0 = 0.0f;
@@ -3043,7 +3039,7 @@ namespace hairgpu::viewer
         m_context->CSSetShader(m_integrateCS.Get(), nullptr, 0);
         m_context->Dispatch(DispatchGroups(totalParticleCount, 64u), 1, 1);
 
-        const bool activeSetReady = false;
+        const bool activeSetReady = m_enableActiveSetRuntime && !m_activeSetPlan.recommendedSimulationTiers.empty();
         if (activeSetReady)
         {
             const std::array<uint32_t, 4> zeroCounters = { 0u, 0u, 0u, 0u };
@@ -3447,7 +3443,7 @@ namespace hairgpu::viewer
         {
             ++m_visibilityRecoveryCount;
             AutoFrameCameraToAsset(true);
-            m_renderMode = RenderMode::ParticleBillboard;
+            m_renderMode = RenderMode::StrandRibbon;
             m_widthScale = std::max(m_widthScale, 0.78f);
 
             if (!readbackValid)
@@ -4730,7 +4726,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
     {
-        m_renderMode = RenderMode::ParticleBillboard;
+        m_renderMode = RenderMode::StrandRibbon;
         m_showScalpMesh = true;
         m_showGuideSkeleton = false;
         m_showFollowerSkeleton = false;
@@ -4746,12 +4742,12 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
             m_builderParticlesPerStrand = 17;
-            m_widthScale = 0.56f;
+            m_widthScale = 1.05f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.085f;
-            m_simConfig.windStrength = 0.03f;
+            m_simConfig.windStrength = 0.015f;
             m_simConfig.solverIterations = 8;
-            m_simConfig.followStiffness = 0.96f;
+            m_simConfig.followStiffness = 0.972f;
             m_selfCollisionRadius = 0.0055f;
             m_selfCollisionStiffness = 0.10f;
             m_simConfig.selfCollisionCellSize = 0.060f;
@@ -4763,7 +4759,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2200;
             m_builderFollowersPerGuide = 10;
             m_builderParticlesPerStrand = 15;
-            m_widthScale = 0.60f;
+            m_widthScale = 1.08f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
             m_simConfig.windStrength = 0.08f;
@@ -4780,7 +4776,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
             m_builderParticlesPerStrand = 17;
-            m_widthScale = 0.58f;
+            m_widthScale = 1.02f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.030f;
             m_simConfig.windStrength = 1.30f;
@@ -4797,7 +4793,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2800;
             m_builderFollowersPerGuide = 8;
             m_builderParticlesPerStrand = 17;
-            m_widthScale = 0.62f;
+            m_widthScale = 1.10f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
             m_simConfig.windStrength = 0.10f;
@@ -4814,7 +4810,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 1800;
             m_builderFollowersPerGuide = 6;
             m_builderParticlesPerStrand = 15;
-            m_widthScale = 0.54f;
+            m_widthScale = 0.95f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
             m_simConfig.windStrength = 0.25f;
@@ -4847,7 +4843,6 @@ namespace hairgpu::viewer
 
         ApplySampleMaskOverrides();
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
-        // Sample asset building/import already handles wig styling.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Procedural sample asset rebuilt";
@@ -6963,7 +6958,6 @@ namespace hairgpu::viewer
         m_asset = std::move(importedAsset);
         std::wstring scalpRepairStatus;
         EnsureAssetScalpConformance(m_asset, &scalpRepairStatus);
-        // Sample asset building/import already handles wig styling.
         m_builderGuideCount = m_asset.guideStrandCount;
         m_builderFollowersPerGuide = (m_asset.guideStrandCount > 0) ? (m_asset.followerStrandCount / m_asset.guideStrandCount) : 0u;
         m_builderParticlesPerStrand = m_asset.particlesPerStrand;

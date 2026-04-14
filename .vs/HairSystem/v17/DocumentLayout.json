@@ -26,15 +26,11 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
             },
             {
               "$type": "Document",
@@ -44,10 +40,14 @@
               "RelativeDocumentMoniker": "apps\\dx11_viewer\\shaders\\HairSim.hlsl",
               "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl",
               "RelativeToolTip": "apps\\dx11_viewer\\shaders\\HairSim.hlsl",
-              "ViewState": "AgIAAN4FAAAAAAAAAAAAAN4FAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAABIDAAAAAAAAAAAqwB0DAAAOAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002777|",
               "WhenOpened": "2026-04-13T09:45:33.21Z",
               "EditorCaption": ""
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
             },
             {
               "$type": "Document",
