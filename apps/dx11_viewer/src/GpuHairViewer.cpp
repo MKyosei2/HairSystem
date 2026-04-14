@@ -1193,6 +1193,7 @@ namespace hairgpu::viewer
         InitCommonControlsEx(&icc);
 
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, 0.036f);
+        // Avoid double wig styling in viewer; sample/import paths already shape the asset.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
         if (m_lastImportStatus.empty())
@@ -1202,14 +1203,14 @@ namespace hairgpu::viewer
         m_activeSetBudget.maxActiveClusters = 6u;
         m_activeSetBudget.maxActiveGuides = 256u;
         m_activeSetBudget.promoteScoreThreshold = 0.52f;
-        m_simConfig.solverIterations = 8;
+        m_simConfig.solverIterations = 4;
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 18.5f;
         m_simConfig.globalDamping = 0.085f;
         m_simConfig.segmentLength = 0.036f;
         m_simConfig.bendStiffness = 0.14f;
-        m_simConfig.followStiffness = 0.972f;
-        m_simConfig.windStrength = 0.015f;
+        m_simConfig.followStiffness = 0.96f;
+        m_simConfig.windStrength = 0.03f;
         m_simConfig.windDirection = { 0.90f, 0.0f, 0.25f };
         m_simConfig.floorY = -1.05f;
         m_simConfig.selfCollisionRadius = 0.0055f;
@@ -1231,8 +1232,8 @@ namespace hairgpu::viewer
         m_runtimeAngularBendCompliance = 5.0e-6f;
         m_runtimeAngularBendStiffness = 0.36f;
         m_runtimeAngularBendDamping = 0.08f;
-        m_widthScale = 1.05f;
-        m_renderMode = RenderMode::StrandRibbon;
+        m_widthScale = 0.56f;
+        m_renderMode = RenderMode::ParticleBillboard;
         m_showScalpMesh = true;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
@@ -1721,7 +1722,7 @@ namespace hairgpu::viewer
         m_strandTubeVertexBuffer.Reset();
         m_strandTubeIndexBuffer.Reset();
         m_strandTubeIndexCount = 0;
-        m_strandTubeRingSides = 6u;
+        m_strandTubeRingSides = 0u;
 
         std::vector<ScalpVertex> scalpVertices;
         scalpVertices.reserve(m_asset.scalpMesh.positions.size());
@@ -2433,6 +2434,8 @@ namespace hairgpu::viewer
             constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
+        // Stable viewer path: keep formula-based active-set evaluation for metrics only.
+        // Simulation updates every guide/follower without compacted dispatch until validated.
         constants.followerUpdateStride = 1u;
         constants.followerUpdatePhase = 0u;
         constants.useCompactedGuideDispatch = 0u;
@@ -2611,10 +2614,11 @@ namespace hairgpu::viewer
         constants.guideStrandCount = m_asset.guideStrandCount;
         constants.particlesPerStrand = m_asset.particlesPerStrand;
         constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
-        constants.tubeRingSides = std::max<uint32_t>(m_strandTubeRingSides, 6u);
+        constants.tubeRingSides = m_strandTubeRingSides;
+        // Render every follower on the stable path.
         constants.renderFollowerStride = 1u;
         constants.renderGuideOnlyAboveTier = 4u;
-        constants.renderReducedWidthBoost = 1.0f;
+        constants.renderReducedWidthBoost = 0.82f;
         constants.renderHiddenWidthThreshold = 0.0f;
         constants.renderStrandAlpha = 1.0f;
         constants.renderPadding0 = 0.0f;
@@ -2836,6 +2840,16 @@ namespace hairgpu::viewer
         }
         m_activeSetGuideContactScores = BuildGuideContactScoresFromParticles(particles);
         m_activeSetGuideUncertainty.assign(guideCount, 0.0f);
+        std::vector<float> guideEditScores = m_runtimeEditState.guideInfluence;
+        if (guideEditScores.size() != guideCount)
+        {
+            guideEditScores.assign(guideCount, 0.0f);
+        }
+        std::vector<float> guidePenetrationScores(guideCount, 0.0f);
+        std::vector<float> guideBoundaryScores(guideCount, 0.0f);
+        std::vector<float> guideTemporalScores(guideCount, 0.0f);
+        std::vector<float> guideLeakageScores(guideCount, 0.0f);
+        std::vector<float> guideModelErrorScores(guideCount, 0.0f);
         const float safeDt = std::max(m_simConfig.fixedTimeStep, 1.0e-4f);
         for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
         {
@@ -2848,7 +2862,19 @@ namespace hairgpu::viewer
             const float velocityProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - previousRoot) / safeDt / 0.30f, 0.0f, 1.0f);
             const float displacementProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - restRoot) / 0.030f, 0.0f, 1.0f);
             const float contactProxy = (guideIndex < m_activeSetGuideContactScores.size()) ? m_activeSetGuideContactScores[guideIndex] : 0.0f;
-            m_activeSetGuideUncertainty[guideIndex] = hairgpu::Clamp(velocityProxy * 0.45f + displacementProxy * 0.30f + contactProxy * 0.25f, 0.0f, 1.0f);
+            const float editProxy = hairgpu::Clamp(guideEditScores[guideIndex], 0.0f, 1.0f);
+            const float boundaryProxy = hairgpu::Clamp(4.0f * editProxy * (1.0f - editProxy), 0.0f, 1.0f);
+            const float temporalProxy = hairgpu::Clamp(velocityProxy * 0.65f + contactProxy * 0.20f + boundaryProxy * 0.15f, 0.0f, 1.0f);
+            const float leakageProxy = hairgpu::Clamp((1.0f - editProxy) * displacementProxy, 0.0f, 1.0f);
+            const float penetrationProxy = hairgpu::Clamp(contactProxy * 1.15f, 0.0f, 1.0f);
+            const float uncertaintyProxy = hairgpu::Clamp(velocityProxy * 0.38f + displacementProxy * 0.22f + contactProxy * 0.18f + boundaryProxy * 0.10f + leakageProxy * 0.12f, 0.0f, 1.0f);
+            const float modelErrorProxy = hairgpu::Clamp(displacementProxy * 0.55f + temporalProxy * 0.25f + leakageProxy * 0.20f, 0.0f, 1.0f);
+            guideBoundaryScores[guideIndex] = boundaryProxy;
+            guideTemporalScores[guideIndex] = temporalProxy;
+            guideLeakageScores[guideIndex] = leakageProxy;
+            guidePenetrationScores[guideIndex] = penetrationProxy;
+            guideModelErrorScores[guideIndex] = modelErrorProxy;
+            m_activeSetGuideUncertainty[guideIndex] = uncertaintyProxy;
         }
 
         hairgpu::ActiveSetRuntimeInput runtimeInput = {};
@@ -2856,6 +2882,12 @@ namespace hairgpu::viewer
         runtimeInput.previousGuideRoots = m_activeSetPreviousGuideRoots;
         runtimeInput.guideUncertainty = m_activeSetGuideUncertainty;
         runtimeInput.guideContactScores = m_activeSetGuideContactScores;
+        runtimeInput.guidePenetrationScores = guidePenetrationScores;
+        runtimeInput.guideEditScores = guideEditScores;
+        runtimeInput.guideBoundaryScores = guideBoundaryScores;
+        runtimeInput.guideTemporalScores = guideTemporalScores;
+        runtimeInput.guideLeakageScores = guideLeakageScores;
+        runtimeInput.guideModelErrorScores = guideModelErrorScores;
         runtimeInput.cameraPosition = m_cameraPosition;
         runtimeInput.cameraForward = hairgpu::Normalize(m_cameraTarget - m_cameraPosition);
         runtimeInput.fixedTimeStep = safeDt;
@@ -2887,7 +2919,10 @@ namespace hairgpu::viewer
             ss << L"OK  clusters=" << m_activeSetPlan.summary.selectedClusterCount
                << L" guides=" << m_activeSetPlan.summary.selectedGuideCount
                << L" strands=" << m_activeSetPlan.summary.selectedStrandCount
-               << L"  budgetScale=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.budgetScale
+               << L"  natGain=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.selectedNaturalnessGain
+               << L"  editCov=" << std::fixed << std::setprecision(2) << (m_activeSetPlan.summary.editCoverageRatio * 100.0f) << L"%"
+               << L"  estFrame=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.estimatedFrameMilliseconds << L"ms"
+               << L"  estMem=" << std::fixed << std::setprecision(0) << m_activeSetPlan.summary.estimatedMemoryMegabytes << L"MB"
                << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations;
             m_activeSetLastStatus = ss.str();
         }
@@ -4742,12 +4777,12 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
             m_builderParticlesPerStrand = 17;
-            m_widthScale = 1.05f;
+            m_widthScale = 0.56f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.085f;
-            m_simConfig.windStrength = 0.015f;
+            m_simConfig.windStrength = 0.03f;
             m_simConfig.solverIterations = 8;
-            m_simConfig.followStiffness = 0.972f;
+            m_simConfig.followStiffness = 0.988f;
             m_selfCollisionRadius = 0.0055f;
             m_selfCollisionStiffness = 0.10f;
             m_simConfig.selfCollisionCellSize = 0.060f;
@@ -4759,7 +4794,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2200;
             m_builderFollowersPerGuide = 10;
             m_builderParticlesPerStrand = 15;
-            m_widthScale = 1.08f;
+            m_widthScale = 0.60f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
             m_simConfig.windStrength = 0.08f;
@@ -4776,7 +4811,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2500;
             m_builderFollowersPerGuide = 9;
             m_builderParticlesPerStrand = 17;
-            m_widthScale = 1.02f;
+            m_widthScale = 0.58f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.030f;
             m_simConfig.windStrength = 1.30f;
@@ -4793,7 +4828,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 2800;
             m_builderFollowersPerGuide = 8;
             m_builderParticlesPerStrand = 17;
-            m_widthScale = 1.10f;
+            m_widthScale = 0.62f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
             m_simConfig.windStrength = 0.10f;
@@ -4810,7 +4845,7 @@ namespace hairgpu::viewer
             m_builderGuideCount = 1800;
             m_builderFollowersPerGuide = 6;
             m_builderParticlesPerStrand = 15;
-            m_widthScale = 0.95f;
+            m_widthScale = 0.54f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
             m_simConfig.windStrength = 0.25f;
@@ -4843,6 +4878,7 @@ namespace hairgpu::viewer
 
         ApplySampleMaskOverrides();
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
+        // Avoid double wig styling in viewer; sample/import paths already shape the asset.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
         m_lastImportStatus = L"Procedural sample asset rebuilt";
@@ -6958,6 +6994,7 @@ namespace hairgpu::viewer
         m_asset = std::move(importedAsset);
         std::wstring scalpRepairStatus;
         EnsureAssetScalpConformance(m_asset, &scalpRepairStatus);
+        // Avoid double wig styling in viewer; sample/import paths already shape the asset.
         m_builderGuideCount = m_asset.guideStrandCount;
         m_builderFollowersPerGuide = (m_asset.guideStrandCount > 0) ? (m_asset.followerStrandCount / m_asset.guideStrandCount) : 0u;
         m_builderParticlesPerStrand = m_asset.particlesPerStrand;

@@ -165,7 +165,7 @@ namespace hairgpu
                 const float restoreWeight = Clamp((t - capRegion * 0.55f) / std::max(1.0f - capRegion * 0.55f, 1.0e-5f), 0.0f, 1.0f) * tipRestore;
                 shapedPoint = Lerp(shapedPoint, originalTarget, restoreWeight);
 
-                const float localBlend = clampedStrength * Clamp((0.68f - t) / 0.68f, 0.0f, 1.0f);
+                const float localBlend = clampedStrength * Clamp((0.40f - t) / 0.40f, 0.0f, 1.0f);
                 asset.restPoints[offset + i] = Lerp(originalCurrent, shapedPoint, localBlend);
                 chainPoint = asset.restPoints[offset + i];
                 prevDir = stepDir;

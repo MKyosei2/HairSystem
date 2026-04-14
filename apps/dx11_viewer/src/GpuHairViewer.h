@@ -680,7 +680,7 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
         hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
         float m_assetBoundsRadius = 0.75f;
-        float m_widthScale = 1.05f;
+        float m_widthScale = 0.56f;
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
@@ -853,7 +853,7 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_strandTubeVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_strandTubeIndexBuffer;
         uint32_t m_strandTubeIndexCount = 0;
-        uint32_t m_strandTubeRingSides = 6;
+        uint32_t m_strandTubeRingSides = 0;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_hairMeshVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_debugLineTemplateVertexBuffer;
         StructuredBuffer m_debugLineEntriesBuffer;

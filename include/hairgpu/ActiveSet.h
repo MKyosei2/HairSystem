@@ -33,8 +33,13 @@ namespace hairgpu
         std::vector<Vec3> previousGuideRoots;
         std::vector<float> guideUncertainty;
         std::vector<float> guideContactScores;
+        std::vector<float> guidePenetrationScores;
         std::vector<float> guideVisibilityScores;
         std::vector<float> guideEditScores;
+        std::vector<float> guideBoundaryScores;
+        std::vector<float> guideTemporalScores;
+        std::vector<float> guideLeakageScores;
+        std::vector<float> guideModelErrorScores;
         Vec3 cameraPosition = { 0.0f, 1.6f, -1.8f };
         Vec3 cameraForward = { 0.0f, 0.0f, 1.0f };
         float fixedTimeStep = 1.0f / 60.0f;
@@ -42,14 +47,21 @@ namespace hairgpu
 
     struct ActiveSetScoringSettings
     {
-        float motionWeight = 0.24f;
-        float displacementWeight = 0.18f;
-        float visibilityWeight = 0.14f;
-        float silhouetteWeight = 0.14f;
-        float uncertaintyWeight = 0.10f;
-        float contactWeight = 0.14f;
-        float editWeight = 0.16f;
-        float clusterSizeWeight = 0.06f;
+        float motionWeight = 0.10f;
+        float displacementWeight = 0.08f;
+        float visibilityWeight = 0.05f;
+        float silhouetteWeight = 0.07f;
+        float uncertaintyWeight = 0.08f;
+        float contactWeight = 0.12f;
+        float editWeight = 0.20f;
+        float clusterSizeWeight = 0.03f;
+        float penetrationWeight = 0.18f;
+        float boundaryWeight = 0.14f;
+        float temporalWeight = 0.09f;
+        float leakageWeight = 0.08f;
+        float modelErrorWeight = 0.10f;
+        float naturalnessGainWeight = 0.70f;
+        float efficiencyWeight = 0.30f;
         float velocitySoftRange = 0.35f;
         float displacementSoftRange = 0.030f;
         float nearDistance = 0.55f;
@@ -75,6 +87,11 @@ namespace hairgpu
         float frameBudgetMilliseconds = 16.67f;
         float estimatedFixedCostMilliseconds = 6.0f;
         float estimatedClusterCostMilliseconds = 0.85f;
+        float memoryBudgetMegabytes = 32768.0f;
+        float estimatedFixedMemoryMegabytes = 512.0f;
+        float estimatedClusterMemoryMegabytes = 12.0f;
+        bool enforceEditCoverage = true;
+        float mandatoryEditThreshold = 0.55f;
     };
 
     struct ActiveSetClusterScore
@@ -86,9 +103,19 @@ namespace hairgpu
         float silhouetteScore = 0.0f;
         float uncertaintyScore = 0.0f;
         float contactScore = 0.0f;
+        float penetrationScore = 0.0f;
+        float boundaryScore = 0.0f;
+        float temporalScore = 0.0f;
+        float leakageScore = 0.0f;
+        float modelErrorScore = 0.0f;
         float editScore = 0.0f;
         float clusterSizeScore = 0.0f;
+        float naturalnessGain = 0.0f;
+        float estimatedTimeCostMilliseconds = 0.0f;
+        float estimatedMemoryCostMegabytes = 0.0f;
+        float efficiencyScore = 0.0f;
         float finalScore = 0.0f;
+        bool mandatoryEditCluster = false;
         bool selected = false;
     };
 
@@ -101,12 +128,20 @@ namespace hairgpu
         float highestScore = 0.0f;
         float lowestSelectedScore = 0.0f;
         float averageSelectedScore = 0.0f;
+        float selectedNaturalnessGain = 0.0f;
+        float averageEfficiencyScore = 0.0f;
+        float editCoverageRatio = 0.0f;
+        uint32_t mandatoryClusterCount = 0u;
+        uint32_t selectedMandatoryClusterCount = 0u;
         float budgetScale = 1.0f;
         uint32_t pendingClusterCount = 0u;
         uint32_t hardMaxActiveClusters = 0u;
         float estimatedFixedCostMilliseconds = 0.0f;
         float estimatedClusterCostMilliseconds = 0.0f;
         float estimatedFrameMilliseconds = 0.0f;
+        float estimatedMemoryMegabytes = 0.0f;
+        float estimatedFixedMemoryMegabytes = 0.0f;
+        float estimatedClusterMemoryMegabytes = 0.0f;
         uint32_t recommendedSolverIterations = 0u;
         uint32_t fullTierCount = 0u;
         uint32_t reducedTierCount = 0u;

@@ -1039,7 +1039,7 @@ namespace hairgpu
             outError = "Failed to open hybrid_teacher_frames.csv for writing.";
             return false;
         }
-        frameCsv << "frameIndex,timeSeconds,selectedClusters,selectedGuides,selectedStrands,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgLengthErrorBefore,avgLengthErrorAfter,estimatedSimulationMilliseconds\n";
+        frameCsv << "frameIndex,timeSeconds,selectedClusters,selectedGuides,selectedStrands,selectedNaturalnessGain,averageEfficiencyScore,editCoverageRatio,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgLengthErrorBefore,avgLengthErrorAfter,estimatedSimulationMilliseconds,estimatedPlanMemoryMegabytes\n";
 
         std::vector<Vec3> previousGuideRoots;
         BuildGuideRootsFromPoints(asset, asset.restPoints, previousGuideRoots);
@@ -1093,7 +1093,10 @@ namespace hairgpu
             runtimeInput.currentGuideRoots = currentGuideRoots;
             runtimeInput.previousGuideRoots = previousGuideRoots;
             runtimeInput.guideContactScores = guideContactScores;
+            runtimeInput.guidePenetrationScores = guidePenetrationScores;
             runtimeInput.guideUncertainty = guideUncertainty;
+            runtimeInput.guideTemporalScores = guideUncertainty;
+            runtimeInput.guideModelErrorScores = modelErrorScores;
             runtimeInput.cameraPosition = Vec3(0.0f, 1.55f, -1.85f);
             runtimeInput.cameraForward = Normalize(Vec3(0.0f, -0.05f, 1.0f));
             runtimeInput.fixedTimeStep = 1.0f / std::max(settings.frameRate, 1.0f);
@@ -1145,6 +1148,9 @@ namespace hairgpu
                      << plan.summary.selectedClusterCount << ","
                      << plan.summary.selectedGuideCount << ","
                      << plan.summary.selectedStrandCount << ","
+                     << plan.summary.selectedNaturalnessGain << ","
+                     << plan.summary.averageEfficiencyScore << ","
+                     << plan.summary.editCoverageRatio << ","
                      << plan.summary.budgetScale << ","
                      << plan.summary.recommendedSolverIterations << ","
                      << plan.summary.fullTierCount << ","
@@ -1161,7 +1167,8 @@ namespace hairgpu
                      << ComputeMaxScalar(guideUncertainty) << ","
                      << correctiveReport.averageLengthErrorBefore << ","
                      << correctiveReport.averageLengthErrorAfter << ","
-                     << estimatedSimulationMilliseconds << "\n";
+                     << estimatedSimulationMilliseconds << ","
+                     << plan.summary.estimatedMemoryMegabytes << "\n";
 
             selectedClusterSum += static_cast<double>(plan.summary.selectedClusterCount);
             selectedGuideSum += static_cast<double>(plan.summary.selectedGuideCount);
@@ -2170,12 +2177,24 @@ namespace hairgpu
             else if (key == "scoringSilhouetteWeight") ioBundle.scoringSettings.silhouetteWeight = toFloat(ioBundle.scoringSettings.silhouetteWeight);
             else if (key == "scoringClusterSizeWeight") ioBundle.scoringSettings.clusterSizeWeight = toFloat(ioBundle.scoringSettings.clusterSizeWeight);
             else if (key == "scoringUncertaintyWeight") ioBundle.scoringSettings.uncertaintyWeight = toFloat(ioBundle.scoringSettings.uncertaintyWeight);
+            else if (key == "scoringPenetrationWeight") ioBundle.scoringSettings.penetrationWeight = toFloat(ioBundle.scoringSettings.penetrationWeight);
+            else if (key == "scoringBoundaryWeight") ioBundle.scoringSettings.boundaryWeight = toFloat(ioBundle.scoringSettings.boundaryWeight);
+            else if (key == "scoringTemporalWeight") ioBundle.scoringSettings.temporalWeight = toFloat(ioBundle.scoringSettings.temporalWeight);
+            else if (key == "scoringLeakageWeight") ioBundle.scoringSettings.leakageWeight = toFloat(ioBundle.scoringSettings.leakageWeight);
+            else if (key == "scoringModelErrorWeight") ioBundle.scoringSettings.modelErrorWeight = toFloat(ioBundle.scoringSettings.modelErrorWeight);
+            else if (key == "scoringNaturalnessGainWeight") ioBundle.scoringSettings.naturalnessGainWeight = toFloat(ioBundle.scoringSettings.naturalnessGainWeight);
+            else if (key == "scoringEfficiencyWeight") ioBundle.scoringSettings.efficiencyWeight = toFloat(ioBundle.scoringSettings.efficiencyWeight);
             else if (key == "budgetMaxActiveClusters") ioBundle.budget.maxActiveClusters = toUInt(ioBundle.budget.maxActiveClusters);
             else if (key == "budgetMaxActiveGuides") ioBundle.budget.maxActiveGuides = toUInt(ioBundle.budget.maxActiveGuides);
             else if (key == "budgetPromoteScoreThreshold") ioBundle.budget.promoteScoreThreshold = toFloat(ioBundle.budget.promoteScoreThreshold);
             else if (key == "budgetTargetFrameMs") ioBundle.budget.targetFrameMilliseconds = toFloat(ioBundle.budget.targetFrameMilliseconds);
             else if (key == "budgetMinSolverIterations") ioBundle.budget.minSolverIterations = toUInt(ioBundle.budget.minSolverIterations);
             else if (key == "budgetMaxSolverIterations") ioBundle.budget.maxSolverIterations = toUInt(ioBundle.budget.maxSolverIterations);
+            else if (key == "budgetMemoryBudgetMB") ioBundle.budget.memoryBudgetMegabytes = toFloat(ioBundle.budget.memoryBudgetMegabytes);
+            else if (key == "budgetFixedMemoryMB") ioBundle.budget.estimatedFixedMemoryMegabytes = toFloat(ioBundle.budget.estimatedFixedMemoryMegabytes);
+            else if (key == "budgetClusterMemoryMB") ioBundle.budget.estimatedClusterMemoryMegabytes = toFloat(ioBundle.budget.estimatedClusterMemoryMegabytes);
+            else if (key == "budgetEnforceEditCoverage") ioBundle.budget.enforceEditCoverage = toUInt(ioBundle.budget.enforceEditCoverage ? 1u : 0u) != 0u;
+            else if (key == "budgetMandatoryEditThreshold") ioBundle.budget.mandatoryEditThreshold = toFloat(ioBundle.budget.mandatoryEditThreshold);
             else if (key == "correctiveShellDistance") ioBundle.correctiveSettings.shellDistance = toFloat(ioBundle.correctiveSettings.shellDistance);
             else if (key == "correctiveContactBlend") ioBundle.correctiveSettings.contactBlend = toFloat(ioBundle.correctiveSettings.contactBlend);
             else if (key == "correctiveStretchBlend") ioBundle.correctiveSettings.stretchBlend = toFloat(ioBundle.correctiveSettings.stretchBlend);
@@ -2845,6 +2864,11 @@ namespace hairgpu
         outBundle.budget.targetFrameMilliseconds = 8.0f;
         outBundle.budget.minSolverIterations = 2u;
         outBundle.budget.maxSolverIterations = 8u;
+        outBundle.budget.memoryBudgetMegabytes = 32768.0f;
+        outBundle.budget.estimatedFixedMemoryMegabytes = 768.0f;
+        outBundle.budget.estimatedClusterMemoryMegabytes = 12.0f;
+        outBundle.budget.enforceEditCoverage = true;
+        outBundle.budget.mandatoryEditThreshold = 0.55f;
         outBundle.correctiveSettings = {};
         outBundle.correctiveSettings.contactBlend = Clamp(0.82f + averageResidualMagnitude * 4.0f, 0.82f, 0.95f);
         outBundle.correctiveSettings.stretchBlend = 0.40f;
@@ -3305,7 +3329,7 @@ namespace hairgpu
             outError = "Failed to open full_hybrid_frames.csv for writing.";
             return false;
         }
-        frameCsv << "frameIndex,timeSeconds,priorRms,hybridRmsBeforeCorrection,hybridRmsAfterCorrection,finalOutputRms,estimatedFrameMs,selectedClusters,selectedGuides,selectedStrands,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgGuideModelError,avgGuidePredictorRisk,maxGuidePredictorRisk\n";
+        frameCsv << "frameIndex,timeSeconds,priorRms,hybridRmsBeforeCorrection,hybridRmsAfterCorrection,finalOutputRms,estimatedFrameMs,estimatedPlanMemoryMegabytes,selectedClusters,selectedGuides,selectedStrands,selectedNaturalnessGain,averageEfficiencyScore,editCoverageRatio,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgGuideModelError,avgGuidePredictorRisk,maxGuidePredictorRisk\n";
 
         std::vector<Vec3> restPriorGuidePoints;
         std::vector<Vec3> smoothedPriorGuidePoints;
@@ -3700,9 +3724,13 @@ namespace hairgpu
                      << hybridAfterRms << ","
                      << finalOutputRms << ","
                      << estimatedFrameMilliseconds << ","
+                     << plan.summary.estimatedMemoryMegabytes << ","
                      << plan.summary.selectedClusterCount << ","
                      << plan.summary.selectedGuideCount << ","
                      << plan.summary.selectedStrandCount << ","
+                     << plan.summary.selectedNaturalnessGain << ","
+                     << plan.summary.averageEfficiencyScore << ","
+                     << plan.summary.editCoverageRatio << ","
                      << plan.summary.budgetScale << ","
                      << plan.summary.recommendedSolverIterations << ","
                      << plan.summary.fullTierCount << ","

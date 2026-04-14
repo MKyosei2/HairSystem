@@ -796,7 +796,7 @@ namespace hairgpu
             const float rootTravel = strandLength * (0.08f + 0.02f * sideFactor + 0.02f * backFactor);
             const float sideDrift = (0.0050f + 0.0080f * sideFactor + 0.0040f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u));
             const float forwardDrift = 0.015f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u));
-            const float curlNoise = parameters.strandNoise * 0.08f;
+            const float curlNoise = parameters.strandNoise * 0.20f;
 
             const Vec3 orthoA = Normalize(Cross(normal, lateral));
             const Vec3 orthoB = Normalize(Cross(lateral, orthoA));
@@ -957,8 +957,8 @@ namespace hairgpu
         parameters.sideVolume = 0.0008f;
         parameters.backVolume = 0.0010f;
         parameters.lowerRingLengthBias = 0.06f;
-        parameters.strandNoise = 0.00010f;
-        parameters.followerSpread = 0.00028f;
+        parameters.strandNoise = 0.00025f;
+        parameters.followerSpread = 0.00035f;
         parameters.tipInward = 0.0002f;
         return parameters;
     }
@@ -1012,8 +1012,8 @@ namespace hairgpu
             RootBinding binding = FindClosestBindingForUv(asset.scalpMesh, u, v);
 
             StrandMaterial material;
-            material.rootWidth = 0.0048f;
-            material.tipWidth = 0.00030f;
+            material.rootWidth = 0.0032f;
+            material.tipWidth = 0.00016f;
             material.stiffness = 0.95f;
             material.damping = 0.055f;
 
@@ -1101,14 +1101,14 @@ namespace hairgpu
 
                 StrandMaterial followerMaterial = material;
                 const float widthJitter = 0.88f + 0.16f * Hash01(seed + 71u);
-                followerMaterial.rootWidth *= 0.68f * widthJitter;
-                followerMaterial.tipWidth *= 0.56f * widthJitter;
+                followerMaterial.rootWidth *= 0.42f * widthJitter;
+                followerMaterial.tipWidth *= 0.34f * widthJitter;
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.972f + Hash01(seed + 7u) * 0.008f - edgeRisk * 0.018f;
-                followerFollow.clumpWeight = 0.90f + Hash01(seed + 19u) * 0.040f - edgeRisk * 0.10f;
-                followerFollow.noiseWeight = 0.00005f + Hash01(seed + 23u) * 0.00008f + edgeRisk * 0.00004f;
+                followerFollow.followWeight = 0.944f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.035f;
+                followerFollow.clumpWeight = 0.74f + Hash01(seed + 19u) * 0.060f - edgeRisk * 0.16f;
+                followerFollow.noiseWeight = 0.00022f + Hash01(seed + 23u) * 0.00036f + edgeRisk * 0.00012f;
 
                 AppendStaticWigStrand(
                     asset,
