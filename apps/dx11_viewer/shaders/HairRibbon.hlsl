@@ -102,9 +102,10 @@ struct GSOutput
     float3 worldPosition : TEXCOORD0;
     float3 color : COLOR0;
     float alpha : TEXCOORD1;
+    float3 strandTangent : TEXCOORD2;
 };
 
-GSOutput MakeVertex(float3 worldPosition, float3 worldNormal, float3 color, float alpha)
+GSOutput MakeVertex(float3 worldPosition, float3 worldNormal, float3 color, float alpha, float3 strandTangent)
 {
     GSOutput o;
     o.position = mul(float4(worldPosition, 1.0f), ViewProjection);
@@ -112,6 +113,7 @@ GSOutput MakeVertex(float3 worldPosition, float3 worldNormal, float3 color, floa
     o.worldPosition = worldPosition;
     o.color = color;
     o.alpha = alpha;
+    o.strandTangent = strandTangent;
     return o;
 }
 
@@ -171,13 +173,13 @@ void GSMain(line VSOutput input[2], inout TriangleStream<GSOutput> outStream)
         const float3 v10 = p1 + ringDir0 * radius1;
         const float3 v11 = p1 + ringDir1 * radius1;
 
-        outStream.Append(MakeVertex(v00, ringDir0, input[0].color, input[0].alpha));
-        outStream.Append(MakeVertex(v10, ringDir0, input[1].color, input[1].alpha));
-        outStream.Append(MakeVertex(v01, ringDir1, input[0].color, input[0].alpha));
+        outStream.Append(MakeVertex(v00, ringDir0, input[0].color, input[0].alpha, tangent));
+        outStream.Append(MakeVertex(v10, ringDir0, input[1].color, input[1].alpha, tangent));
+        outStream.Append(MakeVertex(v01, ringDir1, input[0].color, input[0].alpha, tangent));
 
-        outStream.Append(MakeVertex(v01, ringDir1, input[0].color, input[0].alpha));
-        outStream.Append(MakeVertex(v10, ringDir0, input[1].color, input[1].alpha));
-        outStream.Append(MakeVertex(v11, ringDir1, input[1].color, input[1].alpha));
+        outStream.Append(MakeVertex(v01, ringDir1, input[0].color, input[0].alpha, tangent));
+        outStream.Append(MakeVertex(v10, ringDir0, input[1].color, input[1].alpha, tangent));
+        outStream.Append(MakeVertex(v11, ringDir1, input[1].color, input[1].alpha, tangent));
 
         outStream.RestartStrip();
     }
@@ -186,15 +188,21 @@ void GSMain(line VSOutput input[2], inout TriangleStream<GSOutput> outStream)
 float4 PSMain(GSOutput input) : SV_Target
 {
     const float3 N = normalize(input.worldNormal);
+    const float3 T = normalize(input.strandTangent);
     const float3 L = normalize(-LightDirection.xyz);
     const float3 V = normalize(CameraPosition.xyz - input.worldPosition);
     const float3 H = normalize(L + V);
 
     const float diffuseFront = saturate(dot(N, L));
     const float diffuseWrap = saturate(dot(N, L) * 0.5f + 0.5f);
-    const float specular = pow(saturate(dot(N, H)), 20.0f) * 0.16f;
+    const float kajiyaDiffuse = sqrt(saturate(1.0f - dot(T, L) * dot(T, L)));
+    const float kajiyaSpec = pow(saturate(sqrt(saturate(1.0f - dot(T, H) * dot(T, H)))), 28.0f);
+    const float forwardScatter = pow(saturate(dot(-L, V)), 8.0f) * pow(saturate(1.0f - abs(dot(T, L))), 2.0f);
+    const float dualScatterBack = pow(saturate(dot(T, V) * -dot(T, L)), 2.0f);
     const float rim = pow(1.0f - saturate(abs(dot(N, V))), 2.0f) * 0.12f;
-    const float lighting = 0.16f + 0.52f * diffuseFront + 0.20f * diffuseWrap;
-    const float3 shaded = input.color * lighting + (specular + rim).xxx;
+    const float lighting = 0.10f + 0.36f * diffuseFront + 0.18f * diffuseWrap + 0.22f * kajiyaDiffuse;
+    const float specular = kajiyaSpec * 0.22f + pow(saturate(dot(N, H)), 20.0f) * 0.08f;
+    const float3 scatterTint = input.color * (0.12f * forwardScatter + 0.08f * dualScatterBack);
+    const float3 shaded = input.color * lighting + (specular + rim).xxx + scatterTint;
     return float4(shaded, input.alpha);
 }

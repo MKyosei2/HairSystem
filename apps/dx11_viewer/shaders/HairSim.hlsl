@@ -779,9 +779,9 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
     bool touchedSurface = false;
 
     [loop]
-    for (uint i = 0; i < SphereColliderCount; ++i)
+    for (uint sphereIndex = 0; sphereIndex < SphereColliderCount; ++sphereIndex)
     {
-        float4 sphere = SphereData[i];
+        float4 sphere = SphereData[sphereIndex];
         float3 center = sphere.xyz;
         float radius = sphere.w;
         float3 toPoint = p - center;
@@ -795,10 +795,10 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
     }
 
     [loop]
-    for (uint i = 0; i < CapsuleColliderCount; ++i)
+    for (uint capsuleIndex = 0; capsuleIndex < CapsuleColliderCount; ++capsuleIndex)
     {
-        float4 capsuleA = CapsuleData[i * 2 + 0];
-        float4 capsuleB = CapsuleData[i * 2 + 1];
+        float4 capsuleA = CapsuleData[capsuleIndex * 2 + 0];
+        float4 capsuleB = CapsuleData[capsuleIndex * 2 + 1];
         float3 a = capsuleA.xyz;
         float ra = capsuleA.w;
         float3 b = capsuleB.xyz;
@@ -809,18 +809,18 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
     }
 
     [loop]
-    for (uint i = 0; i < PlaneColliderCount; ++i)
+    for (uint planeIndex = 0; planeIndex < PlaneColliderCount; ++planeIndex)
     {
-        float3 resolved = ResolvePlane(p, PlaneData[i]);
+        float3 resolved = ResolvePlane(p, PlaneData[planeIndex]);
         touchedSurface = touchedSurface || (length(resolved - p) > 1.0e-6f);
         p = resolved;
     }
 
     [loop]
-    for (uint i = 0; i < AabbColliderCount; ++i)
+    for (uint aabbIndex = 0; aabbIndex < AabbColliderCount; ++aabbIndex)
     {
-        float3 mn = AabbData[i * 2u + 0u].xyz;
-        float3 mx = AabbData[i * 2u + 1u].xyz;
+        float3 mn = AabbData[aabbIndex * 2u + 0u].xyz;
+        float3 mx = AabbData[aabbIndex * 2u + 1u].xyz;
         float3 resolved = ResolveAabb(p, mn, mx);
         touchedSurface = touchedSurface || (length(resolved - p) > 1.0e-6f);
         p = resolved;

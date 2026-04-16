@@ -924,8 +924,109 @@ namespace hairgpu
             return false;
         }
 
+        const auto activeBlend = [](float value)
+        {
+            return Clamp(value, 0.0f, 1.0f);
+        };
+
+        const auto translatedRestPoint = [&](uint32_t strandIndex, uint32_t localPoint, const Vec3& currentRoot)
+        {
+            const StrandRange& strand = asset.strands[strandIndex];
+            const Vec3 restRoot = asset.restPoints[strand.pointOffset];
+            const Vec3 restPoint = asset.restPoints[strand.pointOffset + localPoint];
+            return currentRoot + (restPoint - restRoot);
+        };
+
+        const auto safeNormalizeLocal = [](const Vec3& v, const Vec3& fallback)
+        {
+            const float len = Length(v);
+            return (len > 1.0e-6f) ? (v / len) : fallback;
+        };
+
+        const auto buildStableBasisLocal = [&](const Vec3& tangent, Vec3& axisX, Vec3& axisY)
+        {
+            const Vec3 refA(0.0f, 1.0f, 0.0f);
+            const Vec3 refB(1.0f, 0.0f, 0.0f);
+            const Vec3 ref = (std::fabs(tangent.y) < 0.85f) ? refA : refB;
+            axisX = safeNormalizeLocal(Cross(ref, tangent), Vec3(1.0f, 0.0f, 0.0f));
+            axisY = safeNormalizeLocal(Cross(tangent, axisX), Vec3(0.0f, 0.0f, 1.0f));
+        };
+
+        const auto hash01Local = [](uint32_t a, uint32_t b)
+        {
+            uint32_t h = a * 1664525u + 1013904223u;
+            h ^= b * 2246822519u + 3266489917u;
+            h ^= (h >> 15u);
+            return static_cast<float>(h & 0x00ffffffu) / static_cast<float>(0x01000000u);
+        };
+        std::vector<std::vector<uint32_t>> strandsByGroup;
+        uint32_t maxGroupId = 0u;
+        for (const StrandRange& strand : asset.strands)
+        {
+            maxGroupId = std::max(maxGroupId, strand.groupId);
+        }
+        strandsByGroup.resize(static_cast<size_t>(maxGroupId) + 1u);
+        for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+        {
+            strandsByGroup[asset.strands[strandIndex].groupId].push_back(strandIndex);
+        }
+
         SparseCorrectiveReport report = {};
         AccumulateLengthError(asset, inOutPoints, &activeSetPlan.strandCorrectiveMask, report.averageLengthErrorBefore);
+
+        if (settings.enableSagFreeInitialization && activeBlend(settings.sagFreeBlend) > 0.0f)
+        {
+            for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+            {
+                if (strandIndex >= activeSetPlan.strandCorrectiveMask.size() || activeSetPlan.strandCorrectiveMask[strandIndex] == 0u)
+                {
+                    continue;
+                }
+                const StrandRange& strand = asset.strands[strandIndex];
+                if (strand.pointCount < 2u)
+                {
+                    continue;
+                }
+                const Vec3 currentRoot = inOutPoints[strand.pointOffset];
+                for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
+                {
+                    const float u = static_cast<float>(localPoint) / static_cast<float>(std::max<uint32_t>(1u, strand.pointCount - 1u));
+                    Vec3 target = translatedRestPoint(strandIndex, localPoint, currentRoot);
+                    target.y -= 0.010f * u * u;
+                    inOutPoints[strand.pointOffset + localPoint] = Lerp(inOutPoints[strand.pointOffset + localPoint],
+                                                                        target,
+                                                                        activeBlend(settings.sagFreeBlend) * (0.35f + 0.65f * u));
+                }
+            }
+        }
+
+        if (settings.enableSagFreeInitialization && activeBlend(settings.sagFreeBlend) > 0.0f)
+        {
+            for (uint32_t pass = 0u; pass < 2u; ++pass)
+            {
+                for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+                {
+                    if (strandIndex >= activeSetPlan.strandCorrectiveMask.size() || activeSetPlan.strandCorrectiveMask[strandIndex] == 0u)
+                    {
+                        continue;
+                    }
+                    const StrandRange& strand = asset.strands[strandIndex];
+                    if (strand.pointCount < 3u)
+                    {
+                        continue;
+                    }
+                    for (uint32_t localPoint = std::max<uint32_t>(2u, settings.preserveRootPointCount + 1u); localPoint + 1u < strand.pointCount; ++localPoint)
+                    {
+                        const uint32_t prevIndex = strand.pointOffset + localPoint - 1u;
+                        const uint32_t pointIndex = strand.pointOffset + localPoint;
+                        const uint32_t nextIndex = strand.pointOffset + localPoint + 1u;
+                        Vec3 relaxed = (inOutPoints[prevIndex] + inOutPoints[pointIndex] * 2.0f + inOutPoints[nextIndex]) * 0.25f;
+                        relaxed.y = std::max(relaxed.y, inOutPoints[strand.pointOffset].y - 0.18f);
+                        inOutPoints[pointIndex] = Lerp(inOutPoints[pointIndex], relaxed, activeBlend(settings.sagFreeBlend) * 0.18f);
+                    }
+                }
+            }
+        }
 
         double penetrationSum = 0.0;
         uint32_t penetrationSamples = 0u;
@@ -940,6 +1041,26 @@ namespace hairgpu
                 }
                 const StrandRange& strand = asset.strands[strandIndex];
                 bool strandCorrected = false;
+                const Vec3 currentRoot = inOutPoints[strand.pointOffset];
+
+                if (settings.enableShapeMatching && activeBlend(settings.shapeMatchBlend) > 0.0f && strand.pointCount >= 2u)
+                {
+                    const Vec3 restRoot = asset.restPoints[strand.pointOffset];
+                    const Vec3 restTip = asset.restPoints[strand.pointOffset + strand.pointCount - 1u];
+                    const Vec3 currentTip = inOutPoints[strand.pointOffset + strand.pointCount - 1u];
+                    const float restTipDist = std::max(Length(restTip - restRoot), 1.0e-5f);
+                    const float currentTipDist = Length(currentTip - currentRoot);
+                    const float scale = Clamp(currentTipDist / restTipDist, 0.85f, 1.20f);
+                    for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
+                    {
+                        const Vec3 restOffset = asset.restPoints[strand.pointOffset + localPoint] - restRoot;
+                        const Vec3 target = currentRoot + restOffset * scale;
+                        inOutPoints[strand.pointOffset + localPoint] = Lerp(inOutPoints[strand.pointOffset + localPoint],
+                                                                            target,
+                                                                            activeBlend(settings.shapeMatchBlend) * 0.35f);
+                    }
+                }
+
                 for (uint32_t localPoint = 0u; localPoint < strand.pointCount; ++localPoint)
                 {
                     const uint32_t pointIndex = strand.pointOffset + localPoint;
@@ -961,7 +1082,7 @@ namespace hairgpu
 
                     if (best.corrected)
                     {
-                        inOutPoints[pointIndex] = Lerp(point, best.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
+                        inOutPoints[pointIndex] = Lerp(point, best.correctedPoint, activeBlend(settings.contactBlend));
                         strandCorrected = true;
                         ++report.correctedPointCount;
                         report.maxPenetration = std::max(report.maxPenetration, best.penetration);
@@ -984,13 +1105,19 @@ namespace hairgpu
                         continue;
                     }
 
+                    if (settings.enableRootAlignment && localPoint == settings.preserveRootPointCount)
+                    {
+                        const Vec3 rootTarget = translatedRestPoint(strandIndex, localPoint, currentRoot);
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], rootTarget, activeBlend(settings.rootAlignBlend));
+                    }
+
                     Vec3 currentDelta = inOutPoints[currIndex] - inOutPoints[prevIndex];
                     float currentLength = Length(currentDelta);
                     if (currentLength > 1.0e-6f)
                     {
                         const Vec3 dir = currentDelta / currentLength;
                         const Vec3 desiredPoint = inOutPoints[prevIndex] + dir * restLength;
-                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], desiredPoint, Clamp(settings.stretchBlend, 0.0f, 1.0f));
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], desiredPoint, activeBlend(settings.stretchBlend));
                     }
 
                     if (localPoint >= 2u)
@@ -1002,8 +1129,103 @@ namespace hairgpu
                         if (Length(desiredDir) > 1.0e-6f)
                         {
                             const Vec3 bendTarget = inOutPoints[prevIndex] + desiredDir * restLength;
-                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, Clamp(settings.bendBlend, 0.0f, 1.0f));
+                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, activeBlend(settings.bendBlend));
                         }
+
+                        if (settings.enableCurlPreservation && activeBlend(settings.curlPreservationBlend) > 0.0f)
+                        {
+                            const Vec3 restSecond = asset.restPoints[currIndex] - asset.restPoints[prevIndex] * 2.0f + asset.restPoints[prevPrevIndex];
+                            const Vec3 curlTarget = inOutPoints[prevIndex] * 2.0f - inOutPoints[prevPrevIndex] + restSecond;
+                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], curlTarget, activeBlend(settings.curlPreservationBlend) * 0.35f);
+                        }
+                    }
+
+                    if (settings.enableCoilTransport && activeBlend(settings.coilTransportBlend) > 0.0f)
+                    {
+                        const Vec3 restPrevPoint = asset.restPoints[prevIndex];
+                        const Vec3 restCurrPoint = asset.restPoints[currIndex];
+                        const Vec3 restTangent = safeNormalizeLocal(restCurrPoint - restPrevPoint, Vec3(0.0f, 1.0f, 0.0f));
+                        Vec3 axisX;
+                        Vec3 axisY;
+                        buildStableBasisLocal(restTangent, axisX, axisY);
+                        const float u = static_cast<float>(localPoint) / static_cast<float>(std::max<uint32_t>(1u, strand.pointCount - 1u));
+                        float phase = settings.coilTransportFrequency * 6.28318530718f * u + hash01Local(strandIndex, localPoint) * 6.28318530718f;
+                        if (settings.enablePeriodSkip && activeBlend(settings.periodSkipBlend) > 0.0f)
+                        {
+                            const float skipSelector = hash01Local(strand.groupId + 17u, strandIndex + localPoint * 7u);
+                            const float skipAmount = (skipSelector > 0.66f) ? 2.0f * 3.14159265359f : ((skipSelector > 0.33f) ? 3.14159265359f : 0.0f);
+                            phase += skipAmount * activeBlend(settings.periodSkipBlend);
+                        }
+                        if (settings.enablePhaseLock && activeBlend(settings.phaseLockBlend) > 0.0f)
+                        {
+                            const auto& groupStrands = strandsByGroup[static_cast<size_t>(strand.groupId)];
+                            float phaseAccum = phase;
+                            float phaseWeight = 1.0f;
+                            for (uint32_t neighborStrandIndex : groupStrands)
+                            {
+                                if (neighborStrandIndex == strandIndex)
+                                {
+                                    continue;
+                                }
+                                const StrandRange& neighborStrand = asset.strands[neighborStrandIndex];
+                                const float rootDistance = Length(inOutPoints[neighborStrand.pointOffset] - inOutPoints[strand.pointOffset]);
+                                if (rootDistance > std::max(settings.phaseLockRadius, 1.0e-5f))
+                                {
+                                    continue;
+                                }
+                                const float localWeight = 1.0f - Clamp(rootDistance / std::max(settings.phaseLockRadius, 1.0e-5f), 0.0f, 1.0f);
+                                const float neighborPhase = settings.coilTransportFrequency * 6.28318530718f * u + hash01Local(neighborStrandIndex, localPoint) * 6.28318530718f;
+                                phaseAccum += neighborPhase * localWeight;
+                                phaseWeight += localWeight;
+                            }
+                            phase = Lerp(phase, phaseAccum / std::max(phaseWeight, 1.0f), activeBlend(settings.phaseLockBlend));
+                        }
+                        const float amplitude = settings.coilTransportAmplitude * (0.25f + 0.75f * u);
+                        Vec3 coilOffset = axisX * std::sin(phase) * amplitude + axisY * std::cos(phase) * (amplitude * 0.72f);
+                        if (settings.enableSwitchback && activeBlend(settings.switchbackBlend) > 0.0f)
+                        {
+                            const float switchSign = (((localPoint / 2u) % 2u) == 0u) ? 1.0f : -1.0f;
+                            coilOffset += axisY * switchSign * amplitude * 0.35f * activeBlend(settings.switchbackBlend);
+                        }
+                        const Vec3 coilTarget = translatedRestPoint(strandIndex, localPoint, currentRoot) + coilOffset;
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], coilTarget, activeBlend(settings.coilTransportBlend) * (0.20f + 0.80f * u));
+                    }
+
+                    if (settings.enableCosseratProxy && (activeBlend(settings.cosseratBendBlend) > 0.0f || activeBlend(settings.cosseratTwistBlend) > 0.0f))
+                    {
+                        const Vec3 restPrevPoint = asset.restPoints[prevIndex];
+                        const Vec3 restCurrPoint = asset.restPoints[currIndex];
+                        const Vec3 restTangent = safeNormalizeLocal(restCurrPoint - restPrevPoint, Vec3(0.0f, 1.0f, 0.0f));
+                        Vec3 restAxisX;
+                        Vec3 restAxisY;
+                        buildStableBasisLocal(restTangent, restAxisX, restAxisY);
+                        Vec3 currentDelta2 = inOutPoints[currIndex] - inOutPoints[prevIndex];
+                        float currentLength2 = Length(currentDelta2);
+                        if (currentLength2 > 1.0e-6f)
+                        {
+                            const Vec3 currentDir = currentDelta2 / currentLength2;
+                            const Vec3 bendDir = safeNormalizeLocal(Lerp(currentDir, restTangent, activeBlend(settings.cosseratBendBlend)), currentDir);
+                            Vec3 bendTarget = inOutPoints[prevIndex] + bendDir * restLength;
+                            if (activeBlend(settings.cosseratTwistBlend) > 0.0f)
+                            {
+                                const float u = static_cast<float>(localPoint) / static_cast<float>(std::max<uint32_t>(1u, strand.pointCount - 1u));
+                                const float twistPhase = (0.5f + hash01Local(strandIndex + 91u, localPoint + 13u)) * 6.28318530718f * u;
+                                bendTarget += (restAxisX * std::sin(twistPhase) + restAxisY * std::cos(twistPhase)) * settings.coilTransportAmplitude * 0.18f * activeBlend(settings.cosseratTwistBlend);
+                            }
+                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, 0.65f * activeBlend(settings.cosseratBendBlend) + 0.35f * activeBlend(settings.cosseratTwistBlend));
+                        }
+                    }
+
+                    if (settings.enableGhostTargets && activeBlend(settings.ghostTargetBlend) > 0.0f)
+                    {
+                        const Vec3 ghostTarget = translatedRestPoint(strandIndex, localPoint, currentRoot);
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], ghostTarget, activeBlend(settings.ghostTargetBlend) * (0.25f + 0.75f * static_cast<float>(localPoint) / static_cast<float>(std::max<uint32_t>(1u, strand.pointCount - 1u))));
+                    }
+
+                    if (settings.enableRestPreservation && activeBlend(settings.restPreserveBlend) > 0.0f)
+                    {
+                        const Vec3 restTarget = translatedRestPoint(strandIndex, localPoint, currentRoot);
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], restTarget, activeBlend(settings.restPreserveBlend));
                     }
 
                     const PenetrationResult postConstraint = ResolveAgainstColliderSet(inOutPoints[currIndex],
@@ -1013,7 +1235,7 @@ namespace hairgpu
                                                                                       -1.05f);
                     if (postConstraint.corrected)
                     {
-                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, activeBlend(settings.contactBlend));
                         strandCorrected = true;
                         report.maxPenetration = std::max(report.maxPenetration, postConstraint.penetration);
                         penetrationSum += postConstraint.penetration;
@@ -1025,6 +1247,94 @@ namespace hairgpu
                 {
                     ++report.correctedStrandCount;
                 }
+            }
+
+            if (settings.enableAdhesion && activeBlend(settings.adhesionBlend) > 0.0f && settings.adhesionRadius > 1.0e-5f)
+            {
+                std::vector<Vec3> adhesionPoints = inOutPoints;
+                for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+                {
+                    if (strandIndex >= activeSetPlan.strandCorrectiveMask.size() || activeSetPlan.strandCorrectiveMask[strandIndex] == 0u)
+                    {
+                        continue;
+                    }
+                    const StrandRange& strand = asset.strands[strandIndex];
+                    const auto& groupStrands = strandsByGroup[static_cast<size_t>(strand.groupId)];
+                    for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
+                    {
+                        const uint32_t pointIndex = strand.pointOffset + localPoint;
+                        Vec3 average = inOutPoints[pointIndex];
+                        float weight = 1.0f;
+                        for (uint32_t neighborStrandIndex : groupStrands)
+                        {
+                            if (neighborStrandIndex == strandIndex)
+                            {
+                                continue;
+                            }
+                            const StrandRange& neighborStrand = asset.strands[neighborStrandIndex];
+                            if (localPoint >= neighborStrand.pointCount)
+                            {
+                                continue;
+                            }
+                            const uint32_t neighborPointIndex = neighborStrand.pointOffset + localPoint;
+                            const float distance = Length(inOutPoints[neighborPointIndex] - inOutPoints[pointIndex]);
+                            if (distance > settings.adhesionRadius)
+                            {
+                                continue;
+                            }
+                            const float localWeight = 1.0f - Clamp(distance / std::max(settings.adhesionRadius, 1.0e-6f), 0.0f, 1.0f);
+                            average += inOutPoints[neighborPointIndex] * localWeight;
+                            weight += localWeight;
+                        }
+                        adhesionPoints[pointIndex] = Lerp(inOutPoints[pointIndex], average / std::max(weight, 1.0e-6f), activeBlend(settings.adhesionBlend));
+                    }
+                }
+                inOutPoints.swap(adhesionPoints);
+            }
+
+            if (settings.enableBoundarySmoothing && activeBlend(settings.boundaryBlend) > 0.0f)
+            {
+                std::vector<Vec3> smoothed = inOutPoints;
+                for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+                {
+                    if (strandIndex >= activeSetPlan.strandCorrectiveMask.size() || activeSetPlan.strandCorrectiveMask[strandIndex] == 0u)
+                    {
+                        continue;
+                    }
+                    const StrandRange& strand = asset.strands[strandIndex];
+                    const auto& groupStrands = strandsByGroup[static_cast<size_t>(strand.groupId)];
+                    for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
+                    {
+                        const uint32_t pointIndex = strand.pointOffset + localPoint;
+                        Vec3 average = inOutPoints[pointIndex];
+                        float weight = 1.0f;
+                        for (uint32_t neighborStrandIndex : groupStrands)
+                        {
+                            if (neighborStrandIndex == strandIndex)
+                            {
+                                continue;
+                            }
+                            if (neighborStrandIndex < activeSetPlan.strandCorrectiveMask.size() && activeSetPlan.strandCorrectiveMask[neighborStrandIndex] != 0u)
+                            {
+                                continue;
+                            }
+                            const StrandRange& neighborStrand = asset.strands[neighborStrandIndex];
+                            if (neighborStrand.pointCount == 0u || localPoint >= neighborStrand.pointCount)
+                            {
+                                continue;
+                            }
+                            const float rootDistance = Length(inOutPoints[neighborStrand.pointOffset] - inOutPoints[strand.pointOffset]);
+                            if (rootDistance > settings.adhesionRadius * 1.5f)
+                            {
+                                continue;
+                            }
+                            average += inOutPoints[neighborStrand.pointOffset + localPoint] * 0.5f;
+                            weight += 0.5f;
+                        }
+                        smoothed[pointIndex] = Lerp(inOutPoints[pointIndex], average / std::max(weight, 1.0f), activeBlend(settings.boundaryBlend) * (0.20f + 0.80f * static_cast<float>(localPoint) / static_cast<float>(std::max<uint32_t>(1u, strand.pointCount - 1u))));
+                    }
+                }
+                inOutPoints.swap(smoothed);
             }
         }
 
