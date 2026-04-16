@@ -765,9 +765,10 @@ namespace hairgpu
             const float frontFactor = std::max(std::sin(angle), 0.0f);
             const float backFactor = std::max(-std::sin(angle), 0.0f);
             const float sideFactor = std::fabs(std::cos(angle));
-            float fringeDu = std::fabs(WrapUnit(uv.x) - 0.25f);
-            fringeDu = std::min(fringeDu, 1.0f - fringeDu);
-            const float fringeFactor = frontFactor * Smooth01(1.0f - Clamp(fringeDu / 0.11f, 0.0f, 1.0f));
+            const float crownMask = Smooth01(1.0f - Clamp((uv.y - 0.18f) / 0.18f, 0.0f, 1.0f));
+            const float upperMask = Smooth01(1.0f - Clamp((uv.y - 0.26f) / 0.18f, 0.0f, 1.0f));
+            const float faceOpening = EvaluateFaceOpeningMask(uv.x, uv.y);
+            const float partMask = upperMask * Smooth01(1.0f - Clamp(std::fabs(rel.x) / 0.032f, 0.0f, 1.0f));
 
             Vec3 lateral = ProjectOntoPlaneDir(Vec3(sideSign, 0.0f, 0.0f), normal);
             if (Length(lateral) <= 1.0e-6f)
@@ -786,17 +787,48 @@ namespace hairgpu
             }
 
             const Vec3 tangentOffset = rootOffset - normal * Dot(rootOffset, normal);
-            Vec3 root = rootSurface + normal * 0.0045f + tangentOffset * 0.30f;
-            root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0055f);
+            Vec3 root = rootSurface + normal * 0.0038f + tangentOffset * 0.25f;
+            root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0045f);
 
-            const float baseChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), segmentLength);
-            const float lengthJitter = 0.95f + 0.10f * Hash01(seed + 41u);
-            const float lengthScale = Clamp(0.96f + 0.16f * sideFactor + 0.26f * backFactor - 0.18f * fringeFactor, 0.72f, 1.42f);
-            const float strandLength = baseChainLength * parameters.overallLength * lengthScale * lengthJitter;
-            const float rootTravel = strandLength * (0.08f + 0.02f * sideFactor + 0.02f * backFactor);
-            const float sideDrift = (0.0050f + 0.0080f * sideFactor + 0.0040f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u));
-            const float forwardDrift = 0.015f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u));
-            const float curlNoise = parameters.strandNoise * 0.20f;
+            const float incomingChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), 0.001f);
+            const float targetChainLength = Clamp(incomingChainLength, 0.24f, 0.38f);
+            const float lengthJitter = 0.96f + 0.08f * Hash01(seed + 41u);
+            const float partLengthBoost = 0.05f * partMask;
+            const float faceTrim = 0.12f * faceOpening;
+            const float backBoost = 0.10f * backFactor;
+            const float sideBoost = 0.04f * sideFactor;
+            const float strandLength = Clamp(targetChainLength * parameters.overallLength * (0.96f + partLengthBoost + sideBoost + backBoost - faceTrim) * lengthJitter, 0.22f, 0.42f);
+
+            const float capTravel = Clamp(0.026f + 0.020f * crownMask + 0.010f * backFactor, 0.020f, strandLength * 0.22f);
+            const float lateralSweep = 0.014f * sideFactor + 0.040f * partMask + 0.026f * faceOpening;
+            const float radialSweep = 0.008f * sideFactor + 0.006f * backFactor;
+            const float frontSweep = -0.014f * faceOpening - 0.008f * backFactor + 0.004f * frontFactor * (1.0f - faceOpening);
+            const float tipLift = 0.020f * faceOpening;
+            const float noiseAmount = parameters.strandNoise * 0.25f;
+
+            Vec3 rootFlow = Normalize(
+                tangentDown * 0.88f +
+                lateral * (0.55f * partMask + 0.22f * faceOpening + 0.10f * sideFactor) +
+                radial * (0.10f * sideFactor + 0.06f * backFactor) +
+                frontDir * (-0.16f * faceOpening + 0.05f * backFactor));
+            if (Length(rootFlow) <= 1.0e-6f)
+            {
+                rootFlow = tangentDown;
+            }
+
+            Vec3 p0 = root;
+            Vec3 p1 = root + rootFlow * capTravel + normal * 0.0015f;
+            Vec3 p2 = root
+                + rootFlow * (capTravel * 0.85f)
+                + Vec3(0.0f, -1.0f, 0.0f) * (strandLength * 0.42f)
+                + lateral * (lateralSweep * 0.65f)
+                + frontDir * (frontSweep * 0.45f)
+                + radial * (radialSweep * 0.55f);
+            Vec3 p3 = root
+                + Vec3(0.0f, -1.0f, 0.0f) * (strandLength - tipLift)
+                + lateral * lateralSweep
+                + frontDir * frontSweep
+                + radial * radialSweep;
 
             const Vec3 orthoA = Normalize(Cross(normal, lateral));
             const Vec3 orthoB = Normalize(Cross(lateral, orthoA));
@@ -804,27 +836,18 @@ namespace hairgpu
             for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
             {
                 const float t = static_cast<float>(pointIndex) / static_cast<float>(std::max(pointCount - 1u, 1u));
-                const float rootPhase = Clamp(t / 0.36f, 0.0f, 1.0f);
-                const float fallPhase = Clamp((t - 0.36f) / 0.64f, 0.0f, 1.0f);
-
-                Vec3 p = root;
-                p += tangentDown * (rootTravel * Smooth01(rootPhase));
-                p += Vec3(0.0f, -1.0f, 0.0f) * (strandLength * 0.64f * Smooth01(fallPhase));
-                p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase);
-                p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
-                p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
-                p += normal * (0.0050f * (1.0f - rootPhase));
-
-                if (t > 0.35f)
+                Vec3 p = CubicBezier(p0, p1, p2, p3, t);
+                if (t > 0.14f)
                 {
-                    const float noise = curlNoise * (0.35f + 0.65f * t);
-                    const float noiseA = std::sin((t * 1.7f + Hash01(seed + pointIndex * 11u)) * kTau);
-                    const float noiseB = std::cos((t * 1.3f + Hash01(seed + pointIndex * 13u)) * kTau);
-                    p += orthoA * (noiseA * noise);
-                    p += orthoB * (noiseB * noise * 0.5f);
+                    const float atten = Smooth01(Clamp((t - 0.14f) / 0.86f, 0.0f, 1.0f));
+                    const float noiseA = std::sin((t * 1.35f + Hash01(seed + pointIndex * 11u)) * kTau);
+                    const float noiseB = std::cos((t * 1.10f + Hash01(seed + pointIndex * 13u)) * kTau);
+                    p += orthoA * (noiseA * noiseAmount * atten);
+                    p += orthoB * (noiseB * noiseAmount * 0.45f * atten);
                 }
 
-                p = ProjectPointOutsideHeadVolume(p, scalpCenter, Lerp(0.0055f, 0.0020f, t));
+                const float shell = Lerp(0.0045f, 0.0018f, t);
+                p = ProjectPointOutsideHeadVolume(p, scalpCenter, shell);
                 asset.restPoints.push_back(p);
                 asset.pointWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
             }
@@ -953,13 +976,13 @@ namespace hairgpu
         parameters.partWidth = 0.010f;
         parameters.scalpConform = 1.0f;
         parameters.rootLift = 0.0f;
-        parameters.silhouetteWidth = 0.0025f;
-        parameters.sideVolume = 0.0008f;
-        parameters.backVolume = 0.0010f;
-        parameters.lowerRingLengthBias = 0.06f;
-        parameters.strandNoise = 0.00025f;
-        parameters.followerSpread = 0.00035f;
-        parameters.tipInward = 0.0002f;
+        parameters.silhouetteWidth = 0.0018f;
+        parameters.sideVolume = 0.0005f;
+        parameters.backVolume = 0.0006f;
+        parameters.lowerRingLengthBias = 0.04f;
+        parameters.strandNoise = 0.00010f;
+        parameters.followerSpread = 0.00014f;
+        parameters.tipInward = 0.00008f;
         return parameters;
     }
 
@@ -982,24 +1005,18 @@ namespace hairgpu
         const Vec3 scalpCenter(0.0f, 1.60f, 0.0f);
         const float golden = 0.61803398875f;
 
-        const uint32_t guideCols = std::max(8u, static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(guideCount) * 1.12f))));
-        const uint32_t guideRows = std::max(1u, (guideCount + guideCols - 1u) / guideCols);
-
         for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
         {
-            const uint32_t row = guideIndex / guideCols;
-            const uint32_t col = guideIndex % guideCols;
-            const float jx = Hash01(guideIndex * 11u + 1u) - 0.5f;
-            const float jy = Hash01(guideIndex * 13u + 7u) - 0.5f;
-            const float jz = Hash01(guideIndex * 17u + 19u) - 0.5f;
+            const float jitterU = (Hash01(guideIndex * 11u + 1u) - 0.5f) * 0.030f;
+            const float jitterV = (Hash01(guideIndex * 13u + 7u) - 0.5f) * 0.040f;
+            const float jitterPart = (Hash01(guideIndex * 17u + 19u) - 0.5f) * 0.006f;
 
-            const float fx = (static_cast<float>(col) + 0.5f + jx * 0.62f) / static_cast<float>(guideCols);
-            const float fy = (static_cast<float>(row) + 0.5f + jy * 0.74f) / static_cast<float>(guideRows);
-            float u = WrapUnit(fx + jz * 0.004f);
+            float u = WrapUnit((static_cast<float>(guideIndex) + 0.5f) * golden + 0.11f + jitterU);
             const float maxV = EvaluateAllowedRootMaxV(u);
             const float minV = EvaluateAllowedRootMinV(u);
-            float v = Lerp(minV, maxV, std::pow(Clamp(fy, 0.0f, 1.0f), 1.10f));
-            v = Clamp(v + jy * 0.010f, minV, maxV);
+            const float stratified = Fract((static_cast<float>(guideIndex) + 0.5f) * 0.7548776662466927f + 0.23f + jitterV);
+            float v = Lerp(minV, maxV, std::pow(Clamp(stratified, 0.0f, 1.0f), 0.82f));
+            v = Clamp(v + jitterPart, minV, maxV);
 
             float fringeDu = std::fabs(WrapUnit(u) - 0.25f);
             fringeDu = std::min(fringeDu, 1.0f - fringeDu);
@@ -1106,9 +1123,9 @@ namespace hairgpu
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.944f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.035f;
-                followerFollow.clumpWeight = 0.74f + Hash01(seed + 19u) * 0.060f - edgeRisk * 0.16f;
-                followerFollow.noiseWeight = 0.00022f + Hash01(seed + 23u) * 0.00036f + edgeRisk * 0.00012f;
+                followerFollow.followWeight = 0.980f + Hash01(seed + 7u) * 0.006f - edgeRisk * 0.012f;
+                followerFollow.clumpWeight = 0.88f + Hash01(seed + 19u) * 0.040f - edgeRisk * 0.08f;
+                followerFollow.noiseWeight = 0.00002f + Hash01(seed + 23u) * 0.00006f + edgeRisk * 0.00003f;
 
                 AppendStaticWigStrand(
                     asset,
@@ -1129,12 +1146,12 @@ namespace hairgpu
         RebuildRootRestPositionsFromScalp(asset);
 
         WigStyleSettings wigSettings;
-        wigSettings.strength = 1.0f;
-        wigSettings.capRegion = 0.34f;
-        wigSettings.shellOffset = 0.004f;
-        wigSettings.flowBlend = 0.78f;
-        wigSettings.outwardBlend = 0.18f;
-        wigSettings.restoreOriginalTowardsTip = 0.62f;
+        wigSettings.strength = 0.20f;
+        wigSettings.capRegion = 0.18f;
+        wigSettings.shellOffset = 0.0035f;
+        wigSettings.flowBlend = 0.25f;
+        wigSettings.outwardBlend = 0.05f;
+        wigSettings.restoreOriginalTowardsTip = 0.12f;
         StyleAssetToScalpWig(asset, wigSettings);
         return asset;
     }

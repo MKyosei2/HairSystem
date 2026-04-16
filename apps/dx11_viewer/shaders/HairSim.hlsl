@@ -1480,14 +1480,14 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
 
         float t = (ParticlesPerStrand > 1) ? (float(i) / float(ParticlesPerStrand - 1)) : 0.0f;
         float noisePhase = ElapsedTime * (1.7f + 0.6f * follow.NoiseWeight) + strandIndex * 0.173f + i * 0.217f;
-        float noiseAmp = follow.NoiseWeight * (0.0015f + t * 0.0065f);
+        float noiseAmp = follow.NoiseWeight * (0.00025f + t * 0.00120f);
         float3 noise = float3(sin(noisePhase), 0.0f, cos(noisePhase * 1.17f)) * noiseAmp;
 
         float followGain = saturate(lerp(1.0f, follow.FollowWeight, FollowStiffness));
-        float clumpGain = lerp(0.25f, 1.0f, follow.ClumpWeight);
-        float curveGain = 0.35f + 0.65f * t;
+        float clumpGain = lerp(0.70f, 1.0f, follow.ClumpWeight);
+        float curveGain = 0.10f + 0.30f * t;
         float3 parentDelta = parentPos - parentRest;
-        float3 target = parentPos + restOffset * clumpGain + parentDelta * curveGain * 0.12f + noise;
+        float3 target = parentPos + restOffset * clumpGain + parentDelta * curveGain * 0.04f + noise;
         float3 current = InputPositions[strandPointIndex].xyz;
         float3 blended = lerp(current, target, followGain);
 
