@@ -701,6 +701,7 @@ namespace hairgpu::viewer
         uint32_t m_builderGuideCount = 896;
         uint32_t m_builderFollowersPerGuide = 5;
         uint32_t m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
+        float m_sampleTargetChainLengthMeters = 0.30f;
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
@@ -717,7 +718,7 @@ namespace hairgpu::viewer
         std::wstring m_lastEditStackStatus = L"No edit stack";
         hairgpu::RuntimeEditState m_runtimeEditState;
         hairgpu::RegionSelectMode m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
-        bool m_quickEditEnabled = true;
+        bool m_quickEditEnabled = false;
         std::wstring m_quickEditLayerName = L"quick_form";
         float m_quickEditFeather = 0.20f;
         float m_quickEditLengthScale = 1.00f;

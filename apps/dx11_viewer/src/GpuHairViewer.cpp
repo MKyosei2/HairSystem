@@ -51,6 +51,48 @@ namespace hairgpu::viewer
             bool valid() const { return width > 0 && height > 0 && channels > 0 && samples.size() == static_cast<size_t>(width) * height * channels; }
         };
 
+        float ComputeSampleSegmentLengthMeters(uint32_t particlesPerStrand, float targetChainLengthMeters)
+        {
+            const uint32_t segments = std::max<uint32_t>(particlesPerStrand > 0u ? particlesPerStrand - 1u : 1u, 1u);
+            return std::clamp(targetChainLengthMeters / static_cast<float>(segments), 0.0012f, 0.0060f);
+        }
+
+        float ComputeAverageGuideSegmentLength(const hairgpu::HairAsset& asset)
+        {
+            if (asset.strands.empty() || asset.restPoints.empty())
+            {
+                return 0.0025f;
+            }
+
+            double total = 0.0;
+            uint64_t count = 0u;
+            const size_t guideCount = std::min<size_t>(asset.guideStrandCount, asset.strands.size());
+            for (size_t strandIndex = 0; strandIndex < guideCount; ++strandIndex)
+            {
+                const auto& strand = asset.strands[strandIndex];
+                if (strand.pointCount < 2u)
+                {
+                    continue;
+                }
+                for (uint32_t i = 1u; i < strand.pointCount; ++i)
+                {
+                    const size_t p0 = strand.pointOffset + i - 1u;
+                    const size_t p1 = strand.pointOffset + i;
+                    if (p1 >= asset.restPoints.size())
+                    {
+                        break;
+                    }
+                    total += static_cast<double>(hairgpu::Length(asset.restPoints[p1] - asset.restPoints[p0]));
+                    ++count;
+                }
+            }
+            if (count == 0u)
+            {
+                return 0.0025f;
+            }
+            return std::clamp(static_cast<float>(total / static_cast<double>(count)), 0.0012f, 0.0060f);
+        }
+
         bool EndsWithInsensitiveW(const std::wstring& s, const wchar_t* ext)
         {
             std::wstring a = s; std::wstring b = ext;
@@ -469,10 +511,7 @@ namespace hairgpu::viewer
 
         std::wstring BuildDefaultInlineEditStackText()
         {
-            return
-                L"stack,0.42,0.10\r\n"
-                L"layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00\r\n"
-                L"layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85\r\n";
+            return L"";
         }
 
         std::vector<std::string> SplitSimpleCsvText(const std::string& line)
@@ -1238,9 +1277,9 @@ namespace hairgpu::viewer
         icc.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
         InitCommonControlsEx(&icc);
 
-        const float initialChainLengthMeters = 0.32f;
-        m_simConfig.segmentLength = initialChainLengthMeters / static_cast<float>(std::max<uint32_t>(m_builderParticlesPerStrand - 1u, 1u));
+        m_simConfig.segmentLength = ComputeSampleSegmentLengthMeters(m_builderParticlesPerStrand, m_sampleTargetChainLengthMeters);
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
+        m_simConfig.segmentLength = ComputeAverageGuideSegmentLength(m_asset);
         // Avoid double wig styling in viewer; sample/import paths already shape the asset.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
@@ -1255,7 +1294,7 @@ namespace hairgpu::viewer
         m_simConfig.fixedTimeStep = 1.0f / 120.0f;
         m_simConfig.gravity = 18.5f;
         m_simConfig.globalDamping = 0.085f;
-        m_simConfig.segmentLength = 0.036f;
+        m_simConfig.segmentLength = ComputeAverageGuideSegmentLength(m_asset);
         m_simConfig.bendStiffness = 0.14f;
         m_simConfig.followStiffness = 0.96f;
         m_simConfig.windStrength = 0.03f;
@@ -1294,7 +1333,12 @@ namespace hairgpu::viewer
         m_enableSelfCollision = false;
         m_enableGridSelfCollision = false;
 
-        m_colliders.spheres.push_back({ { 0.0f, 1.66f, 0.0f }, 0.215f });
+        m_colliders.spheres.push_back({ { 0.0f, 1.66f, 0.0f }, 0.215f }); // skull
+        m_colliders.spheres.push_back({ { 0.0f, 1.58f, 0.11f }, 0.115f }); // face front
+        m_colliders.spheres.push_back({ { -0.11f, 1.57f, 0.08f }, 0.070f }); // cheek L
+        m_colliders.spheres.push_back({ {  0.11f, 1.57f, 0.08f }, 0.070f }); // cheek R
+        m_colliders.capsules.push_back({ { 0.0f, 1.73f, 0.02f }, 0.085f, { 0.0f, 1.60f, 0.08f }, 0.095f }); // forehead
+        m_colliders.capsules.push_back({ { 0.0f, 1.50f, 0.10f }, 0.085f, { 0.0f, 1.34f, 0.03f }, 0.070f }); // jaw/neck front
         m_colliders.capsules.push_back({ { -0.19f, 1.36f, 0.02f }, 0.11f, { -0.42f, 1.15f, 0.04f }, 0.08f });
         m_colliders.capsules.push_back({ {  0.19f, 1.36f, 0.02f }, 0.11f, {  0.42f, 1.15f, 0.04f }, 0.08f });
         m_colliders.capsules.push_back({ {  0.00f, 1.44f, -0.08f }, 0.14f, {  0.00f, 0.92f, -0.10f }, 0.16f });
@@ -4847,11 +4891,6 @@ namespace hairgpu::viewer
         m_activeSetBudget.standardParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
         m_activeSetBudget.maxParticlesPerStrand = hairgpu::kIdealParticlesPerStrand;
         m_activeSetBudget.maxRefinementLevel = 3u;
-        if (m_editInlineEditStack)
-        {
-            SetWindowTextW(m_editInlineEditStack, L"");
-        }
-        m_selectedInlineLayerIndex = -1;
         switch (presetIndex)
         {
         default:
@@ -4860,17 +4899,17 @@ namespace hairgpu::viewer
             m_builderGuideCount = 896;
             m_builderFollowersPerGuide = 5;
             m_builderParticlesPerStrand = hairgpu::kStandardParticlesPerStrand;
-            m_widthScale = 0.62f;
-            m_simConfig.gravity = 10.0f;
-            m_simConfig.globalDamping = 0.120f;
-            m_simConfig.windStrength = 0.00f;
-            m_simConfig.solverIterations = 10;
-            m_simConfig.followStiffness = 0.995f;
-            m_selfCollisionRadius = 0.0035f;
-            m_selfCollisionStiffness = 0.06f;
-            m_simConfig.selfCollisionCellSize = 0.045f;
-            m_simConfig.stretchCompliance = 5.0e-8f;
-            m_simConfig.bendCompliance = 4.0e-6f;
+            m_widthScale = 0.56f;
+            m_simConfig.gravity = 18.5f;
+            m_simConfig.globalDamping = 0.085f;
+            m_simConfig.windStrength = 0.03f;
+            m_simConfig.solverIterations = 8;
+            m_simConfig.followStiffness = 0.988f;
+            m_selfCollisionRadius = 0.0055f;
+            m_selfCollisionStiffness = 0.10f;
+            m_simConfig.selfCollisionCellSize = 0.060f;
+            m_simConfig.stretchCompliance = 2.0e-7f;
+            m_simConfig.bendCompliance = 1.5e-5f;
             break;
         case 1:
             m_activePresetName = L"Calm Studio";
@@ -4990,17 +5029,14 @@ namespace hairgpu::viewer
 
     bool GpuHairViewer::RebuildAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand)
     {
-        const uint32_t previousParticlesPerStrand = std::max<uint32_t>(m_builderParticlesPerStrand, 2u);
-        const float preservedChainLength = m_simConfig.segmentLength * static_cast<float>(std::max<uint32_t>(previousParticlesPerStrand - 1u, 1u));
-
         m_builderGuideCount = guideCount;
         m_builderFollowersPerGuide = followersPerGuide;
         m_builderParticlesPerStrand = std::max<uint32_t>(particlesPerStrand, 4u);
-        const float targetChainLengthMeters = std::clamp(preservedChainLength, 0.24f, 0.36f);
-        m_simConfig.segmentLength = targetChainLengthMeters / static_cast<float>(std::max<uint32_t>(m_builderParticlesPerStrand - 1u, 1u));
+        m_simConfig.segmentLength = ComputeSampleSegmentLengthMeters(m_builderParticlesPerStrand, m_sampleTargetChainLengthMeters);
 
         ApplySampleMaskOverrides();
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
+        m_simConfig.segmentLength = ComputeAverageGuideSegmentLength(m_asset);
         // Avoid double wig styling in viewer; sample/import paths already shape the asset.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";
