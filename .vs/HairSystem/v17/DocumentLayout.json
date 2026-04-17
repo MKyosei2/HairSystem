@@ -1,21 +1,21 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\",
+  "WorkspaceRootPath": "C:\\Users\\kyose\\source\\repos\\HairSystem\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
       "RelativeMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|solutionrelative:apps\\dx11_viewer\\shaders\\HairSim.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|solutionrelative:apps\\dx11_viewer\\src\\GpuHairViewer.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{9C9B3452-F3E6-44C7-AA5C-880FA988AD09}|apps\\dx11_viewer\\hairgpu_dx11_viewer.vcxproj|solutionrelative:apps\\dx11_viewer\\src\\GpuHairViewer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7D34DC9F-67C8-4378-9C5A-A21D34B390A1}|src\\hairgpu_core\\hairgpu_core.vcxproj|C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{7D34DC9F-67C8-4378-9C5A-A21D34B390A1}|src\\hairgpu_core\\hairgpu_core.vcxproj|C:\\Users\\kyose\\source\\repos\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{7D34DC9F-67C8-4378-9C5A-A21D34B390A1}|src\\hairgpu_core\\hairgpu_core.vcxproj|solutionrelative:src\\hairgpu_core\\SampleAsset.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -40,11 +40,11 @@
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "HairSim.hlsl",
-              "DocumentMoniker": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl",
+              "DocumentMoniker": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl",
               "RelativeDocumentMoniker": "apps\\dx11_viewer\\shaders\\HairSim.hlsl",
-              "ToolTip": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl",
+              "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\shaders\\HairSim.hlsl",
               "RelativeToolTip": "apps\\dx11_viewer\\shaders\\HairSim.hlsl",
-              "ViewState": "AgIAABUDAAAAAAAAAAAqwCQDAAAJAAAAAAAAAA==",
+              "ViewState": "AgIAABUDAAAAAAAAAAAqwB4DAAAFAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002777|",
               "WhenOpened": "2026-04-13T09:45:33.21Z",
               "EditorCaption": ""
@@ -53,9 +53,9 @@
               "$type": "Document",
               "DocumentIndex": 1,
               "Title": "GpuHairViewer.h",
-              "DocumentMoniker": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.h",
+              "DocumentMoniker": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.h",
               "RelativeDocumentMoniker": "apps\\dx11_viewer\\src\\GpuHairViewer.h",
-              "ToolTip": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.h",
+              "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.h",
               "RelativeToolTip": "apps\\dx11_viewer\\src\\GpuHairViewer.h",
               "ViewState": "AgIAAA8AAAAAAAAAAAAAABsAAAAXAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
@@ -65,9 +65,9 @@
               "$type": "Document",
               "DocumentIndex": 2,
               "Title": "GpuHairViewer.cpp",
-              "DocumentMoniker": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
+              "DocumentMoniker": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "RelativeDocumentMoniker": "apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
-              "ToolTip": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
+              "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "RelativeToolTip": "apps\\dx11_viewer\\src\\GpuHairViewer.cpp",
               "ViewState": "AgIAAFUGAAAAAAAAAAAiwF0GAAAmAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
@@ -77,9 +77,9 @@
               "$type": "Document",
               "DocumentIndex": 3,
               "Title": "SampleAsset.cpp",
-              "DocumentMoniker": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp",
+              "DocumentMoniker": "C:\\Users\\kyose\\source\\repos\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp",
               "RelativeDocumentMoniker": "src\\hairgpu_core\\SampleAsset.cpp",
-              "ToolTip": "C:\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\GitHub\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp",
+              "ToolTip": "C:\\Users\\kyose\\source\\repos\\HairSystem\\src\\hairgpu_core\\SampleAsset.cpp",
               "RelativeToolTip": "src\\hairgpu_core\\SampleAsset.cpp",
               "ViewState": "AgIAAL8DAAAAAAAAAADwv80DAAAxAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
