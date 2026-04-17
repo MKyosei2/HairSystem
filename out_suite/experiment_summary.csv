@@ -1,5 +1,0 @@
-variant,usesEditScores,selectedClusters,selectedGuides,selectedStrands,highestScore,lowestSelectedScore,averageSelectedScore,estimatedFrameMs,recommendedSolverIterations,budgetScale,maxActiveClusters,maxActiveGuides,promoteScoreThreshold
-prediction_only,0,0,0,0,0,0,0,6,3,1,0,0,2
-active_set_runtime,0,0,0,0,0,0,0,6,3,1,6,64,0.52
-proposal_hybrid,1,0,0,0,0,0,0,6,3,1,6,64,0.52
-full_physics,1,1,1,2,0.32798,0.32798,0.32798,6.85,6,1,1,1,0

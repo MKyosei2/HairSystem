@@ -1,2 +1,0 @@
-valid | errors=0 warnings=0 info=1 | avgSeg=0.19894 maxSeg=0.383001
-- [info] Asset validation passed without issues.
