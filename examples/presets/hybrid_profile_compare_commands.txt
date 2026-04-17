@@ -1,8 +1,0 @@
-# Submission baseline vs ideal/max adaptive compare
-hairgpu_cli hybrid-profile-compare teacher_dir bundle_dir out_profile_compare standard128,ideal1024,max2048
-
-# Full sweep including development baseline
-hairgpu_cli hybrid-profile-compare teacher_dir bundle_dir out_profile_compare_full dev16,standard128,ideal1024,max2048
-
-# Same compare with explicit collider set
-hairgpu_cli hybrid-profile-compare teacher_dir bundle_dir out_profile_compare_env standard128,ideal1024,max2048 --colliders examples/sample_assets/test_colliders.csv
