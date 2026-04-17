@@ -88,17 +88,13 @@ namespace hairgpu
         float EvaluateAllowedRootMinV(float u)
         {
             (void)u;
-            return 0.03f;
+            return 0.02f;
         }
 
         float EvaluateAllowedRootMaxV(float u)
         {
-            const float angle = WrapUnit(u) * kTau;
-            const float front = std::max(std::sin(angle), 0.0f);
-            const float back = std::max(-std::sin(angle), 0.0f);
-            const float side = std::fabs(std::cos(angle));
-            float maxV = 0.84f + 0.08f * back + 0.04f * side - 0.03f * front;
-            return Clamp(maxV, 0.72f, 0.94f);
+            (void)u;
+            return 0.94f;
         }
 
         Vec3 ProjectOntoPlaneDir(const Vec3& v, const Vec3& n)
@@ -134,33 +130,6 @@ namespace hairgpu
                 result.y += 0.020f * faceLift;
             }
 
-            return result;
-        }
-
-        Vec3 ProjectPointOutsideFaceVolumes(const Vec3& point, const Vec3& scalpCenter, float shell)
-        {
-            Vec3 result = point;
-            const Vec3 faceCenter = scalpCenter + Vec3(0.0f, -0.03f, 0.11f);
-            const Vec3 cheekL = scalpCenter + Vec3(-0.10f, -0.03f, 0.09f);
-            const Vec3 cheekR = scalpCenter + Vec3( 0.10f, -0.03f, 0.09f);
-            const Vec3 jawCenter = scalpCenter + Vec3(0.0f, -0.13f, 0.06f);
-            struct FaceSphere { Vec3 c; float r; };
-            const FaceSphere spheres[] = {
-                { faceCenter, 0.105f + shell },
-                { cheekL,    0.062f + shell },
-                { cheekR,    0.062f + shell },
-                { jawCenter, 0.074f + shell },
-            };
-            for (const FaceSphere& s : spheres)
-            {
-                Vec3 delta = result - s.c;
-                const float len = Length(delta);
-                if (len < s.r)
-                {
-                    const Vec3 dir = (len > 1.0e-6f) ? (delta / len) : Vec3(0.0f, 0.0f, 1.0f);
-                    result = s.c + dir * s.r;
-                }
-            }
             return result;
         }
 
@@ -649,7 +618,12 @@ namespace hairgpu
                     penalty += (centroidV - maxAllowedV) * (centroidV - maxAllowedV) * 28.0f;
                 }
 
-                const float score = du * du + dv * dv * 1.35f + penalty;
+                float frontDu = std::fabs(WrapUnit(centroidU) - 0.25f);
+                frontDu = std::min(frontDu, 1.0f - frontDu);
+                const float frontCenter = Smooth01(1.0f - Clamp(frontDu / 0.11f, 0.0f, 1.0f));
+                penalty += frontCenter * Clamp((centroidV - 0.28f) / 0.12f, 0.0f, 1.0f) * 16.0f;
+
+                const float score = du * du + dv * dv * 1.6f + penalty;
                 if (score < bestScore)
                 {
                     bestScore = score;
@@ -739,10 +713,12 @@ namespace hairgpu
 
         enum class ProceduralRootRegion : uint32_t
         {
-            Fringe = 0u,
+            FringeLeft = 0u,
+            FringeRight,
             TempleLeft,
             TempleRight,
             Crown,
+            TopMid,
             Back,
             Nape,
         };
@@ -753,58 +729,116 @@ namespace hairgpu
             return std::min(d, 1.0f - d);
         }
 
-        ProceduralRootRegion SelectRootRegion(uint32_t guideIndex, uint32_t guideCount)
+        float EvaluateHairlineBand(float u, float v)
         {
-            const float t = (guideCount > 0u) ? ((static_cast<float>(guideIndex) + 0.5f) / static_cast<float>(guideCount)) : 0.5f;
-            if (t < 0.22f) return ProceduralRootRegion::Fringe;
-            if (t < 0.36f) return ProceduralRootRegion::TempleLeft;
-            if (t < 0.50f) return ProceduralRootRegion::TempleRight;
-            if (t < 0.72f) return ProceduralRootRegion::Back;
-            if (t < 0.88f) return ProceduralRootRegion::Nape;
-            return ProceduralRootRegion::Crown;
+            const float center = Smooth01(1.0f - Clamp(WrapDistance01(u, 0.25f) / 0.22f, 0.0f, 1.0f));
+            const float vertical = Smooth01(1.0f - Clamp(std::fabs(v - 0.34f) / 0.08f, 0.0f, 1.0f));
+            const float edgeCut = Smooth01(Clamp((WrapDistance01(u, 0.25f) - 0.020f) / 0.045f, 0.0f, 1.0f));
+            return center * vertical * edgeCut;
         }
 
-        Vec2 SampleRootUvForRegion(ProceduralRootRegion region, uint32_t seed)
+        float EvaluateCoverageWeight(float u, float v)
         {
+            const float topMid = Smooth01(1.0f - Clamp(std::fabs(v - 0.26f) / 0.16f, 0.0f, 1.0f));
+            const float backBand = Smooth01(1.0f - Clamp(std::fabs(v - 0.55f) / 0.22f, 0.0f, 1.0f));
+            const float sideBand = Smooth01(Clamp((WrapDistance01(u, 0.25f) - 0.12f) / 0.22f, 0.0f, 1.0f));
+            return Clamp(0.35f + 0.45f * topMid + 0.25f * backBand + 0.15f * sideBand + 0.35f * EvaluateHairlineBand(u, v), 0.0f, 1.0f);
+        }
+
+        bool IsUvInsideFaceOpening(float u, float v)
+        {
+            return EvaluateFaceOpeningMask(u, v) > 0.55f;
+        }
+
+        Vec2 SampleCoverageRootUv(uint32_t seed, float partingOffset)
+        {
+            const float r = Hash01(seed * 196613u + 17u);
             const float a = Hash01(seed * 1664525u + 1013904223u);
             const float b = Hash01(seed * 22695477u + 1u);
-            const float sideSign = (Hash01(seed * 1103515245u + 12345u) < 0.5f) ? -1.0f : 1.0f;
-            Vec2 uv{ 0.25f, 0.32f };
-            switch (region)
+            const float c = Hash01(seed * 1103515245u + 12345u);
+            Vec2 uv{ 0.25f, 0.28f };
+
+            if (r < 0.18f)
             {
-            case ProceduralRootRegion::Fringe:
-                uv.x = WrapUnit(0.25f + (a - 0.5f) * 0.40f);
-                uv.y = Lerp(0.42f, 0.62f, std::pow(b, 0.82f));
-                if (WrapDistance01(uv.x, 0.25f) < 0.020f)
+                const float sideSign = (c < 0.5f) ? -1.0f : 1.0f;
+                const float centerU = WrapUnit(0.25f + partingOffset + sideSign * Lerp(0.035f, 0.16f, a));
+                uv.x = WrapUnit(centerU + (b - 0.5f) * 0.035f);
+                uv.y = Lerp(0.28f, 0.40f, std::pow(c, 0.85f));
+            }
+            else if (r < 0.34f)
+            {
+                const float sideSign = (c < 0.5f) ? -1.0f : 1.0f;
+                uv.x = WrapUnit(0.25f + partingOffset + sideSign * Lerp(0.16f, 0.28f, a));
+                uv.y = Lerp(0.26f, 0.52f, b);
+            }
+            else if (r < 0.48f)
+            {
+                uv.x = WrapUnit(0.25f + partingOffset + (a - 0.5f) * 0.44f);
+                uv.y = Lerp(0.16f, 0.34f, b);
+            }
+            else if (r < 0.68f)
+            {
+                const float backCenter = (c < 0.5f) ? 0.95f : 0.05f;
+                uv.x = WrapUnit(backCenter + (a - 0.5f) * 0.18f);
+                uv.y = Lerp(0.30f, 0.68f, b);
+            }
+            else if (r < 0.84f)
+            {
+                const float backCenter = (c < 0.5f) ? 0.95f : 0.05f;
+                uv.x = WrapUnit(backCenter + (a - 0.5f) * 0.12f);
+                uv.y = Lerp(0.68f, 0.88f, b);
+            }
+            else
+            {
+                const float radius = std::sqrt(a) * 0.08f;
+                const float angle = b * kTau;
+                uv.x = WrapUnit(0.25f + partingOffset + std::cos(angle) * radius);
+                uv.y = Clamp(0.12f + std::sin(angle) * radius, 0.04f, 0.22f);
+            }
+            return uv;
+        }
+
+        ProceduralRootRegion SelectRootRegion(const Vec2& uv, float partingOffset)
+        {
+            const float u = WrapUnit(uv.x - partingOffset);
+            const float v = uv.y;
+            const float dPart = WrapDistance01(u, 0.25f);
+            const float dBack = std::min(WrapDistance01(u, 0.95f), WrapDistance01(u, 0.05f));
+
+            if (v > 0.70f)
+            {
+                return ProceduralRootRegion::Nape;
+            }
+            if (v < 0.18f && dPart < 0.11f)
+            {
+                return ProceduralRootRegion::Crown;
+            }
+            if (v < 0.42f && dPart < 0.18f)
+            {
+                return (u <= 0.25f) ? ProceduralRootRegion::FringeLeft : ProceduralRootRegion::FringeRight;
+            }
+            if (v < 0.56f && dPart >= 0.18f && dPart < 0.32f)
+            {
+                return (u <= 0.25f) ? ProceduralRootRegion::TempleLeft : ProceduralRootRegion::TempleRight;
+            }
+            if (dBack < 0.16f)
+            {
+                return ProceduralRootRegion::Back;
+            }
+            return ProceduralRootRegion::TopMid;
+        }
+
+        Vec2 SampleRootUvForRegion(ProceduralRootRegion region, uint32_t seed, float partingOffset)
+        {
+            Vec2 uv = SampleCoverageRootUv(seed, partingOffset);
+            for (uint32_t attempt = 0u; attempt < 32u; ++attempt)
+            {
+                const uint32_t localSeed = seed + attempt * 7919u;
+                uv = SampleCoverageRootUv(localSeed, partingOffset);
+                if (SelectRootRegion(uv, partingOffset) == region)
                 {
-                    uv.x = WrapUnit(0.25f + sideSign * Lerp(0.020f, 0.060f, Hash01(seed + 71u)));
+                    return uv;
                 }
-                break;
-            case ProceduralRootRegion::TempleLeft:
-                uv.x = WrapUnit(0.10f + (a - 0.5f) * 0.20f);
-                uv.y = Lerp(0.36f, 0.68f, std::pow(b, 0.90f));
-                break;
-            case ProceduralRootRegion::TempleRight:
-                uv.x = WrapUnit(0.40f + (a - 0.5f) * 0.20f);
-                uv.y = Lerp(0.36f, 0.68f, std::pow(b, 0.90f));
-                break;
-            case ProceduralRootRegion::Back:
-                uv.x = WrapUnit(0.75f + (a - 0.5f) * 0.32f);
-                uv.y = Lerp(0.22f, 0.70f, std::pow(b, 0.88f));
-                break;
-            case ProceduralRootRegion::Nape:
-                uv.x = WrapUnit(0.75f + (a - 0.5f) * 0.24f);
-                uv.y = Lerp(0.68f, 0.90f, std::pow(b, 0.80f));
-                break;
-            case ProceduralRootRegion::Crown:
-            default:
-                uv.x = WrapUnit(a);
-                uv.y = Lerp(0.04f, 0.20f, std::pow(b, 1.40f));
-                if (WrapDistance01(uv.x, 0.25f) < 0.018f)
-                {
-                    uv.x = WrapUnit(0.25f + sideSign * Lerp(0.018f, 0.050f, Hash01(seed + 37u)));
-                }
-                break;
             }
             return uv;
         }
@@ -831,7 +865,8 @@ namespace hairgpu
             uint32_t seed,
             float segmentLength,
             const WigParameters& parameters,
-            const Vec3& rootOffset)
+            const Vec3& rootOffset,
+            ProceduralRootRegion family)
         {
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, binding);
             const Vec3 normal = EvaluateTriangleNormal(asset.scalpMesh, binding);
@@ -855,31 +890,12 @@ namespace hairgpu
             const float frontFactor = std::max(std::sin(angle), 0.0f);
             const float backFactor = std::max(-std::sin(angle), 0.0f);
             const float sideFactor = std::fabs(std::cos(angle));
-            float partDu = std::fabs(WrapUnit(uv.x) - 0.25f);
-            partDu = std::min(partDu, 1.0f - partDu);
-            const float partFactor = Smooth01(1.0f - Clamp(partDu / 0.060f, 0.0f, 1.0f));
-            const float fringeFactor = frontFactor * Smooth01(1.0f - Clamp(partDu / 0.15f, 0.0f, 1.0f));
-            const float templeFactor = Smooth01(Clamp((sideFactor - 0.55f) / 0.40f, 0.0f, 1.0f)) * Smooth01(1.0f - Clamp((uv.y - 0.58f) / 0.40f, 0.0f, 1.0f));
-            const float napeFactor = backFactor * Smooth01(Clamp((uv.y - 0.46f) / 0.24f, 0.0f, 1.0f));
-            const float crownFactor = Smooth01(1.0f - Clamp(uv.y / 0.22f, 0.0f, 1.0f));
-
-            ProceduralRootRegion family = ProceduralRootRegion::Back;
-            if (napeFactor > 0.45f)
-            {
-                family = ProceduralRootRegion::Nape;
-            }
-            else if (templeFactor > 0.42f && frontFactor > 0.15f)
-            {
-                family = (sideSign < 0.0f) ? ProceduralRootRegion::TempleLeft : ProceduralRootRegion::TempleRight;
-            }
-            else if (fringeFactor > 0.35f)
-            {
-                family = ProceduralRootRegion::Fringe;
-            }
-            else if (crownFactor > 0.60f)
-            {
-                family = ProceduralRootRegion::Crown;
-            }
+            const float partDu = WrapDistance01(uv.x, 0.25f + parameters.partingOffset);
+            const float partFactor = Smooth01(1.0f - Clamp(partDu / 0.055f, 0.0f, 1.0f));
+            const float fringeFactor = frontFactor * Smooth01(1.0f - Clamp(partDu / 0.16f, 0.0f, 1.0f));
+            const float templeFactor = Smooth01(Clamp((sideFactor - 0.50f) / 0.38f, 0.0f, 1.0f)) * Smooth01(1.0f - Clamp(std::fabs(uv.y - 0.38f) / 0.22f, 0.0f, 1.0f));
+            const float napeFactor = backFactor * Smooth01(Clamp((uv.y - 0.62f) / 0.20f, 0.0f, 1.0f));
+            const float crownFactor = Smooth01(1.0f - Clamp(std::fabs(uv.y - 0.14f) / 0.10f, 0.0f, 1.0f));
 
             Vec3 sideDir = ProjectOntoPlaneDir(Vec3(sideSign, 0.0f, 0.0f), normal);
             if (Length(sideDir) <= 1.0e-6f)
@@ -898,86 +914,95 @@ namespace hairgpu
             }
 
             const Vec3 tangentOffset = rootOffset - normal * Dot(rootOffset, normal);
-            Vec3 root = rootSurface + normal * 0.0028f + tangentOffset * 0.55f;
+            Vec3 root = rootSurface + normal * 0.0035f + tangentOffset * 0.10f;
             root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0055f);
-            root = ProjectPointOutsideFaceVolumes(root, scalpCenter, 0.0035f);
 
             const float baseChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), segmentLength);
-            const float lengthJitter = 0.965f + 0.07f * Hash01(seed + 41u);
-            const float lengthScale = Clamp(0.90f + 0.08f * sideFactor + 0.10f * backFactor + 0.10f * napeFactor - 0.06f * fringeFactor, 0.84f, 1.08f);
-            const float strandLength = Clamp(baseChainLength * parameters.overallLength * lengthScale * lengthJitter, 0.18f, 0.32f);
+            const float lengthJitter = 0.985f + 0.03f * Hash01(seed + 41u);
+            const float lengthScale = Clamp(0.88f + 0.06f * sideFactor + 0.12f * backFactor + 0.08f * napeFactor - 0.10f * fringeFactor, 0.78f, 1.10f);
+            const float strandLength = Clamp(baseChainLength * parameters.overallLength * lengthScale * lengthJitter, 0.20f, 0.34f);
 
-            const Vec3 gravityDown(0.0f, -1.0f, 0.0f);
-            Vec3 tangentDown = ProjectOntoPlaneDir(gravityDown, scalpNormal);
-            if (Length(tangentDown) <= 1.0e-6f)
-            {
-                tangentDown = down;
-            }
-            Vec3 crownSwirl = Normalize(Cross(scalpNormal, sideDir * sideSign + Vec3(0.0f, 0.12f, -0.18f)));
-            if (Length(crownSwirl) <= 1.0e-6f)
-            {
-                crownSwirl = sideDir;
-            }
-
-            Vec3 capDir = tangentDown;
-            Vec3 midDir = Normalize(gravityDown * 0.86f + tangentDown * 0.14f);
-            Vec3 tipDir = gravityDown;
-            float capLength = strandLength * 0.18f;
-            float sweepLength = strandLength * 0.18f;
-            float dropLength = strandLength * 0.64f;
+            Vec3 capDir = down;
+            Vec3 midDir = down;
+            Vec3 tipDir = down;
+            float capLength = strandLength * 0.12f;
+            float sweepLength = strandLength * 0.12f;
+            float dropLength = strandLength * 0.76f;
 
             switch (family)
             {
-            case ProceduralRootRegion::Fringe:
-                capDir = Normalize(tangentDown * 0.35f + sideDir * (0.88f + 0.12f * partFactor) + frontRetreat * 0.10f);
-                midDir = Normalize(gravityDown * 0.78f + sideDir * (0.36f + 0.12f * partFactor) + frontRetreat * 0.08f);
-                tipDir = Normalize(gravityDown * 0.98f + sideDir * 0.05f);
-                capLength = strandLength * 0.20f;
-                sweepLength = strandLength * 0.18f;
-                dropLength = strandLength * 0.62f;
+            case ProceduralRootRegion::FringeLeft:
+            case ProceduralRootRegion::FringeRight:
+            {
+                const float splitSign = (family == ProceduralRootRegion::FringeLeft) ? -1.0f : 1.0f;
+                Vec3 splitDir = Normalize(ProjectOntoPlaneDir(sideDir * splitSign * 1.15f + frontRetreat * 0.08f + down * 0.18f, normal));
+                Vec3 settleDir = Normalize(down * 0.78f + splitDir * 0.72f + frontRetreat * 0.06f);
+                capDir = Normalize(ProjectOntoPlaneDir(splitDir * 0.88f + scalpTangent * 0.20f, normal));
+                midDir = settleDir;
+                tipDir = Normalize(down * 0.94f + splitDir * 0.28f + frontRetreat * 0.06f);
+                capLength = strandLength * 0.18f;
+                sweepLength = strandLength * 0.28f;
+                dropLength = strandLength * 0.54f;
                 break;
+            }
             case ProceduralRootRegion::TempleLeft:
             case ProceduralRootRegion::TempleRight:
-                capDir = Normalize(tangentDown * 0.42f + sideDir * 0.72f + frontRetreat * 0.18f);
-                midDir = Normalize(gravityDown * 0.82f + sideDir * 0.42f + frontRetreat * 0.10f);
-                tipDir = Normalize(gravityDown * 0.96f + sideDir * 0.08f);
-                capLength = strandLength * 0.18f;
-                sweepLength = strandLength * 0.20f;
-                dropLength = strandLength * 0.62f;
+            {
+                const float templeSign = (family == ProceduralRootRegion::TempleLeft) ? -1.0f : 1.0f;
+                Vec3 wrapDir = Normalize(ProjectOntoPlaneDir(sideDir * templeSign * 1.05f + backDir * 0.48f + down * 0.08f, normal));
+                capDir = Normalize(ProjectOntoPlaneDir(wrapDir * 0.90f + scalpBitangent * 0.24f, normal));
+                midDir = Normalize(down * 0.62f + wrapDir * 0.78f + backDir * 0.22f);
+                tipDir = Normalize(down * 0.92f + wrapDir * 0.24f + backDir * 0.16f);
+                capLength = strandLength * 0.22f;
+                sweepLength = strandLength * 0.24f;
+                dropLength = strandLength * 0.54f;
                 break;
+            }
             case ProceduralRootRegion::Crown:
-                capDir = Normalize(tangentDown * 0.48f + crownSwirl * 0.52f + backDir * 0.14f);
-                midDir = Normalize(gravityDown * 0.72f + backDir * 0.22f + sideDir * 0.14f);
-                tipDir = Normalize(gravityDown * 0.98f + backDir * 0.06f);
-                capLength = strandLength * 0.16f;
-                sweepLength = strandLength * 0.18f;
-                dropLength = strandLength * 0.66f;
+            {
+                const float swirlAngle = (WrapUnit(uv.x) - (0.25f + parameters.partingOffset)) * kTau;
+                Vec3 swirlDir = Normalize(ProjectOntoPlaneDir(sideDir * std::cos(swirlAngle) * 0.55f + backDir * std::sin(swirlAngle) * 0.45f + down * 0.10f, normal));
+                capDir = Normalize(ProjectOntoPlaneDir(swirlDir * 0.90f + scalpTangent * 0.25f, normal));
+                midDir = Normalize(backDir * 0.40f + sideDir * 0.20f + down * 0.62f);
+                tipDir = Normalize(down * 0.96f + backDir * 0.18f + sideDir * 0.06f);
+                capLength = strandLength * 0.20f;
+                sweepLength = strandLength * 0.22f;
+                dropLength = strandLength * 0.58f;
                 break;
+            }
+            case ProceduralRootRegion::TopMid:
+            {
+                Vec3 topFlow = Normalize(ProjectOntoPlaneDir(sideDir * 0.25f + backDir * 0.55f + down * 0.16f, normal));
+                capDir = Normalize(ProjectOntoPlaneDir(topFlow * 0.90f + scalpTangent * 0.22f, normal));
+                midDir = Normalize(down * 0.70f + topFlow * 0.62f);
+                tipDir = Normalize(down * 0.95f + backDir * 0.20f + sideDir * 0.10f);
+                capLength = strandLength * 0.20f;
+                sweepLength = strandLength * 0.24f;
+                dropLength = strandLength * 0.56f;
+                break;
+            }
             case ProceduralRootRegion::Nape:
-                capDir = Normalize(tangentDown * 0.50f + backDir * 0.50f);
-                midDir = Normalize(gravityDown * 0.88f + backDir * 0.18f);
-                tipDir = Normalize(gravityDown * 1.00f + backDir * 0.04f);
-                capLength = strandLength * 0.15f;
-                sweepLength = strandLength * 0.15f;
+                capDir = Normalize(ProjectOntoPlaneDir(backDir * 0.96f + down * 0.12f, normal));
+                midDir = Normalize(backDir * 0.35f + down * 0.82f);
+                tipDir = Normalize(down * 0.98f + backDir * 0.10f);
+                capLength = strandLength * 0.16f;
+                sweepLength = strandLength * 0.14f;
                 dropLength = strandLength * 0.70f;
                 break;
             case ProceduralRootRegion::Back:
             default:
-                capDir = Normalize(tangentDown * 0.46f + backDir * 0.42f + sideDir * 0.12f);
-                midDir = Normalize(gravityDown * 0.84f + backDir * 0.22f + sideDir * 0.08f);
-                tipDir = Normalize(gravityDown * 0.99f + backDir * 0.05f);
-                capLength = strandLength * 0.17f;
-                sweepLength = strandLength * 0.16f;
-                dropLength = strandLength * 0.67f;
+                capDir = Normalize(ProjectOntoPlaneDir(backDir * 0.92f + sideDir * 0.10f + down * 0.10f, normal));
+                midDir = Normalize(backDir * 0.30f + down * 0.84f + sideDir * 0.10f);
+                tipDir = Normalize(down * 0.98f + backDir * 0.14f + sideDir * 0.05f);
+                capLength = strandLength * 0.18f;
+                sweepLength = strandLength * 0.18f;
+                dropLength = strandLength * 0.64f;
                 break;
             }
 
-            Vec3 cap = root + capDir * capLength + normal * (0.0008f + 0.0006f * crownFactor);
-            Vec3 sweep = cap + midDir * sweepLength;
-            Vec3 tip = sweep + tipDir * dropLength;
-            cap = ProjectPointOutsideFaceVolumes(ProjectPointOutsideHeadVolume(cap, scalpCenter, 0.0045f), scalpCenter, 0.0030f);
-            sweep = ProjectPointOutsideFaceVolumes(ProjectPointOutsideHeadVolume(sweep, scalpCenter, 0.0030f), scalpCenter, 0.0020f);
-            tip = ProjectPointOutsideHeadVolume(tip, scalpCenter, 0.0015f);
+            const Vec3 cap = root + capDir * capLength + normal * (0.0014f + 0.0010f * crownFactor);
+            const Vec3 sweep = cap + midDir * sweepLength;
+            const Vec3 tip = sweep + tipDir * dropLength;
 
             Vec3 orthoA = Normalize(Cross(tipDir, normal));
             if (Length(orthoA) <= 1.0e-6f)
@@ -1005,7 +1030,6 @@ namespace hairgpu
                 }
 
                 p = ProjectPointOutsideHeadVolume(p, scalpCenter, Lerp(0.0055f, 0.0020f, t));
-                p = ProjectPointOutsideFaceVolumes(p, scalpCenter, Lerp(0.0030f, 0.0008f, t));
                 asset.restPoints.push_back(p);
                 asset.pointWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
             }
@@ -1165,18 +1189,27 @@ namespace hairgpu
 
         for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
         {
-            const ProceduralRootRegion region = SelectRootRegion(guideIndex, guideCount);
             float u = 0.25f;
             float v = 0.20f;
-            for (uint32_t attempt = 0u; attempt < 24u; ++attempt)
+            ProceduralRootRegion region = ProceduralRootRegion::TopMid;
+            for (uint32_t attempt = 0u; attempt < 40u; ++attempt)
             {
                 const uint32_t seq = guideIndex * 131u + attempt * 977u + 17u;
-                const Vec2 sampledUv = SampleRootUvForRegion(region, seq);
+                Vec2 sampledUv = SampleCoverageRootUv(seq, parameters.partingOffset);
+                sampledUv.x = WrapUnit(sampledUv.x);
+                sampledUv.y = Clamp(sampledUv.y, 0.03f, 0.90f);
+                if (IsUvInsideFaceOpening(sampledUv.x, sampledUv.y))
+                {
+                    sampledUv.y = std::max(0.26f, sampledUv.y - 0.08f);
+                }
                 u = sampledUv.x;
                 v = sampledUv.y;
-                const float accept = Clamp((1.0f - 0.42f * EvaluatePartingMap(u, v, parameters.partingOffset)) *
-                                           (1.0f - 0.18f * EvaluateFaceOpeningMask(u, v)), 0.45f, 1.0f);
-                if (Hash01(seq * 37u + 17u) <= accept || attempt + 1u == 24u)
+                region = SelectRootRegion(sampledUv, parameters.partingOffset);
+                const float coverage = EvaluateCoverageWeight(u, v);
+                const float accept = Clamp(coverage *
+                                           (1.0f - 0.28f * EvaluatePartingMap(u, v, parameters.partingOffset)) *
+                                           (1.0f - 0.35f * EvaluateFaceOpeningMask(u, v)), 0.20f, 1.0f);
+                if (Hash01(seq * 37u + 17u) <= accept || attempt + 1u == 40u)
                 {
                     break;
                 }
@@ -1208,7 +1241,8 @@ namespace hairgpu
                 guideIndex + 1u,
                 segmentLength,
                 parameters,
-                Vec3(0.0f, 0.0f, 0.0f));
+                Vec3(0.0f, 0.0f, 0.0f),
+                region);
 
             Vec3 normal;
             Vec3 tangent;
@@ -1279,9 +1313,9 @@ namespace hairgpu
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.975f + Hash01(seed + 7u) * 0.006f - edgeRisk * 0.012f;
-                followerFollow.clumpWeight = 0.92f + Hash01(seed + 19u) * 0.030f - edgeRisk * 0.05f;
-                followerFollow.noiseWeight = 0.0f;
+                followerFollow.followWeight = 0.944f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.035f;
+                followerFollow.clumpWeight = 0.74f + Hash01(seed + 19u) * 0.060f - edgeRisk * 0.16f;
+                followerFollow.noiseWeight = 0.00022f + Hash01(seed + 23u) * 0.00036f + edgeRisk * 0.00012f;
 
                 AppendStaticWigStrand(
                     asset,
@@ -1295,7 +1329,8 @@ namespace hairgpu
                     seed,
                     segmentLength,
                     parameters,
-                    rootOffset);
+                    rootOffset,
+                    region);
             }
         }
 
@@ -1312,6 +1347,190 @@ namespace hairgpu
         return asset;
     }
 
+
+    void ClampAssetStrandArcLength(HairAsset& asset, float maxArcLength)
+    {
+        if (maxArcLength <= 1.0e-6f)
+        {
+            return;
+        }
+        for (const StrandRange& strand : asset.strands)
+        {
+            if (strand.pointCount < 2u || strand.pointOffset + strand.pointCount > asset.restPoints.size())
+            {
+                continue;
+            }
+            float arcLength = 0.0f;
+            for (uint32_t i = 1u; i < strand.pointCount; ++i)
+            {
+                const Vec3& a = asset.restPoints[strand.pointOffset + i - 1u];
+                const Vec3& b = asset.restPoints[strand.pointOffset + i];
+                arcLength += Length(b - a);
+            }
+            if (arcLength <= maxArcLength)
+            {
+                continue;
+            }
+            const Vec3 root = asset.restPoints[strand.pointOffset];
+            const float scale = maxArcLength / std::max(arcLength, 1.0e-6f);
+            for (uint32_t i = 1u; i < strand.pointCount; ++i)
+            {
+                const uint32_t pointIndex = strand.pointOffset + i;
+                asset.restPoints[pointIndex] = root + (asset.restPoints[pointIndex] - root) * scale;
+            }
+        }
+    }
+
+    Vec2 SampleRapunzelPreviewUv(uint32_t seed)
+    {
+        const float azimuth = Hash01(seed * 1664525u + 1013904223u) * kTau;
+        const float radial = std::pow(Hash01(seed * 22695477u + 1u), 1.85f);
+        const float extra = Hash01(seed * 1103515245u + 12345u);
+        const float backBias = std::max(-std::sin(azimuth), 0.0f);
+        const float sideBias = std::fabs(std::cos(azimuth));
+        float u = WrapUnit(azimuth / kTau);
+        float v = 0.030f + radial * (0.18f + 0.10f * backBias + 0.04f * sideBias);
+
+        const float partDistance = WrapDistance01(u, 0.25f);
+        const float faceOpening = Smooth01(1.0f - Clamp(partDistance / 0.10f, 0.0f, 1.0f)) *
+                                  Smooth01(Clamp((v - 0.10f) / 0.08f, 0.0f, 1.0f)) *
+                                  Smooth01(1.0f - Clamp((v - 0.34f) / 0.12f, 0.0f, 1.0f));
+        if (faceOpening > 1.0e-4f)
+        {
+            const float sideSign = (WrapUnit(u - 0.25f) < 0.5f) ? -1.0f : 1.0f;
+            u = WrapUnit(u + sideSign * (0.05f + 0.03f * extra) * faceOpening);
+            v = std::max(0.025f, v - 0.08f * faceOpening);
+        }
+
+        return { WrapUnit(u), Clamp(v, 0.025f, 0.40f) };
+    }
+
+    void AppendRapunzelPreviewStrand(
+        HairAsset& asset,
+        const RootBinding& binding,
+        const Vec3& scalpCenter,
+        const StrandMaterial& material,
+        const FollowData& follow,
+        uint32_t pointCount,
+        uint32_t groupId,
+        uint32_t flags,
+        uint32_t seed,
+        float segmentLength,
+        const Vec3& rootOffset)
+    {
+        const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, binding);
+        const Vec3 normal = EvaluateTriangleNormal(asset.scalpMesh, binding);
+        const Vec2 uv = EvaluateTriangleUv(asset.scalpMesh, binding);
+
+        Vec3 scalpNormal;
+        Vec3 scalpTangent;
+        Vec3 scalpBitangent;
+        EvaluateScalpFrameFromBinding(asset.scalpMesh, binding, scalpNormal, scalpTangent, scalpBitangent);
+
+        Vec3 down = ProjectOntoPlaneDir(Vec3(0.0f, -1.0f, 0.0f), normal);
+        if (Length(down) <= 1.0e-6f)
+        {
+            down = Vec3(0.0f, -1.0f, 0.0f);
+        }
+
+        const float angle = WrapUnit(uv.x) * kTau;
+        const float frontFactor = std::max(std::sin(angle), 0.0f);
+        const float backFactor = std::max(-std::sin(angle), 0.0f);
+        const float sideFactor = std::fabs(std::cos(angle));
+        const float sideSign = SignedSideFromU(uv.x);
+        const float partDistance = WrapDistance01(uv.x, 0.25f);
+        const float partInfluence = Smooth01(1.0f - Clamp(partDistance / 0.075f, 0.0f, 1.0f));
+        const float crownInfluence = Smooth01(1.0f - Clamp((uv.y - 0.03f) / 0.14f, 0.0f, 1.0f));
+
+        Vec3 frontDir = ProjectOntoPlaneDir(Vec3(0.0f, 0.0f, 1.0f), normal);
+        if (Length(frontDir) <= 1.0e-6f)
+        {
+            frontDir = scalpTangent;
+        }
+        Vec3 backDir = ProjectOntoPlaneDir(Vec3(0.0f, 0.0f, -1.0f), normal);
+        if (Length(backDir) <= 1.0e-6f)
+        {
+            backDir = frontDir * -1.0f;
+        }
+        Vec3 sideDir = ProjectOntoPlaneDir(Vec3(sideSign, 0.0f, 0.0f), normal);
+        if (Length(sideDir) <= 1.0e-6f)
+        {
+            sideDir = scalpBitangent;
+        }
+
+        const Vec3 rel = rootSurface - scalpCenter;
+        Vec3 radial = SafeNormalizeXZ(rel);
+        if (Length(radial) <= 1.0e-6f)
+        {
+            radial = sideDir;
+        }
+
+        const Vec3 tangentOffset = rootOffset - normal * Dot(rootOffset, normal);
+        Vec3 root = rootSurface + normal * 0.0030f + tangentOffset;
+        root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0050f);
+
+        const float baseChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), segmentLength);
+        const float jitter = 0.92f + 0.12f * Hash01(seed + 19u);
+        const float frontCenter = frontFactor * partInfluence;
+        const float lengthScale = Clamp(0.95f + 0.22f * backFactor + 0.10f * sideFactor - 0.18f * frontCenter - 0.08f * crownInfluence, 0.78f, 1.22f);
+        const float strandLength = Clamp(baseChainLength * lengthScale * jitter, 0.18f, 0.36f);
+
+        Vec3 splitDir = Normalize(ProjectOntoPlaneDir(sideDir * (0.70f * partInfluence + 0.10f) + down * 0.25f + frontDir * 0.08f, normal));
+        Vec3 wrapDir = Normalize(ProjectOntoPlaneDir(radial * (0.72f + 0.18f * crownInfluence) + backDir * (0.20f + 0.25f * backFactor) + sideDir * 0.16f, normal));
+        Vec3 flowDir = Normalize(wrapDir * (0.70f + 0.20f * crownInfluence) + splitDir * (0.45f * frontCenter) + backDir * (0.18f * backFactor) + sideDir * (0.12f * sideFactor));
+
+        Vec3 capDir = Normalize(ProjectOntoPlaneDir(flowDir * 0.98f + down * 0.10f, normal));
+        Vec3 midDir = Normalize(down * 0.78f + flowDir * 0.42f + backDir * 0.08f * backFactor);
+        Vec3 tipDir = Normalize(down * 0.97f + flowDir * 0.10f);
+
+        const float capLength = strandLength * Lerp(0.22f, 0.14f, frontCenter);
+        const float sweepLength = strandLength * Lerp(0.22f, 0.18f, frontCenter);
+        const float dropLength = std::max(strandLength - capLength - sweepLength, strandLength * 0.46f);
+
+        const Vec3 cap = root + capDir * capLength + normal * (0.0012f + 0.0008f * crownInfluence);
+        const Vec3 sweep = cap + midDir * sweepLength;
+        const Vec3 tip = sweep + tipDir * dropLength;
+
+        Vec3 orthoA = Normalize(Cross(tipDir, normal));
+        if (Length(orthoA) <= 1.0e-6f)
+        {
+            orthoA = sideDir;
+        }
+        Vec3 orthoB = Normalize(Cross(tipDir, orthoA));
+        if (Length(orthoB) <= 1.0e-6f)
+        {
+            orthoB = radial;
+        }
+
+        const float noiseScale = 0.0013f;
+        for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
+        {
+            const float t = static_cast<float>(pointIndex) / static_cast<float>(std::max(pointCount - 1u, 1u));
+            Vec3 p = CubicBezier(root, cap, sweep, tip, Smooth01(t));
+            if (t > 0.35f)
+            {
+                const float noise = noiseScale * (0.15f + 0.85f * t);
+                const float noiseA = std::sin((t * 1.7f + Hash01(seed + pointIndex * 17u)) * kTau);
+                const float noiseB = std::cos((t * 1.2f + Hash01(seed + pointIndex * 23u)) * kTau);
+                p += orthoA * (noiseA * noise);
+                p += orthoB * (noiseB * noise * 0.45f);
+            }
+            p = ProjectPointOutsideHeadVolume(p, scalpCenter, Lerp(0.0050f, 0.0018f, t));
+            asset.restPoints.push_back(p);
+            asset.pointWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
+        }
+
+        StrandRange range;
+        range.pointOffset = static_cast<uint32_t>(asset.restPoints.size()) - pointCount;
+        range.pointCount = pointCount;
+        range.groupId = groupId;
+        range.flags = flags;
+        asset.strands.push_back(range);
+        asset.materials.push_back(material);
+        asset.rootBindings.push_back(binding);
+        asset.followData.push_back(follow);
+    }
+
     HairAsset BuildSampleGuideHairAsset(uint32_t strandCount, uint32_t particlesPerStrand, float segmentLength)
     {
         return BuildStaticWigHairAsset(strandCount, 0, particlesPerStrand, segmentLength, DefaultWigParameters());
@@ -1319,7 +1538,87 @@ namespace hairgpu
 
     HairAsset BuildSampleHybridHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength)
     {
-        return BuildStaticWigHairAsset(guideCount, followersPerGuide, particlesPerStrand, segmentLength, DefaultWigParameters());
+        HairAsset asset = BuildStaticWigHairAsset(guideCount, followersPerGuide, particlesPerStrand, segmentLength, DefaultWigParameters());
+        ClampAssetStrandArcLength(asset, 1.00f);
+        return asset;
+    }
+
+    HairAsset BuildRapunzelPreviewHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength)
+    {
+        HairAsset asset;
+        asset.guideStrandCount = guideCount;
+        asset.followerStrandCount = guideCount * followersPerGuide;
+        asset.particlesPerStrand = particlesPerStrand;
+        asset.scalpMesh = BuildSampleScalpMesh(24, 40, Vec3(0.0f, 1.60f, 0.0f), 0.23f, 0.19f, 0.18f);
+
+        const uint32_t totalStrands = asset.guideStrandCount + asset.followerStrandCount;
+        asset.strands.reserve(totalStrands);
+        asset.materials.reserve(totalStrands);
+        asset.rootBindings.reserve(totalStrands);
+        asset.followData.reserve(totalStrands);
+        asset.restPoints.reserve(static_cast<size_t>(totalStrands) * particlesPerStrand);
+        asset.pointWidths.reserve(static_cast<size_t>(totalStrands) * particlesPerStrand);
+
+        const Vec3 scalpCenter(0.0f, 1.60f, 0.0f);
+        const float goldenAngle = 2.39996323f;
+
+        for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
+        {
+            Vec2 uv{ 0.25f, 0.12f };
+            for (uint32_t attempt = 0u; attempt < 64u; ++attempt)
+            {
+                uv = SampleRapunzelPreviewUv(guideIndex * 977u + attempt * 131u + 17u);
+                if (!IsUvInsideFaceOpening(uv.x, uv.y))
+                {
+                    break;
+                }
+            }
+
+            RootBinding binding = FindClosestBindingForUv(asset.scalpMesh, uv.x, uv.y);
+
+            StrandMaterial guideMaterial;
+            guideMaterial.rootWidth = 0.0026f;
+            guideMaterial.tipWidth = 0.00013f;
+            guideMaterial.stiffness = 0.95f;
+            guideMaterial.damping = 0.055f;
+
+            FollowData guideFollow;
+            guideFollow.parentGuide = static_cast<int32_t>(guideIndex);
+            guideFollow.followWeight = 1.0f;
+            guideFollow.clumpWeight = 0.0f;
+            guideFollow.noiseWeight = 0.0f;
+
+            AppendRapunzelPreviewStrand(asset, binding, scalpCenter, guideMaterial, guideFollow, particlesPerStrand, 0u, static_cast<uint32_t>(StrandFlags::Guide), guideIndex + 1u, segmentLength, Vec3(0.0f, 0.0f, 0.0f));
+
+            Vec3 normal; Vec3 tangent; Vec3 binormal;
+            EvaluateScalpFrameFromBinding(asset.scalpMesh, binding, normal, tangent, binormal);
+            const float guideRotation = Hash01(guideIndex * 29u + 3u) * kTau;
+            for (uint32_t followerIndex = 0; followerIndex < followersPerGuide; ++followerIndex)
+            {
+                const uint32_t seed = guideIndex * 97u + followerIndex * 17u + 13u;
+                const float ring01 = std::sqrt((static_cast<float>(followerIndex) + 0.5f) / static_cast<float>(std::max(followersPerGuide, 1u)));
+                const float ring = Lerp(0.0035f, 0.0110f, ring01);
+                const float angle = guideRotation + goldenAngle * static_cast<float>(followerIndex) + (Hash01(seed + 9u) - 0.5f) * 0.55f;
+                Vec3 rootOffset = tangent * (std::cos(angle) * ring) + binormal * (std::sin(angle) * ring * 0.92f);
+
+                StrandMaterial followerMaterial = guideMaterial;
+                const float widthJitter = 0.84f + 0.22f * Hash01(seed + 71u);
+                followerMaterial.rootWidth *= 0.38f * widthJitter;
+                followerMaterial.tipWidth *= 0.32f * widthJitter;
+
+                FollowData followerFollow;
+                followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
+                followerFollow.followWeight = 0.84f + Hash01(seed + 7u) * 0.08f;
+                followerFollow.clumpWeight = 0.22f + Hash01(seed + 19u) * 0.22f;
+                followerFollow.noiseWeight = 0.00055f + Hash01(seed + 23u) * 0.00045f;
+
+                AppendRapunzelPreviewStrand(asset, binding, scalpCenter, followerMaterial, followerFollow, particlesPerStrand, 1u, static_cast<uint32_t>(StrandFlags::None), seed, segmentLength, rootOffset);
+            }
+        }
+
+        RebuildRootRestPositionsFromScalp(asset);
+        ClampAssetStrandArcLength(asset, 0.32f);
+        return asset;
     }
 
     void SetSampleMaskOverridePaths(const char* partingMaskPath, const char* regionMaskPath)

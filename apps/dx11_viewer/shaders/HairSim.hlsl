@@ -562,9 +562,9 @@ void IntegrateCS(uint3 id : SV_DispatchThreadID)
         float3 boundRoot = EvaluateBoundRoot(strandIndex);
         float3 restRoot = RestPositions[strandIndex * ParticlesPerStrand].xyz;
         float3 restCurrent = RestPositions[particleIndex].xyz;
-        float restSegLength = max(length(restCurrent - restRoot), 1.0e-5f);
         float3 tetherDir = SafeNormalize(restCurrent - restRoot);
-        float3 tetherTarget = boundRoot + tetherDir * restSegLength;
+        float authoredRestLength = max(length(restCurrent - restRoot), 1.0e-6f);
+        float3 tetherTarget = boundRoot + tetherDir * authoredRestLength;
         next = lerp(next, tetherTarget, RootStiffness);
     }
 
@@ -606,8 +606,10 @@ void DistanceCS(uint3 id : SV_DispatchThreadID)
         float3 delta = p1 - p0;
         float lengthValue = max(length(delta), 1.0e-6f);
         float3 dir = delta / lengthValue;
-        float restLength = max(length(RestPositions[currentIndex].xyz - RestPositions[prevIndex].xyz), 1.0e-5f);
-        float C = lengthValue - restLength;
+        float3 restP0 = RestPositions[prevIndex].xyz;
+        float3 restP1 = RestPositions[currentIndex].xyz;
+        float restSegmentLength = max(length(restP1 - restP0), 1.0e-6f);
+        float C = lengthValue - restSegmentLength;
         float w0 = (i == 1) ? 0.0f : 1.0f;
         float w1 = 1.0f;
         float denom = w0 + w1 + alpha;
@@ -1481,22 +1483,36 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         float3 restOffset = followerRest - parentRest;
 
         float t = (ParticlesPerStrand > 1) ? (float(i) / float(ParticlesPerStrand - 1)) : 0.0f;
-        float noisePhase = ElapsedTime * (1.1f + 0.2f * follow.NoiseWeight) + strandIndex * 0.137f + i * 0.167f;
-        float noiseAmp = follow.NoiseWeight * (0.00015f + t * 0.00035f);
+        float noisePhase = ElapsedTime * (1.2f + 0.2f * follow.NoiseWeight) + strandIndex * 0.173f + i * 0.217f;
+        float noiseAmp = follow.NoiseWeight * (0.00015f + t * 0.00055f);
         float3 noise = float3(sin(noisePhase), 0.0f, cos(noisePhase * 1.17f)) * noiseAmp;
 
         float followGain = saturate(lerp(1.0f, follow.FollowWeight, FollowStiffness));
-        float clumpGain = lerp(0.82f, 1.0f, follow.ClumpWeight);
-        float maxOffset = lerp(0.00025f, 0.0018f, t);
-        float restLen = length(restOffset);
-        float3 safeOffset = (restLen > maxOffset && restLen > 1.0e-6f) ? (restOffset * (maxOffset / restLen)) : restOffset;
-        float3 target = parentPos + safeOffset * clumpGain + noise;
+        float clumpGain = lerp(0.85f, 1.0f, follow.ClumpWeight);
+        float3 parentTangent = float3(0.0f, 1.0f, 0.0f);
+        if (i + 1 < ParticlesPerStrand)
+        {
+            parentTangent = SafeNormalize(OutputPositions[parentStart + i + 1].xyz - parentPos);
+        }
+        else if (i > 0)
+        {
+            parentTangent = SafeNormalize(parentPos - OutputPositions[parentStart + i - 1].xyz);
+        }
+        float3 restOffsetTangent = parentTangent * dot(restOffset, parentTangent);
+        float3 restOffsetLateral = restOffset - restOffsetTangent;
+        float lateralScale = lerp(0.40f, 0.85f, t);
+        float3 target = parentPos + restOffsetTangent + restOffsetLateral * lateralScale * clumpGain + noise;
         float3 current = InputPositions[strandPointIndex].xyz;
         float3 blended = lerp(current, target, followGain);
 
         if (i == 0)
         {
             blended = boundFollowerRoot;
+        }
+        else if (i == 1)
+        {
+            float rootRestLength = max(length(followerRest - RestPositions[strandStart].xyz), 1.0e-5f);
+            blended = lerp(blended, boundFollowerRoot + SafeNormalize(target - boundFollowerRoot) * rootRestLength, 0.55f);
         }
 
         OutputPreviousPositions[strandPointIndex] = float4(InputPositions[strandPointIndex].xyz, 1.0f);

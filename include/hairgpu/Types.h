@@ -159,7 +159,7 @@ namespace hairgpu
     struct GpuSimulationConfig
     {
         uint32_t solverIterations = 6;
-        float fixedTimeStep = 1.0f / 120.0f;
+        float fixedTimeStep = 1.0f / 60.0f;
         float gravity = 9.81f;
         float globalDamping = 0.03f;
         float segmentLength = 0.035f;
@@ -258,6 +258,7 @@ namespace hairgpu
     HairAsset BuildStaticWigHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength, const WigParameters& parameters);
     HairAsset BuildSampleGuideHairAsset(uint32_t strandCount, uint32_t particlesPerStrand, float segmentLength);
     HairAsset BuildSampleHybridHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength);
+    HairAsset BuildRapunzelPreviewHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength);
 
     enum class SampleMaskSourceMode : uint32_t
     {
