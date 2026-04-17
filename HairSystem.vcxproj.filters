@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files"><UniqueIdentifier>{B26D4E19-A4B9-4F3A-AE89-0FEA0E8B0D01}</UniqueIdentifier></Filter>
+    <Filter Include="Source Files\Viewer"><UniqueIdentifier>{13D59C77-A2D3-4E6E-A896-18246811B001}</UniqueIdentifier></Filter>
+    <Filter Include="Source Files\Core"><UniqueIdentifier>{13D59C77-A2D3-4E6E-A896-18246811B002}</UniqueIdentifier></Filter>
+    <Filter Include="Header Files"><UniqueIdentifier>{65B73B2A-A704-4A0C-B571-5725B258B101}</UniqueIdentifier></Filter>
+    <Filter Include="Header Files\hairgpu"><UniqueIdentifier>{65B73B2A-A704-4A0C-B571-5725B258B102}</UniqueIdentifier></Filter>
+    <Filter Include="Shaders"><UniqueIdentifier>{90DCA785-8821-4458-8114-C6635B3B9701}</UniqueIdentifier></Filter>
+    <Filter Include="Reference Files"><UniqueIdentifier>{90DCA785-8821-4458-8114-C6635B3B9702}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="apps\dx11_viewer\src\AppMain.cpp"><Filter>Source Files\Viewer</Filter></ClCompile>
+    <ClCompile Include="apps\dx11_viewer\src\GpuHairViewer.cpp"><Filter>Source Files\Viewer</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\ActiveSet.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Adaptive.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\AssetIO.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Authoring.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Binding.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\BoneAnimation.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Broadphase.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Cards.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Collision.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\DccInterop.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\GuideCache.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\HairCache.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\HairMath.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\HybridRuntime.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Lod.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\MeshIO.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Metrics.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Pipeline.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\ReducedModel.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\RenderData.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\SampleAsset.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\TemporalModel.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\UsdExport.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Validation.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+    <ClCompile Include="src\hairgpu_core\Wig.cpp"><Filter>Source Files\Core</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="apps\dx11_viewer\src\GpuHairViewer.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\ActiveSet.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Adaptive.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\AssetIO.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Authoring.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Binding.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\BoneAnimation.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Broadphase.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Cards.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Collision.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\DccInterop.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\GuideCache.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\HairCache.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\HybridRuntime.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Lod.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Math.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\MeshIO.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Metrics.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Pipeline.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\ReducedModel.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\RenderData.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\TemporalModel.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Types.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\UsdExport.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Validation.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+    <ClInclude Include="include\hairgpu\Wig.h"><Filter>Header Files\hairgpu</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="apps\dx11_viewer\shaders\DebugLine.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairBrickInstanced.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairCpuMesh.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairActiveSet.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairIndirectArgs.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairLine.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairParticle.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairRibbon.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairSim.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairStrandInstanced.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairTube.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairVoxel.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\ScalpMesh.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\ScalpSim.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\hairgpu_cli\src\main.cpp"><Filter>Reference Files</Filter></None>
+    <None Include="docs\PROJECT_ONE_PROJECT_NOTES.md"><Filter>Reference Files</Filter></None>
+  </ItemGroup>
+</Project>
