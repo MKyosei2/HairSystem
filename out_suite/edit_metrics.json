@@ -1,0 +1,10 @@
+{
+  "rmsPositionError": 0.057065,
+  "silhouetteError": 0.055898,
+  "clumpPreservationScore": 0.958866,
+  "rootLocalityScore": 0.485026,
+  "editLocalityScore": 0.000000,
+  "boundaryNaturalnessScore": 1.000000,
+  "editedStrandRatio": 1.000000,
+  "editToRunLatencyMilliseconds": 0.116906
+}

@@ -1,0 +1,10 @@
+{
+  "normalizedHairAsset": "asset_normalized.hairbin",
+  "validationReport": "validation_report.txt",
+  "metricsJson": "metrics.json",
+  "lods": ["lod0.hairbin", "lod1.hairbin", "lod2.hairbin"],
+  "cardsObj": "cards.obj",
+  "usda": "asset.usda",
+  "guideCache": "guide_rest.guidecache",
+  "scalpObj": "scalp.obj"
+}
