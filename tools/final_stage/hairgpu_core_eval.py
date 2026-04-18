@@ -40,6 +40,10 @@ def write_markdown(path: Path, final_summary: dict[str, Any], manifest: dict[str
             '',
             f"- Avg p95 frame ms: {float(runtime_suite.get('avg_p95_frame_ms', 0.0)):.3f}",
             f"- Avg 60 FPS ratio: {float(runtime_suite.get('avg_sixty_fps_ratio', 0.0)):.3f}",
+            f"- Avg edit locality: {float(runtime_suite.get('avg_edit_locality', 0.0)):.3f}",
+            f"- Avg boundary naturalness: {float(runtime_suite.get('avg_boundary_naturalness', 0.0)):.3f}",
+            f"- Avg edit-to-run latency ms: {float(runtime_suite.get('avg_edit_to_run_latency_ms', 0.0)):.3f}",
+            f"- Avg penetration/sec: {float(runtime_suite.get('avg_penetration_per_sec', 0.0)):.3f}",
             f"- Run count: {runtime_suite.get('run_count', 0)}",
         ]
     hypothesis_rows = final_summary.get('runtimeHypothesisChecks', [])

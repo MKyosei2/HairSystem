@@ -425,11 +425,18 @@ namespace hairgpu::viewer
             StrandRibbon = 2,
         };
 
+        enum class InteractionMode : uint32_t
+        {
+            View = 0,
+            Edit = 1,
+        };
+
         enum class DebugColorMode : uint32_t
         {
             Natural = 0,
             GuideFollower = 1,
             WidthHeatmap = 2,
+            Editability = 3,
         };
 
         enum class MaskOverlayMode : uint32_t
@@ -599,6 +606,7 @@ namespace hairgpu::viewer
         void SyncQuickEditFormControlsFromState();
         void RefreshInlineLayerListFromText(int preferredSelection = -1);
         bool TryBuildSelectedInlineLayerPreview(std::vector<float>& outGuideInfluence, uint32_t& outActiveGuideCount, float& outMaxInfluence) const;
+        bool BuildEditVisualizationCategories(std::vector<uint32_t>& outCategories) const;
         bool IsEditInfluenceOverlayMode() const;
         bool IsBoundaryBeforeAfterOverlayMode() const;
         bool IsActiveSetRiskOverlayMode() const;
@@ -693,8 +701,8 @@ namespace hairgpu::viewer
         uint32_t m_sortedBroadphasePaddedCount = 1u;
 
         uint32_t m_builderGuideCount = 2500;
-        uint32_t m_builderFollowersPerGuide = 9;
-        uint32_t m_builderParticlesPerStrand = 15;
+        uint32_t m_builderFollowersPerGuide = 39;
+        uint32_t m_builderParticlesPerStrand = 128;
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
@@ -754,6 +762,7 @@ namespace hairgpu::viewer
         std::vector<GpuParticle> m_initialParticles;
         std::vector<FollowGpuData> m_followGpuData;
         hairgpu::HairSegmentRenderData m_renderData;
+        std::vector<uint32_t> m_editVisualizationCategories;
         std::vector<GpuParticle> m_restScalpParticles;
         std::vector<GpuParticle> m_animatedScalpParticles;
         std::vector<TriangleGpuData> m_scalpTriangles;
@@ -907,6 +916,7 @@ namespace hairgpu::viewer
         int32_t m_activeGpuTimingFrameIndex = -1;
 
         RenderMode m_renderMode = RenderMode::StrandRibbon;
+        InteractionMode m_interactionMode = InteractionMode::Edit;
         DebugColorMode m_debugColorMode = DebugColorMode::Natural;
 
         LARGE_INTEGER m_qpcFrequency = {};
@@ -976,6 +986,7 @@ namespace hairgpu::viewer
         HWND m_previewRegionMask = nullptr;
         HWND m_comboPreset = nullptr;
         HWND m_comboRenderMode = nullptr;
+        HWND m_comboInteractionMode = nullptr;
         HWND m_comboDebugColor = nullptr;
         HWND m_checkSelfCollision = nullptr;
         HWND m_checkGrid = nullptr;
@@ -1005,6 +1016,8 @@ namespace hairgpu::viewer
         HWND m_trackBendCompliance = nullptr;
         HWND m_labelStats = nullptr;
         HWND m_labelAssetStats = nullptr;
+        HWND m_labelEditWorkflow = nullptr;
+        HWND m_labelEditLegend = nullptr;
         HWND m_labelEditStack = nullptr;
         HWND m_labelInlineEditStack = nullptr;
         HWND m_editInlineEditStack = nullptr;

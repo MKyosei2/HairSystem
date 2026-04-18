@@ -856,11 +856,109 @@ namespace hairgpu
                     ++count;
                 }
             }
-            outAverageError = (count > 0u) ? static_cast<float>(total / static_cast<double>(count)) : 0.0f;
-        }
+
+        outAverageError = (count > 0u) ? static_cast<float>(total / static_cast<double>(count)) : 0.0f;
     }
 
-    bool ApplySparseCorrectivePhysics(const HairAsset& asset,
+    std::vector<float> BuildTeacherEditScores(const HairAsset& asset, float timeSeconds, float boundaryBias)
+    {
+        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+        std::vector<float> scores(guideCount, 0.0f);
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            if (guideIndex >= asset.rootBindings.size())
+            {
+                continue;
+            }
+            const Vec2 uv = asset.rootBindings[guideIndex].rootUv;
+            const float frontBand = Clamp(1.0f - std::fabs(uv.y - 0.20f) / 0.22f, 0.0f, 1.0f);
+            const float partingBand = Clamp(1.0f - std::fabs(uv.x - 0.52f) / 0.16f, 0.0f, 1.0f);
+            const float oscillation = 0.5f + 0.5f * std::sin(timeSeconds * 1.9f + static_cast<float>(guideIndex) * 0.37f);
+            scores[guideIndex] = Clamp((frontBand * 0.65f + partingBand * 0.35f) * (boundaryBias * 0.55f + oscillation * 0.45f), 0.0f, 1.0f);
+        }
+        return scores;
+    }
+
+    std::vector<float> BuildTeacherBoundaryScores(const HairAsset& asset, const std::vector<float>& editScores)
+    {
+        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+        std::vector<float> boundaryScores(guideCount, 0.0f);
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            if (guideIndex >= asset.rootBindings.size())
+            {
+                continue;
+            }
+            const Vec2 uv = asset.rootBindings[guideIndex].rootUv;
+            float bestDelta = 0.0f;
+            for (uint32_t other = 0u; other < guideCount; ++other)
+            {
+                if (other == guideIndex || other >= asset.rootBindings.size())
+                {
+                    continue;
+                }
+                if (asset.strands[other].groupId != asset.strands[guideIndex].groupId)
+                {
+                    continue;
+                }
+                const Vec2 otherUv = asset.rootBindings[other].rootUv;
+                const float du = uv.x - otherUv.x;
+                const float dv = uv.y - otherUv.y;
+                const float dist = std::sqrt(du * du + dv * dv);
+                if (dist > 0.14f)
+                {
+                    continue;
+                }
+                bestDelta = std::max(bestDelta, std::fabs(editScores[guideIndex] - editScores[other]));
+            }
+            boundaryScores[guideIndex] = Clamp(bestDelta, 0.0f, 1.0f);
+        }
+        return boundaryScores;
+    }
+
+    void ApplyTeacherEditCase(const HairAsset& asset,
+                              const std::vector<float>& guideEditScores,
+                              float lengthScaleAmplitude,
+                              float tipOffsetAmplitude,
+                              std::vector<Vec3>& inOutPoints)
+    {
+        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            const StrandRange& strand = asset.strands[guideIndex];
+            if (strand.pointCount < 2u)
+            {
+                continue;
+            }
+            const float editWeight = (guideIndex < guideEditScores.size()) ? guideEditScores[guideIndex] : 0.0f;
+            if (editWeight <= 1.0e-4f)
+            {
+                continue;
+            }
+            const uint32_t rootIndex = strand.pointOffset;
+            const Vec3 root = inOutPoints[rootIndex];
+            const Vec3 tipBase = inOutPoints[strand.pointOffset + strand.pointCount - 1u];
+            Vec3 direction = Normalize(tipBase - root);
+            if (Length(direction) <= 1.0e-6f)
+            {
+                direction = Vec3(0.0f, -1.0f, 0.0f);
+            }
+            const Vec3 lateral = Normalize(Cross(Vec3(0.0f, 1.0f, 0.0f), direction));
+            const float targetScale = 1.0f + lengthScaleAmplitude * (editWeight - 0.5f);
+            const Vec3 tipOffset = lateral * (tipOffsetAmplitude * (0.35f + 0.65f * editWeight));
+            for (uint32_t localPoint = 1u; localPoint < strand.pointCount; ++localPoint)
+            {
+                const uint32_t pointIndex = strand.pointOffset + localPoint;
+                const float tt = static_cast<float>(localPoint) / static_cast<float>(strand.pointCount - 1u);
+                const Vec3 basePoint = inOutPoints[pointIndex];
+                const Vec3 along = root + (basePoint - root) * targetScale;
+                inOutPoints[pointIndex] = Lerp(basePoint, along + tipOffset * tt, editWeight * (0.35f + 0.65f * tt));
+            }
+        }
+    }
+}
+
+bool ApplySparseCorrectivePhysics(const HairAsset& asset,
                                       const ActiveSetPlan& activeSetPlan,
                                       const ColliderSet& colliders,
                                       std::vector<Vec3>& inOutPoints,
@@ -876,6 +974,7 @@ namespace hairgpu
         }
 
         SparseCorrectiveReport report = {};
+        report.preservedRootPointCount = settings.preserveRootPointCount;
         AccumulateLengthError(asset, inOutPoints, &activeSetPlan.strandCorrectiveMask, report.averageLengthErrorBefore);
 
         double penetrationSum = 0.0;
@@ -918,60 +1017,72 @@ namespace hairgpu
                         report.maxPenetration = std::max(report.maxPenetration, best.penetration);
                         penetrationSum += best.penetration;
                         ++penetrationSamples;
+                        ++report.penetrationEventCount;
                     }
                 }
 
-                for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
-                {
-                    const uint32_t prevIndex = strand.pointOffset + localPoint - 1u;
-                    const uint32_t currIndex = strand.pointOffset + localPoint;
-                    if (currIndex >= inOutPoints.size() || prevIndex >= inOutPoints.size())
-                    {
-                        continue;
-                    }
-                    const float restLength = StrandSegmentRestLength(asset, strandIndex, localPoint);
-                    if (restLength <= 1.0e-6f)
-                    {
-                        continue;
-                    }
 
-                    Vec3 currentDelta = inOutPoints[currIndex] - inOutPoints[prevIndex];
-                    float currentLength = Length(currentDelta);
-                    if (currentLength > 1.0e-6f)
-                    {
-                        const Vec3 dir = currentDelta / currentLength;
-                        const Vec3 desiredPoint = inOutPoints[prevIndex] + dir * restLength;
-                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], desiredPoint, Clamp(settings.stretchBlend, 0.0f, 1.0f));
-                    }
+for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
+{
+    const uint32_t prevIndex = strand.pointOffset + localPoint - 1u;
+    const uint32_t currIndex = strand.pointOffset + localPoint;
+    if (currIndex >= inOutPoints.size() || prevIndex >= inOutPoints.size())
+    {
+        continue;
+    }
+    const float restLength = StrandSegmentRestLength(asset, strandIndex, localPoint);
+    if (restLength <= 1.0e-6f)
+    {
+        continue;
+    }
 
-                    if (localPoint >= 2u)
-                    {
-                        const uint32_t prevPrevIndex = strand.pointOffset + localPoint - 2u;
-                        const Vec3 restPrev = asset.restPoints[prevIndex] - asset.restPoints[prevPrevIndex];
-                        const Vec3 restCurr = asset.restPoints[currIndex] - asset.restPoints[prevIndex];
-                        const Vec3 desiredDir = Normalize(Lerp(Normalize(restCurr), Normalize(restPrev), 0.25f));
-                        if (Length(desiredDir) > 1.0e-6f)
-                        {
-                            const Vec3 bendTarget = inOutPoints[prevIndex] + desiredDir * restLength;
-                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, Clamp(settings.bendBlend, 0.0f, 1.0f));
-                        }
-                    }
+    const float stretchBlend = Clamp(settings.stretchBlend, 0.0f, 1.0f);
+    const float bendBlend = Clamp(settings.bendBlend, 0.0f, 1.0f);
+    const float complianceScale = 1.0f / static_cast<float>(std::max<uint32_t>(iterations, 1u));
 
-                    const PenetrationResult postConstraint = ResolveAgainstColliderSet(inOutPoints[currIndex],
-                                                                                      settings.affectExternalColliders ? colliders : ColliderSet(),
-                                                                                      settings.shellDistance,
-                                                                                      settings.affectFloor,
-                                                                                      -1.05f);
-                    if (postConstraint.corrected)
-                    {
-                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
-                        strandCorrected = true;
-                        report.maxPenetration = std::max(report.maxPenetration, postConstraint.penetration);
-                        penetrationSum += postConstraint.penetration;
-                        ++penetrationSamples;
-                    }
-                }
+    if (localPoint == settings.preserveRootPointCount && settings.preserveRootPointCount > 0u)
+    {
+        const Vec3 restAnchor = asset.restPoints[currIndex];
+        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], restAnchor, 0.15f * complianceScale);
+    }
 
+    Vec3 currentDelta = inOutPoints[currIndex] - inOutPoints[prevIndex];
+    float currentLength = Length(currentDelta);
+    if (currentLength > 1.0e-6f)
+    {
+        const Vec3 dir = currentDelta / currentLength;
+        const float correction = (restLength - currentLength) * stretchBlend * complianceScale;
+        inOutPoints[currIndex] += dir * correction;
+    }
+
+    if (localPoint >= 2u)
+    {
+        const uint32_t prevPrevIndex = strand.pointOffset + localPoint - 2u;
+        const Vec3 restPrev = asset.restPoints[prevIndex] - asset.restPoints[prevPrevIndex];
+        const Vec3 restCurr = asset.restPoints[currIndex] - asset.restPoints[prevIndex];
+        const Vec3 desiredDir = Normalize(Lerp(Normalize(restCurr), Normalize(restPrev), 0.25f));
+        if (Length(desiredDir) > 1.0e-6f)
+        {
+            const Vec3 bendTarget = inOutPoints[prevIndex] + desiredDir * restLength;
+            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, bendBlend * complianceScale);
+        }
+    }
+
+    const PenetrationResult postConstraint = ResolveAgainstColliderSet(inOutPoints[currIndex],
+                                                                      settings.affectExternalColliders ? colliders : ColliderSet(),
+                                                                      settings.shellDistance,
+                                                                      settings.affectFloor,
+                                                                      -1.05f);
+    if (postConstraint.corrected)
+    {
+        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
+        strandCorrected = true;
+        report.maxPenetration = std::max(report.maxPenetration, postConstraint.penetration);
+        penetrationSum += postConstraint.penetration;
+        ++penetrationSamples;
+        ++report.penetrationEventCount;
+    }
+}
                 if (strandCorrected)
                 {
                     ++report.correctedStrandCount;
@@ -1039,7 +1150,7 @@ namespace hairgpu
             outError = "Failed to open hybrid_teacher_frames.csv for writing.";
             return false;
         }
-        frameCsv << "frameIndex,timeSeconds,selectedClusters,selectedGuides,selectedStrands,selectedNaturalnessGain,averageEfficiencyScore,editCoverageRatio,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgLengthErrorBefore,avgLengthErrorAfter,estimatedSimulationMilliseconds,estimatedPlanMemoryMegabytes\n";
+        frameCsv << "frameIndex,timeSeconds,selectedClusters,selectedGuides,selectedStrands,selectedNaturalnessGain,averageEfficiencyScore,editCoverageRatio,budgetScale,recommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctedStrands,correctedPoints,avgPenetration,maxPenetration,avgGuideContact,avgGuidePenetration,avgGuideUncertainty,maxGuideUncertainty,avgGuideEdit,avgGuideBoundary,avgLengthErrorBefore,avgLengthErrorAfter,estimatedSimulationMilliseconds,estimatedPlanMemoryMegabytes\n";
 
         std::vector<Vec3> previousGuideRoots;
         BuildGuideRootsFromPoints(asset, asset.restPoints, previousGuideRoots);
@@ -1064,6 +1175,9 @@ namespace hairgpu
                                   settings.tipNoiseAmplitude,
                                   settings.windCyclesPerSecond,
                                   framePoints);
+            const std::vector<float> guideEditScores = BuildTeacherEditScores(asset, timeSeconds, settings.editBoundaryBias);
+            const std::vector<float> guideBoundaryScores = BuildTeacherBoundaryScores(asset, guideEditScores);
+            ApplyTeacherEditCase(asset, guideEditScores, settings.editLengthScaleAmplitude, settings.editTipOffsetAmplitude, framePoints);
 
             std::vector<Vec3> currentGuideRoots;
             BuildGuideRootsFromPoints(asset, framePoints, currentGuideRoots);
@@ -1095,6 +1209,8 @@ namespace hairgpu
             runtimeInput.guideContactScores = guideContactScores;
             runtimeInput.guidePenetrationScores = guidePenetrationScores;
             runtimeInput.guideUncertainty = guideUncertainty;
+            runtimeInput.guideEditScores = guideEditScores;
+            runtimeInput.guideBoundaryScores = guideBoundaryScores;
             runtimeInput.guideTemporalScores = guideUncertainty;
             runtimeInput.guideModelErrorScores = modelErrorScores;
             runtimeInput.cameraPosition = Vec3(0.0f, 1.55f, -1.85f);

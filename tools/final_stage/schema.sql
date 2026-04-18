@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS runtime_runs (
     follower_count INTEGER,
     total_strand_count INTEGER,
     total_particle_count INTEGER,
+    avg_silhouette_error REAL,
+    avg_clump_preservation REAL,
+    avg_edit_locality REAL,
+    avg_boundary_naturalness REAL,
+    avg_edit_to_run_latency_ms REAL,
+    avg_penetration_per_sec REAL,
+    peak_ram_mb REAL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
 );

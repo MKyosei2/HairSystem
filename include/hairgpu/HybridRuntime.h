@@ -28,6 +28,8 @@ namespace hairgpu
     {
         uint32_t correctedStrandCount = 0u;
         uint32_t correctedPointCount = 0u;
+        uint32_t preservedRootPointCount = 0u;
+        uint32_t penetrationEventCount = 0u;
         float averagePenetration = 0.0f;
         float maxPenetration = 0.0f;
         float averageLengthErrorBefore = 0.0f;
@@ -49,6 +51,9 @@ namespace hairgpu
         float swayAmplitude = 0.035f;
         float tipNoiseAmplitude = 0.006f;
         float windCyclesPerSecond = 0.55f;
+        float editLengthScaleAmplitude = 0.10f;
+        float editTipOffsetAmplitude = 0.020f;
+        float editBoundaryBias = 0.55f;
         ActiveSetClusterSettings clusterSettings = {};
         ActiveSetScoringSettings scoringSettings = {};
         ActiveSetBudget budget = {};

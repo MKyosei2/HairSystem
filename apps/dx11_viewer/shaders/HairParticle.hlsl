@@ -28,6 +28,7 @@ struct VSOutput
     float3 color : COLOR0;
     float radius : TEXCOORD2;
     float strandT : TEXCOORD3;
+    float alphaScale : TEXCOORD4;
 };
 
 struct GSOutput
@@ -38,6 +39,7 @@ struct GSOutput
     float3 color : COLOR0;
     float2 uv : TEXCOORD2;
     float strandT : TEXCOORD3;
+    float alphaScale : TEXCOORD4;
 };
 
 float3 SafeNormalize(float3 v)
@@ -46,12 +48,31 @@ float3 SafeNormalize(float3 v)
     return (lenSq > 1.0e-8f) ? (v * rsqrt(lenSq)) : float3(0.0f, 1.0f, 0.0f);
 }
 
-float3 TierColor(uint tier)
+float3 EditabilityColor(uint category)
 {
-    if (tier == 0u) return float3(0.18f, 0.95f, 0.85f);
-    if (tier == 1u) return float3(0.98f, 0.75f, 0.20f);
-    if (tier == 2u) return float3(0.86f, 0.36f, 1.00f);
-    return float3(0.58f, 0.62f, 0.70f);
+    if (category == 0u) return float3(0.12f, 0.95f, 0.48f);   // editable
+    if (category == 2u) return float3(1.00f, 0.18f, 0.86f);   // selected strand
+    if (category == 3u) return float3(1.00f, 0.72f, 0.20f);   // related guide/family
+    if (category == 4u) return float3(1.00f, 0.92f, 0.18f);   // boundary band
+    return float3(0.30f, 0.32f, 0.36f);                       // locked
+}
+
+float EditabilityAlphaScale(uint category)
+{
+    if (category == 0u) return 1.00f;
+    if (category == 2u) return 1.00f;
+    if (category == 3u) return 0.95f;
+    if (category == 4u) return 0.88f;
+    return 0.24f;
+}
+
+float EditabilityWidthScale(uint category)
+{
+    if (category == 2u) return 2.20f;
+    if (category == 3u) return 1.35f;
+    if (category == 4u) return 1.15f;
+    if (category == 0u) return 1.08f;
+    return 0.70f;
 }
 
 float3 ComputeHairColor(uint strandIndex, float widthN, float strandT, uint strandTier)
@@ -72,7 +93,7 @@ float3 ComputeHairColor(uint strandIndex, float widthN, float strandT, uint stra
     }
     if (DebugColorMode == 3)
     {
-        return TierColor(strandTier);
+        return EditabilityColor(strandTier);
     }
     return naturalColor;
 }
@@ -105,6 +126,15 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
     if (strandTier == 1u)
     {
         width *= RenderReducedWidthBoost;
+    }
+    if (DebugColorMode == 3u)
+    {
+        width *= EditabilityWidthScale(strandTier);
+        output.alphaScale = EditabilityAlphaScale(strandTier);
+    }
+    else
+    {
+        output.alphaScale = 1.0f;
     }
     output.radius = max(width * 0.95f, 0.0f);
     output.strandT = (safeParticlesPerStrand > 1u) ? (float(localIndex) / float(safeParticlesPerStrand - 1u)) : 0.0f;
@@ -146,6 +176,7 @@ void GSPointMain(point VSOutput input[1], inout TriangleStream<GSOutput> stream)
         o.color = v.color;
         o.uv = uv[i];
         o.strandT = v.strandT;
+        o.alphaScale = v.alphaScale;
         stream.Append(o);
     }
     stream.RestartStrip();
@@ -192,6 +223,7 @@ void GSBillboardMain(point VSOutput input[1], inout TriangleStream<GSOutput> str
         o.color = v.color;
         o.uv = uv[i];
         o.strandT = v.strandT;
+        o.alphaScale = v.alphaScale;
         stream.Append(o);
     }
     stream.RestartStrip();
@@ -209,7 +241,7 @@ float4 PSMain(GSOutput input) : SV_Target
     float alpha = saturate(1.0f - r2);
     alpha = alpha * alpha;
     alpha *= lerp(1.00f, 0.72f, input.strandT);
-    alpha = max(alpha, 0.22f) * RenderStrandAlpha;
+    alpha = max(alpha, 0.22f) * RenderStrandAlpha * input.alphaScale;
 
     float3 viewDir = SafeNormalize(CameraPosition.xyz - input.worldPosition);
     float3 tangent = SafeNormalize(input.tangent);

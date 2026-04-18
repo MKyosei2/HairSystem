@@ -713,6 +713,25 @@ namespace hairgpu
             }
         }
 
+
+        Vec3 ComputeBoundaryTangent(const HairAsset& asset, const StrandRange& strand, uint32_t localIndex)
+        {
+            if (strand.pointCount == 0u)
+            {
+                return Vec3(0.0f, 0.0f, 0.0f);
+            }
+            const uint32_t clampedIndex = std::min<uint32_t>(localIndex, strand.pointCount - 1u);
+            if (strand.pointCount == 1u)
+            {
+                return Vec3(0.0f, 1.0f, 0.0f);
+            }
+            const uint32_t prevIndex = (clampedIndex > 0u) ? (clampedIndex - 1u) : 0u;
+            const uint32_t nextIndex = std::min<uint32_t>(clampedIndex + 1u, strand.pointCount - 1u);
+            const Vec3 prevPoint = asset.restPoints[strand.pointOffset + prevIndex];
+            const Vec3 nextPoint = asset.restPoints[strand.pointOffset + nextIndex];
+            return Normalize(nextPoint - prevPoint);
+        }
+
         void ApplyBoundarySmoothing(HairAsset& asset,
                                     const std::vector<float>& strandInfluence,
                                     float radiusUv,
@@ -731,6 +750,7 @@ namespace hairgpu
                 guideUvs[guideIndex] = GetRootUv(asset, guideIndex);
             }
 
+            std::vector<Vec3> originalPoints = asset.restPoints;
             std::vector<Vec3> smoothedPoints = asset.restPoints;
             for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
             {
@@ -783,19 +803,42 @@ namespace hairgpu
                 for (uint32_t localIndex = 1u; localIndex < strand.pointCount; ++localIndex)
                 {
                     const float u = static_cast<float>(localIndex) / static_cast<float>(std::max<uint32_t>(strand.pointCount - 1u, 1u));
-                    Vec3 weightedAverage = asset.restPoints[strand.pointOffset + localIndex];
+                    Vec3 weightedAverage = originalPoints[strand.pointOffset + localIndex];
+                    Vec3 weightedTangent = ComputeBoundaryTangent(asset, strand, localIndex);
                     float totalWeight = 1.0f;
                     for (const auto& [distance, otherGuide] : neighbors)
                     {
                         const StrandRange& neighborStrand = asset.strands[otherGuide];
                         const uint32_t neighborLocalIndex = std::min<uint32_t>(localIndex, neighborStrand.pointCount - 1u);
                         const float neighborWeight = Clamp01(1.0f - distance / safeRadius);
-                        weightedAverage += asset.restPoints[neighborStrand.pointOffset + neighborLocalIndex] * neighborWeight;
+                        weightedAverage += originalPoints[neighborStrand.pointOffset + neighborLocalIndex] * neighborWeight;
+                        weightedTangent += ComputeBoundaryTangent(asset, neighborStrand, neighborLocalIndex) * neighborWeight;
                         totalWeight += neighborWeight;
                     }
                     weightedAverage = weightedAverage / std::max(totalWeight, 1.0e-4f);
+                    const Vec3 tangent = Normalize(weightedTangent / std::max(totalWeight, 1.0e-4f));
+
+                    const uint32_t pointIndex = strand.pointOffset + localIndex;
+                    const uint32_t prevPointIndex = strand.pointOffset + localIndex - 1u;
+                    const float restSegmentLength = Length(originalPoints[pointIndex] - originalPoints[prevPointIndex]);
+                    Vec3 tangentTarget = weightedAverage;
+                    if (Length(tangent) > 1.0e-6f && restSegmentLength > 1.0e-6f)
+                    {
+                        tangentTarget = smoothedPoints[prevPointIndex] + tangent * restSegmentLength;
+                    }
+                    Vec3 curvatureTarget = weightedAverage;
+                    if (localIndex + 1u < strand.pointCount)
+                    {
+                        const Vec3 nextOriginal = originalPoints[strand.pointOffset + localIndex + 1u];
+                        const Vec3 prevOriginal = originalPoints[prevPointIndex];
+                        curvatureTarget = (weightedAverage + nextOriginal + prevOriginal) / 3.0f;
+                    }
+
                     const float blend = Clamp01(smoothingStrength * boundary * (0.20f + 0.80f * u));
-                    smoothedPoints[strand.pointOffset + localIndex] = Lerp(asset.restPoints[strand.pointOffset + localIndex], weightedAverage, blend);
+                    Vec3 smoothed = Lerp(originalPoints[pointIndex], weightedAverage, blend * 0.55f);
+                    smoothed = Lerp(smoothed, tangentTarget, blend * 0.30f);
+                    smoothed = Lerp(smoothed, curvatureTarget, blend * 0.15f);
+                    smoothedPoints[pointIndex] = smoothed;
                 }
             }
 
@@ -817,12 +860,14 @@ namespace hairgpu
                 const uint32_t pointCount = std::min(guide.pointCount, follower.pointCount);
                 const float parentInfluence = Clamp01(strandInfluence[static_cast<uint32_t>(follow.parentGuide)]);
                 const float boundary = Clamp01(1.0f - std::abs(parentInfluence - 0.5f) * 2.0f);
-                const float blend = Clamp01((0.25f + 0.55f * boundary) * std::clamp(follow.followWeight, 0.0f, 1.0f));
+                const float blend = Clamp01((0.18f + 0.62f * boundary) * std::clamp(follow.followWeight, 0.0f, 1.0f));
                 for (uint32_t localIndex = 0u; localIndex < pointCount; ++localIndex)
                 {
                     const uint32_t gi = guide.pointOffset + localIndex;
                     const uint32_t si = follower.pointOffset + localIndex;
-                    asset.restPoints[si] = Lerp(asset.restPoints[si], asset.restPoints[gi], blend);
+                    const float u = (pointCount > 1u) ? static_cast<float>(localIndex) / static_cast<float>(pointCount - 1u) : 0.0f;
+                    const float localBlend = Clamp01(blend * (0.35f + 0.65f * u));
+                    asset.restPoints[si] = Lerp(originalPoints[si], asset.restPoints[gi], localBlend);
                 }
             }
         }
@@ -1127,7 +1172,7 @@ namespace hairgpu
             {
                 continue;
             }
-            RegionSelectionResult selection = SelectRegion(asset, layer.region);
+            RegionSelectionResult selection = BuildLayerSelection(asset, layer);
             selection = ScaleSelectionWeights(selection, layer.layerWeight);
             if (selection.strands.empty())
             {

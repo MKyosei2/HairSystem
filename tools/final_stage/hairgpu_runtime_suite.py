@@ -98,20 +98,24 @@ def write_markdown(
         f"- Avg frame ms: {float(summary.get('avg_frame_ms') or 0.0):.3f}",
         f"- Avg p95 frame ms: {float(summary.get('avg_p95_frame_ms') or 0.0):.3f}",
         f"- Avg 60 FPS ratio: {float(summary.get('avg_sixty_fps_ratio') or 0.0):.3f}",
+        f"- Avg edit locality: {float(summary.get('avg_edit_locality') or 0.0):.3f}",
+        f"- Avg boundary naturalness: {float(summary.get('avg_boundary_naturalness') or 0.0):.3f}",
+        f"- Avg edit-to-run latency ms: {float(summary.get('avg_edit_to_run_latency_ms') or 0.0):.3f}",
+        f"- Avg penetration / sec: {float(summary.get('avg_penetration_per_sec') or 0.0):.3f}",
         "",
         "## Method leaderboard",
         "",
-        "| Method | Runs | Avg frame ms | Avg p95 ms | Avg worst ms | Avg FPS | Avg 60 FPS ratio |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Method | Runs | Avg frame ms | Avg p95 ms | Avg worst ms | Avg FPS | Avg 60 FPS ratio | Avg locality | Avg boundary | Avg edit latency ms | Avg penetration / sec |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in method_rows:
         lines.append(
-            f"| {row['method_code']} | {row['run_count']} | {float(row['avg_frame_ms'] or 0.0):.3f} | {float(row['avg_p95_frame_ms'] or 0.0):.3f} | {float(row['avg_worst_frame_ms'] or 0.0):.3f} | {float(row['avg_fps'] or 0.0):.3f} | {float(row['avg_sixty_fps_ratio'] or 0.0):.3f} |"
+            f"| {row['method_code']} | {row['run_count']} | {float(row['avg_frame_ms'] or 0.0):.3f} | {float(row['avg_p95_frame_ms'] or 0.0):.3f} | {float(row['avg_worst_frame_ms'] or 0.0):.3f} | {float(row['avg_fps'] or 0.0):.3f} | {float(row['avg_sixty_fps_ratio'] or 0.0):.3f} | {float(row.get('avg_edit_locality') or 0.0):.3f} | {float(row.get('avg_boundary_naturalness') or 0.0):.3f} | {float(row.get('avg_edit_to_run_latency_ms') or 0.0):.3f} | {float(row.get('avg_penetration_per_sec') or 0.0):.3f} |"
         )
-    lines += ["", "## Scenario summary", "", "| Scenario | Runs | Avg frame ms | Avg p95 ms | Avg worst ms | Avg FPS | Avg 60 FPS ratio |", "|---|---:|---:|---:|---:|---:|---:|"]
+    lines += ["", "## Scenario summary", "", "| Scenario | Runs | Avg frame ms | Avg p95 ms | Avg worst ms | Avg FPS | Avg 60 FPS ratio | Avg locality | Avg boundary | Avg edit latency ms | Avg penetration / sec |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for row in scenario_rows:
         lines.append(
-            f"| {row['scenario_code']} | {row['run_count']} | {float(row['avg_frame_ms'] or 0.0):.3f} | {float(row['avg_p95_frame_ms'] or 0.0):.3f} | {float(row['avg_worst_frame_ms'] or 0.0):.3f} | {float(row['avg_fps'] or 0.0):.3f} | {float(row['avg_sixty_fps_ratio'] or 0.0):.3f} |"
+            f"| {row['scenario_code']} | {row['run_count']} | {float(row['avg_frame_ms'] or 0.0):.3f} | {float(row['avg_p95_frame_ms'] or 0.0):.3f} | {float(row['avg_worst_frame_ms'] or 0.0):.3f} | {float(row['avg_fps'] or 0.0):.3f} | {float(row['avg_sixty_fps_ratio'] or 0.0):.3f} | {float(row.get('avg_edit_locality') or 0.0):.3f} | {float(row.get('avg_boundary_naturalness') or 0.0):.3f} | {float(row.get('avg_edit_to_run_latency_ms') or 0.0):.3f} | {float(row.get('avg_penetration_per_sec') or 0.0):.3f} |"
         )
     if pairwise_rows:
         lines += ["", "## Pairwise deltas vs baseline", "", "| Scenario | Method | Baseline | Δ avg frame ms | Δ p95 ms | Δ 60 FPS ratio | Better overall |", "|---|---|---|---:|---:|---:|---|"]

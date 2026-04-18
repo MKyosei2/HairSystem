@@ -35,6 +35,9 @@ namespace hairgpu
         float silhouetteError = 0.0f;
         float clumpPreservationScore = 1.0f;
         float rootLocalityScore = 1.0f;
+        float averageTangentError = 0.0f;
+        float averageCurvatureError = 0.0f;
+        float clumpAxisVariance = 0.0f;
     };
 
     struct HairEditComparisonReport
@@ -43,6 +46,8 @@ namespace hairgpu
         float editLocalityScore = 1.0f;
         float boundaryNaturalnessScore = 1.0f;
         float editedStrandRatio = 0.0f;
+        float nonEditedLeakage = 0.0f;
+        float averageBoundaryTangentJump = 0.0f;
         float editToRunLatencyMilliseconds = 0.0f;
     };
 

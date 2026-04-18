@@ -1,9 +1,36 @@
-.vs/
-out/
-build/
+# Build outputs
 bin/
-obj/
+bin-int/
+build/
+build-*/
+out_*/
+cmake-build-*/
+
+# Temporary checks / generated reports
+build_check/
+*.log
+*.tlog
+*.obj
+*.ilk
+*.pdb
+*.idb
+*.lib
+*.exp
+*.ipch
+*.tmp
 *.user
 *.VC.db
-*.sln.docstates
-*.vcxproj.user
+*.opendb
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vs/
+.vscode/
+.idea/

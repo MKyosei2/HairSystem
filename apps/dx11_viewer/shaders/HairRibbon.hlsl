@@ -35,12 +35,31 @@ struct VSOutput
     float alpha : TEXCOORD0;
 };
 
-float3 TierColor(uint tier)
+float3 EditabilityColor(uint category)
 {
-    if (tier == 0u) return float3(0.18f, 0.95f, 0.85f);
-    if (tier == 1u) return float3(0.98f, 0.75f, 0.20f);
-    if (tier == 2u) return float3(0.86f, 0.36f, 1.00f);
-    return float3(0.58f, 0.62f, 0.70f);
+    if (category == 0u) return float3(0.12f, 0.95f, 0.48f);   // editable
+    if (category == 2u) return float3(1.00f, 0.18f, 0.86f);   // selected strand
+    if (category == 3u) return float3(1.00f, 0.72f, 0.20f);   // related guide/family
+    if (category == 4u) return float3(1.00f, 0.92f, 0.18f);   // boundary band
+    return float3(0.30f, 0.32f, 0.36f);                       // locked
+}
+
+float EditabilityAlphaScale(uint category)
+{
+    if (category == 0u) return 1.00f;
+    if (category == 2u) return 1.00f;
+    if (category == 3u) return 0.95f;
+    if (category == 4u) return 0.88f;
+    return 0.24f;
+}
+
+float EditabilityWidthScale(uint category)
+{
+    if (category == 2u) return 2.20f;
+    if (category == 3u) return 1.35f;
+    if (category == 4u) return 1.15f;
+    if (category == 0u) return 1.08f;
+    return 0.70f;
 }
 
 float3 ComputeHairColor(uint strandIndex, float widthN, uint strandTier)
@@ -61,7 +80,7 @@ float3 ComputeHairColor(uint strandIndex, float widthN, uint strandTier)
     }
     if (DebugColorMode == 3)
     {
-        return TierColor(strandTier);
+        return EditabilityColor(strandTier);
     }
     return naturalColor;
 }
@@ -88,9 +107,13 @@ VSOutput VSMain(VSInput input)
         width *= RenderReducedWidthBoost;
     }
 
+    if (DebugColorMode == 3u)
+    {
+        width *= EditabilityWidthScale(strandTier);
+    }
     const float widthN = saturate((width - 0.0010f) / 0.0120f);
     output.width = width;
-    output.alpha = (width > RenderHiddenWidthThreshold) ? RenderStrandAlpha : 0.0f;
+    output.alpha = (width > RenderHiddenWidthThreshold) ? (RenderStrandAlpha * ((DebugColorMode == 3u) ? EditabilityAlphaScale(strandTier) : 1.0f)) : 0.0f;
     output.color = ComputeHairColor(input.strandIndex, widthN, strandTier);
     return output;
 }

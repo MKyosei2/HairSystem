@@ -41,6 +41,19 @@ namespace hairgpu
             return v * v * (3.0f - 2.0f * v);
         }
 
+        float WrapSignedUnitDelta(float v)
+        {
+            while (v > 0.5f)
+            {
+                v -= 1.0f;
+            }
+            while (v < -0.5f)
+            {
+                v += 1.0f;
+            }
+            return v;
+        }
+
         float SignedSideFromU(float u)
         {
             const float angle = WrapUnit(u) * kTau;
@@ -84,11 +97,19 @@ namespace hairgpu
         constexpr float kHeadRadiusX = 0.23f;
         constexpr float kHeadRadiusY = 0.20f;
         constexpr float kHeadRadiusZ = 0.19f;
+        constexpr uint32_t kLengthResampleMinSamples = 64u;
+        constexpr float kTargetAverageStrandLengthMeters = 0.50f;
+
+        float ComputeReferenceStrandLength(float segmentLength)
+        {
+            (void)segmentLength;
+            return kTargetAverageStrandLengthMeters;
+        }
 
         float EvaluateAllowedRootMinV(float u)
         {
             (void)u;
-            return 0.02f;
+            return 0.06f;
         }
 
         float EvaluateAllowedRootMaxV(float u)
@@ -596,6 +617,38 @@ namespace hairgpu
             };
         }
 
+        Vec3 ComputeWrappedUvBarycentric(const Vec2& uvA, const Vec2& uvB, const Vec2& uvC, float targetU, float targetV)
+        {
+            const Vec2 a{ targetU + WrapSignedUnitDelta(uvA.x - targetU), uvA.y };
+            const Vec2 b{ targetU + WrapSignedUnitDelta(uvB.x - targetU), uvB.y };
+            const Vec2 c{ targetU + WrapSignedUnitDelta(uvC.x - targetU), uvC.y };
+            const Vec2 p{ targetU, targetV };
+
+            const Vec2 v0{ b.x - a.x, b.y - a.y };
+            const Vec2 v1{ c.x - a.x, c.y - a.y };
+            const Vec2 v2{ p.x - a.x, p.y - a.y };
+            const float det = v0.x * v1.y - v1.x * v0.y;
+            if (std::fabs(det) <= 1.0e-7f)
+            {
+                return Vec3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f);
+            }
+
+            const float invDet = 1.0f / det;
+            float w1 = (v2.x * v1.y - v1.x * v2.y) * invDet;
+            float w2 = (v0.x * v2.y - v2.x * v0.y) * invDet;
+            float w0 = 1.0f - w1 - w2;
+
+            w0 = std::max(w0, 0.0f);
+            w1 = std::max(w1, 0.0f);
+            w2 = std::max(w2, 0.0f);
+            const float weightSum = w0 + w1 + w2;
+            if (weightSum <= 1.0e-6f)
+            {
+                return Vec3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f);
+            }
+            return Vec3(w0 / weightSum, w1 / weightSum, w2 / weightSum);
+        }
+
         RootBinding FindClosestBindingForUv(const ScalpMesh& scalp, float targetU, float targetV)
         {
             RootBinding best;
@@ -609,7 +662,7 @@ namespace hairgpu
                 const Vec2& uva = scalp.uvs[tri.a];
                 const Vec2& uvb = scalp.uvs[tri.b];
                 const Vec2& uvc = scalp.uvs[tri.c];
-                const float centroidU = (uva.x + uvb.x + uvc.x) / 3.0f;
+                const float centroidU = WrapUnit((uva.x + uvb.x + uvc.x) / 3.0f);
                 const float centroidV = (uva.y + uvb.y + uvc.y) / 3.0f;
                 float du = std::fabs(centroidU - targetU);
                 du = std::min(du, 1.0f - du);
@@ -637,11 +690,155 @@ namespace hairgpu
                 {
                     bestScore = score;
                     best.triangleIndex = triIndex;
-                    best.rootUv = { centroidU, centroidV };
+                    best.barycentric = ComputeWrappedUvBarycentric(uva, uvb, uvc, targetU, targetV);
+                    best.rootUv = { targetU, targetV };
                 }
             }
 
             return best;
+        }
+
+
+        float EvaluateTriangleArea3D(const ScalpMesh& scalp, uint32_t triangleIndex)
+        {
+            if (triangleIndex >= scalp.triangles.size())
+            {
+                return 0.0f;
+            }
+
+            const TriangleIndices& tri = scalp.triangles[triangleIndex];
+            const Vec3& a = scalp.positions[tri.a];
+            const Vec3& b = scalp.positions[tri.b];
+            const Vec3& c = scalp.positions[tri.c];
+            return 0.5f * Length(Cross(b - a, c - a));
+        }
+
+        float EvaluateRootCoverageWeight(float u, float v)
+        {
+            const float minAllowedV = EvaluateAllowedRootMinV(u);
+            const float maxAllowedV = EvaluateAllowedRootMaxV(u);
+            if (v < minAllowedV || v > maxAllowedV)
+            {
+                return 0.0f;
+            }
+
+            const float normalizedBand = Clamp((v - minAllowedV) / std::max(maxAllowedV - minAllowedV, 1.0e-5f), 0.0f, 1.0f);
+            const float centerBand = 1.0f - std::fabs(normalizedBand - 0.54f) / 0.54f;
+            const float bandWeight = 0.48f + 0.52f * Smooth01(Clamp(centerBand, 0.0f, 1.0f));
+            const float faceOpening = EvaluateFaceOpeningMask(u, v);
+            const Vec3 regions = EvaluateProceduralScalpRegionMap(u, v);
+            const float crownFill = 0.34f * regions.x * Smooth01(1.0f - Clamp((v - minAllowedV) / 0.18f, 0.0f, 1.0f));
+            const float templeBoost = 0.18f * regions.y;
+            const float napeBoost = 0.16f * regions.z;
+            const float frontCompensation = 0.16f * faceOpening;
+            const float frontPenalty = 0.22f * faceOpening;
+            const float centerBias = 0.90f + 0.10f * Smooth01(1.0f - std::fabs(normalizedBand - 0.46f) / 0.46f);
+            return Clamp((1.0f - frontPenalty + crownFill + templeBoost + napeBoost + frontCompensation) * bandWeight * centerBias, 0.0f, 1.0f);
+        }
+
+        std::vector<float> BuildScalpAreaDistributionCdf(const ScalpMesh& scalp)
+        {
+            std::vector<float> cdf;
+            cdf.reserve(scalp.triangles.size());
+
+            float cumulative = 0.0f;
+            for (uint32_t triIndex = 0; triIndex < static_cast<uint32_t>(scalp.triangles.size()); ++triIndex)
+            {
+                const TriangleIndices& tri = scalp.triangles[triIndex];
+                const Vec2& uva = scalp.uvs[tri.a];
+                const Vec2& uvb = scalp.uvs[tri.b];
+                const Vec2& uvc = scalp.uvs[tri.c];
+
+                float wrappedU = uva.x + WrapSignedUnitDelta(uvb.x - uva.x) * (1.0f / 3.0f)
+                               + WrapSignedUnitDelta(uvc.x - uva.x) * (1.0f / 3.0f);
+                wrappedU = WrapUnit(wrappedU);
+                const float centroidV = (uva.y + uvb.y + uvc.y) / 3.0f;
+                const float area = EvaluateTriangleArea3D(scalp, triIndex);
+                const float rootWeight = EvaluateRootCoverageWeight(wrappedU, centroidV);
+                const float triangleWeight = area * rootWeight;
+                cumulative += triangleWeight;
+                cdf.push_back(cumulative);
+            }
+
+            if (!cdf.empty() && cumulative <= 1.0e-8f)
+            {
+                cdf.clear();
+                cumulative = 0.0f;
+                for (uint32_t triIndex = 0; triIndex < static_cast<uint32_t>(scalp.triangles.size()); ++triIndex)
+                {
+                    cumulative += std::max(EvaluateTriangleArea3D(scalp, triIndex), 1.0e-6f);
+                    cdf.push_back(cumulative);
+                }
+            }
+
+            return cdf;
+        }
+
+        uint32_t SampleTriangleIndexFromCdf(const std::vector<float>& cdf, float sample01)
+        {
+            if (cdf.empty())
+            {
+                return 0u;
+            }
+
+            const float total = cdf.back();
+            if (total <= 1.0e-8f)
+            {
+                return static_cast<uint32_t>(std::min<size_t>(cdf.size() - 1u, static_cast<size_t>(sample01 * static_cast<float>(cdf.size()))));
+            }
+
+            const float target = Clamp(sample01, 0.0f, 0.999999f) * total;
+            const auto it = std::lower_bound(cdf.begin(), cdf.end(), target);
+            if (it == cdf.end())
+            {
+                return static_cast<uint32_t>(cdf.size() - 1u);
+            }
+            return static_cast<uint32_t>(std::distance(cdf.begin(), it));
+        }
+
+        RootBinding BuildBindingFromTriangleSample(const ScalpMesh& scalp, uint32_t triangleIndex, float sampleA, float sampleB)
+        {
+            RootBinding binding;
+            binding.triangleIndex = std::min<uint32_t>(triangleIndex, static_cast<uint32_t>(std::max<size_t>(scalp.triangles.size(), 1u)) - 1u);
+
+            const float su = std::sqrt(Clamp(sampleA, 0.0f, 1.0f));
+            const float b0 = 1.0f - su;
+            const float b1 = su * (1.0f - Clamp(sampleB, 0.0f, 1.0f));
+            const float b2 = su * Clamp(sampleB, 0.0f, 1.0f);
+            binding.barycentric = Vec3(b0, b1, b2);
+            binding.rootUv = EvaluateTriangleUv(scalp, binding);
+            binding.rootUv.x = WrapUnit(binding.rootUv.x);
+            return binding;
+        }
+
+        RootBinding SampleAreaDistributedRootBinding(const ScalpMesh& scalp, const std::vector<float>& areaCdf, uint32_t strandIndex)
+        {
+            const float base = Fract((static_cast<float>(strandIndex) + 0.5f) * 0.754877666f);
+            const uint32_t seed = strandIndex * 1664525u + 1013904223u;
+
+            RootBinding fallback = FindClosestBindingForUv(scalp, Fract(base + Hash01(seed + 3u) * 0.17f), 0.32f + (Hash01(seed + 5u) - 0.5f) * 0.10f);
+            float bestWeight = EvaluateRootCoverageWeight(fallback.rootUv.x, fallback.rootUv.y);
+
+            for (uint32_t attempt = 0; attempt < 12u; ++attempt)
+            {
+                const float triSample = Fract(base + static_cast<float>(attempt) * 0.38196601125f + Hash01(seed + attempt * 11u) * 0.05f);
+                const float baryA = Hash01(seed + 31u + attempt * 17u);
+                const float baryB = Hash01(seed + 67u + attempt * 23u);
+                RootBinding candidate = BuildBindingFromTriangleSample(scalp, SampleTriangleIndexFromCdf(areaCdf, triSample), baryA, baryB);
+                candidate.rootUv.x = WrapUnit(candidate.rootUv.x);
+                const float weight = EvaluateRootCoverageWeight(candidate.rootUv.x, candidate.rootUv.y);
+                if (weight > 0.18f)
+                {
+                    return candidate;
+                }
+                if (weight > bestWeight)
+                {
+                    bestWeight = weight;
+                    fallback = candidate;
+                }
+            }
+
+            return fallback;
         }
 
         Vec3 CubicBezier(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t)
@@ -655,19 +852,6 @@ namespace hairgpu
                 + p3 * (tt * t);
         }
 
-
-        float WrapSignedUnitDelta(float v)
-        {
-            while (v > 0.5f)
-            {
-                v -= 1.0f;
-            }
-            while (v < -0.5f)
-            {
-                v += 1.0f;
-            }
-            return v;
-        }
 
         void EvaluateScalpFrameFromBinding(const ScalpMesh& scalpMesh, const RootBinding& binding, Vec3& outNormal, Vec3& outTangent, Vec3& outBitangent)
         {
@@ -789,10 +973,11 @@ namespace hairgpu
             Vec3 root = rootSurface + normal * 0.0045f + tangentOffset * 0.30f;
             root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0055f);
 
-            const float baseChainLength = std::max(segmentLength * static_cast<float>(std::max(pointCount - 1u, 1u)), segmentLength);
-            const float lengthJitter = 0.95f + 0.10f * Hash01(seed + 41u);
-            const float lengthScale = Clamp(0.96f + 0.16f * sideFactor + 0.26f * backFactor - 0.18f * fringeFactor, 0.72f, 1.42f);
-            const float strandLength = baseChainLength * parameters.overallLength * lengthScale * lengthJitter;
+            const float baseStrandLength = ComputeReferenceStrandLength(segmentLength);
+            const float regionalLength = ComputeGuideLength(root, scalpCenter, uv, baseStrandLength, parameters);
+            const float lengthJitter = 0.97f + 0.06f * Hash01(seed + 41u);
+            const float lengthScale = Clamp(0.97f + 0.05f * sideFactor + 0.08f * backFactor - 0.04f * fringeFactor, 0.92f, 1.12f);
+            const float strandLength = regionalLength * lengthScale * lengthJitter;
             const float rootTravel = strandLength * (0.08f + 0.02f * sideFactor + 0.02f * backFactor);
             const float sideDrift = (0.0050f + 0.0080f * sideFactor + 0.0040f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u));
             const float forwardDrift = 0.015f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u));
@@ -801,9 +986,16 @@ namespace hairgpu
             const Vec3 orthoA = Normalize(Cross(normal, lateral));
             const Vec3 orthoB = Normalize(Cross(lateral, orthoA));
 
-            for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
+            const uint32_t denseSampleCount = std::max<uint32_t>(kLengthResampleMinSamples, std::max<uint32_t>(pointCount * 4u, 2u));
+            std::vector<Vec3> denseSamples;
+            std::vector<float> denseWidths;
+            std::vector<float> cumulativeLengths;
+            denseSamples.reserve(denseSampleCount);
+            denseWidths.reserve(denseSampleCount);
+            cumulativeLengths.reserve(denseSampleCount);
+
+            auto evaluatePointAt = [&](float t, uint32_t noiseIndex)
             {
-                const float t = static_cast<float>(pointIndex) / static_cast<float>(std::max(pointCount - 1u, 1u));
                 const float rootPhase = Clamp(t / 0.36f, 0.0f, 1.0f);
                 const float fallPhase = Clamp((t - 0.36f) / 0.64f, 0.0f, 1.0f);
 
@@ -818,15 +1010,51 @@ namespace hairgpu
                 if (t > 0.35f)
                 {
                     const float noise = curlNoise * (0.35f + 0.65f * t);
-                    const float noiseA = std::sin((t * 1.7f + Hash01(seed + pointIndex * 11u)) * kTau);
-                    const float noiseB = std::cos((t * 1.3f + Hash01(seed + pointIndex * 13u)) * kTau);
+                    const float noiseA = std::sin((t * 1.7f + Hash01(seed + noiseIndex * 11u)) * kTau);
+                    const float noiseB = std::cos((t * 1.3f + Hash01(seed + noiseIndex * 13u)) * kTau);
                     p += orthoA * (noiseA * noise);
                     p += orthoB * (noiseB * noise * 0.5f);
                 }
 
-                p = ProjectPointOutsideHeadVolume(p, scalpCenter, Lerp(0.0055f, 0.0020f, t));
+                return ProjectPointOutsideHeadVolume(p, scalpCenter, Lerp(0.0055f, 0.0020f, t));
+            };
+
+            for (uint32_t sampleIndex = 0; sampleIndex < denseSampleCount; ++sampleIndex)
+            {
+                const float t = static_cast<float>(sampleIndex) / static_cast<float>(std::max(denseSampleCount - 1u, 1u));
+                denseSamples.push_back(evaluatePointAt(t, sampleIndex + 1u));
+                denseWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
+                if (sampleIndex == 0u)
+                {
+                    cumulativeLengths.push_back(0.0f);
+                }
+                else
+                {
+                    const float segmentArc = Length(denseSamples[sampleIndex] - denseSamples[sampleIndex - 1u]);
+                    cumulativeLengths.push_back(cumulativeLengths.back() + segmentArc);
+                }
+            }
+
+            const float totalArcLength = std::max(cumulativeLengths.back(), 1.0e-6f);
+            uint32_t denseCursor = 0u;
+            for (uint32_t pointIndex = 0; pointIndex < pointCount; ++pointIndex)
+            {
+                const float pointAlpha = static_cast<float>(pointIndex) / static_cast<float>(std::max(pointCount - 1u, 1u));
+                const float targetArcLength = pointAlpha * totalArcLength;
+                while ((denseCursor + 1u) < denseSampleCount && cumulativeLengths[denseCursor + 1u] < targetArcLength)
+                {
+                    ++denseCursor;
+                }
+
+                const uint32_t nextCursor = std::min(denseCursor + 1u, denseSampleCount - 1u);
+                const float arcA = cumulativeLengths[denseCursor];
+                const float arcB = cumulativeLengths[nextCursor];
+                const float arcDenom = std::max(arcB - arcA, 1.0e-6f);
+                const float localT = Clamp((targetArcLength - arcA) / arcDenom, 0.0f, 1.0f);
+                const Vec3 p = Lerp(denseSamples[denseCursor], denseSamples[nextCursor], localT);
+                const float width = Lerp(denseWidths[denseCursor], denseWidths[nextCursor], localT);
                 asset.restPoints.push_back(p);
-                asset.pointWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
+                asset.pointWidths.push_back(width);
             }
 
             StrandRange range;
@@ -980,36 +1208,11 @@ namespace hairgpu
         asset.pointWidths.reserve(static_cast<size_t>(totalStrands) * particlesPerStrand);
 
         const Vec3 scalpCenter(0.0f, 1.60f, 0.0f);
-        const float golden = 0.61803398875f;
-
-        const uint32_t guideCols = std::max(8u, static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(guideCount) * 1.12f))));
-        const uint32_t guideRows = std::max(1u, (guideCount + guideCols - 1u) / guideCols);
+        const std::vector<float> scalpAreaCdf = BuildScalpAreaDistributionCdf(asset.scalpMesh);
 
         for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
         {
-            const uint32_t row = guideIndex / guideCols;
-            const uint32_t col = guideIndex % guideCols;
-            const float jx = Hash01(guideIndex * 11u + 1u) - 0.5f;
-            const float jy = Hash01(guideIndex * 13u + 7u) - 0.5f;
-            const float jz = Hash01(guideIndex * 17u + 19u) - 0.5f;
-
-            const float fx = (static_cast<float>(col) + 0.5f + jx * 0.62f) / static_cast<float>(guideCols);
-            const float fy = (static_cast<float>(row) + 0.5f + jy * 0.74f) / static_cast<float>(guideRows);
-            float u = WrapUnit(fx + jz * 0.004f);
-            const float maxV = EvaluateAllowedRootMaxV(u);
-            const float minV = EvaluateAllowedRootMinV(u);
-            float v = Lerp(minV, maxV, std::pow(Clamp(fy, 0.0f, 1.0f), 1.10f));
-            v = Clamp(v + jy * 0.010f, minV, maxV);
-
-            float fringeDu = std::fabs(WrapUnit(u) - 0.25f);
-            fringeDu = std::min(fringeDu, 1.0f - fringeDu);
-            const float fringeMask = Smooth01(1.0f - Clamp(fringeDu / 0.11f, 0.0f, 1.0f));
-            if (fringeMask > 0.0f)
-            {
-                v = std::min(v, 0.26f + 0.02f * (1.0f - fringeMask));
-            }
-
-            RootBinding binding = FindClosestBindingForUv(asset.scalpMesh, u, v);
+            RootBinding binding = SampleAreaDistributedRootBinding(asset.scalpMesh, scalpAreaCdf, guideIndex);
 
             StrandMaterial material;
             material.rootWidth = 0.0032f;
@@ -1056,16 +1259,16 @@ namespace hairgpu
                 rimDir = tangent;
             }
             const float edgeRisk = Clamp(
-                templeMaskLocal * 0.78f +
-                napeMaskLocal * 0.52f +
-                faceOpeningLocal * 0.92f,
+                templeMaskLocal * 0.55f +
+                napeMaskLocal * 0.34f +
+                faceOpeningLocal * 0.40f,
                 0.0f,
                 1.0f);
             const float followerSpreadScale =
-                (1.0f - 0.48f * templeMaskLocal) *
-                (1.0f - 0.56f * napeMaskLocal) *
-                (1.0f - 0.55f * faceOpeningLocal) *
-                (0.88f + 0.08f * crownMaskLocal);
+                (1.0f - 0.24f * templeMaskLocal) *
+                (1.0f - 0.20f * napeMaskLocal) *
+                (1.0f - 0.12f * faceOpeningLocal) *
+                (0.98f + 0.10f * crownMaskLocal);
             const float guideRotation = Hash01(guideIndex * 29u + 3u) * kTau;
             const float goldenAngle = 2.39996323f;
 
@@ -1092,7 +1295,7 @@ namespace hairgpu
                 }
 
                 Vec3 rootOffset = planarOffset + normal * (verticalBias * ring * (1.0f - 0.75f * edgeRisk));
-                const float maxOffset = parameters.followerSpread * Lerp(0.34f, 0.62f, 1.0f - edgeRisk);
+                const float maxOffset = parameters.followerSpread * Lerp(0.46f, 0.78f, 1.0f - edgeRisk);
                 const float rootOffsetLength = Length(rootOffset);
                 if (rootOffsetLength > maxOffset && rootOffsetLength > 1.0e-6f)
                 {
@@ -1129,24 +1332,34 @@ namespace hairgpu
         RebuildRootRestPositionsFromScalp(asset);
 
         WigStyleSettings wigSettings;
-        wigSettings.strength = 1.0f;
-        wigSettings.capRegion = 0.34f;
+        wigSettings.strength = 0.88f;
+        wigSettings.capRegion = 0.16f;
         wigSettings.shellOffset = 0.004f;
-        wigSettings.flowBlend = 0.78f;
-        wigSettings.outwardBlend = 0.18f;
-        wigSettings.restoreOriginalTowardsTip = 0.62f;
+        wigSettings.flowBlend = 0.35f;
+        wigSettings.outwardBlend = 0.08f;
+        wigSettings.restoreOriginalTowardsTip = 0.82f;
         StyleAssetToScalpWig(asset, wigSettings);
         return asset;
     }
 
     HairAsset BuildSampleGuideHairAsset(uint32_t strandCount, uint32_t particlesPerStrand, float segmentLength)
     {
-        return BuildStaticWigHairAsset(strandCount, 0, particlesPerStrand, segmentLength, DefaultWigParameters());
+        return BuildStaticWigHairAsset(
+            strandCount,
+            0,
+            particlesPerStrand,
+            segmentLength,
+            DefaultWigParameters());
     }
 
     HairAsset BuildSampleHybridHairAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand, float segmentLength)
     {
-        return BuildStaticWigHairAsset(guideCount, followersPerGuide, particlesPerStrand, segmentLength, DefaultWigParameters());
+        return BuildStaticWigHairAsset(
+            guideCount,
+            followersPerGuide,
+            particlesPerStrand,
+            segmentLength,
+            DefaultWigParameters());
     }
 
     void SetSampleMaskOverridePaths(const char* partingMaskPath, const char* regionMaskPath)

@@ -262,8 +262,10 @@ class FinalStageDatabase:
                 experiment_id, run_name, method_code, scenario_code, asset_name, runtime_source,
                 summary_json_path, frame_csv_path, sample_count, avg_frame_ms, p95_frame_ms,
                 worst_frame_ms, avg_simulation_ms, avg_fps, sixty_fps_ratio, guide_count,
-                follower_count, total_strand_count, total_particle_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                follower_count, total_strand_count, total_particle_count, avg_silhouette_error,
+                avg_clump_preservation, avg_edit_locality, avg_boundary_naturalness,
+                avg_edit_to_run_latency_ms, avg_penetration_per_sec, peak_ram_mb, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 experiment_id,
@@ -285,6 +287,13 @@ class FinalStageDatabase:
                 int(self._resolve_summary_value(summary, "follower_count", "followerCount", default=0)),
                 int(self._resolve_summary_value(summary, "total_strand_count", "totalStrandCount", default=0)),
                 int(self._resolve_summary_value(summary, "total_particle_count", "totalParticleCount", default=0)),
+                float(self._resolve_summary_value(summary, "avg_silhouette_error", "averageSilhouetteError", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_clump_preservation", "averageClumpPreservation", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_edit_locality", "averageEditLocality", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_boundary_naturalness", "averageBoundaryNaturalness", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_edit_to_run_latency_ms", "averageEditToRunLatencyMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_penetration_per_sec", "avgPenetrationPerSec", default=0.0)),
+                float(self._resolve_summary_value(summary, "peak_ram_mb", "peakRamMb", default=0.0)),
                 datetime.utcnow().isoformat(timespec="seconds"),
             ),
         )
@@ -430,7 +439,11 @@ class FinalStageDatabase:
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
-                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
+                AVG(avg_edit_locality) AS avg_edit_locality,
+                AVG(avg_boundary_naturalness) AS avg_boundary_naturalness,
+                AVG(avg_edit_to_run_latency_ms) AS avg_edit_to_run_latency_ms,
+                AVG(avg_penetration_per_sec) AS avg_penetration_per_sec
             FROM runtime_runs
             GROUP BY method_code, scenario_code
             ORDER BY method_code, scenario_code
@@ -446,7 +459,11 @@ class FinalStageDatabase:
                 AVG(avg_frame_ms) AS avg_frame_ms,
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
                 AVG(avg_fps) AS avg_fps,
-                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
+                AVG(avg_edit_locality) AS avg_edit_locality,
+                AVG(avg_boundary_naturalness) AS avg_boundary_naturalness,
+                AVG(avg_edit_to_run_latency_ms) AS avg_edit_to_run_latency_ms,
+                AVG(avg_penetration_per_sec) AS avg_penetration_per_sec
             FROM runtime_runs
             GROUP BY method_code
             ORDER BY method_code
@@ -464,7 +481,11 @@ class FinalStageDatabase:
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
                 AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
-                AVG(avg_simulation_ms) AS avg_simulation_ms
+                AVG(avg_simulation_ms) AS avg_simulation_ms,
+                AVG(avg_edit_locality) AS avg_edit_locality,
+                AVG(avg_boundary_naturalness) AS avg_boundary_naturalness,
+                AVG(avg_edit_to_run_latency_ms) AS avg_edit_to_run_latency_ms,
+                AVG(avg_penetration_per_sec) AS avg_penetration_per_sec
             FROM runtime_runs
             GROUP BY method_code
             ORDER BY avg_sixty_fps_ratio DESC, avg_p95_frame_ms ASC, method_code ASC
@@ -482,7 +503,11 @@ class FinalStageDatabase:
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
-                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
+                AVG(avg_edit_locality) AS avg_edit_locality,
+                AVG(avg_boundary_naturalness) AS avg_boundary_naturalness,
+                AVG(avg_edit_to_run_latency_ms) AS avg_edit_to_run_latency_ms,
+                AVG(avg_penetration_per_sec) AS avg_penetration_per_sec
             FROM runtime_runs
             GROUP BY scenario_code
             ORDER BY scenario_code ASC
@@ -503,7 +528,11 @@ class FinalStageDatabase:
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
-                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio
+                AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
+                AVG(avg_edit_locality) AS avg_edit_locality,
+                AVG(avg_boundary_naturalness) AS avg_boundary_naturalness,
+                AVG(avg_edit_to_run_latency_ms) AS avg_edit_to_run_latency_ms,
+                AVG(avg_penetration_per_sec) AS avg_penetration_per_sec
             FROM runtime_runs
             """
         ).fetchone()
