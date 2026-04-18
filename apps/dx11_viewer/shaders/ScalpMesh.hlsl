@@ -54,10 +54,10 @@ float4 PSMain(VSOutput input) : SV_Target
 
     const float diffuse = saturate(dot(N, L));
     const float fresnel = pow(1.0f - saturate(dot(N, V)), 3.0f);
-    const float specular = pow(saturate(dot(N, H)), 20.0f) * 0.18f;
+    const float specular = pow(saturate(dot(N, H)), 18.0f) * 0.04f;
 
     const float3 baseColor = input.color;
-    const float3 rimColor = float3(0.90f, 0.82f, 0.78f);
-    const float3 shaded = baseColor * (0.22f + 0.78f * diffuse) + rimColor * (fresnel * 0.08f) + specular.xxx;
-    return float4(shaded, 1.0f);
+    const float3 rimColor = baseColor * 1.08f;
+    const float3 shaded = baseColor * (0.34f + 0.58f * diffuse) + rimColor * (fresnel * 0.03f) + specular.xxx;
+    return float4(saturate(shaded), 1.0f);
 }

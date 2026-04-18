@@ -452,7 +452,15 @@ namespace hairgpu::viewer
             IDC_LABEL_ACTIVESET_EDIT_WEIGHT,
             IDC_TRACK_ACTIVESET_EDIT_WEIGHT,
             IDC_BTN_EXPORT_ACTIVESET_JSON,
-            IDC_BTN_EXPORT_RUNTIME_REPORT
+            IDC_BTN_EXPORT_RUNTIME_REPORT,
+            IDC_LABEL_SCALP_COVERAGE_STRENGTH,
+            IDC_TRACK_SCALP_COVERAGE_STRENGTH,
+            IDC_LABEL_SCALP_PART_WIDTH,
+            IDC_TRACK_SCALP_PART_WIDTH,
+            IDC_LABEL_SCALP_DARKNESS,
+            IDC_TRACK_SCALP_DARKNESS,
+            IDC_LABEL_SCALP_HAIR_BLEND,
+            IDC_TRACK_SCALP_HAIR_BLEND
         };
 
         int SliderFromFloat(float value, float minValue, float maxValue, int sliderMax = 1000)
@@ -1836,9 +1844,12 @@ namespace hairgpu::viewer
             v.nx = n.x;
             v.ny = n.y;
             v.nz = n.z;
-            v.r = 0.76f;
-            v.g = 0.62f;
-            v.b = 0.52f;
+            float r = 0.76f, g = 0.62f, b = 0.52f;
+            const Vec3 uvw = ComputeScalpPreviewUv(m_asset.scalpMesh.positions[i]);
+            EvaluateScalpCoverageTint(uvw.x, uvw.y, r, g, b);
+            v.r = r;
+            v.g = g;
+            v.b = b;
             scalpVertices.push_back(v);
         }
         if (!scalpVertices.empty())
@@ -4482,6 +4493,15 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             return hwnd;
         };
 
+        m_labelScalpCoverageStrength = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_COVERAGE_STRENGTH);
+        m_trackScalpCoverageStrength = createSlider(IDC_TRACK_SCALP_COVERAGE_STRENGTH);
+        m_labelScalpPartWidth = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_PART_WIDTH);
+        m_trackScalpPartWidth = createSlider(IDC_TRACK_SCALP_PART_WIDTH);
+        m_labelScalpDarkness = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_DARKNESS);
+        m_trackScalpDarkness = createSlider(IDC_TRACK_SCALP_DARKNESS);
+        m_labelScalpHairBlend = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_HAIR_BLEND);
+        m_trackScalpHairBlend = createSlider(IDC_TRACK_SCALP_HAIR_BLEND);
+
         m_trackQuickEditFeather = createSlider(IDC_TRACK_QUICK_EDIT_FEATHER);
         m_trackQuickEditLengthScale = createSlider(IDC_TRACK_QUICK_EDIT_LENGTHSCALE);
         m_trackQuickEditLayerWeight = createSlider(IDC_TRACK_QUICK_EDIT_LAYERWEIGHT);
@@ -4558,7 +4578,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         m_labelEditWorkflow = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
         m_labelEditLegend = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
 
-        return m_comboPreset && m_comboRenderMode && m_comboInteractionMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_labelEditWorkflow && m_labelEditLegend && m_checkShowScalpMesh;
+        return m_comboPreset && m_comboRenderMode && m_comboInteractionMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_labelEditWorkflow && m_labelEditLegend && m_checkShowScalpMesh && m_labelScalpCoverageStrength && m_trackScalpCoverageStrength && m_labelScalpPartWidth && m_trackScalpPartWidth && m_labelScalpDarkness && m_trackScalpDarkness && m_labelScalpHairBlend && m_trackScalpHairBlend;
     }
 
     void GpuHairViewer::LayoutUiControls()
@@ -4680,7 +4700,9 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             m_labelQuickEditGroupId, m_editQuickEditGroupId, m_checkQuickEditGuidesOnly, m_labelQuickEditVisualization,
             m_btnQuickEditReplace, m_btnQuickEditAppend, m_btnBrowsePartingMask, m_btnBrowseRegionMask, m_labelMaskSource,
             m_comboMaskSource, m_labelMaskOverlay, m_comboMaskOverlay, m_labelPartingMask, m_previewPartingMask,
-            m_labelRegionMask, m_previewRegionMask, m_editGuides, m_editFollowers, m_editParticles,
+            m_labelRegionMask, m_previewRegionMask, m_labelScalpCoverageStrength, m_trackScalpCoverageStrength,
+            m_labelScalpPartWidth, m_trackScalpPartWidth, m_labelScalpDarkness, m_trackScalpDarkness,
+            m_labelScalpHairBlend, m_trackScalpHairBlend, m_editGuides, m_editFollowers, m_editParticles,
             m_comboRenderMode, m_comboInteractionMode, m_comboDebugColor,
             m_checkSelfCollision, m_checkGrid, m_checkScalpMotion, m_checkShowColliders, m_checkShowScalpMesh,
             m_checkShowScalp, m_checkShowGridBounds, m_checkShowFloor, m_checkShowGuides, m_checkShowFollowers,
@@ -4811,6 +4833,11 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             place(m_checkShowGridBounds, x, toggleY6, halfWidth, controlHeight);
             place(m_checkScalpMotion, x + halfWidth + 8, toggleY6, halfWidth, controlHeight);
 
+            placeLabelSlider(m_labelScalpCoverageStrength, m_trackScalpCoverageStrength, true);
+            placeLabelSlider(m_labelScalpPartWidth, m_trackScalpPartWidth, true);
+            placeLabelSlider(m_labelScalpDarkness, m_trackScalpDarkness, true);
+            placeLabelSlider(m_labelScalpHairBlend, m_trackScalpHairBlend, true);
+
             placeLabelSlider(m_labelWidth, m_trackWidth, true);
             placeLabelSlider(m_labelGravity, m_trackGravity, true);
             placeLabelSlider(m_labelDamping, m_trackDamping, true);
@@ -4929,6 +4956,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         const float bendT = (std::log10(std::max(m_simConfig.bendCompliance, 1.0e-8f)) + 8.0f) / 5.0f;
         SendMessageW(m_trackStretchCompliance, TBM_SETPOS, TRUE, SliderFromFloat(stretchT, 0.0f, 1.0f));
         SendMessageW(m_trackBendCompliance, TBM_SETPOS, TRUE, SliderFromFloat(bendT, 0.0f, 1.0f));
+        SendMessageW(m_trackScalpCoverageStrength, TBM_SETPOS, TRUE, SliderFromFloat(m_scalpCoverageStrength, 0.0f, 2.0f));
+        SendMessageW(m_trackScalpPartWidth, TBM_SETPOS, TRUE, SliderFromFloat(m_scalpPartLineWidth, 0.008f, 0.120f));
+        SendMessageW(m_trackScalpDarkness, TBM_SETPOS, TRUE, SliderFromFloat(m_scalpTintDarkness, 0.0f, 1.0f));
+        SendMessageW(m_trackScalpHairBlend, TBM_SETPOS, TRUE, SliderFromFloat(m_scalpHairBlend, 0.0f, 1.0f));
         SendMessageW(m_checkActiveSetAdaptiveBudget, BM_SETCHECK, m_activeSetBudget.enableBudgetAdaptation ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(m_checkActiveSetHardClamp, BM_SETCHECK, m_activeSetBudget.enableHardBudgetClamp ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(m_trackActiveSetMaxClusters, TBM_SETPOS, TRUE, SliderFromFloat(static_cast<float>(m_activeSetBudget.maxActiveClusters), 1.0f, 64.0f));
@@ -4962,6 +4993,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         SetWindowTextFormat(m_labelGridCellSize, L"Grid Cell Size: " + FormatFloat(m_simConfig.selfCollisionCellSize, 3));
         SetWindowTextFormat(m_labelStretchCompliance, L"Stretch Compliance: " + FormatScientific(m_simConfig.stretchCompliance));
         SetWindowTextFormat(m_labelBendCompliance, L"Bend Compliance: " + FormatScientific(m_simConfig.bendCompliance));
+        SetWindowTextFormat(m_labelScalpCoverageStrength, L"Scalp Coverage Strength: " + FormatFloat(m_scalpCoverageStrength, 2));
+        SetWindowTextFormat(m_labelScalpPartWidth, L"Part Line Width: " + FormatFloat(m_scalpPartLineWidth, 3));
+        SetWindowTextFormat(m_labelScalpDarkness, L"Scalp Darkness: " + FormatFloat(m_scalpTintDarkness, 2));
+        SetWindowTextFormat(m_labelScalpHairBlend, L"Hair Tint Blend: " + FormatFloat(m_scalpHairBlend, 2));
         RefreshActiveSetTuningLabels();
         RefreshInlineLayerListFromText(m_selectedInlineLayerIndex);
         RefreshQuickEditFormLabels();
@@ -5015,6 +5050,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         const float bendT = FloatFromSlider(static_cast<int>(SendMessageW(m_trackBendCompliance, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
         m_simConfig.stretchCompliance = std::pow(10.0f, -9.0f + stretchT * 5.0f);
         m_simConfig.bendCompliance = std::pow(10.0f, -8.0f + bendT * 5.0f);
+        m_scalpCoverageStrength = FloatFromSlider(static_cast<int>(SendMessageW(m_trackScalpCoverageStrength, TBM_GETPOS, 0, 0)), 0.0f, 2.0f);
+        m_scalpPartLineWidth = FloatFromSlider(static_cast<int>(SendMessageW(m_trackScalpPartWidth, TBM_GETPOS, 0, 0)), 0.008f, 0.120f);
+        m_scalpTintDarkness = FloatFromSlider(static_cast<int>(SendMessageW(m_trackScalpDarkness, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
+        m_scalpHairBlend = FloatFromSlider(static_cast<int>(SendMessageW(m_trackScalpHairBlend, TBM_GETPOS, 0, 0)), 0.0f, 1.0f);
         {
             const LRESULT quickModeSel = SendMessageW(m_comboQuickEditMode, CB_GETCURSEL, 0, 0);
             m_quickEditMode = (quickModeSel == 1) ? hairgpu::RegionSelectMode::Rectangle : ((quickModeSel == 2) ? hairgpu::RegionSelectMode::Sector : hairgpu::RegionSelectMode::Ellipse);
@@ -5072,7 +5111,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
 
         BOOL ok = FALSE;
         UINT value = GetDlgItemInt(m_hwnd, IDC_EDIT_GUIDES, &ok, FALSE);
-        if (ok) { m_builderGuideCount = std::max<UINT>(64u, std::min<UINT>(value, 4096u)); }
+        if (ok) { m_builderGuideCount = std::max<UINT>(64u, std::min<UINT>(value, 12000u)); }
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_FOLLOWERS, &ok, FALSE);
         if (ok) { m_builderFollowersPerGuide = std::min<UINT>(value, 64u); }
         value = GetDlgItemInt(m_hwnd, IDC_EDIT_PARTICLES, &ok, FALSE);
@@ -5088,10 +5127,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 UpdateActiveSetRuntimeFromParticles(particles);
             }
         }
-        else if (IsEditInfluenceOverlayMode())
-        {
-            UpdateScalpOverlayVertexBuffer();
-        }
+        UpdateScalpOverlayVertexBuffer();
     }
 
     void GpuHairViewer::ApplyPreset(int presetIndex)
@@ -5109,8 +5145,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         default:
         case 0:
             m_activePresetName = L"Rapunzel Preview";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 39;
+            m_builderGuideCount = 6000;
+            m_builderFollowersPerGuide = 16;
             m_builderParticlesPerStrand = 128;
             m_widthScale = 0.56f;
             m_simConfig.gravity = 18.5f;
@@ -5126,8 +5162,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             break;
         case 1:
             m_activePresetName = L"Calm Studio";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 39;
+            m_builderGuideCount = 6000;
+            m_builderFollowersPerGuide = 16;
             m_builderParticlesPerStrand = 128;
             m_widthScale = 0.60f;
             m_simConfig.gravity = 18.0f;
@@ -5143,8 +5179,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             break;
         case 2:
             m_activePresetName = L"Windy Demo";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 39;
+            m_builderGuideCount = 6000;
+            m_builderFollowersPerGuide = 16;
             m_builderParticlesPerStrand = 128;
             m_widthScale = 0.58f;
             m_simConfig.gravity = 18.5f;
@@ -5160,8 +5196,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             break;
         case 3:
             m_activePresetName = L"Heavy Grounded";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 39;
+            m_builderGuideCount = 6000;
+            m_builderFollowersPerGuide = 16;
             m_builderParticlesPerStrand = 128;
             m_widthScale = 0.62f;
             m_simConfig.gravity = 22.0f;
@@ -5177,8 +5213,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             break;
         case 4:
             m_activePresetName = L"Game-ish LOD";
-            m_builderGuideCount = 2500;
-            m_builderFollowersPerGuide = 39;
+            m_builderGuideCount = 6000;
+            m_builderFollowersPerGuide = 16;
             m_builderParticlesPerStrand = 128;
             m_widthScale = 0.54f;
             m_simConfig.gravity = 18.0f;
@@ -5368,6 +5404,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         out << "debugColorMode=" << static_cast<uint32_t>(m_debugColorMode) << "\n";
         out << "maskSourceMode=" << static_cast<uint32_t>(m_maskSourceMode) << "\n";
         out << "maskOverlayMode=" << static_cast<uint32_t>(m_maskOverlayMode) << "\n";
+        out << "scalpCoverageStrength=" << m_scalpCoverageStrength << "\n";
+        out << "scalpPartLineWidth=" << m_scalpPartLineWidth << "\n";
+        out << "scalpTintDarkness=" << m_scalpTintDarkness << "\n";
+        out << "scalpHairBlend=" << m_scalpHairBlend << "\n";
         out << "editStackPath=" << WideToUtf8(m_editStackPath) << "\n";
         out << "partingMaskPath=" << WideToUtf8(m_partingMaskPath) << "\n";
         out << "regionMaskPath=" << WideToUtf8(m_regionMaskPath) << "\n";
@@ -5473,6 +5513,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         if (auto it = values.find("selectedInlineLayerIndex"); it != values.end()) m_selectedInlineLayerIndex = std::max(0, std::stoi(it->second));
         m_maskSourceMode = static_cast<MaskSourceMode>(std::min<uint32_t>(getUInt("maskSourceMode", static_cast<uint32_t>(m_maskSourceMode)), 2u));
         m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 9u));
+        m_scalpCoverageStrength = hairgpu::Clamp(getFloat("scalpCoverageStrength", m_scalpCoverageStrength), 0.0f, 2.0f);
+        m_scalpPartLineWidth = hairgpu::Clamp(getFloat("scalpPartLineWidth", m_scalpPartLineWidth), 0.008f, 0.120f);
+        m_scalpTintDarkness = hairgpu::Clamp(getFloat("scalpTintDarkness", m_scalpTintDarkness), 0.0f, 1.0f);
+        m_scalpHairBlend = hairgpu::Clamp(getFloat("scalpHairBlend", m_scalpHairBlend), 0.0f, 1.0f);
         m_activeSetBudget.enableBudgetAdaptation = getBool("activeSetAdaptiveBudget", m_activeSetBudget.enableBudgetAdaptation);
         m_activeSetBudget.enableHardBudgetClamp = getBool("activeSetHardClamp", m_activeSetBudget.enableHardBudgetClamp);
         m_activeSetBudget.maxActiveClusters = std::max<uint32_t>(1u, getUInt("activeSetMaxClusters", m_activeSetBudget.maxActiveClusters));
@@ -6544,6 +6588,51 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         }
     }
 
+    void GpuHairViewer::EvaluateScalpCoverageTint(float u, float v, float& r, float& g, float& b) const
+    {
+        const float dx = u - 0.58f;
+        const float dy = v - 0.28f;
+        const float crown = hairgpu::Clamp(1.0f - std::sqrt(dx * dx * 2.4f + dy * dy * 1.4f) / 0.34f, 0.0f, 1.0f);
+
+        const float partWidth = std::max(m_scalpPartLineWidth, 1.0e-4f);
+        const float partLine = std::exp(-(dx * dx) / std::max(partWidth * partWidth, 1.0e-5f)) * std::exp(-(dy * dy) / 0.070f);
+
+        const float shoulderOffset = std::max(partWidth * 1.15f, 0.022f);
+        const float shoulderWidth = std::max(partWidth * 1.75f, 0.040f);
+        const float shoulderL = std::exp(-((dx + shoulderOffset) * (dx + shoulderOffset)) / std::max(shoulderWidth * shoulderWidth, 1.0e-5f)) * std::exp(-(dy * dy) / 0.085f);
+        const float shoulderR = std::exp(-((dx - shoulderOffset) * (dx - shoulderOffset)) / std::max(shoulderWidth * shoulderWidth, 1.0e-5f)) * std::exp(-(dy * dy) / 0.085f);
+        const float frontBand = std::exp(-((v - 0.84f) * (v - 0.84f)) / 0.018f);
+
+        const float rawCoverage = 0.18f + 0.58f * crown - 0.34f * partLine + 0.26f * (shoulderL + shoulderR) + 0.10f * frontBand;
+        const float coverage = hairgpu::Clamp(rawCoverage * m_scalpCoverageStrength, 0.0f, 1.0f);
+
+        const float darkness = hairgpu::Clamp(m_scalpTintDarkness, 0.0f, 1.0f);
+        const float hairBlend = hairgpu::Clamp(m_scalpHairBlend, 0.0f, 1.0f);
+
+        const float scalpBaseR = 0.46f, scalpBaseG = 0.34f, scalpBaseB = 0.25f;
+        const float scalpDarkR = 0.26f, scalpDarkG = 0.18f, scalpDarkB = 0.12f;
+        const float hairBaseR = 0.18f, hairBaseG = 0.12f, hairBaseB = 0.08f;
+        const float hairTintR = 0.14f, hairTintG = 0.10f, hairTintB = 0.07f;
+
+        const float scalpR = scalpBaseR * (1.0f - darkness) + scalpDarkR * darkness;
+        const float scalpG = scalpBaseG * (1.0f - darkness) + scalpDarkG * darkness;
+        const float scalpB = scalpBaseB * (1.0f - darkness) + scalpDarkB * darkness;
+
+        const float hairR = hairBaseR * (1.0f - hairBlend) + hairTintR * hairBlend;
+        const float hairG = hairBaseG * (1.0f - hairBlend) + hairTintG * hairBlend;
+        const float hairB = hairBaseB * (1.0f - hairBlend) + hairTintB * hairBlend;
+
+        const float partLight = hairgpu::Clamp(0.08f + 0.40f * partLine, 0.0f, 0.38f);
+
+        r = scalpR * (1.0f - coverage) + hairR * coverage + partLight * 0.08f;
+        g = scalpG * (1.0f - coverage) + hairG * coverage + partLight * 0.06f;
+        b = scalpB * (1.0f - coverage) + hairB * coverage + partLight * 0.04f;
+
+        r = hairgpu::Clamp(r, 0.0f, 1.0f);
+        g = hairgpu::Clamp(g, 0.0f, 1.0f);
+        b = hairgpu::Clamp(b, 0.0f, 1.0f);
+    }
+
     void GpuHairViewer::UpdateScalpOverlayVertexBuffer()
     {
         if (!m_scalpVertexBuffer || m_asset.scalpMesh.positions.empty())
@@ -6647,6 +6736,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             const Vec3 n = (i < m_asset.scalpMesh.normals.size()) ? m_asset.scalpMesh.normals[i] : Vec3(0.0f, 1.0f, 0.0f);
             float r = 0.76f, g = 0.62f, b = 0.52f;
             const Vec3 uvw = ComputeScalpPreviewUv(p);
+            EvaluateScalpCoverageTint(uvw.x, uvw.y, r, g, b);
             if (m_maskOverlayMode == MaskOverlayMode::Parting)
             {
                 const float maskValue = (partImg.width > 0) ? SamplePreviewMaskScalar(partImg, uvw.x, uvw.y, 0) : ProceduralPartingPreview(uvw.x, uvw.y);

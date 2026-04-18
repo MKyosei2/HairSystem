@@ -91,6 +91,10 @@ VSOutput VSMain(VSInput input)
     output.worldPosition = Positions[input.particleIndex].xyz;
 
     const uint strandTier = StrandTiers[input.strandIndex];
+    const uint safeParticlesPerStrand = max(ParticlesPerStrand, 1u);
+    const uint localIndex = input.particleIndex % safeParticlesPerStrand;
+    const float strandT = (safeParticlesPerStrand > 1u) ? (float(localIndex) / float(safeParticlesPerStrand - 1u)) : 0.0f;
+    const float rootMask = exp(-(strandT * strandT) / 0.015f);
     float width = Widths[input.particleIndex] * max(WidthScale, 0.05f);
     const bool isGuide = input.strandIndex < GuideStrandCount;
     if (!isGuide)
@@ -107,13 +111,15 @@ VSOutput VSMain(VSInput input)
         width *= RenderReducedWidthBoost;
     }
 
+    width *= (1.0f + 0.28f * rootMask);
     if (DebugColorMode == 3u)
     {
         width *= EditabilityWidthScale(strandTier);
     }
     const float widthN = saturate((width - 0.0010f) / 0.0120f);
     output.width = width;
-    output.alpha = (width > RenderHiddenWidthThreshold) ? (RenderStrandAlpha * ((DebugColorMode == 3u) ? EditabilityAlphaScale(strandTier) : 1.0f)) : 0.0f;
+    const float alphaBoost = 1.0f + 0.18f * rootMask;
+    output.alpha = (width > RenderHiddenWidthThreshold) ? (RenderStrandAlpha * alphaBoost * ((DebugColorMode == 3u) ? EditabilityAlphaScale(strandTier) : 1.0f)) : 0.0f;
     output.color = ComputeHairColor(input.strandIndex, widthN, strandTier);
     return output;
 }

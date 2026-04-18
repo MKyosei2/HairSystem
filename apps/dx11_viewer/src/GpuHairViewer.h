@@ -627,6 +627,7 @@ namespace hairgpu::viewer
         void ReleaseMaskPreviewBitmaps();
         void ShowMaskPreviewPopup(bool partingMask);
         void UpdateScalpOverlayVertexBuffer();
+        void EvaluateScalpCoverageTint(float u, float v, float& r, float& g, float& b) const;
         RECT GetRenderViewportRect() const;
         hairgpu::Vec3 ApplySampleScalpSkinning(const hairgpu::Vec3& restPosition, const hairgpu::SkinWeight4& weights, float elapsedSeconds) const;
 
@@ -700,8 +701,8 @@ namespace hairgpu::viewer
         float m_runtimeAngularBendDamping = 0.08f;
         uint32_t m_sortedBroadphasePaddedCount = 1u;
 
-        uint32_t m_builderGuideCount = 2500;
-        uint32_t m_builderFollowersPerGuide = 39;
+        uint32_t m_builderGuideCount = 6000;
+        uint32_t m_builderFollowersPerGuide = 16;
         uint32_t m_builderParticlesPerStrand = 128;
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
@@ -750,6 +751,10 @@ namespace hairgpu::viewer
         hairgpu::HairAsset m_baseAsset;
         MaskSourceMode m_maskSourceMode = MaskSourceMode::Auto;
         MaskOverlayMode m_maskOverlayMode = MaskOverlayMode::None;
+        float m_scalpCoverageStrength = 1.00f;
+        float m_scalpPartLineWidth = 0.034f;
+        float m_scalpTintDarkness = 0.55f;
+        float m_scalpHairBlend = 0.70f;
 
         float m_smoothedFps = 0.0f;
         float m_lastFrameSeconds = 0.0f;
@@ -1050,6 +1055,14 @@ namespace hairgpu::viewer
         HWND m_labelRegionMask = nullptr;
         HWND m_labelMaskSource = nullptr;
         HWND m_labelMaskOverlay = nullptr;
+        HWND m_labelScalpCoverageStrength = nullptr;
+        HWND m_trackScalpCoverageStrength = nullptr;
+        HWND m_labelScalpPartWidth = nullptr;
+        HWND m_trackScalpPartWidth = nullptr;
+        HWND m_labelScalpDarkness = nullptr;
+        HWND m_trackScalpDarkness = nullptr;
+        HWND m_labelScalpHairBlend = nullptr;
+        HWND m_trackScalpHairBlend = nullptr;
         HBITMAP m_partingPreviewBitmap = nullptr;
         HBITMAP m_regionPreviewBitmap = nullptr;
         HWND m_labelWidth = nullptr;

@@ -93,6 +93,20 @@ namespace hairgpu
             return frontCenter * foreheadBand * cheekTaper;
         }
 
+        float EvaluatePartLineCenterMask(float u, float v, float partingOffset = 0.0f)
+        {
+            return EvaluateProceduralPartingMap(u, v, partingOffset);
+        }
+
+        float EvaluatePartShoulderMask(float u, float v, float partingOffset = 0.0f)
+        {
+            const float center = EvaluateProceduralPartingMap(u, v, partingOffset);
+            const float left = EvaluateProceduralPartingMap(WrapUnit(u + 0.030f), v, partingOffset);
+            const float right = EvaluateProceduralPartingMap(WrapUnit(u - 0.030f), v, partingOffset);
+            const float shoulder = std::max(left, right) - center * 0.55f;
+            return Clamp(shoulder, 0.0f, 1.0f);
+        }
+
 
         constexpr float kHeadRadiusX = 0.23f;
         constexpr float kHeadRadiusY = 0.20f;
@@ -722,18 +736,31 @@ namespace hairgpu
                 return 0.0f;
             }
 
+            const float dx = WrapSignedUnitDelta(u - 0.5f);
+            const float dy = v - 0.20f;
             const float normalizedBand = Clamp((v - minAllowedV) / std::max(maxAllowedV - minAllowedV, 1.0e-5f), 0.0f, 1.0f);
-            const float centerBand = 1.0f - std::fabs(normalizedBand - 0.54f) / 0.54f;
-            const float bandWeight = 0.48f + 0.52f * Smooth01(Clamp(centerBand, 0.0f, 1.0f));
+            const float bandWindow = 0.55f + 0.45f * Smooth01(1.0f - std::fabs(normalizedBand - 0.52f) / 0.52f);
             const float faceOpening = EvaluateFaceOpeningMask(u, v);
             const Vec3 regions = EvaluateProceduralScalpRegionMap(u, v);
-            const float crownFill = 0.34f * regions.x * Smooth01(1.0f - Clamp((v - minAllowedV) / 0.18f, 0.0f, 1.0f));
-            const float templeBoost = 0.18f * regions.y;
-            const float napeBoost = 0.16f * regions.z;
-            const float frontCompensation = 0.16f * faceOpening;
-            const float frontPenalty = 0.22f * faceOpening;
-            const float centerBias = 0.90f + 0.10f * Smooth01(1.0f - std::fabs(normalizedBand - 0.46f) / 0.46f);
-            return Clamp((1.0f - frontPenalty + crownFill + templeBoost + napeBoost + frontCompensation) * bandWeight * centerBias, 0.0f, 1.0f);
+            const float crownMask = regions.x;
+            const float templeMask = regions.y;
+            const float napeMask = regions.z;
+            const float crown = std::exp(-(dx * dx * 2.0f + dy * dy * 1.2f) / 0.030f);
+            const float partLine = std::exp(-(dx * dx) / 0.0008f) * std::exp(-(dy * dy) / 0.050f);
+            const float shoulderL = std::exp(-((dx + 0.028f) * (dx + 0.028f)) / 0.0018f) * std::exp(-(dy * dy) / 0.060f);
+            const float shoulderR = std::exp(-((dx - 0.028f) * (dx - 0.028f)) / 0.0018f) * std::exp(-(dy * dy) / 0.060f);
+            const float frontHairline = std::exp(-((v - 0.86f) * (v - 0.86f)) / 0.010f);
+            const float crownBoost = 0.90f * crown + 0.28f * crownMask;
+            const float partLinePenalty = 0.45f * partLine;
+            const float partShoulderBoost = 0.70f * (shoulderL + shoulderR);
+            const float templeBoost = 0.18f * templeMask;
+            const float napeBoost = 0.12f * napeMask;
+            const float frontBoost = 0.22f * frontHairline * (1.0f - 0.35f * faceOpening);
+
+            float coverage = 1.0f + crownBoost - partLinePenalty + partShoulderBoost + templeBoost + napeBoost + frontBoost;
+            coverage *= bandWindow;
+            coverage *= (1.0f - 0.08f * faceOpening);
+            return Clamp(coverage, 0.20f, 3.20f);
         }
 
         std::vector<float> BuildScalpAreaDistributionCdf(const ScalpMesh& scalp)
@@ -796,7 +823,24 @@ namespace hairgpu
             return static_cast<uint32_t>(std::distance(cdf.begin(), it));
         }
 
-        RootBinding BuildBindingFromTriangleSample(const ScalpMesh& scalp, uint32_t triangleIndex, float sampleA, float sampleB)
+        Vec3 JitterBarycentric(const Vec3& barycentric, float amount, uint32_t seed)
+        {
+            Vec3 out = barycentric;
+            out.x += (Hash01(seed + 1u) - 0.5f) * amount;
+            out.y += (Hash01(seed + 2u) - 0.5f) * amount;
+            out.z = 1.0f - out.x - out.y;
+            out.x = std::max(out.x, 0.001f);
+            out.y = std::max(out.y, 0.001f);
+            out.z = std::max(out.z, 0.001f);
+            const float sum = out.x + out.y + out.z;
+            if (sum > 1.0e-6f)
+            {
+                out = out / sum;
+            }
+            return out;
+        }
+
+        RootBinding BuildBindingFromTriangleSample(const ScalpMesh& scalp, uint32_t triangleIndex, float sampleA, float sampleB, uint32_t seed = 0u)
         {
             RootBinding binding;
             binding.triangleIndex = std::min<uint32_t>(triangleIndex, static_cast<uint32_t>(std::max<size_t>(scalp.triangles.size(), 1u)) - 1u);
@@ -805,7 +849,7 @@ namespace hairgpu
             const float b0 = 1.0f - su;
             const float b1 = su * (1.0f - Clamp(sampleB, 0.0f, 1.0f));
             const float b2 = su * Clamp(sampleB, 0.0f, 1.0f);
-            binding.barycentric = Vec3(b0, b1, b2);
+            binding.barycentric = JitterBarycentric(Vec3(b0, b1, b2), 0.05f, seed);
             binding.rootUv = EvaluateTriangleUv(scalp, binding);
             binding.rootUv.x = WrapUnit(binding.rootUv.x);
             return binding;
@@ -819,12 +863,12 @@ namespace hairgpu
             RootBinding fallback = FindClosestBindingForUv(scalp, Fract(base + Hash01(seed + 3u) * 0.17f), 0.32f + (Hash01(seed + 5u) - 0.5f) * 0.10f);
             float bestWeight = EvaluateRootCoverageWeight(fallback.rootUv.x, fallback.rootUv.y);
 
-            for (uint32_t attempt = 0; attempt < 12u; ++attempt)
+            for (uint32_t attempt = 0; attempt < 16u; ++attempt)
             {
                 const float triSample = Fract(base + static_cast<float>(attempt) * 0.38196601125f + Hash01(seed + attempt * 11u) * 0.05f);
                 const float baryA = Hash01(seed + 31u + attempt * 17u);
                 const float baryB = Hash01(seed + 67u + attempt * 23u);
-                RootBinding candidate = BuildBindingFromTriangleSample(scalp, SampleTriangleIndexFromCdf(areaCdf, triSample), baryA, baryB);
+                RootBinding candidate = BuildBindingFromTriangleSample(scalp, SampleTriangleIndexFromCdf(areaCdf, triSample), baryA, baryB, seed + 97u + attempt * 13u);
                 candidate.rootUv.x = WrapUnit(candidate.rootUv.x);
                 const float weight = EvaluateRootCoverageWeight(candidate.rootUv.x, candidate.rootUv.y);
                 if (weight > 0.18f)
@@ -931,6 +975,13 @@ namespace hairgpu
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, binding);
             const Vec3 normal = EvaluateTriangleNormal(asset.scalpMesh, binding);
             const Vec2 uv = EvaluateTriangleUv(asset.scalpMesh, binding);
+            const Vec3 scalpRegions = EvaluateScalpRegionMap(uv.x, uv.y);
+            const float crownMask = scalpRegions.x;
+            const float templeMask = scalpRegions.y;
+            const float napeMask = scalpRegions.z;
+            const float partLineCenter = EvaluatePartLineCenterMask(uv.x, uv.y, parameters.partingOffset);
+            const float partShoulder = EvaluatePartShoulderMask(uv.x, uv.y, parameters.partingOffset);
+            const float faceOpening = EvaluateFaceOpeningMask(uv.x, uv.y);
             const Vec3 rel = rootSurface - scalpCenter;
             const Vec3 radial = SafeNormalizeXZ(rel);
 
@@ -949,6 +1000,12 @@ namespace hairgpu
             const float frontFactor = std::max(std::sin(angle), 0.0f);
             const float backFactor = std::max(-std::sin(angle), 0.0f);
             const float sideFactor = std::fabs(std::cos(angle));
+            const bool isGuideStrand = (flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u;
+            const float crownSupportZone = crownMask * (1.0f - faceOpening * 0.45f) * (0.78f + 0.22f * (1.0f - sideFactor));
+            const float supportSeed = Hash01(seed + 131u);
+            const float supportMix = (!isGuideStrand && supportSeed < (0.12f + 0.30f * crownSupportZone))
+                ? (0.58f + 0.22f * Hash01(seed + 151u))
+                : 0.0f;
             float fringeDu = std::fabs(WrapUnit(uv.x) - 0.25f);
             fringeDu = std::min(fringeDu, 1.0f - fringeDu);
             const float fringeFactor = frontFactor * Smooth01(1.0f - Clamp(fringeDu / 0.11f, 0.0f, 1.0f));
@@ -976,12 +1033,15 @@ namespace hairgpu
             const float baseStrandLength = ComputeReferenceStrandLength(segmentLength);
             const float regionalLength = ComputeGuideLength(root, scalpCenter, uv, baseStrandLength, parameters);
             const float lengthJitter = 0.97f + 0.06f * Hash01(seed + 41u);
-            const float lengthScale = Clamp(0.97f + 0.05f * sideFactor + 0.08f * backFactor - 0.04f * fringeFactor, 0.92f, 1.12f);
-            const float strandLength = regionalLength * lengthScale * lengthJitter;
-            const float rootTravel = strandLength * (0.08f + 0.02f * sideFactor + 0.02f * backFactor);
-            const float sideDrift = (0.0050f + 0.0080f * sideFactor + 0.0040f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u));
-            const float forwardDrift = 0.015f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u));
-            const float curlNoise = parameters.strandNoise * 0.20f;
+            const float lengthScale = Clamp(0.96f + 0.05f * sideFactor + 0.08f * backFactor - 0.04f * fringeFactor + 0.03f * crownMask, 0.90f, 1.12f);
+            const float baseStrandLengthMeters = regionalLength * lengthScale * lengthJitter;
+            const float supportLengthScale = 0.28f + 0.18f * Hash01(seed + 157u);
+            const float strandLength = Lerp(baseStrandLengthMeters, baseStrandLengthMeters * supportLengthScale, supportMix);
+            const float rootTravel = strandLength * Lerp(0.12f, 0.07f, supportMix) * (0.86f + 0.12f * sideFactor + 0.10f * backFactor);
+            const float sideDrift = (0.0040f + 0.0065f * sideFactor + 0.0035f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u)) * (1.0f - 0.72f * supportMix);
+            const float forwardDrift = 0.012f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u)) * (1.0f - 0.70f * supportMix);
+            const float curlNoise = parameters.strandNoise * Lerp(0.20f, 0.11f, supportMix);
+            const float rootWidthBoost = 1.0f + 0.34f * crownMask + 0.26f * partShoulder + 0.22f * supportMix - 0.10f * faceOpening;
 
             const Vec3 orthoA = Normalize(Cross(normal, lateral));
             const Vec3 orthoB = Normalize(Cross(lateral, orthoA));
@@ -1001,11 +1061,11 @@ namespace hairgpu
 
                 Vec3 p = root;
                 p += tangentDown * (rootTravel * Smooth01(rootPhase));
-                p += Vec3(0.0f, -1.0f, 0.0f) * (strandLength * 0.64f * Smooth01(fallPhase));
-                p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase);
+                p += Vec3(0.0f, -1.0f, 0.0f) * (strandLength * Lerp(0.64f, 0.58f, supportMix) * Smooth01(fallPhase));
+                p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase * (1.0f - 0.50f * supportMix));
                 p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
-                p += normal * (0.0050f * (1.0f - rootPhase));
+                p += normal * (0.0050f * (1.0f - rootPhase) + 0.015f * supportMix * (1.0f - fallPhase));
 
                 if (t > 0.35f)
                 {
@@ -1023,7 +1083,8 @@ namespace hairgpu
             {
                 const float t = static_cast<float>(sampleIndex) / static_cast<float>(std::max(denseSampleCount - 1u, 1u));
                 denseSamples.push_back(evaluatePointAt(t, sampleIndex + 1u));
-                denseWidths.push_back(Lerp(material.rootWidth, material.tipWidth, t));
+                const float widthBlend = 1.0f + (rootWidthBoost - 1.0f) * (1.0f - t) * (1.0f - t);
+                denseWidths.push_back(Lerp(material.rootWidth * widthBlend, material.tipWidth, t));
                 if (sampleIndex == 0u)
                 {
                     cumulativeLengths.push_back(0.0f);
@@ -1176,7 +1237,7 @@ namespace hairgpu
     WigParameters DefaultWigParameters()
     {
         WigParameters parameters;
-        parameters.overallLength = 1.06f;
+        parameters.overallLength = 1.00f;
         parameters.partingOffset = 0.0f;
         parameters.partWidth = 0.010f;
         parameters.scalpConform = 1.0f;
@@ -1186,7 +1247,7 @@ namespace hairgpu
         parameters.backVolume = 0.0010f;
         parameters.lowerRingLengthBias = 0.06f;
         parameters.strandNoise = 0.00025f;
-        parameters.followerSpread = 0.00035f;
+        parameters.followerSpread = 0.00042f;
         parameters.tipInward = 0.0002f;
         return parameters;
     }
@@ -1258,6 +1319,8 @@ namespace hairgpu
             {
                 rimDir = tangent;
             }
+            const float partLineCenterLocal = EvaluatePartLineCenterMask(bindingUv.x, bindingUv.y, parameters.partingOffset);
+            const float partShoulderLocal = EvaluatePartShoulderMask(bindingUv.x, bindingUv.y, parameters.partingOffset);
             const float edgeRisk = Clamp(
                 templeMaskLocal * 0.55f +
                 napeMaskLocal * 0.34f +
@@ -1265,10 +1328,10 @@ namespace hairgpu
                 0.0f,
                 1.0f);
             const float followerSpreadScale =
-                (1.0f - 0.24f * templeMaskLocal) *
-                (1.0f - 0.20f * napeMaskLocal) *
-                (1.0f - 0.12f * faceOpeningLocal) *
-                (0.98f + 0.10f * crownMaskLocal);
+                (1.0f - 0.10f * templeMaskLocal) *
+                (1.0f - 0.08f * napeMaskLocal) *
+                (1.0f - 0.04f * faceOpeningLocal) *
+                (0.96f + 0.16f * crownMaskLocal + 0.12f * partShoulderLocal - 0.10f * partLineCenterLocal);
             const float guideRotation = Hash01(guideIndex * 29u + 3u) * kTau;
             const float goldenAngle = 2.39996323f;
 
@@ -1276,8 +1339,9 @@ namespace hairgpu
             {
                 const uint32_t seed = guideIndex * 97u + followerIndex * 17u + 13u;
                 const float ring01 = std::sqrt((static_cast<float>(followerIndex) + 0.5f) / static_cast<float>(std::max(followersPerGuide, 1u)));
-                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.12f, 0.58f, ring01);
-                const float angle = guideRotation + goldenAngle * static_cast<float>(followerIndex) + (Hash01(seed + 9u) - 0.5f) * 0.16f;
+                const bool isSupportHair = false;
+                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.12f, 0.44f, ring01);
+                const float angle = guideRotation + goldenAngle * static_cast<float>(followerIndex) + (Hash01(seed + 9u) - 0.5f) * 0.12f;
                 const float radialJitter = 0.94f + 0.10f * Hash01(seed + 5u);
                 const float tangentJitter = (Hash01(seed + 3u) - 0.5f) * 0.10f;
                 const float bitangentScale = 0.74f + 0.12f * Hash01(seed + 37u);
@@ -1294,8 +1358,14 @@ namespace hairgpu
                     planarOffset += rimDir * ((Hash01(seed + 83u) - 0.5f) * outwardAmount * 0.18f * edgeRisk);
                 }
 
-                Vec3 rootOffset = planarOffset + normal * (verticalBias * ring * (1.0f - 0.75f * edgeRisk));
-                const float maxOffset = parameters.followerSpread * Lerp(0.46f, 0.78f, 1.0f - edgeRisk);
+                Vec3 rootOffset = planarOffset + normal * (verticalBias * ring * (1.0f - 0.70f * edgeRisk));
+                rootOffset += radialDir * (ring * (0.10f * crownMaskLocal + 0.14f * partShoulderLocal - 0.18f * partLineCenterLocal));
+                if (isSupportHair)
+                {
+                    rootOffset += normal * (parameters.followerSpread * 0.16f);
+                    rootOffset = rootOffset - radialDir * (ring * 0.04f);
+                }
+                const float maxOffset = parameters.followerSpread * Lerp(0.54f, 0.88f, 1.0f - edgeRisk) * (1.0f + 0.10f * crownMaskLocal + 0.08f * partShoulderLocal);
                 const float rootOffsetLength = Length(rootOffset);
                 if (rootOffsetLength > maxOffset && rootOffsetLength > 1.0e-6f)
                 {
@@ -1304,14 +1374,14 @@ namespace hairgpu
 
                 StrandMaterial followerMaterial = material;
                 const float widthJitter = 0.88f + 0.16f * Hash01(seed + 71u);
-                followerMaterial.rootWidth *= 0.42f * widthJitter;
+                followerMaterial.rootWidth *= (0.54f + 0.08f * crownMaskLocal + 0.06f * partShoulderLocal) * widthJitter;
                 followerMaterial.tipWidth *= 0.34f * widthJitter;
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.944f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.035f;
-                followerFollow.clumpWeight = 0.74f + Hash01(seed + 19u) * 0.060f - edgeRisk * 0.16f;
-                followerFollow.noiseWeight = 0.00022f + Hash01(seed + 23u) * 0.00036f + edgeRisk * 0.00012f;
+                followerFollow.followWeight = 0.948f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.028f;
+                followerFollow.clumpWeight = 0.76f + Hash01(seed + 19u) * 0.050f - edgeRisk * 0.12f;
+                followerFollow.noiseWeight = 0.00020f + Hash01(seed + 23u) * 0.00020f + edgeRisk * 0.00008f;
 
                 AppendStaticWigStrand(
                     asset,
@@ -1334,10 +1404,10 @@ namespace hairgpu
         WigStyleSettings wigSettings;
         wigSettings.strength = 0.88f;
         wigSettings.capRegion = 0.16f;
-        wigSettings.shellOffset = 0.004f;
-        wigSettings.flowBlend = 0.35f;
-        wigSettings.outwardBlend = 0.08f;
-        wigSettings.restoreOriginalTowardsTip = 0.82f;
+        wigSettings.shellOffset = 0.0045f;
+        wigSettings.flowBlend = 0.18f;
+        wigSettings.outwardBlend = 0.02f;
+        wigSettings.restoreOriginalTowardsTip = 0.88f;
         StyleAssetToScalpWig(asset, wigSettings);
         return asset;
     }

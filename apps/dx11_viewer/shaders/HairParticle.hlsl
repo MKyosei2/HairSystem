@@ -127,6 +127,9 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
     {
         width *= RenderReducedWidthBoost;
     }
+    output.strandT = (safeParticlesPerStrand > 1u) ? (float(localIndex) / float(safeParticlesPerStrand - 1u)) : 0.0f;
+    const float rootMask = exp(-(output.strandT * output.strandT) / 0.020f);
+    width *= (1.0f + 0.30f * rootMask);
     if (DebugColorMode == 3u)
     {
         width *= EditabilityWidthScale(strandTier);
@@ -136,8 +139,7 @@ VSOutput VSMain(uint vertexId : SV_VertexID)
     {
         output.alphaScale = 1.0f;
     }
-    output.radius = max(width * 0.95f, 0.0f);
-    output.strandT = (safeParticlesPerStrand > 1u) ? (float(localIndex) / float(safeParticlesPerStrand - 1u)) : 0.0f;
+    output.radius = max(width * (0.95f + 0.12f * rootMask), 0.0f);
     const float widthN = saturate((width - 0.0010f) / 0.0120f);
     output.color = ComputeHairColor(strandIndex, widthN, output.strandT, strandTier);
     return output;
@@ -241,6 +243,8 @@ float4 PSMain(GSOutput input) : SV_Target
     float alpha = saturate(1.0f - r2);
     alpha = alpha * alpha;
     alpha *= lerp(1.00f, 0.72f, input.strandT);
+    const float rootMask = exp(-(input.strandT * input.strandT) / 0.020f);
+    alpha *= (1.0f + 0.18f * rootMask);
     alpha = max(alpha, 0.22f) * RenderStrandAlpha * input.alphaScale;
 
     float3 viewDir = SafeNormalize(CameraPosition.xyz - input.worldPosition);
