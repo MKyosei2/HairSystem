@@ -18,6 +18,10 @@ namespace hairgpu
         float contactBlend = 0.85f;
         float stretchBlend = 0.42f;
         float bendBlend = 0.18f;
+        float shapePreservationBlend = 0.10f;
+        float clumpPreservationBlend = 0.14f;
+        float curlPreservationBlend = 0.12f;
+        float twistBlend = 0.08f;
         uint32_t iterations = 2u;
         uint32_t preserveRootPointCount = 1u;
         bool affectFloor = true;
@@ -34,6 +38,8 @@ namespace hairgpu
         float maxPenetration = 0.0f;
         float averageLengthErrorBefore = 0.0f;
         float averageLengthErrorAfter = 0.0f;
+        float averageShapeErrorBefore = 0.0f;
+        float averageShapeErrorAfter = 0.0f;
     };
 
     bool ApplySparseCorrectivePhysics(const HairAsset& asset,

@@ -50,6 +50,11 @@ namespace hairgpu
         float sideOffset = 0.0f;
         float yawRadians = 0.0f;
         float followerInfluence = 1.0f;
+        float clumpStrength = 0.0f;
+        float curlStrength = 0.0f;
+        float partingStrength = 0.0f;
+        float partingCenterU = 0.50f;
+        float partingWidthUv = 0.14f;
     };
 
     enum class StrandSelectionMode : uint32_t

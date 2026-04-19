@@ -860,6 +860,46 @@ namespace hairgpu
         outAverageError = (count > 0u) ? static_cast<float>(total / static_cast<double>(count)) : 0.0f;
     }
 
+
+        void AccumulateShapeError(const HairAsset& asset,
+                                  const std::vector<Vec3>& points,
+                                  const std::vector<uint8_t>* mask,
+                                  float& outAverageError)
+        {
+            double total = 0.0;
+            uint32_t count = 0u;
+            for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
+            {
+                if (mask && strandIndex < mask->size() && (*mask)[strandIndex] == 0u)
+                {
+                    continue;
+                }
+                const StrandRange& strand = asset.strands[strandIndex];
+                if (strand.pointCount == 0u)
+                {
+                    continue;
+                }
+                const uint32_t rootIndex = strand.pointOffset;
+                if (rootIndex >= points.size() || rootIndex >= asset.restPoints.size())
+                {
+                    continue;
+                }
+                for (uint32_t localPoint = 1u; localPoint < strand.pointCount; ++localPoint)
+                {
+                    const uint32_t pointIndex = strand.pointOffset + localPoint;
+                    if (pointIndex >= points.size() || pointIndex >= asset.restPoints.size())
+                    {
+                        continue;
+                    }
+                    const Vec3 currentLocal = points[pointIndex] - points[rootIndex];
+                    const Vec3 restLocal = asset.restPoints[pointIndex] - asset.restPoints[rootIndex];
+                    total += static_cast<double>(Length(currentLocal - restLocal));
+                    ++count;
+                }
+            }
+            outAverageError = (count > 0u) ? static_cast<float>(total / static_cast<double>(count)) : 0.0f;
+        }
+
     std::vector<float> BuildTeacherEditScores(const HairAsset& asset, float timeSeconds, float boundaryBias)
     {
         const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
@@ -976,6 +1016,7 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
         SparseCorrectiveReport report = {};
         report.preservedRootPointCount = settings.preserveRootPointCount;
         AccumulateLengthError(asset, inOutPoints, &activeSetPlan.strandCorrectiveMask, report.averageLengthErrorBefore);
+        AccumulateShapeError(asset, inOutPoints, &activeSetPlan.strandCorrectiveMask, report.averageShapeErrorBefore);
 
         double penetrationSum = 0.0;
         uint32_t penetrationSamples = 0u;
@@ -1022,67 +1063,123 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
                 }
 
 
-for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
-{
-    const uint32_t prevIndex = strand.pointOffset + localPoint - 1u;
-    const uint32_t currIndex = strand.pointOffset + localPoint;
-    if (currIndex >= inOutPoints.size() || prevIndex >= inOutPoints.size())
-    {
-        continue;
-    }
-    const float restLength = StrandSegmentRestLength(asset, strandIndex, localPoint);
-    if (restLength <= 1.0e-6f)
-    {
-        continue;
-    }
+                const uint32_t rootIndex = strand.pointOffset;
+                const bool isFollower = strandIndex >= asset.guideStrandCount && strandIndex < asset.followData.size();
+                const FollowData* followData = isFollower ? &asset.followData[strandIndex] : nullptr;
+                const StrandRange* parentGuide = nullptr;
+                if (followData && followData->parentGuide >= 0 && static_cast<uint32_t>(followData->parentGuide) < asset.guideStrandCount)
+                {
+                    parentGuide = &asset.strands[static_cast<uint32_t>(followData->parentGuide)];
+                }
+                for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCount); localPoint < strand.pointCount; ++localPoint)
+                {
+                    const uint32_t prevIndex = strand.pointOffset + localPoint - 1u;
+                    const uint32_t currIndex = strand.pointOffset + localPoint;
+                    if (currIndex >= inOutPoints.size() || prevIndex >= inOutPoints.size() || rootIndex >= inOutPoints.size())
+                    {
+                        continue;
+                    }
+                    const float restLength = StrandSegmentRestLength(asset, strandIndex, localPoint);
+                    if (restLength <= 1.0e-6f)
+                    {
+                        continue;
+                    }
 
-    const float stretchBlend = Clamp(settings.stretchBlend, 0.0f, 1.0f);
-    const float bendBlend = Clamp(settings.bendBlend, 0.0f, 1.0f);
-    const float complianceScale = 1.0f / static_cast<float>(std::max<uint32_t>(iterations, 1u));
+                    const float stretchBlend = Clamp(settings.stretchBlend, 0.0f, 1.0f);
+                    const float bendBlend = Clamp(settings.bendBlend, 0.0f, 1.0f);
+                    const float shapeBlend = Clamp(settings.shapePreservationBlend, 0.0f, 1.0f);
+                    const float clumpBlend = Clamp(settings.clumpPreservationBlend, 0.0f, 1.0f);
+                    const float curlBlend = Clamp(settings.curlPreservationBlend, 0.0f, 1.0f);
+                    const float twistBlend = Clamp(settings.twistBlend, 0.0f, 1.0f);
+                    const float complianceScale = 1.0f / static_cast<float>(std::max<uint32_t>(iterations, 1u));
+                    const float strandT = static_cast<float>(localPoint) / static_cast<float>(std::max<uint32_t>(strand.pointCount - 1u, 1u));
 
-    if (localPoint == settings.preserveRootPointCount && settings.preserveRootPointCount > 0u)
-    {
-        const Vec3 restAnchor = asset.restPoints[currIndex];
-        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], restAnchor, 0.15f * complianceScale);
-    }
+                    if (localPoint == settings.preserveRootPointCount && settings.preserveRootPointCount > 0u)
+                    {
+                        const Vec3 restAnchor = asset.restPoints[currIndex];
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], restAnchor, 0.15f * complianceScale);
+                    }
 
-    Vec3 currentDelta = inOutPoints[currIndex] - inOutPoints[prevIndex];
-    float currentLength = Length(currentDelta);
-    if (currentLength > 1.0e-6f)
-    {
-        const Vec3 dir = currentDelta / currentLength;
-        const float correction = (restLength - currentLength) * stretchBlend * complianceScale;
-        inOutPoints[currIndex] += dir * correction;
-    }
+                    Vec3 currentDelta = inOutPoints[currIndex] - inOutPoints[prevIndex];
+                    float currentLength = Length(currentDelta);
+                    if (currentLength > 1.0e-6f)
+                    {
+                        const Vec3 dir = currentDelta / currentLength;
+                        const float correction = (restLength - currentLength) * stretchBlend * complianceScale;
+                        inOutPoints[currIndex] += dir * correction;
+                    }
 
-    if (localPoint >= 2u)
-    {
-        const uint32_t prevPrevIndex = strand.pointOffset + localPoint - 2u;
-        const Vec3 restPrev = asset.restPoints[prevIndex] - asset.restPoints[prevPrevIndex];
-        const Vec3 restCurr = asset.restPoints[currIndex] - asset.restPoints[prevIndex];
-        const Vec3 desiredDir = Normalize(Lerp(Normalize(restCurr), Normalize(restPrev), 0.25f));
-        if (Length(desiredDir) > 1.0e-6f)
-        {
-            const Vec3 bendTarget = inOutPoints[prevIndex] + desiredDir * restLength;
-            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, bendBlend * complianceScale);
-        }
-    }
+                    if (localPoint >= 2u)
+                    {
+                        const uint32_t prevPrevIndex = strand.pointOffset + localPoint - 2u;
+                        const Vec3 restPrev = asset.restPoints[prevIndex] - asset.restPoints[prevPrevIndex];
+                        const Vec3 restCurr = asset.restPoints[currIndex] - asset.restPoints[prevIndex];
+                        const Vec3 desiredDir = Normalize(Lerp(Normalize(restCurr), Normalize(restPrev), 0.25f));
+                        if (Length(desiredDir) > 1.0e-6f)
+                        {
+                            const Vec3 bendTarget = inOutPoints[prevIndex] + desiredDir * restLength;
+                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], bendTarget, bendBlend * complianceScale);
+                        }
 
-    const PenetrationResult postConstraint = ResolveAgainstColliderSet(inOutPoints[currIndex],
-                                                                      settings.affectExternalColliders ? colliders : ColliderSet(),
-                                                                      settings.shellDistance,
-                                                                      settings.affectFloor,
-                                                                      -1.05f);
-    if (postConstraint.corrected)
-    {
-        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
-        strandCorrected = true;
-        report.maxPenetration = std::max(report.maxPenetration, postConstraint.penetration);
-        penetrationSum += postConstraint.penetration;
-        ++penetrationSamples;
-        ++report.penetrationEventCount;
-    }
-}
+                        const Vec3 currentPrev = Normalize(inOutPoints[prevIndex] - inOutPoints[prevPrevIndex]);
+                        const Vec3 currentCurr = Normalize(inOutPoints[currIndex] - inOutPoints[prevIndex]);
+                        const Vec3 restBinormal = Normalize(Cross(Normalize(restPrev), Normalize(restCurr)));
+                        const Vec3 currentBinormal = Normalize(Cross(currentPrev, currentCurr));
+                        if (Length(restBinormal) > 1.0e-6f && Length(currentBinormal) > 1.0e-6f)
+                        {
+                            const Vec3 twistAssist = Normalize(Cross(currentBinormal, restBinormal));
+                            if (Length(twistAssist) > 1.0e-6f)
+                            {
+                                inOutPoints[currIndex] += twistAssist * (restLength * twistBlend * complianceScale * 0.20f * strandT);
+                            }
+                        }
+                    }
+
+                    const Vec3 rootAlignedRestTarget = inOutPoints[rootIndex] + (asset.restPoints[currIndex] - asset.restPoints[rootIndex]);
+                    inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], rootAlignedRestTarget, shapeBlend * complianceScale * (0.25f + 0.75f * strandT));
+
+                    if (localPoint >= 2u)
+                    {
+                        const uint32_t prevPrevIndex = strand.pointOffset + localPoint - 2u;
+                        const Vec3 restPrev = asset.restPoints[prevIndex] - asset.restPoints[prevPrevIndex];
+                        const Vec3 restCurr = asset.restPoints[currIndex] - asset.restPoints[prevIndex];
+                        const Vec3 restCurveDelta = Normalize(restCurr) - Normalize(restPrev);
+                        const float restCurveMag = Length(restCurveDelta);
+                        if (restCurveMag > 1.0e-6f)
+                        {
+                            const Vec3 curlTarget = inOutPoints[prevIndex] + Normalize(restCurr) * restLength;
+                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], curlTarget, curlBlend * complianceScale * Clamp(restCurveMag * 1.75f, 0.0f, 1.0f));
+                        }
+                    }
+
+                    if (parentGuide && followData)
+                    {
+                        const uint32_t guideLocalPoint = std::min<uint32_t>(localPoint, parentGuide->pointCount - 1u);
+                        const uint32_t guidePointIndex = parentGuide->pointOffset + guideLocalPoint;
+                        if (guidePointIndex < inOutPoints.size() && guidePointIndex < asset.restPoints.size())
+                        {
+                            const Vec3 restFamilyOffset = asset.restPoints[currIndex] - asset.restPoints[guidePointIndex];
+                            const float familyWeight = Clamp(followData->clumpWeight, 0.0f, 1.0f) * std::clamp(followData->followWeight, 0.0f, 1.0f);
+                            const Vec3 familyTarget = inOutPoints[guidePointIndex] + restFamilyOffset;
+                            inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], familyTarget, clumpBlend * complianceScale * familyWeight * (0.30f + 0.70f * strandT));
+                        }
+                    }
+
+                    const PenetrationResult postConstraint = ResolveAgainstColliderSet(inOutPoints[currIndex],
+                                                                                      settings.affectExternalColliders ? colliders : ColliderSet(),
+                                                                                      settings.shellDistance,
+                                                                                      settings.affectFloor,
+                                                                                      -1.05f);
+                    if (postConstraint.corrected)
+                    {
+                        inOutPoints[currIndex] = Lerp(inOutPoints[currIndex], postConstraint.correctedPoint, Clamp(settings.contactBlend, 0.0f, 1.0f));
+                        strandCorrected = true;
+                        report.maxPenetration = std::max(report.maxPenetration, postConstraint.penetration);
+                        penetrationSum += postConstraint.penetration;
+                        ++penetrationSamples;
+                        ++report.penetrationEventCount;
+                    }
+                }
                 if (strandCorrected)
                 {
                     ++report.correctedStrandCount;
@@ -1094,6 +1191,7 @@ for (uint32_t localPoint = std::max<uint32_t>(1u, settings.preserveRootPointCoun
             ? static_cast<float>(penetrationSum / static_cast<double>(penetrationSamples))
             : 0.0f;
         AccumulateLengthError(asset, inOutPoints, &activeSetPlan.strandCorrectiveMask, report.averageLengthErrorAfter);
+        AccumulateShapeError(asset, inOutPoints, &activeSetPlan.strandCorrectiveMask, report.averageShapeErrorAfter);
 
         if (outReport)
         {

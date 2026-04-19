@@ -233,8 +233,12 @@ HairShapeComparisonReport CompareHairShape(const HairAsset& reference, const Hai
             const Vec3 a = SampleStrandPoint(reference, refStrand, t);
             const Vec3 b = SampleStrandPoint(candidate, candStrand, t);
             const float dx = a.x - b.x;
+            const float dy = a.y - b.y;
             const float dz = a.z - b.z;
-            silhouetteSq += static_cast<double>(dx * dx + dz * dz);
+            const double xz = static_cast<double>(dx * dx + dz * dz);
+            const double xy = static_cast<double>(dx * dx + dy * dy);
+            const double yz = static_cast<double>(dy * dy + dz * dz);
+            silhouetteSq += (xz + xy + yz) / 3.0;
             ++silhouetteSamples;
 
             tangentError += Length(SampleStrandTangent(reference, refStrand, t) - SampleStrandTangent(candidate, candStrand, t));
@@ -269,6 +273,7 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
 
     std::vector<float> strandDelta(strandPairs, 0.0f);
     std::vector<float> strandTangentDelta(strandPairs, 0.0f);
+    std::vector<float> strandCurvatureDelta(strandPairs, 0.0f);
     const HairAssetMetrics refMetrics = ComputeHairAssetMetrics(reference);
     const float avgLength = std::max(refMetrics.averageLength, 1.0e-4f);
     uint32_t changedCount = 0u;
@@ -281,6 +286,7 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
         const StrandRange& editStrand = edited.strands[strandIndex];
         double sumSq = 0.0;
         double tangentAccum = 0.0;
+        double curvatureAccum = 0.0;
         for (uint32_t sampleIndex = 0u; sampleIndex < samplesPerStrand; ++sampleIndex)
         {
             const float t = (samplesPerStrand > 1u) ? static_cast<float>(sampleIndex) / static_cast<float>(samplesPerStrand - 1u) : 0.0f;
@@ -289,9 +295,11 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
             const float d = Length(a - b);
             sumSq += static_cast<double>(d * d);
             tangentAccum += Length(SampleStrandTangent(reference, refStrand, t) - SampleStrandTangent(edited, editStrand, t));
+            curvatureAccum += std::fabs(SampleStrandCurvatureProxy(reference, refStrand, t) - SampleStrandCurvatureProxy(edited, editStrand, t));
         }
         strandDelta[strandIndex] = static_cast<float>(std::sqrt(sumSq / static_cast<double>(samplesPerStrand)));
         strandTangentDelta[strandIndex] = static_cast<float>(tangentAccum / static_cast<double>(samplesPerStrand));
+        strandCurvatureDelta[strandIndex] = static_cast<float>(curvatureAccum / static_cast<double>(samplesPerStrand));
         if (strandDelta[strandIndex] > 0.01f * avgLength)
         {
             ++changedCount;
@@ -311,6 +319,7 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
     const uint32_t guidePairs = std::min<uint32_t>(reference.guideStrandCount, edited.guideStrandCount);
     double boundaryAccum = 0.0;
     double boundaryTangentAccum = 0.0;
+    double boundaryCurvatureAccum = 0.0;
     uint32_t boundaryCount = 0u;
     for (uint32_t i = 0u; i < guidePairs; ++i)
     {
@@ -339,12 +348,14 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
             }
             boundaryAccum += static_cast<double>(std::fabs(strandDelta[i] - strandDelta[j]));
             boundaryTangentAccum += static_cast<double>(std::fabs(strandTangentDelta[i] - strandTangentDelta[j]));
+            boundaryCurvatureAccum += static_cast<double>(std::fabs(strandCurvatureDelta[i] - strandCurvatureDelta[j]));
             ++boundaryCount;
         }
     }
     const float avgBoundaryJump = boundaryCount > 0u ? static_cast<float>(boundaryAccum / static_cast<double>(boundaryCount)) : 0.0f;
     report.averageBoundaryTangentJump = boundaryCount > 0u ? static_cast<float>(boundaryTangentAccum / static_cast<double>(boundaryCount)) : 0.0f;
-    report.boundaryNaturalnessScore = Clamp(1.0f - (avgBoundaryJump / (0.08f * avgLength + 1.0e-4f) + report.averageBoundaryTangentJump * 0.75f), 0.0f, 1.0f);
+    const float avgBoundaryCurvatureJump = boundaryCount > 0u ? static_cast<float>(boundaryCurvatureAccum / static_cast<double>(boundaryCount)) : 0.0f;
+    report.boundaryNaturalnessScore = Clamp(1.0f - (avgBoundaryJump / (0.08f * avgLength + 1.0e-4f) + report.averageBoundaryTangentJump * 0.60f + avgBoundaryCurvatureJump * 0.85f), 0.0f, 1.0f);
     return report;
 }
 

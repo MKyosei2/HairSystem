@@ -534,25 +534,36 @@ namespace hairgpu
                     !parseFloatOptional(22u, layer.edit.tipOffset.z, "tipOffsetZ") ||
                     !parseFloatOptional(23u, layer.edit.sideOffset, "sideOffset") ||
                     !parseFloatOptional(24u, layer.edit.yawRadians, "yawRadians") ||
-                    !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence"))
+                    !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence") ||
+                    !parseFloatOptional(26u, layer.edit.clumpStrength, "clumpStrength") ||
+                    !parseFloatOptional(27u, layer.edit.curlStrength, "curlStrength") ||
+                    !parseFloatOptional(28u, layer.edit.partingStrength, "partingStrength") ||
+                    !parseFloatOptional(29u, layer.edit.partingCenterU, "partingCenterU") ||
+                    !parseFloatOptional(30u, layer.edit.partingWidthUv, "partingWidthUv"))
                 {
                     return false;
                 }
                 layer.region.groupId = groupId;
-                if (tokens.size() >= 27u && !tokens[26].empty())
+                const bool hasExtendedEditColumns = tokens.size() >= 34u;
+                const size_t strandSelectionColumn = hasExtendedEditColumns ? 31u : 26u;
+                const size_t strandSelectionModeColumn = hasExtendedEditColumns ? 32u : 27u;
+                const size_t strandSelectionWeightColumn = hasExtendedEditColumns ? 33u : 28u;
+                if (tokens.size() > strandSelectionColumn && !tokens[strandSelectionColumn].empty())
                 {
-                    if (!ParseStrandSelectionSpecLocal(tokens[26], layer.strandSelection, outError))
+                    if (!ParseStrandSelectionSpecLocal(tokens[strandSelectionColumn], layer.strandSelection, outError))
                     {
                         outError += " at line " + std::to_string(lineNumber);
                         return false;
                     }
                 }
-                if (tokens.size() >= 28u && !tokens[27].empty() && !ParseStrandSelectionModeToken(tokens[27], layer.strandSelectionMode))
+                if (tokens.size() > strandSelectionModeColumn && !tokens[strandSelectionModeColumn].empty() &&
+                    !ParseStrandSelectionModeToken(tokens[strandSelectionModeColumn], layer.strandSelectionMode))
                 {
                     outError = "Malformed strand selection mode at line " + std::to_string(lineNumber);
                     return false;
                 }
-                if (tokens.size() >= 29u && !tokens[28].empty() && !TryParseFloatToken(tokens[28], layer.strandSelectionWeight))
+                if (tokens.size() > strandSelectionWeightColumn && !tokens[strandSelectionWeightColumn].empty() &&
+                    !TryParseFloatToken(tokens[strandSelectionWeightColumn], layer.strandSelectionWeight))
                 {
                     outError = "Malformed strand selection weight at line " + std::to_string(lineNumber);
                     return false;
@@ -573,6 +584,22 @@ namespace hairgpu
             const float c = std::cos(radians);
             const float s = std::sin(radians);
             return {p.x * c - p.z * s, p.y, p.x * s + p.z * c};
+        }
+
+        Vec3 MakeSafeAxis(const Vec3& primary, const Vec3& fallback)
+        {
+            const Vec3 axis = Normalize(primary);
+            return Length(axis) > 1.0e-6f ? axis : fallback;
+        }
+
+        float Hash01(uint32_t value)
+        {
+            value ^= value >> 16u;
+            value *= 0x7feb352du;
+            value ^= value >> 15u;
+            value *= 0x846ca68bu;
+            value ^= value >> 16u;
+            return static_cast<float>(value & 0x00ffffffu) / static_cast<float>(0x01000000u);
         }
 
         Vec3 GetStrandRoot(const HairAsset& asset, uint32_t strandIndex)
@@ -933,6 +960,10 @@ namespace hairgpu
             outError = "No strands selected.";
             return false;
         }
+
+        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+        const std::vector<Vec3> originalPoints = asset.restPoints;
+
         for (const SelectedStrand& selected : selection.strands)
         {
             if (selected.strandIndex >= asset.strands.size())
@@ -940,28 +971,78 @@ namespace hairgpu
                 continue;
             }
             const StrandRange& strand = asset.strands[selected.strandIndex];
-            if (strand.pointCount == 0)
+            if (strand.pointCount == 0u)
             {
                 continue;
             }
-            const Vec3 root = asset.restPoints[strand.pointOffset];
-            for (uint32_t localIndex = 0; localIndex < strand.pointCount; ++localIndex)
+
+            const Vec3 root = originalPoints[strand.pointOffset];
+            const Vec3 tip = originalPoints[strand.pointOffset + strand.pointCount - 1u];
+            const Vec3 rootToTip = MakeSafeAxis(tip - root, Vec3(0.0f, -1.0f, 0.0f));
+            Vec3 lateral = Normalize(Cross(Vec3(0.0f, 1.0f, 0.0f), rootToTip));
+            if (Length(lateral) <= 1.0e-6f)
             {
-                const float u = (strand.pointCount > 1) ? static_cast<float>(localIndex) / static_cast<float>(strand.pointCount - 1) : 0.0f;
-                Vec3 p = asset.restPoints[strand.pointOffset + localIndex] - root;
-                p = RotateYaw(p, settings.yawRadians * selected.weight);
-                p = p * Lerp(1.0f, settings.lengthScale, u * selected.weight);
-                const Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * selected.weight;
-                const Vec3 side = Vec3(settings.sideOffset * selected.weight, 0.0f, 0.0f);
-                asset.restPoints[strand.pointOffset + localIndex] = root + p + additive + side;
+                lateral = Vec3(1.0f, 0.0f, 0.0f);
+            }
+            Vec3 binormal = Normalize(Cross(rootToTip, lateral));
+            if (Length(binormal) <= 1.0e-6f)
+            {
+                binormal = Vec3(0.0f, 0.0f, 1.0f);
+            }
+
+            const Vec2 rootUv = GetRootUv(asset, selected.strandIndex);
+            const float selectionWeight = Clamp01(selected.weight);
+            const float partWidth = std::max(settings.partingWidthUv, 1.0e-4f);
+            const float partDistance = std::fabs(rootUv.x - settings.partingCenterU);
+            const float partLineWeight = Clamp01(1.0f - partDistance / partWidth);
+            const float partDirection = (rootUv.x >= settings.partingCenterU) ? 1.0f : -1.0f;
+            const float frontBias = Clamp01(1.15f - rootUv.y * 1.25f);
+            const float strandPhase = 6.2831853f * Hash01(selected.strandIndex * 1664525u + 1013904223u);
+            const float guideFamilyStrength = (selected.strandIndex < asset.followData.size()) ? Clamp(asset.followData[selected.strandIndex].clumpWeight, 0.0f, 1.0f) : 0.0f;
+
+            for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const float u = (strand.pointCount > 1u) ? static_cast<float>(localIndex) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
+                Vec3 p = originalPoints[strand.pointOffset + localIndex] - root;
+                p = RotateYaw(p, settings.yawRadians * selectionWeight);
+                p = p * Lerp(1.0f, settings.lengthScale, u * selectionWeight);
+
+                const Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * selectionWeight;
+                const Vec3 side = lateral * (settings.sideOffset * selectionWeight);
+
+                const float curlEnvelope = selectionWeight * settings.curlStrength * (0.20f + 0.80f * u) * u;
+                const float curlPhase = strandPhase + u * 10.0f;
+                const Vec3 curlOffset = (lateral * std::sin(curlPhase) + binormal * std::cos(curlPhase)) * curlEnvelope;
+
+                const float partingEnvelope = selectionWeight * settings.partingStrength * partLineWeight * frontBias * (1.0f - 0.75f * u);
+                const Vec3 partingOffset = lateral * (partDirection * partingEnvelope) + Vec3(0.0f, partingEnvelope * 0.18f, 0.0f);
+
+                float clumpEnvelope = selectionWeight * settings.clumpStrength * (0.10f + 0.90f * u) * (0.35f + 0.65f * guideFamilyStrength);
+                Vec3 clumpOffset = {};
+                if (selected.strandIndex >= guideCount && selected.strandIndex < asset.followData.size())
+                {
+                    const FollowData& follow = asset.followData[selected.strandIndex];
+                    if (follow.parentGuide >= 0 && static_cast<uint32_t>(follow.parentGuide) < guideCount)
+                    {
+                        const StrandRange& guide = asset.strands[static_cast<uint32_t>(follow.parentGuide)];
+                        const uint32_t guideLocalIndex = std::min<uint32_t>(localIndex, guide.pointCount - 1u);
+                        const uint32_t guidePointIndex = guide.pointOffset + guideLocalIndex;
+                        const Vec3 guidePoint = originalPoints[guidePointIndex];
+                        const Vec3 familyDelta = guidePoint - originalPoints[strand.pointOffset + localIndex];
+                        clumpEnvelope *= std::clamp(follow.followWeight, 0.0f, 1.0f);
+                        clumpOffset = familyDelta * Clamp01(clumpEnvelope);
+                    }
+                }
+
+                asset.restPoints[strand.pointOffset + localIndex] = root + p + additive + side + curlOffset + partingOffset + clumpOffset;
                 if (strand.pointOffset + localIndex < asset.pointWidths.size())
                 {
-                    asset.pointWidths[strand.pointOffset + localIndex] *= Lerp(1.0f, settings.widthScale, selected.weight);
+                    const float widthBlend = Clamp01(selectionWeight * (0.70f + 0.30f * (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
+                    asset.pointWidths[strand.pointOffset + localIndex] *= Lerp(1.0f, settings.widthScale, widthBlend);
                 }
             }
         }
 
-        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
         for (uint32_t strandIndex = guideCount; strandIndex < asset.strands.size(); ++strandIndex)
         {
             if (strandIndex >= asset.followData.size())
@@ -981,24 +1062,29 @@ namespace hairgpu
             {
                 continue;
             }
-            const float appliedWeight = it->weight * settings.followerInfluence * std::clamp(follow.followWeight, 0.0f, 1.0f);
+
+            const float familyBlend = Clamp01(it->weight * settings.followerInfluence * std::clamp(follow.followWeight, 0.0f, 1.0f));
+            const float clumpBlend = Clamp01(familyBlend * (0.35f + 0.65f * settings.clumpStrength) * (0.45f + 0.55f * Clamp(follow.clumpWeight, 0.0f, 1.0f)));
             const StrandRange& guide = asset.strands[static_cast<uint32_t>(follow.parentGuide)];
             const StrandRange& strand = asset.strands[strandIndex];
             const uint32_t count = std::min(guide.pointCount, strand.pointCount);
-            for (uint32_t localIndex = 0; localIndex < count; ++localIndex)
+            for (uint32_t localIndex = 0u; localIndex < count; ++localIndex)
             {
                 const uint32_t gi = guide.pointOffset + localIndex;
                 const uint32_t si = strand.pointOffset + localIndex;
-                asset.restPoints[si] = Lerp(asset.restPoints[si], asset.restPoints[gi], appliedWeight);
+                const float u = (count > 1u) ? static_cast<float>(localIndex) / static_cast<float>(count - 1u) : 0.0f;
+                const Vec3 restOffset = originalPoints[si] - originalPoints[gi];
+                const Vec3 guideDrivenTarget = asset.restPoints[gi] + restOffset * (1.0f - 0.55f * settings.clumpStrength);
+                const float localBlend = Clamp01(Lerp(familyBlend, clumpBlend, u));
+                asset.restPoints[si] = Lerp(asset.restPoints[si], guideDrivenTarget, localBlend);
                 if (si < asset.pointWidths.size() && gi < asset.pointWidths.size())
                 {
-                    asset.pointWidths[si] = Lerp(asset.pointWidths[si], asset.pointWidths[gi], appliedWeight);
+                    asset.pointWidths[si] = Lerp(asset.pointWidths[si], asset.pointWidths[gi], familyBlend);
                 }
             }
         }
         return true;
     }
-
 
     bool LoadEditStackCsv(const std::filesystem::path& path, EditStack& outStack, std::string& outError)
     {
@@ -1030,7 +1116,7 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack," << stack.boundarySmoothing << "," << stack.boundaryRadiusUv << "\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         for (const EditLayer& layer : stack.layers)
         {
             out << "layer,"
@@ -1063,6 +1149,11 @@ namespace hairgpu
                 << layer.edit.sideOffset << ","
                 << layer.edit.yawRadians << ","
                 << layer.edit.followerInfluence << ","
+                << layer.edit.clumpStrength << ","
+                << layer.edit.curlStrength << ","
+                << layer.edit.partingStrength << ","
+                << layer.edit.partingCenterU << ","
+                << layer.edit.partingWidthUv << ","
                 << EscapeCsvToken(FormatStrandSelectionSpecLocal(layer.strandSelection)) << ","
                 << StrandSelectionModeToToken(layer.strandSelectionMode) << ","
                 << layer.strandSelectionWeight << "\n";
@@ -1083,10 +1174,10 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,strandSelection,strandSelectionMode,strandSelectionWeight\n";
-        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,,,1.00\n";
-        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,,,1.00\n";
-        out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,42,replace,1.00\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,0.18,0.00,0.012,0.50,0.14,,,1.00\n";
+        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,0.10,0.018,0.000,0.50,0.14,,,1.00\n";
+        out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,0.00,0.00,0.000,0.50,0.14,42,replace,1.00\n";
         outError.clear();
         return true;
     }

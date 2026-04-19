@@ -849,25 +849,34 @@ namespace
                 !parseFloatOptional(22u, layer.edit.tipOffset.z, "tipOffsetZ") ||
                 !parseFloatOptional(23u, layer.edit.sideOffset, "sideOffset") ||
                 !parseFloatOptional(24u, layer.edit.yawRadians, "yawRadians") ||
-                !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence"))
+                !parseFloatOptional(25u, layer.edit.followerInfluence, "followerInfluence") ||
+                !parseFloatOptional(26u, layer.edit.clumpStrength, "clumpStrength") ||
+                !parseFloatOptional(27u, layer.edit.curlStrength, "curlStrength") ||
+                !parseFloatOptional(28u, layer.edit.partingStrength, "partingStrength") ||
+                !parseFloatOptional(29u, layer.edit.partingCenterU, "partingCenterU") ||
+                !parseFloatOptional(30u, layer.edit.partingWidthUv, "partingWidthUv"))
             {
                 return false;
             }
             layer.region.groupId = groupId;
-            if (tokens.size() >= 27u && !tokens[26].empty())
+            const bool hasExtendedEditColumns = tokens.size() >= 34u;
+            const size_t strandSelectionColumn = hasExtendedEditColumns ? 31u : 26u;
+            const size_t strandSelectionModeColumn = hasExtendedEditColumns ? 32u : 27u;
+            const size_t strandSelectionWeightColumn = hasExtendedEditColumns ? 33u : 28u;
+            if (tokens.size() > strandSelectionColumn && !tokens[strandSelectionColumn].empty())
             {
-                if (!ParseStrandSelectionSpec(tokens[26], layer.strandSelection, outError))
+                if (!ParseStrandSelectionSpec(tokens[strandSelectionColumn], layer.strandSelection, outError))
                 {
                     outError += " at line " + std::to_string(lineNumber);
                     return false;
                 }
             }
-            if (tokens.size() >= 28u && !tokens[27].empty() && !ParseStrandSelectionModeToken(tokens[27], layer.strandSelectionMode))
+            if (tokens.size() > strandSelectionModeColumn && !tokens[strandSelectionModeColumn].empty() && !ParseStrandSelectionModeToken(tokens[strandSelectionModeColumn], layer.strandSelectionMode))
             {
                 outError = "Malformed strand selection mode at line " + std::to_string(lineNumber);
                 return false;
             }
-            if (tokens.size() >= 29u && !tokens[28].empty() && !TryParseFloatToken(tokens[28], layer.strandSelectionWeight))
+            if (tokens.size() > strandSelectionWeightColumn && !tokens[strandSelectionWeightColumn].empty() && !TryParseFloatToken(tokens[strandSelectionWeightColumn], layer.strandSelectionWeight))
             {
                 outError = "Malformed strand selection weight at line " + std::to_string(lineNumber);
                 return false;
@@ -894,10 +903,10 @@ namespace
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,strandSelection,strandSelectionMode,strandSelectionWeight\n";
-        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,,,1.00\n";
-        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,,,1.00\n";
-        out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,42,replace,1.00\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,0.18,0.00,0.012,0.50,0.14,,,1.00\n";
+        out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,0.10,0.018,0.000,0.50,0.14,,,1.00\n";
+        out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,0.00,0.00,0.000,0.50,0.14,42,replace,1.00\n";
         outError.clear();
         return true;
     }
@@ -1374,8 +1383,8 @@ namespace
   hairgpu_cli retessellate-strands <input> <output.hairbin> [targetParticlesPerStrand=15] [snapRoots=1]
   hairgpu_cli segment-profile <input> <output.hairbin> [balanced|smooth|cinematic] [targetParticlesOverride=0]
   hairgpu_cli select-region <input> [mode cx cy rx ry groupId guidesOnly]
-  hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower]
-  hairgpu_cli edit-strand <input> <output.hairbin> <strandSpec> [mode=replace|guide_family|union] [lengthScale widthScale rootX rootY rootZ tipX tipY tipZ side yaw follower]
+  hairgpu_cli edit-region <input> <output.hairbin> [mode cx cy rx ry groupId guidesOnly] [lengthScale widthScale rootY tipY side yaw follower clump curl parting partCenter partWidth]
+  hairgpu_cli edit-strand <input> <output.hairbin> <strandSpec> [mode=replace|guide_family|union] [lengthScale widthScale rootX rootY rootZ tipX tipY tipZ side yaw follower clump curl parting partCenter partWidth]
   hairgpu_cli edit-stack-template <output.csv>
   hairgpu_cli experiment-suite-template <output_dir>
   hairgpu_cli edit-stack-apply <input> <stack.csv> <output.hairbin> [runtime.json]
@@ -2885,6 +2894,11 @@ int main(int argc, char** argv)
         edit.sideOffset = ArgToFloat(argc, argv, base + 4, edit.sideOffset);
         edit.yawRadians = ArgToFloat(argc, argv, base + 5, edit.yawRadians);
         edit.followerInfluence = ArgToFloat(argc, argv, base + 6, edit.followerInfluence);
+        edit.clumpStrength = ArgToFloat(argc, argv, base + 7, edit.clumpStrength);
+        edit.curlStrength = ArgToFloat(argc, argv, base + 8, edit.curlStrength);
+        edit.partingStrength = ArgToFloat(argc, argv, base + 9, edit.partingStrength);
+        edit.partingCenterU = ArgToFloat(argc, argv, base + 10, edit.partingCenterU);
+        edit.partingWidthUv = ArgToFloat(argc, argv, base + 11, edit.partingWidthUv);
         const RegionSelectionResult result = SelectRegion(asset, region);
         if (!ApplyEditToRegion(asset, result, edit, error) || !SaveHairAssetToHairBinary(argv[3], asset, error))
         {
@@ -2923,6 +2937,11 @@ int main(int argc, char** argv)
         layer.edit.sideOffset = ArgToFloat(argc, argv, base + 8, layer.edit.sideOffset);
         layer.edit.yawRadians = ArgToFloat(argc, argv, base + 9, layer.edit.yawRadians);
         layer.edit.followerInfluence = ArgToFloat(argc, argv, base + 10, layer.edit.followerInfluence);
+        layer.edit.clumpStrength = ArgToFloat(argc, argv, base + 11, layer.edit.clumpStrength);
+        layer.edit.curlStrength = ArgToFloat(argc, argv, base + 12, layer.edit.curlStrength);
+        layer.edit.partingStrength = ArgToFloat(argc, argv, base + 13, layer.edit.partingStrength);
+        layer.edit.partingCenterU = ArgToFloat(argc, argv, base + 14, layer.edit.partingCenterU);
+        layer.edit.partingWidthUv = ArgToFloat(argc, argv, base + 15, layer.edit.partingWidthUv);
 
         EditStack stack = {};
         stack.layers.push_back(layer);

@@ -25,6 +25,7 @@
 #include "hairgpu/Binding.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/Math.h"
+#include "hairgpu/Metrics.h"
 #include "hairgpu/Wig.h"
 
 #pragma comment(lib, "d3d11.lib")
@@ -7444,6 +7445,11 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         const std::string perfPathUtf8 = WideToUtf8(perfPath.wstring());
         const std::string planPathUtf8 = WideToUtf8(planPath.wstring());
         const std::string settingsPathUtf8 = WideToUtf8(settingsPath.wstring());
+        hairgpu::HairEditComparisonReport editMetrics = {};
+        if (!m_baseAsset.strands.empty() && m_baseAsset.strands.size() == m_asset.strands.size())
+        {
+            editMetrics = hairgpu::CompareHairEditRegion(m_baseAsset, m_asset, 16u);
+        }
 
         std::ostringstream json;
         json << std::fixed << std::setprecision(6);
