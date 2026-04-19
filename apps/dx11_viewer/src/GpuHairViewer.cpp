@@ -460,7 +460,34 @@ namespace hairgpu::viewer
             IDC_LABEL_SCALP_DARKNESS,
             IDC_TRACK_SCALP_DARKNESS,
             IDC_LABEL_SCALP_HAIR_BLEND,
-            IDC_TRACK_SCALP_HAIR_BLEND
+            IDC_TRACK_SCALP_HAIR_BLEND,
+            IDC_BTN_WORKSPACE_GROOM,
+            IDC_BTN_WORKSPACE_SIM,
+            IDC_BTN_WORKSPACE_REVIEW,
+            IDC_BTN_WORKSPACE_REPORT,
+            IDC_BTN_TOOL_SELECT,
+            IDC_BTN_TOOL_COMB,
+            IDC_BTN_TOOL_GRAB,
+            IDC_BTN_TOOL_SMOOTH,
+            IDC_BTN_TOOL_LENGTH,
+            IDC_BTN_TOOL_VOLUME,
+            IDC_BTN_TOOL_PART,
+            IDC_BTN_TOOL_FREEZE,
+            IDC_BTN_TOOL_STRAND_FIX,
+            IDC_BTN_UNDO_EDIT,
+            IDC_BTN_REDO_EDIT,
+            IDC_BTN_TRAY_LAYERS,
+            IDC_BTN_TRAY_HISTORY,
+            IDC_BTN_TRAY_METRICS,
+            IDC_BTN_TOGGLE_INSPECTOR,
+            IDC_BTN_TOGGLE_TRAY,
+            IDC_BTN_TOGGLE_ADVANCED,
+            IDC_BTN_FAST_VIEWPORT,
+            IDC_LABEL_WORKSPACE_TITLE,
+            IDC_LABEL_INSPECTOR_TITLE,
+            IDC_LABEL_TRAY_TITLE,
+            IDC_LABEL_TOOL_HINT,
+            IDC_LABEL_SESSION_STATUS
         };
 
         int SliderFromFloat(float value, float minValue, float maxValue, int sliderMax = 1000)
@@ -2743,12 +2770,13 @@ namespace hairgpu::viewer
         constants.particlesPerStrand = m_asset.particlesPerStrand;
         constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
         constants.tubeRingSides = m_strandTubeRingSides;
-        // Render every follower on the stable path.
-        constants.renderFollowerStride = 1u;
-        constants.renderGuideOnlyAboveTier = editVisualization ? 6u : 4u;
-        constants.renderReducedWidthBoost = editVisualization ? 1.15f : 0.82f;
+        const bool fastEditPreview = m_fastGroomViewport && IsGroomWorkspace();
+        const bool heavyInteraction = m_brushStrokeActive || m_gizmoDragging;
+        constants.renderFollowerStride = fastEditPreview ? (heavyInteraction ? 4u : 2u) : 1u;
+        constants.renderGuideOnlyAboveTier = fastEditPreview ? (heavyInteraction ? 2u : 3u) : (editVisualization ? 6u : 4u);
+        constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.95f : 1.02f) : (editVisualization ? 1.15f : 0.82f);
         constants.renderHiddenWidthThreshold = 0.0f;
-        constants.renderStrandAlpha = editVisualization ? 0.96f : 1.0f;
+        constants.renderStrandAlpha = fastEditPreview ? (heavyInteraction ? 0.82f : 0.90f) : (editVisualization ? 0.96f : 1.0f);
         constants.renderPadding0 = 0.0f;
     }
 
@@ -4429,15 +4457,15 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         m_labelMaskOverlay = createControl(0, L"STATIC", L"Scalp Overlay", SS_LEFT, IDC_LABEL_SELF_RADIUS + 100);
         m_comboMaskOverlay = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_MASK_OVERLAY);
         SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"None"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Parting"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Region"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Influence / Selected Layer"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Boundary Before / After"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Risk / Selection"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Motion"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Contact"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Uncertainty"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Active-Set Edit"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Parting Overlay"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Region Overlay"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Influence"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Boundary Compare"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Selection / Risk"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Motion Score"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Contact Score"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Uncertainty Score"));
+        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Score"));
         SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, 0, 0);
         m_labelPartingMask = createControl(0, L"STATIC", L"Parting preview", SS_LEFT, IDC_LABEL_PARTING_MASK_NAME);
         m_previewPartingMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_PARTING_MASK);
@@ -4578,8 +4606,168 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         m_labelEditWorkflow = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
         m_labelEditLegend = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
 
-        return m_comboPreset && m_comboRenderMode && m_comboInteractionMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_labelEditWorkflow && m_labelEditLegend && m_checkShowScalpMesh && m_labelScalpCoverageStrength && m_trackScalpCoverageStrength && m_labelScalpPartWidth && m_trackScalpPartWidth && m_labelScalpDarkness && m_trackScalpDarkness && m_labelScalpHairBlend && m_trackScalpHairBlend;
+        m_btnWorkspaceGroom = createControl(0, L"BUTTON", L"Groom", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_GROOM);
+        m_btnWorkspaceSim = createControl(0, L"BUTTON", L"Sim", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_SIM);
+        m_btnWorkspaceReview = createControl(0, L"BUTTON", L"Review", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_REVIEW);
+        m_btnWorkspaceReport = createControl(0, L"BUTTON", L"Report", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_REPORT);
+        m_btnToolSelect = createControl(0, L"BUTTON", L"Select", BS_PUSHBUTTON, IDC_BTN_TOOL_SELECT);
+        m_btnToolComb = createControl(0, L"BUTTON", L"Comb", BS_PUSHBUTTON, IDC_BTN_TOOL_COMB);
+        m_btnToolGrab = createControl(0, L"BUTTON", L"Grab", BS_PUSHBUTTON, IDC_BTN_TOOL_GRAB);
+        m_btnToolSmooth = createControl(0, L"BUTTON", L"Smooth", BS_PUSHBUTTON, IDC_BTN_TOOL_SMOOTH);
+        m_btnToolLength = createControl(0, L"BUTTON", L"Length", BS_PUSHBUTTON, IDC_BTN_TOOL_LENGTH);
+        m_btnToolVolume = createControl(0, L"BUTTON", L"Volume", BS_PUSHBUTTON, IDC_BTN_TOOL_VOLUME);
+        m_btnToolPart = createControl(0, L"BUTTON", L"Part", BS_PUSHBUTTON, IDC_BTN_TOOL_PART);
+        m_btnToolFreeze = createControl(0, L"BUTTON", L"Freeze", BS_PUSHBUTTON, IDC_BTN_TOOL_FREEZE);
+        m_btnToolStrandFix = createControl(0, L"BUTTON", L"Strand Fix", BS_PUSHBUTTON, IDC_BTN_TOOL_STRAND_FIX);
+        m_btnUndoEdit = createControl(0, L"BUTTON", L"Undo", BS_PUSHBUTTON, IDC_BTN_UNDO_EDIT);
+        m_btnRedoEdit = createControl(0, L"BUTTON", L"Redo", BS_PUSHBUTTON, IDC_BTN_REDO_EDIT);
+        m_btnTrayLayers = createControl(0, L"BUTTON", L"Layers", BS_PUSHBUTTON, IDC_BTN_TRAY_LAYERS);
+        m_btnTrayHistory = createControl(0, L"BUTTON", L"History", BS_PUSHBUTTON, IDC_BTN_TRAY_HISTORY);
+        m_btnTrayMetrics = createControl(0, L"BUTTON", L"Metrics", BS_PUSHBUTTON, IDC_BTN_TRAY_METRICS);
+        m_btnToggleInspector = createControl(0, L"BUTTON", L"Inspector", BS_PUSHBUTTON, IDC_BTN_TOGGLE_INSPECTOR);
+        m_btnToggleTray = createControl(0, L"BUTTON", L"Layers", BS_PUSHBUTTON, IDC_BTN_TOGGLE_TRAY);
+        m_btnToggleAdvanced = createControl(0, L"BUTTON", L"Advanced", BS_PUSHBUTTON, IDC_BTN_TOGGLE_ADVANCED);
+        m_btnFastViewport = createControl(0, L"BUTTON", L"Fast View", BS_PUSHBUTTON, IDC_BTN_FAST_VIEWPORT);
+        m_labelWorkspaceTitle = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WORKSPACE_TITLE);
+        m_labelInspectorTitle = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_INSPECTOR_TITLE);
+        m_labelTrayTitle = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_TRAY_TITLE);
+        m_labelToolHint = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, IDC_LABEL_TOOL_HINT);
+        m_labelSessionStatus = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SESSION_STATUS);
+
+        return m_comboPreset && m_comboRenderMode && m_comboInteractionMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_labelEditWorkflow && m_labelEditLegend && m_checkShowScalpMesh && m_labelScalpCoverageStrength && m_trackScalpCoverageStrength && m_labelScalpPartWidth && m_trackScalpPartWidth && m_labelScalpDarkness && m_trackScalpDarkness && m_labelScalpHairBlend && m_trackScalpHairBlend && m_btnWorkspaceGroom && m_btnWorkspaceSim && m_btnWorkspaceReview && m_btnWorkspaceReport && m_btnToolSelect && m_btnToolComb && m_btnToolGrab && m_btnToolSmooth && m_btnToolLength && m_btnToolVolume && m_btnToolPart && m_btnToolFreeze && m_btnToolStrandFix && m_btnUndoEdit && m_btnRedoEdit && m_btnTrayLayers && m_btnTrayHistory && m_btnTrayMetrics && m_btnToggleInspector && m_btnToggleTray && m_btnToggleAdvanced && m_btnFastViewport && m_labelWorkspaceTitle && m_labelInspectorTitle && m_labelTrayTitle && m_labelToolHint && m_labelSessionStatus;
     }
+
+
+    void GpuHairViewer::ApplyWorkspaceMode(WorkspaceMode workspace)
+    {
+        m_workspaceMode = workspace;
+        switch (workspace)
+        {
+        case WorkspaceMode::Groom:
+            m_interactionMode = InteractionMode::Edit;
+            if (m_debugColorMode == DebugColorMode::Natural)
+            {
+                m_debugColorMode = DebugColorMode::Editability;
+            }
+            if (m_maskOverlayMode == MaskOverlayMode::None)
+            {
+                m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            }
+            break;
+        case WorkspaceMode::Sim:
+            m_interactionMode = InteractionMode::View;
+            if (m_maskOverlayMode == MaskOverlayMode::EditInfluenceBeforeAfter)
+            {
+                m_maskOverlayMode = MaskOverlayMode::None;
+            }
+            break;
+        case WorkspaceMode::Review:
+            m_interactionMode = InteractionMode::View;
+            if (m_maskOverlayMode == MaskOverlayMode::None)
+            {
+                m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            }
+            break;
+        case WorkspaceMode::Report:
+            m_interactionMode = InteractionMode::View;
+            if (m_maskOverlayMode == MaskOverlayMode::None)
+            {
+                m_maskOverlayMode = MaskOverlayMode::ActiveSetRiskSelection;
+            }
+            break;
+        }
+        SyncControlsFromState();
+        LayoutUiControls();
+    }
+
+    void GpuHairViewer::ApplyGroomToolPreset(GroomTool tool)
+    {
+        m_groomTool = tool;
+        m_workspaceMode = WorkspaceMode::Groom;
+        m_interactionMode = InteractionMode::Edit;
+        switch (tool)
+        {
+        case GroomTool::Select:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Comb:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_quickEditFeather = std::max(m_quickEditFeather, 0.20f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Grab:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Smooth:
+            m_quickEditBoundarySmoothing = std::max(m_quickEditBoundarySmoothing, 0.45f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        case GroomTool::Length:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Volume:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Part:
+            m_quickEditMode = hairgpu::RegionSelectMode::Sector;
+            m_maskOverlayMode = MaskOverlayMode::Parting;
+            break;
+        case GroomTool::Freeze:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::StrandFix:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        }
+        SyncControlsFromState();
+        LayoutUiControls();
+    }
+
+    const wchar_t* GpuHairViewer::GetWorkspaceDisplayName() const
+    {
+        switch (m_workspaceMode)
+        {
+        case WorkspaceMode::Groom: return L"Groom";
+        case WorkspaceMode::Sim: return L"Sim";
+        case WorkspaceMode::Review: return L"Review";
+        case WorkspaceMode::Report: return L"Report";
+        default: return L"Groom";
+        }
+    }
+
+    const wchar_t* GpuHairViewer::GetGroomToolDisplayName() const
+    {
+        switch (m_groomTool)
+        {
+        case GroomTool::Select: return L"Select";
+        case GroomTool::Comb: return L"Comb";
+        case GroomTool::Grab: return L"Grab";
+        case GroomTool::Smooth: return L"Smooth";
+        case GroomTool::Length: return L"Length";
+        case GroomTool::Volume: return L"Volume";
+        case GroomTool::Part: return L"Part";
+        case GroomTool::Freeze: return L"Freeze";
+        case GroomTool::StrandFix: return L"Strand Fix";
+        default: return L"Comb";
+        }
+    }
+
+    const wchar_t* GpuHairViewer::GetBottomTrayDisplayName() const
+    {
+        switch (m_bottomTrayTab)
+        {
+        case BottomTrayTab::Layers: return L"Layers";
+        case BottomTrayTab::History: return L"History";
+        case BottomTrayTab::Metrics: return L"Metrics";
+        default: return L"Layers";
+        }
+    }
+
+    bool GpuHairViewer::IsGroomWorkspace() const { return m_workspaceMode == WorkspaceMode::Groom; }
+    bool GpuHairViewer::IsSimWorkspace() const { return m_workspaceMode == WorkspaceMode::Sim; }
+    bool GpuHairViewer::IsReviewWorkspace() const { return m_workspaceMode == WorkspaceMode::Review; }
+    bool GpuHairViewer::IsReportWorkspace() const { return m_workspaceMode == WorkspaceMode::Report; }
 
     void GpuHairViewer::LayoutUiControls()
     {
@@ -4595,17 +4783,22 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         MoveWindow(m_uiPanel, panelX, 0, kUiPanelWidth, panelHeight, TRUE);
 
         const int fullWidth = kUiPanelWidth - kUiMargin * 2;
-        const int halfWidth = (fullWidth - 8) / 2;
-        const int thirdWidth = (fullWidth - 16) / 3;
-        const int narrowEditWidth = 64;
         const int x = panelX + kUiMargin;
+        const int leftRailWidth = 84;
+        const int contentGap = 10;
+        const int inspectorX = x + leftRailWidth + contentGap;
+        const int inspectorWidth = fullWidth - leftRailWidth - contentGap;
         const int labelHeight = 18;
         const int controlHeight = 24;
         const int sliderHeight = 28;
         const int gap = 6;
+        const int quadWidth = (fullWidth - 24) / 4;
+        const int sixWidth = (fullWidth - 20) / 6;
+        const int twoWidth = (inspectorWidth - 8) / 2;
+        const int threeWidth = (inspectorWidth - 16) / 3;
         int y = kUiMargin;
 
-        auto findStaticByText = [&](const wchar_t* text) -> HWND
+        auto findStaticByText = [&](const wchar_t* textValue) -> HWND
         {
             for (HWND child = GetWindow(m_hwnd, GW_CHILD); child != nullptr; child = GetWindow(child, GW_HWNDNEXT))
             {
@@ -4621,7 +4814,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 }
                 wchar_t buffer[128] = {};
                 GetWindowTextW(child, buffer, static_cast<int>(std::size(buffer)));
-                if (wcscmp(buffer, text) == 0)
+                if (wcscmp(buffer, textValue) == 0)
                 {
                     return child;
                 }
@@ -4630,11 +4823,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         };
 
         HWND labelPreset = findStaticByText(L"Preset");
-        HWND labelGuides = findStaticByText(L"Guides");
-        HWND labelFollowers = findStaticByText(L"Followers / guide");
-        HWND labelParticles = findStaticByText(L"Particles / strand");
         HWND labelRender = findStaticByText(L"Render");
-        HWND labelInteraction = findStaticByText(L"Interaction");
         HWND labelColorDebug = findStaticByText(L"Color Debug");
 
         auto show = [&](HWND hwnd, bool visible)
@@ -4662,24 +4851,36 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             y += amount;
             return old;
         };
-        auto placeLabelSlider = [&](HWND label, HWND slider, bool visible)
+        auto placeInspectorSlider = [&](HWND label, HWND slider, bool visible)
         {
-            if (visible)
-            {
-                place(label, x, advance(labelHeight), fullWidth, labelHeight, true);
-                place(slider, x, advance(sliderHeight), fullWidth, sliderHeight, true);
-            }
-            else
+            if (!visible)
             {
                 show(label, false);
                 show(slider, false);
+                return;
             }
+            place(label, inspectorX, y, inspectorWidth, labelHeight, true);
+            y += labelHeight;
+            place(slider, inspectorX, y, inspectorWidth, sliderHeight, true);
+            y += sliderHeight;
+        };
+        auto placeInspectorSliderHalf = [&](HWND labelA, HWND sliderA, HWND labelB, HWND sliderB, bool visible)
+        {
+            if (!visible)
+            {
+                show(labelA, false); show(sliderA, false); show(labelB, false); show(sliderB, false);
+                return;
+            }
+            place(labelA, inspectorX, y, twoWidth, labelHeight, true);
+            place(labelB, inspectorX + twoWidth + 8, y, twoWidth, labelHeight, true);
+            y += labelHeight;
+            place(sliderA, inspectorX, y, twoWidth, sliderHeight, true);
+            place(sliderB, inspectorX + twoWidth + 8, y, twoWidth, sliderHeight, true);
+            y += sliderHeight;
         };
 
-        const bool editMode = (m_interactionMode == InteractionMode::Edit);
-
         std::vector<HWND> managed = {
-            labelPreset, labelGuides, labelFollowers, labelParticles, labelRender, labelInteraction, labelColorDebug,
+            labelPreset, labelRender, labelColorDebug,
             m_comboPreset, m_btnPlayPause, m_btnReset, m_btnStep, m_btnApplyAsset, m_btnImportAsset,
             m_btnSaveSettings, m_btnLoadSettings, m_btnExportCsv, m_btnExportPerfCsv,
             m_btnBrowseEditStack, m_btnClearEditStack, m_labelEditStack, m_labelInlineEditStack, m_editInlineEditStack,
@@ -4716,170 +4917,256 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             m_labelActiveSetClusterCost, m_trackActiveSetClusterCost, m_labelActiveSetScoreWeights, m_labelActiveSetMotionWeight,
             m_trackActiveSetMotionWeight, m_labelActiveSetContactWeight, m_trackActiveSetContactWeight, m_labelActiveSetUncertaintyWeight,
             m_trackActiveSetUncertaintyWeight, m_labelActiveSetEditWeight, m_trackActiveSetEditWeight, m_btnExportActiveSetJson,
-            m_btnExportRuntimeReport, m_labelAssetStats, m_labelStats, m_labelEditWorkflow, m_labelEditLegend
+            m_btnExportRuntimeReport, m_labelAssetStats, m_labelStats, m_labelEditWorkflow, m_labelEditLegend,
+            m_btnWorkspaceGroom, m_btnWorkspaceSim, m_btnWorkspaceReview, m_btnWorkspaceReport,
+            m_btnToolSelect, m_btnToolComb, m_btnToolGrab, m_btnToolSmooth, m_btnToolLength, m_btnToolVolume,
+            m_btnToolPart, m_btnToolFreeze, m_btnToolStrandFix, m_btnUndoEdit, m_btnRedoEdit,
+            m_btnTrayLayers, m_btnTrayHistory, m_btnTrayMetrics, m_btnToggleInspector, m_btnToggleTray, m_btnToggleAdvanced, m_btnFastViewport,
+            m_labelWorkspaceTitle, m_labelInspectorTitle, m_labelTrayTitle, m_labelToolHint, m_labelSessionStatus
         };
         for (HWND hwnd : managed)
         {
             show(hwnd, false);
         }
 
-        // Header / common controls
-        place(labelPreset, x, advance(labelHeight), fullWidth, labelHeight);
-        place(m_comboPreset, x, advance(controlHeight), fullWidth, 220);
+        SetWindowTextFormat(m_labelWorkspaceTitle, std::wstring(L"Workspace  •  ") + GetWorkspaceDisplayName());
+        SetWindowTextFormat(m_labelInspectorTitle, IsGroomWorkspace() ? (std::wstring(L"Tool Options  •  ") + GetGroomToolDisplayName()) :
+            (IsSimWorkspace() ? L"Tool Options  •  Simulation" : (IsReviewWorkspace() ? L"Tool Options  •  Review" : L"Tool Options  •  Report")));
+        SetWindowTextFormat(m_labelTrayTitle, std::wstring(L"Panels  •  ") + GetBottomTrayDisplayName());
 
-        const int topRowY = advance(controlHeight + gap);
-        place(m_btnPlayPause, x, topRowY, thirdWidth, controlHeight);
-        place(m_btnReset, x + thirdWidth + 8, topRowY, thirdWidth, controlHeight);
-        place(m_btnStep, x + (thirdWidth + 8) * 2, topRowY, thirdWidth, controlHeight);
+        const std::wstring toolHint = IsGroomWorkspace()
+            ? (std::wstring(L"DCC-style workflow: choose a tool on the left, tweak only the top options, then edit in the viewport.\n"
+               L"Active tool: ") + GetGroomToolDisplayName() + L"   LMB edit / Alt+LMB orbit / Wheel radius")
+            : (IsSimWorkspace()
+                ? L"Simulation toolbar. Keep Groom for shaping, then tune physics here."
+                : (IsReviewWorkspace()
+                    ? L"Review toolbar. Compare overlays and masks without opening the full advanced stack."
+                    : L"Report toolbar. Export telemetry while keeping the viewport uncluttered."));
+        SetWindowTextFormat(m_labelToolHint, toolHint);
 
-        const int modeLabelY = advance(labelHeight);
-        place(labelInteraction, x, modeLabelY, halfWidth, labelHeight);
-        place(labelRender, x + halfWidth + 8, modeLabelY, halfWidth, labelHeight);
-        const int modeRowY = advance(controlHeight);
-        place(m_comboInteractionMode, x, modeRowY, halfWidth, 120);
-        place(m_comboRenderMode, x + halfWidth + 8, modeRowY, halfWidth, 120);
+        std::wstring sessionStatus = L"Toolbar: Import / Save / Export / Rebuild";
+        sessionStatus += L"\nEdit stack: ";
+        sessionStatus += (m_editStackPath.empty() ? L"inline session" : std::filesystem::path(m_editStackPath).filename().wstring());
+        sessionStatus += L"   Overlay: ";
+        sessionStatus += GetMaskOverlayModeDisplayName();
+        SetWindowTextFormat(m_labelSessionStatus, sessionStatus);
 
-        place(labelColorDebug, x, advance(labelHeight), fullWidth, labelHeight);
-        place(m_comboDebugColor, x, advance(controlHeight), fullWidth, 160);
+        place(m_labelWorkspaceTitle, x, advance(labelHeight), fullWidth, labelHeight);
+        const int workspaceY = advance(controlHeight);
+        place(m_btnWorkspaceGroom, x, workspaceY, quadWidth, controlHeight);
+        place(m_btnWorkspaceSim, x + quadWidth + 8, workspaceY, quadWidth, controlHeight);
+        place(m_btnWorkspaceReview, x + (quadWidth + 8) * 2, workspaceY, quadWidth, controlHeight);
+        place(m_btnWorkspaceReport, x + (quadWidth + 8) * 3, workspaceY, quadWidth, controlHeight);
 
-        if (editMode)
+        const int toolbarY1 = advance(controlHeight + gap);
+        place(m_btnImportAsset, x, toolbarY1, quadWidth, controlHeight);
+        place(m_btnSaveSettings, x + quadWidth + 8, toolbarY1, quadWidth, controlHeight);
+        place(m_btnSaveInlineEditStack, x + (quadWidth + 8) * 2, toolbarY1, quadWidth, controlHeight);
+        place(m_btnApplyAsset, x + (quadWidth + 8) * 3, toolbarY1, quadWidth, controlHeight);
+
+        const int toolbarY2 = advance(controlHeight + gap);
+        place(m_btnUndoEdit, x, toolbarY2, sixWidth, controlHeight);
+        place(m_btnRedoEdit, x + (sixWidth + 4), toolbarY2, sixWidth, controlHeight);
+        place(m_btnToggleInspector, x + (sixWidth + 4) * 2, toolbarY2, sixWidth, controlHeight);
+        place(m_btnToggleAdvanced, x + (sixWidth + 4) * 3, toolbarY2, sixWidth, controlHeight);
+        place(m_btnToggleTray, x + (sixWidth + 4) * 4, toolbarY2, sixWidth, controlHeight);
+        place(m_btnFastViewport, x + (sixWidth + 4) * 5, toolbarY2, sixWidth, controlHeight);
+
+        const int toolbarY3 = advance(controlHeight + gap);
+        place(m_btnPlayPause, x, toolbarY3, quadWidth, controlHeight);
+        place(m_btnStep, x + quadWidth + 8, toolbarY3, quadWidth, controlHeight);
+        place(m_btnBrowseEditStack, x + (quadWidth + 8) * 2, toolbarY3, quadWidth, controlHeight);
+        place(m_btnClearEditStack, x + (quadWidth + 8) * 3, toolbarY3, quadWidth, controlHeight);
+
+        place(m_labelSessionStatus, x, advance(40), fullWidth, 36);
+
+        const int bodyTop = y + gap;
+        const int trayReservedHeight = m_showBottomTray ? 164 : 0;
+        const int bodyBottom = panelHeight - trayReservedHeight - kUiMargin;
+        const int bodyHeight = std::max(bodyBottom - bodyTop, 220);
+
+        int leftY = bodyTop;
+        if (IsGroomWorkspace())
         {
-            SetWindowTextW(m_labelEditWorkflow,
-                L"HOW TO EDIT\r\n"                L"1. Keep Interaction on Edit Mode.\r\n"                L"2. In the 3D view, click the hair area or one strand.\r\n"                L"3. Pick the layer below, or press Add New Layer.\r\n"                L"4. Use Area X / Area Y and Area Width / Height to place the edit.\r\n"                L"5. Use Hair Length, Layer Strength, and Boundary Softness.\r\n"                L"6. Press Apply to This Layer to update the current layer.");
-            SetWindowTextW(m_labelEditLegend,
-                L"WHAT THE COLORS MEAN\r\n"                L"Green = editable  Gray = locked\r\n"                L"Yellow = boundary  Pink = selected strand\r\n"                L"Orange = related family\r\n"                L"Selected strand points: Root red / Mid yellow / Tip cyan");
-        }
-
-        // Hair build block
-        const int buildLabelY = advance(labelHeight);
-        place(labelGuides, x, buildLabelY, 50, labelHeight);
-        place(labelFollowers, x + 118, buildLabelY, 96, labelHeight);
-        place(labelParticles, x + 252, buildLabelY, 98, labelHeight);
-        const int buildRowY = advance(controlHeight);
-        place(m_editGuides, x, buildRowY, narrowEditWidth, controlHeight);
-        place(m_editFollowers, x + 118, buildRowY, narrowEditWidth, controlHeight);
-        place(m_editParticles, x + 252, buildRowY, narrowEditWidth, controlHeight);
-        const int buildButtonY = advance(controlHeight + gap);
-        place(m_btnApplyAsset, x, buildButtonY, halfWidth, controlHeight);
-        place(m_btnImportAsset, x + halfWidth + 8, buildButtonY, halfWidth, controlHeight);
-
-        if (editMode)
-        {
-            // Clear, task-oriented edit layout.
-            place(m_labelEditWorkflow, x, advance(118), fullWidth, 112);
-            place(m_labelEditLegend, x, advance(86), fullWidth, 80);
-
-            const int editLoadY = advance(controlHeight + gap);
-            place(m_btnBrowseEditStack, x, editLoadY, halfWidth, controlHeight);
-            place(m_btnClearEditStack, x + halfWidth + 8, editLoadY, halfWidth, controlHeight);
-            place(m_labelEditStack, x, advance(labelHeight), fullWidth, labelHeight);
-
-            place(m_labelLayerList, x, advance(labelHeight + 4), fullWidth, labelHeight);
-            place(m_listInlineLayers, x, advance(92), fullWidth, 88);
-            const int layerButtonY = advance(controlHeight + gap);
-            place(m_btnQuickEditMoveUp, x, layerButtonY, halfWidth, controlHeight);
-            place(m_btnQuickEditMoveDown, x + halfWidth + 8, layerButtonY, halfWidth, controlHeight);
-
-            place(m_labelQuickEditForm, x, advance(labelHeight + 4), fullWidth, labelHeight);
-            place(m_checkQuickEditEnabled, x, advance(controlHeight), fullWidth, controlHeight);
-            place(m_labelQuickEditName, x, advance(labelHeight), fullWidth, labelHeight);
-            place(m_editQuickEditName, x, advance(controlHeight), fullWidth, controlHeight);
-            place(m_comboQuickEditMode, x, advance(controlHeight + gap), fullWidth, 120);
-
-            // Most understandable controls first.
-            placeLabelSlider(m_labelQuickEditCenterU, m_trackQuickEditCenterU, true);
-            placeLabelSlider(m_labelQuickEditCenterV, m_trackQuickEditCenterV, true);
-            placeLabelSlider(m_labelQuickEditRadiusU, m_trackQuickEditRadiusU, true);
-            placeLabelSlider(m_labelQuickEditRadiusV, m_trackQuickEditRadiusV, true);
-            placeLabelSlider(m_labelQuickEditLengthScale, m_trackQuickEditLengthScale, true);
-            placeLabelSlider(m_labelQuickEditLayerWeight, m_trackQuickEditLayerWeight, true);
-            placeLabelSlider(m_labelQuickEditWidthScale, m_trackQuickEditWidthScale, true);
-            placeLabelSlider(m_labelQuickEditFeather, m_trackQuickEditFeather, true);
-            placeLabelSlider(m_labelQuickEditBoundarySmoothing, m_trackQuickEditBoundarySmoothing, true);
-
-            const bool sectorMode = (m_quickEditMode == hairgpu::RegionSelectMode::Sector);
-            placeLabelSlider(m_labelQuickEditAngleCenter, m_trackQuickEditAngleCenter, sectorMode);
-            placeLabelSlider(m_labelQuickEditAngleHalfExtent, m_trackQuickEditAngleHalfExtent, sectorMode);
-
-            const int editActionY = advance(controlHeight + gap);
-            place(m_btnQuickEditReplace, x, editActionY, halfWidth, controlHeight);
-            place(m_btnQuickEditAppend, x + halfWidth + 8, editActionY, halfWidth, controlHeight);
-            const int dangerRowY = advance(controlHeight + gap);
-            place(m_btnQuickEditDuplicate, x, dangerRowY, halfWidth, controlHeight);
-            place(m_btnQuickEditDelete, x + halfWidth + 8, dangerRowY, halfWidth, controlHeight);
-
-            place(m_labelQuickEditVisualization, x, advance(76), fullWidth, 72);
-            place(m_labelAssetStats, x, advance(84), fullWidth, 80);
+            place(m_btnToolSelect, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolComb, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolGrab, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolSmooth, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolLength, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolVolume, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolPart, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolFreeze, x, leftY, leftRailWidth, controlHeight); leftY += controlHeight + 4;
+            place(m_btnToolStrandFix, x, leftY, leftRailWidth, controlHeight);
         }
         else
         {
-            // View-first layout
-            const int toggleY1 = advance(controlHeight + gap);
-            place(m_checkShowScalpMesh, x, toggleY1, halfWidth, controlHeight);
-            place(m_checkShowColliders, x + halfWidth + 8, toggleY1, halfWidth, controlHeight);
-            const int toggleY2 = advance(controlHeight);
-            place(m_checkShowGuides, x, toggleY2, halfWidth, controlHeight);
-            place(m_checkShowFollowers, x + halfWidth + 8, toggleY2, halfWidth, controlHeight);
-            const int toggleY3 = advance(controlHeight);
-            place(m_checkShowRoots, x, toggleY3, halfWidth, controlHeight);
-            place(m_checkShowLinks, x + halfWidth + 8, toggleY3, halfWidth, controlHeight);
-            const int toggleY4 = advance(controlHeight);
-            place(m_checkShowScalp, x, toggleY4, halfWidth, controlHeight);
-            place(m_checkShowFloor, x + halfWidth + 8, toggleY4, halfWidth, controlHeight);
-            const int toggleY5 = advance(controlHeight);
-            place(m_checkGrid, x, toggleY5, halfWidth, controlHeight);
-            place(m_checkSelfCollision, x + halfWidth + 8, toggleY5, halfWidth, controlHeight);
-            const int toggleY6 = advance(controlHeight);
-            place(m_checkShowGridBounds, x, toggleY6, halfWidth, controlHeight);
-            place(m_checkScalpMotion, x + halfWidth + 8, toggleY6, halfWidth, controlHeight);
+            place(m_btnToolSelect, x, leftY, leftRailWidth, controlHeight);
+        }
 
-            placeLabelSlider(m_labelScalpCoverageStrength, m_trackScalpCoverageStrength, true);
-            placeLabelSlider(m_labelScalpPartWidth, m_trackScalpPartWidth, true);
-            placeLabelSlider(m_labelScalpDarkness, m_trackScalpDarkness, true);
-            placeLabelSlider(m_labelScalpHairBlend, m_trackScalpHairBlend, true);
+        y = bodyTop;
+        if (m_showInspectorPane)
+        {
+            place(m_labelInspectorTitle, inspectorX, y, inspectorWidth, labelHeight);
+            y += labelHeight + 2;
+            place(m_labelToolHint, inspectorX, y, inspectorWidth, 42);
+            y += 46;
 
-            placeLabelSlider(m_labelWidth, m_trackWidth, true);
-            placeLabelSlider(m_labelGravity, m_trackGravity, true);
-            placeLabelSlider(m_labelDamping, m_trackDamping, true);
-            placeLabelSlider(m_labelWind, m_trackWind, true);
-            placeLabelSlider(m_labelIterations, m_trackIterations, true);
-            placeLabelSlider(m_labelFollow, m_trackFollow, true);
-            placeLabelSlider(m_labelSelfRadius, m_trackSelfRadius, true);
-            placeLabelSlider(m_labelSelfStiffness, m_trackSelfStiffness, true);
-            placeLabelSlider(m_labelGridCellSize, m_trackGridCellSize, true);
-            placeLabelSlider(m_labelStretchCompliance, m_trackStretchCompliance, true);
-            placeLabelSlider(m_labelBendCompliance, m_trackBendCompliance, true);
+            if (IsGroomWorkspace())
+            {
+                const bool showArea = m_groomTool == GroomTool::Comb || m_groomTool == GroomTool::Grab || m_groomTool == GroomTool::Length || m_groomTool == GroomTool::Volume || m_groomTool == GroomTool::Part || m_groomTool == GroomTool::Freeze;
+                const bool showSector = (m_groomTool == GroomTool::Part) || (m_quickEditMode == hairgpu::RegionSelectMode::Sector);
+                const bool showStrandOffsets = m_groomTool == GroomTool::Grab || m_groomTool == GroomTool::StrandFix;
+                const bool showCombOffsets = m_groomTool == GroomTool::Comb;
+                const bool showLength = m_groomTool == GroomTool::Length || m_groomTool == GroomTool::Comb;
+                const bool showVolume = m_groomTool == GroomTool::Volume;
+                const bool showSmooth = m_groomTool == GroomTool::Smooth;
+                const bool showGrouping = m_groomTool == GroomTool::Freeze || m_groomTool == GroomTool::Select;
 
-            place(m_labelActiveSetTuning, x, advance(labelHeight + 4), fullWidth, labelHeight + 2);
-            const int budgetRowY = advance(controlHeight + gap);
-            place(m_checkActiveSetAdaptiveBudget, x, budgetRowY, halfWidth, controlHeight);
-            place(m_checkActiveSetHardClamp, x + halfWidth + 8, budgetRowY, halfWidth, controlHeight);
-            placeLabelSlider(m_labelActiveSetMaxClusters, m_trackActiveSetMaxClusters, true);
-            placeLabelSlider(m_labelActiveSetMaxGuides, m_trackActiveSetMaxGuides, true);
-            placeLabelSlider(m_labelActiveSetThreshold, m_trackActiveSetThreshold, true);
-            placeLabelSlider(m_labelActiveSetTargetFrame, m_trackActiveSetTargetFrame, true);
-            placeLabelSlider(m_labelActiveSetFixedCost, m_trackActiveSetFixedCost, true);
-            placeLabelSlider(m_labelActiveSetClusterCost, m_trackActiveSetClusterCost, true);
-            place(m_labelActiveSetScoreWeights, x, advance(labelHeight), fullWidth, labelHeight);
-            placeLabelSlider(m_labelActiveSetMotionWeight, m_trackActiveSetMotionWeight, true);
-            placeLabelSlider(m_labelActiveSetContactWeight, m_trackActiveSetContactWeight, true);
-            placeLabelSlider(m_labelActiveSetUncertaintyWeight, m_trackActiveSetUncertaintyWeight, true);
-            placeLabelSlider(m_labelActiveSetEditWeight, m_trackActiveSetEditWeight, true);
+                place(m_labelQuickEditName, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                place(m_editQuickEditName, inspectorX, y, inspectorWidth, controlHeight); y += controlHeight + 4;
+                place(m_checkQuickEditEnabled, inspectorX, y, twoWidth, controlHeight);
+                place(m_checkQuickEditGuidesOnly, inspectorX + twoWidth + 8, y, twoWidth, controlHeight);
+                y += controlHeight + 4;
+                place(m_comboQuickEditMode, inspectorX, y, inspectorWidth, 120); y += controlHeight + gap;
 
-            const int saveRowY = advance(controlHeight + gap);
-            place(m_btnSaveSettings, x, saveRowY, halfWidth, controlHeight);
-            place(m_btnLoadSettings, x + halfWidth + 8, saveRowY, halfWidth, controlHeight);
-            const int exportRowY = advance(controlHeight + gap);
-            place(m_btnExportCsv, x, exportRowY, halfWidth, controlHeight);
-            place(m_btnExportPerfCsv, x + halfWidth + 8, exportRowY, halfWidth, controlHeight);
-            const int reportRowY = advance(controlHeight + gap);
-            place(m_btnExportActiveSetJson, x, reportRowY, halfWidth, controlHeight);
-            place(m_btnExportRuntimeReport, x + halfWidth + 8, reportRowY, halfWidth, controlHeight);
+                placeInspectorSliderHalf(m_labelQuickEditRadiusU, m_trackQuickEditRadiusU, m_labelQuickEditRadiusV, m_trackQuickEditRadiusV, showArea || showStrandOffsets || showSmooth);
+                placeInspectorSlider(m_labelQuickEditLayerWeight, m_trackQuickEditLayerWeight, true);
+                placeInspectorSlider(m_labelQuickEditFeather, m_trackQuickEditFeather, showArea || showSmooth);
+                placeInspectorSlider(m_labelQuickEditLengthScale, m_trackQuickEditLengthScale, showLength);
+                placeInspectorSlider(m_labelQuickEditWidthScale, m_trackQuickEditWidthScale, showVolume);
+                placeInspectorSlider(m_labelQuickEditBoundarySmoothing, m_trackQuickEditBoundarySmoothing, showSmooth || showCombOffsets || showVolume);
+                placeInspectorSlider(m_labelQuickEditBoundaryRadiusUv, m_trackQuickEditBoundaryRadiusUv, showSmooth);
+                placeInspectorSlider(m_labelQuickEditSideOffset, m_trackQuickEditSideOffset, showCombOffsets || showVolume);
+                placeInspectorSlider(m_labelQuickEditYaw, m_trackQuickEditYaw, showCombOffsets || m_groomTool == GroomTool::Part);
+                placeInspectorSlider(m_labelQuickEditFollowerInfluence, m_trackQuickEditFollowerInfluence, showVolume || showCombOffsets);
+                placeInspectorSlider(m_labelQuickEditTipOffsetX, m_trackQuickEditTipOffsetX, showCombOffsets || showStrandOffsets);
+                placeInspectorSlider(m_labelQuickEditTipOffsetY, m_trackQuickEditTipOffsetY, showStrandOffsets);
+                placeInspectorSlider(m_labelQuickEditTipOffsetZ, m_trackQuickEditTipOffsetZ, showCombOffsets || showStrandOffsets);
 
-            place(m_labelAssetStats, x, advance(92), fullWidth, 88);
-            place(m_labelStats, x, advance(150), fullWidth, 144);
+                const int actionY = std::min(y + 4, bodyBottom - (m_showAdvancedInspector ? 170 : 76));
+                place(m_btnQuickEditReplace, inspectorX, actionY, twoWidth, controlHeight);
+                place(m_btnQuickEditAppend, inspectorX + twoWidth + 8, actionY, twoWidth, controlHeight);
+
+                if (m_showAdvancedInspector)
+                {
+                    y = actionY + controlHeight + 8;
+                    place(m_labelQuickEditForm, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                    placeInspectorSliderHalf(m_labelQuickEditCenterU, m_trackQuickEditCenterU, m_labelQuickEditCenterV, m_trackQuickEditCenterV, showArea);
+                    placeInspectorSlider(m_labelQuickEditInnerRadius, m_trackQuickEditInnerRadius, showArea);
+                    placeInspectorSlider(m_labelQuickEditAngleCenter, m_trackQuickEditAngleCenter, showSector);
+                    placeInspectorSlider(m_labelQuickEditAngleHalfExtent, m_trackQuickEditAngleHalfExtent, showSector);
+                    placeInspectorSlider(m_labelQuickEditRootOffsetX, m_trackQuickEditRootOffsetX, showStrandOffsets);
+                    placeInspectorSlider(m_labelQuickEditRootOffsetY, m_trackQuickEditRootOffsetY, showStrandOffsets);
+                    placeInspectorSlider(m_labelQuickEditRootOffsetZ, m_trackQuickEditRootOffsetZ, showStrandOffsets);
+                    if (showGrouping)
+                    {
+                        place(m_labelQuickEditGroupId, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                        place(m_editQuickEditGroupId, inspectorX, y, inspectorWidth, controlHeight); y += controlHeight + 4;
+                    }
+                    place(m_labelQuickEditVisualization, inspectorX, y, inspectorWidth, 56); y += 60;
+                    place(m_btnQuickEditDuplicate, inspectorX, y, twoWidth, controlHeight);
+                    place(m_btnQuickEditDelete, inspectorX + twoWidth + 8, y, twoWidth, controlHeight); y += controlHeight + 4;
+                    place(m_btnQuickEditMoveUp, inspectorX, y, twoWidth, controlHeight);
+                    place(m_btnQuickEditMoveDown, inspectorX + twoWidth + 8, y, twoWidth, controlHeight);
+                }
+            }
+            else if (IsSimWorkspace())
+            {
+                place(labelRender, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                place(m_comboRenderMode, inspectorX, y, inspectorWidth, 120); y += controlHeight + gap;
+                place(labelColorDebug, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                place(m_comboDebugColor, inspectorX, y, inspectorWidth, 140); y += controlHeight + gap;
+                place(m_checkSelfCollision, inspectorX, y, twoWidth, controlHeight);
+                place(m_checkShowColliders, inspectorX + twoWidth + 8, y, twoWidth, controlHeight); y += controlHeight + 4;
+                placeInspectorSlider(m_labelWidth, m_trackWidth, true);
+                placeInspectorSlider(m_labelGravity, m_trackGravity, true);
+                placeInspectorSlider(m_labelDamping, m_trackDamping, true);
+                placeInspectorSlider(m_labelWind, m_trackWind, true);
+                placeInspectorSlider(m_labelIterations, m_trackIterations, true);
+                if (m_showAdvancedInspector)
+                {
+                    place(m_checkShowScalpMesh, inspectorX, y, twoWidth, controlHeight);
+                    place(m_checkShowScalp, inspectorX + twoWidth + 8, y, twoWidth, controlHeight); y += controlHeight + 4;
+                    place(m_checkShowGuides, inspectorX, y, twoWidth, controlHeight);
+                    place(m_checkShowFollowers, inspectorX + twoWidth + 8, y, twoWidth, controlHeight); y += controlHeight + 4;
+                    placeInspectorSlider(m_labelFollow, m_trackFollow, true);
+                    placeInspectorSlider(m_labelSelfRadius, m_trackSelfRadius, true);
+                    placeInspectorSlider(m_labelSelfStiffness, m_trackSelfStiffness, true);
+                    placeInspectorSlider(m_labelGridCellSize, m_trackGridCellSize, true);
+                    placeInspectorSlider(m_labelStretchCompliance, m_trackStretchCompliance, true);
+                    placeInspectorSlider(m_labelBendCompliance, m_trackBendCompliance, true);
+                }
+            }
+            else if (IsReviewWorkspace())
+            {
+                place(m_labelMaskOverlay, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                place(m_comboMaskOverlay, inspectorX, y, inspectorWidth, 160); y += controlHeight + gap;
+                place(m_labelMaskSource, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                place(m_comboMaskSource, inspectorX, y, inspectorWidth, 120); y += controlHeight + gap;
+                place(m_btnBrowsePartingMask, inspectorX, y, twoWidth, controlHeight);
+                place(m_btnBrowseRegionMask, inspectorX + twoWidth + 8, y, twoWidth, controlHeight); y += controlHeight + 4;
+                place(m_labelPartingMask, inspectorX, y, twoWidth, labelHeight);
+                place(m_labelRegionMask, inspectorX + twoWidth + 8, y, twoWidth, labelHeight); y += labelHeight;
+                place(m_previewPartingMask, inspectorX, y, twoWidth, 72);
+                place(m_previewRegionMask, inspectorX + twoWidth + 8, y, twoWidth, 72); y += 78;
+                if (m_showAdvancedInspector)
+                {
+                    placeInspectorSlider(m_labelScalpCoverageStrength, m_trackScalpCoverageStrength, true);
+                    placeInspectorSlider(m_labelScalpPartWidth, m_trackScalpPartWidth, true);
+                    placeInspectorSlider(m_labelScalpDarkness, m_trackScalpDarkness, true);
+                    placeInspectorSlider(m_labelScalpHairBlend, m_trackScalpHairBlend, true);
+                    place(m_labelAssetStats, inspectorX, std::min(y + 4, bodyBottom - 88), inspectorWidth, 84);
+                }
+            }
+            else
+            {
+                place(m_btnExportActiveSetJson, inspectorX, y, inspectorWidth, controlHeight); y += controlHeight + 4;
+                place(m_btnExportRuntimeReport, inspectorX, y, inspectorWidth, controlHeight); y += controlHeight + 8;
+                if (m_showAdvancedInspector)
+                {
+                    place(m_labelActiveSetTuning, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight + 4;
+                    place(m_checkActiveSetAdaptiveBudget, inspectorX, y, twoWidth, controlHeight);
+                    place(m_checkActiveSetHardClamp, inspectorX + twoWidth + 8, y, twoWidth, controlHeight); y += controlHeight + 4;
+                    placeInspectorSlider(m_labelActiveSetMaxClusters, m_trackActiveSetMaxClusters, true);
+                    placeInspectorSlider(m_labelActiveSetMaxGuides, m_trackActiveSetMaxGuides, true);
+                    placeInspectorSlider(m_labelActiveSetThreshold, m_trackActiveSetThreshold, true);
+                    placeInspectorSlider(m_labelActiveSetTargetFrame, m_trackActiveSetTargetFrame, true);
+                    placeInspectorSlider(m_labelActiveSetFixedCost, m_trackActiveSetFixedCost, true);
+                    placeInspectorSlider(m_labelActiveSetClusterCost, m_trackActiveSetClusterCost, true);
+                    place(m_labelActiveSetScoreWeights, inspectorX, y, inspectorWidth, labelHeight); y += labelHeight;
+                    placeInspectorSlider(m_labelActiveSetMotionWeight, m_trackActiveSetMotionWeight, true);
+                    placeInspectorSlider(m_labelActiveSetContactWeight, m_trackActiveSetContactWeight, true);
+                    placeInspectorSlider(m_labelActiveSetUncertaintyWeight, m_trackActiveSetUncertaintyWeight, true);
+                    placeInspectorSlider(m_labelActiveSetEditWeight, m_trackActiveSetEditWeight, true);
+                }
+            }
+        }
+
+        if (m_showBottomTray)
+        {
+            const int trayY = panelHeight - 152;
+            place(m_labelTrayTitle, x, trayY, fullWidth, labelHeight);
+            place(m_btnTrayLayers, x, trayY + labelHeight + 4, quadWidth, controlHeight);
+            place(m_btnTrayHistory, x + quadWidth + 8, trayY + labelHeight + 4, quadWidth, controlHeight);
+            place(m_btnTrayMetrics, x + (quadWidth + 8) * 2, trayY + labelHeight + 4, quadWidth, controlHeight);
+            const int trayBodyY = trayY + labelHeight + controlHeight + 10;
+            const int trayBodyHeight = panelHeight - trayBodyY - kUiMargin;
+            if (m_bottomTrayTab == BottomTrayTab::Layers)
+            {
+                place(m_labelLayerList, x, trayBodyY, fullWidth, labelHeight);
+                place(m_listInlineLayers, x, trayBodyY + labelHeight + 2, fullWidth, trayBodyHeight - labelHeight - 2);
+            }
+            else if (m_bottomTrayTab == BottomTrayTab::History)
+            {
+                place(m_labelEditLegend, x, trayBodyY, fullWidth, trayBodyHeight);
+            }
+            else
+            {
+                place(m_labelStats, x, trayBodyY, fullWidth, trayBodyHeight);
+            }
         }
     }
+
 
     void GpuHairViewer::RefreshAssetStatsText()
     {
@@ -4898,15 +5185,19 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
            << L"Total particles: " << m_asset.restPoints.size() << L"\n"
            << L"Segments: " << m_renderData.segmentCount << L"\n"
            << L"Import: " << m_lastImportStatus << L"\n"
-           << L"Edit stack: " << (m_editStackPath.empty() ? L"none" : std::filesystem::path(m_editStackPath).filename().wstring()) << L"\n"
+           << L"Edit stack: " << editStackDisplayName << L"\n"
            << L"Edit status: " << m_lastEditStackStatus << L"\n"
            << L"Active edit guides: " << m_runtimeEditState.activeGuideCount << L" / " << m_asset.guideStrandCount << L"\n"
-           << L"Runtime: particle-only GPU path\nEdit boxes auto-rebuild\nEdit tip: use Edit Mode, then Area X/Y and Hair Length.";
+           << L"Runtime: particle-only GPU path\nEdit boxes auto-rebuild";
+
         if (m_labelEditStack)
         {
-            SetWindowTextFormat(m_labelEditStack, L"1) Current edits: " + editStackDisplayName + L"  [" + m_lastEditStackStatus + L"]");
+            SetWindowTextFormat(m_labelEditStack, L"Edit Stack: " + editStackDisplayName + L"  [" + m_lastEditStackStatus + L"]");
         }
-        SetWindowTextFormat(m_labelAssetStats, ss.str());
+        if (m_labelAssetStats)
+        {
+            SetWindowTextFormat(m_labelAssetStats, ss.str());
+        }
     }
 
     void GpuHairViewer::SyncControlsFromState()
@@ -5001,6 +5292,28 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         RefreshInlineLayerListFromText(m_selectedInlineLayerIndex);
         RefreshQuickEditFormLabels();
         SetWindowTextFormat(m_btnPlayPause, m_paused ? L"Play" : L"Pause");
+        SetWindowTextFormat(m_btnSaveSettings, L"Save Session");
+        SetWindowTextFormat(m_btnSaveInlineEditStack, L"Export Stack");
+        SetWindowTextFormat(m_btnWorkspaceGroom, m_workspaceMode == WorkspaceMode::Groom ? L"[Groom]" : L"Groom");
+        SetWindowTextFormat(m_btnWorkspaceSim, m_workspaceMode == WorkspaceMode::Sim ? L"[Sim]" : L"Sim");
+        SetWindowTextFormat(m_btnWorkspaceReview, m_workspaceMode == WorkspaceMode::Review ? L"[Review]" : L"Review");
+        SetWindowTextFormat(m_btnWorkspaceReport, m_workspaceMode == WorkspaceMode::Report ? L"[Report]" : L"Report");
+        SetWindowTextFormat(m_btnToolSelect, m_groomTool == GroomTool::Select ? L"> Select" : L"Q  Select");
+        SetWindowTextFormat(m_btnToolComb, m_groomTool == GroomTool::Comb ? L"> Comb" : L"W  Comb");
+        SetWindowTextFormat(m_btnToolGrab, m_groomTool == GroomTool::Grab ? L"> Grab" : L"E  Grab");
+        SetWindowTextFormat(m_btnToolSmooth, m_groomTool == GroomTool::Smooth ? L"> Smooth" : L"A  Smooth");
+        SetWindowTextFormat(m_btnToolLength, m_groomTool == GroomTool::Length ? L"> Length" : L"S  Length");
+        SetWindowTextFormat(m_btnToolVolume, m_groomTool == GroomTool::Volume ? L"> Volume" : L"D  Volume");
+        SetWindowTextFormat(m_btnToolPart, m_groomTool == GroomTool::Part ? L"> Part" : L"P  Part");
+        SetWindowTextFormat(m_btnToolFreeze, m_groomTool == GroomTool::Freeze ? L"> Freeze" : L"X  Freeze");
+        SetWindowTextFormat(m_btnToolStrandFix, m_groomTool == GroomTool::StrandFix ? L"> Fix" : L"V  Fix");
+        SetWindowTextFormat(m_btnTrayLayers, m_bottomTrayTab == BottomTrayTab::Layers ? L"[Layers]" : L"Layers");
+        SetWindowTextFormat(m_btnTrayHistory, m_bottomTrayTab == BottomTrayTab::History ? L"[History]" : L"History");
+        SetWindowTextFormat(m_btnTrayMetrics, m_bottomTrayTab == BottomTrayTab::Metrics ? L"[Metrics]" : L"Metrics");
+        SetWindowTextFormat(m_btnToggleInspector, m_showInspectorPane ? L"Inspector On" : L"Inspector Off");
+        SetWindowTextFormat(m_btnToggleAdvanced, m_showAdvancedInspector ? L"Advanced On" : L"Advanced Off");
+        SetWindowTextFormat(m_btnToggleTray, m_showBottomTray ? L"Panels On" : L"Panels Off");
+        SetWindowTextFormat(m_btnFastViewport, m_fastGroomViewport ? L"Fast View On" : L"Fast View Off");
         RefreshAssetStatsText();
 
         m_gpuDebugLinesDirty = true;
@@ -5030,7 +5343,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             const LRESULT renderSel = SendMessageW(m_comboRenderMode, CB_GETCURSEL, 0, 0);
             m_renderMode = (renderSel <= 0) ? RenderMode::ParticlePointSprite : ((renderSel == 1) ? RenderMode::ParticleBillboard : RenderMode::StrandRibbon);
         }
-        m_interactionMode = (SendMessageW(m_comboInteractionMode, CB_GETCURSEL, 0, 0) == 1) ? InteractionMode::Edit : InteractionMode::View;
+        m_interactionMode = IsGroomWorkspace() ? InteractionMode::Edit :
+            ((SendMessageW(m_comboInteractionMode, CB_GETCURSEL, 0, 0) == 1) ? InteractionMode::Edit : InteractionMode::View);
         m_debugColorMode = static_cast<DebugColorMode>(std::max<LRESULT>(0, SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0)));
         if (m_interactionMode == InteractionMode::Edit && m_debugColorMode == DebugColorMode::Natural)
         {
@@ -5253,6 +5567,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         m_selectedStrandIndex = -1;
         m_strandUndoStack.clear();
         m_strandRedoStack.clear();
+        m_lockedStrands.assign(m_asset.strands.size(), 0u);
+        m_viewportHistory.clear();
         hairgpu::HairAsset editedAsset = m_baseAsset;
         if (m_editStackPath.empty())
         {
@@ -5413,6 +5729,13 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         out << "regionMaskPath=" << WideToUtf8(m_regionMaskPath) << "\n";
         out << "inlineEditStackText=" << EscapeSettingsText(WideToUtf8(GetInlineEditStackText())) << "\n";
         out << "selectedInlineLayerIndex=" << std::max(m_selectedInlineLayerIndex, 0) << "\n";
+        out << "workspaceMode=" << static_cast<uint32_t>(m_workspaceMode) << "\n";
+        out << "groomTool=" << static_cast<uint32_t>(m_groomTool) << "\n";
+        out << "bottomTrayTab=" << static_cast<uint32_t>(m_bottomTrayTab) << "\n";
+        out << "showInspectorPane=" << (m_showInspectorPane ? 1 : 0) << "\n";
+        out << "showBottomTray=" << (m_showBottomTray ? 1 : 0) << "\n";
+        out << "showAdvancedInspector=" << (m_showAdvancedInspector ? 1 : 0) << "\n";
+        out << "fastGroomViewport=" << (m_fastGroomViewport ? 1 : 0) << "\n";
         out << "activeSetAdaptiveBudget=" << (m_activeSetBudget.enableBudgetAdaptation ? 1 : 0) << "\n";
         out << "activeSetHardClamp=" << (m_activeSetBudget.enableHardBudgetClamp ? 1 : 0) << "\n";
         out << "activeSetMaxClusters=" << m_activeSetBudget.maxActiveClusters << "\n";
@@ -5511,6 +5834,13 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         std::wstring inlineEditStackText = BuildDefaultInlineEditStackText();
         if (auto it = values.find("inlineEditStackText"); it != values.end()) inlineEditStackText = Utf8ToWide(UnescapeSettingsText(it->second));
         if (auto it = values.find("selectedInlineLayerIndex"); it != values.end()) m_selectedInlineLayerIndex = std::max(0, std::stoi(it->second));
+        m_workspaceMode = static_cast<WorkspaceMode>(std::min<uint32_t>(getUInt("workspaceMode", static_cast<uint32_t>(m_workspaceMode)), 3u));
+        m_groomTool = static_cast<GroomTool>(std::min<uint32_t>(getUInt("groomTool", static_cast<uint32_t>(m_groomTool)), 8u));
+        m_bottomTrayTab = static_cast<BottomTrayTab>(std::min<uint32_t>(getUInt("bottomTrayTab", static_cast<uint32_t>(m_bottomTrayTab)), 2u));
+        m_showInspectorPane = getBool("showInspectorPane", m_showInspectorPane);
+        m_showBottomTray = getBool("showBottomTray", m_showBottomTray);
+        m_showAdvancedInspector = getBool("showAdvancedInspector", m_showAdvancedInspector);
+        m_fastGroomViewport = getBool("fastGroomViewport", m_fastGroomViewport);
         m_maskSourceMode = static_cast<MaskSourceMode>(std::min<uint32_t>(getUInt("maskSourceMode", static_cast<uint32_t>(m_maskSourceMode)), 2u));
         m_maskOverlayMode = static_cast<MaskOverlayMode>(std::min<uint32_t>(getUInt("maskOverlayMode", static_cast<uint32_t>(m_maskOverlayMode)), 9u));
         m_scalpCoverageStrength = hairgpu::Clamp(getFloat("scalpCoverageStrength", m_scalpCoverageStrength), 0.0f, 2.0f);
@@ -5530,6 +5860,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         m_activeSetScoringSettings.contactWeight = hairgpu::Clamp(getFloat("activeSetContactWeight", m_activeSetScoringSettings.contactWeight), 0.0f, 1.0f);
         m_activeSetScoringSettings.uncertaintyWeight = hairgpu::Clamp(getFloat("activeSetUncertaintyWeight", m_activeSetScoringSettings.uncertaintyWeight), 0.0f, 1.0f);
         m_activeSetScoringSettings.editWeight = hairgpu::Clamp(getFloat("activeSetEditWeight", m_activeSetScoringSettings.editWeight), 0.0f, 1.0f);
+        m_interactionMode = (m_workspaceMode == WorkspaceMode::Groom) ? InteractionMode::Edit : InteractionMode::View;
 
         SyncControlsFromState();
         SetWindowTextW(m_editInlineEditStack, inlineEditStackText.c_str());
@@ -5769,69 +6100,150 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         SetWindowTextFormat(m_labelActiveSetTuning, tuningHeader);
     }
 
+
     void GpuHairViewer::RefreshQuickEditFormLabels()
     {
-        std::wstring selectedLabel = L"2) Pick a Layer  -  Selected: ";
+        std::wstring selectedLabel = std::wstring(L"Layers - selected: ");
         const int selectedIndex = GetSelectedInlineLayerIndex();
         if (selectedIndex >= 0)
         {
             selectedLabel += std::to_wstring(selectedIndex + 1);
-            selectedLabel += m_quickEditEnabled ? L" [on]" : L" [off]";
+            selectedLabel += m_quickEditEnabled ? L" [enabled]" : L" [disabled]";
         }
         else
         {
             selectedLabel += L"none";
         }
         SetWindowTextFormat(m_labelLayerList, selectedLabel);
+
+        std::wstring toolLabel = std::wstring(L"Groom Form - ") + GetGroomToolDisplayName();
+        SetWindowTextFormat(m_labelQuickEditForm, toolLabel);
+        SetWindowTextFormat(m_labelQuickEditName, L"Layer / Stroke Name");
+
         constexpr float kRadToDeg = 57.2957795f;
-        SetWindowTextFormat(m_labelQuickEditFeather, L"Boundary Softness: " + FormatFloat(m_quickEditFeather, 2));
-        SetWindowTextFormat(m_labelQuickEditLengthScale, L"Hair Length: " + FormatFloat(m_quickEditLengthScale, 2));
-        SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Layer Strength: " + FormatFloat(m_quickEditLayerWeight, 2));
-        SetWindowTextFormat(m_labelQuickEditCenterU, L"Area X: " + FormatFloat(m_quickEditCenterU, 2));
-        SetWindowTextFormat(m_labelQuickEditCenterV, L"Area Y: " + FormatFloat(m_quickEditCenterV, 2));
-        SetWindowTextFormat(m_labelQuickEditRadiusU, L"Area Width: " + FormatFloat(m_quickEditRadiusU, 2));
-        SetWindowTextFormat(m_labelQuickEditRadiusV, L"Area Height: " + FormatFloat(m_quickEditRadiusV, 2));
+        switch (m_groomTool)
+        {
+        case GroomTool::Comb:
+            SetWindowTextFormat(m_labelQuickEditCenterU, L"Brush Center U: " + FormatFloat(m_quickEditCenterU, 2));
+            SetWindowTextFormat(m_labelQuickEditCenterV, L"Brush Center V: " + FormatFloat(m_quickEditCenterV, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusU, L"Brush Width: " + FormatFloat(m_quickEditRadiusU, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusV, L"Brush Height: " + FormatFloat(m_quickEditRadiusV, 2));
+            SetWindowTextFormat(m_labelQuickEditLengthScale, L"Length Bias: " + FormatFloat(m_quickEditLengthScale, 2));
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Stroke Strength: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditFeather, L"Falloff: " + FormatFloat(m_quickEditFeather, 2));
+            SetWindowTextFormat(m_labelQuickEditTipOffsetX, L"Comb Drift X: " + FormatFloat(m_quickEditTipOffsetX, 3));
+            SetWindowTextFormat(m_labelQuickEditTipOffsetZ, L"Comb Drift Z: " + FormatFloat(m_quickEditTipOffsetZ, 3));
+            SetWindowTextFormat(m_labelQuickEditSideOffset, L"Side Flow: " + FormatFloat(m_quickEditSideOffset, 3));
+            SetWindowTextFormat(m_labelQuickEditYaw, L"Flow Angle: " + FormatFloat(m_quickEditYawRadians * kRadToDeg, 1) + L" deg");
+            SetWindowTextFormat(m_labelQuickEditFollowerInfluence, L"Clump Follow: " + FormatFloat(m_quickEditFollowerInfluence, 2));
+            SetWindowTextFormat(m_labelQuickEditBoundarySmoothing, L"Relax After Stroke: " + FormatFloat(m_quickEditBoundarySmoothing, 2));
+            break;
+        case GroomTool::Grab:
+        case GroomTool::StrandFix:
+            SetWindowTextFormat(m_labelQuickEditCenterU, L"Grab Center U: " + FormatFloat(m_quickEditCenterU, 2));
+            SetWindowTextFormat(m_labelQuickEditCenterV, L"Grab Center V: " + FormatFloat(m_quickEditCenterV, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusU, L"Grab Radius U: " + FormatFloat(m_quickEditRadiusU, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusV, L"Grab Radius V: " + FormatFloat(m_quickEditRadiusV, 2));
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Grab Strength: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditFeather, L"Falloff: " + FormatFloat(m_quickEditFeather, 2));
+            SetWindowTextFormat(m_labelQuickEditRootOffsetX, L"Root Move X: " + FormatFloat(m_quickEditRootOffsetX, 3));
+            SetWindowTextFormat(m_labelQuickEditRootOffsetY, L"Root Move Y: " + FormatFloat(m_quickEditRootOffsetY, 3));
+            SetWindowTextFormat(m_labelQuickEditRootOffsetZ, L"Root Move Z: " + FormatFloat(m_quickEditRootOffsetZ, 3));
+            SetWindowTextFormat(m_labelQuickEditTipOffsetX, L"Tip Move X: " + FormatFloat(m_quickEditTipOffsetX, 3));
+            SetWindowTextFormat(m_labelQuickEditTipOffsetY, L"Tip Move Y: " + FormatFloat(m_quickEditTipOffsetY, 3));
+            SetWindowTextFormat(m_labelQuickEditTipOffsetZ, L"Tip Move Z: " + FormatFloat(m_quickEditTipOffsetZ, 3));
+            break;
+        case GroomTool::Smooth:
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Smooth Strength: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditFeather, L"Smooth Falloff: " + FormatFloat(m_quickEditFeather, 2));
+            SetWindowTextFormat(m_labelQuickEditBoundarySmoothing, L"Boundary Relax: " + FormatFloat(m_quickEditBoundarySmoothing, 2));
+            SetWindowTextFormat(m_labelQuickEditBoundaryRadiusUv, L"Relax Radius: " + FormatFloat(m_quickEditBoundaryRadiusUv, 2));
+            break;
+        case GroomTool::Length:
+            SetWindowTextFormat(m_labelQuickEditCenterU, L"Target Area U: " + FormatFloat(m_quickEditCenterU, 2));
+            SetWindowTextFormat(m_labelQuickEditCenterV, L"Target Area V: " + FormatFloat(m_quickEditCenterV, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusU, L"Area Width: " + FormatFloat(m_quickEditRadiusU, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusV, L"Area Height: " + FormatFloat(m_quickEditRadiusV, 2));
+            SetWindowTextFormat(m_labelQuickEditLengthScale, L"Length Scale: " + FormatFloat(m_quickEditLengthScale, 2));
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Length Weight: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditFeather, L"Blend: " + FormatFloat(m_quickEditFeather, 2));
+            break;
+        case GroomTool::Volume:
+            SetWindowTextFormat(m_labelQuickEditCenterU, L"Volume Center U: " + FormatFloat(m_quickEditCenterU, 2));
+            SetWindowTextFormat(m_labelQuickEditCenterV, L"Volume Center V: " + FormatFloat(m_quickEditCenterV, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusU, L"Volume Width: " + FormatFloat(m_quickEditRadiusU, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusV, L"Volume Height: " + FormatFloat(m_quickEditRadiusV, 2));
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Volume Strength: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditSideOffset, L"Lift / Push: " + FormatFloat(m_quickEditSideOffset, 3));
+            SetWindowTextFormat(m_labelQuickEditWidthScale, L"Width Scale: " + FormatFloat(m_quickEditWidthScale, 2));
+            SetWindowTextFormat(m_labelQuickEditFollowerInfluence, L"Clump Response: " + FormatFloat(m_quickEditFollowerInfluence, 2));
+            SetWindowTextFormat(m_labelQuickEditBoundarySmoothing, L"Relax After Volume: " + FormatFloat(m_quickEditBoundarySmoothing, 2));
+            break;
+        case GroomTool::Part:
+            SetWindowTextFormat(m_labelQuickEditCenterU, L"Part Center U: " + FormatFloat(m_quickEditCenterU, 2));
+            SetWindowTextFormat(m_labelQuickEditCenterV, L"Part Center V: " + FormatFloat(m_quickEditCenterV, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusU, L"Part Width: " + FormatFloat(m_quickEditRadiusU, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusV, L"Part Height: " + FormatFloat(m_quickEditRadiusV, 2));
+            SetWindowTextFormat(m_labelQuickEditAngleCenter, L"Direction: " + FormatFloat(m_quickEditAngleCenterRadians * kRadToDeg, 1) + L" deg");
+            SetWindowTextFormat(m_labelQuickEditAngleHalfExtent, L"Spread: " + FormatFloat(m_quickEditAngleHalfExtentRadians * kRadToDeg, 1) + L" deg");
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Part Strength: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditYaw, L"Bias Angle: " + FormatFloat(m_quickEditYawRadians * kRadToDeg, 1) + L" deg");
+            break;
+        case GroomTool::Freeze:
+        case GroomTool::Select:
+        default:
+            SetWindowTextFormat(m_labelQuickEditCenterU, L"Selection Center U: " + FormatFloat(m_quickEditCenterU, 2));
+            SetWindowTextFormat(m_labelQuickEditCenterV, L"Selection Center V: " + FormatFloat(m_quickEditCenterV, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusU, L"Selection Width: " + FormatFloat(m_quickEditRadiusU, 2));
+            SetWindowTextFormat(m_labelQuickEditRadiusV, L"Selection Height: " + FormatFloat(m_quickEditRadiusV, 2));
+            SetWindowTextFormat(m_labelQuickEditLayerWeight, L"Selection Weight: " + FormatFloat(m_quickEditLayerWeight, 2));
+            SetWindowTextFormat(m_labelQuickEditFeather, L"Selection Feather: " + FormatFloat(m_quickEditFeather, 2));
+            SetWindowTextFormat(m_labelQuickEditGroupId, L"Group Filter: " + FormatOptionalGroupId(m_quickEditGroupId));
+            break;
+        }
+
+        // labels that may be shown outside the current tool still need sensible captions
         SetWindowTextFormat(m_labelQuickEditInnerRadius, L"Inner Radius: " + FormatFloat(m_quickEditInnerRadius, 2));
-        SetWindowTextFormat(m_labelQuickEditAngleCenter, L"Angle Center: " + FormatFloat(m_quickEditAngleCenterRadians * kRadToDeg, 1) + L" deg");
-        SetWindowTextFormat(m_labelQuickEditAngleHalfExtent, L"Angle Half Extent: " + FormatFloat(m_quickEditAngleHalfExtentRadians * kRadToDeg, 1) + L" deg");
-        SetWindowTextFormat(m_labelQuickEditRootOffsetX, L"Root Offset X: " + FormatFloat(m_quickEditRootOffsetX, 3));
-        SetWindowTextFormat(m_labelQuickEditRootOffsetY, L"Root Offset Y: " + FormatFloat(m_quickEditRootOffsetY, 3));
-        SetWindowTextFormat(m_labelQuickEditRootOffsetZ, L"Root Offset Z: " + FormatFloat(m_quickEditRootOffsetZ, 3));
-        SetWindowTextFormat(m_labelQuickEditTipOffsetX, L"Tip Offset X: " + FormatFloat(m_quickEditTipOffsetX, 3));
-        SetWindowTextFormat(m_labelQuickEditTipOffsetY, L"Tip Offset Y: " + FormatFloat(m_quickEditTipOffsetY, 3));
-        SetWindowTextFormat(m_labelQuickEditTipOffsetZ, L"Tip Offset Z: " + FormatFloat(m_quickEditTipOffsetZ, 3));
-        SetWindowTextFormat(m_labelQuickEditSideOffset, L"Side Offset: " + FormatFloat(m_quickEditSideOffset, 3));
-        SetWindowTextFormat(m_labelQuickEditYaw, L"Yaw: " + FormatFloat(m_quickEditYawRadians * kRadToDeg, 1) + L" deg");
-        SetWindowTextFormat(m_labelQuickEditWidthScale, L"Hair Width: " + FormatFloat(m_quickEditWidthScale, 2));
+        SetWindowTextFormat(m_labelQuickEditWidthScale, L"Width Scale: " + FormatFloat(m_quickEditWidthScale, 2));
         SetWindowTextFormat(m_labelQuickEditFollowerInfluence, L"Follower Influence: " + FormatFloat(m_quickEditFollowerInfluence, 2));
         SetWindowTextFormat(m_labelQuickEditBoundarySmoothing, L"Boundary Blend: " + FormatFloat(m_quickEditBoundarySmoothing, 2));
-        SetWindowTextFormat(m_labelQuickEditBoundaryRadiusUv, L"Boundary Radius UV: " + FormatFloat(m_quickEditBoundaryRadiusUv, 2));
+        SetWindowTextFormat(m_labelQuickEditBoundaryRadiusUv, L"Boundary Radius: " + FormatFloat(m_quickEditBoundaryRadiusUv, 2));
         SetWindowTextFormat(m_labelQuickEditGroupId, L"Group Filter: " + FormatOptionalGroupId(m_quickEditGroupId));
 
-        std::wstring previewLabel = L"Tip: click hair in the 3D view, then move the Area and Hair Length sliders.";
+        std::wstring previewLabel = std::wstring(L"Workspace: ") + GetWorkspaceDisplayName() +
+            L"  Tool: " + GetGroomToolDisplayName() +
+            L"\r\nTip: sculpt in the viewport, then push to layer or duplicate a layer for non-destructive refinement.";
         std::vector<float> previewInfluence;
         uint32_t previewGuideCount = 0u;
         float previewMaxInfluence = 0.0f;
         if (TryBuildSelectedInlineLayerPreview(previewInfluence, previewGuideCount, previewMaxInfluence))
         {
-            if (GetSelectedInlineLayerIndex() >= 0)
-            {
-                previewLabel = L"Preview: selected layer guides " + std::to_wstring(previewGuideCount) +
-                    L", max " + FormatFloat(previewMaxInfluence, 2) +
-                    L", center (" + FormatFloat(m_quickEditCenterU, 2) + L", " + FormatFloat(m_quickEditCenterV, 2) + L")" +
-                    L", tipZ " + FormatFloat(m_quickEditTipOffsetZ, 2) +
-                    L", yaw " + FormatFloat(m_quickEditYawRadians * kRadToDeg, 0) + L" deg" +
-                    L", width " + FormatFloat(m_quickEditWidthScale, 2) +
-                    L", follow " + FormatFloat(m_quickEditFollowerInfluence, 2) +
-                    L", smooth " + FormatFloat(m_quickEditBoundarySmoothing, 2) +
-                    L", radius " + FormatFloat(m_quickEditBoundaryRadiusUv, 2) +
-                    L", group " + FormatOptionalGroupId(m_quickEditGroupId) +
-                    (m_quickEditGuidesOnly ? L", guides only" : L", guides+followers") +
-                    (IsBoundaryBeforeAfterOverlayMode() ? L" (Boundary Before/After: left raw, right tinted)" : (IsActiveSetRiskOverlayMode() ? L" (Active-Set overlay shows risk heat + selected clusters)" : L" (Edit Influence overlay adds boundary tint)"));
-            }
+            previewLabel += L"\r\nSelected guides: " + std::to_wstring(previewGuideCount) +
+                L"  Max influence: " + FormatFloat(previewMaxInfluence, 2) +
+                L"  Overlay: " + GetMaskOverlayModeDisplayName();
+        }
+        uint32_t lockedCount = 0u;
+        for (uint8_t v : m_lockedStrands)
+        {
+            lockedCount += (v != 0u) ? 1u : 0u;
+        }
+        previewLabel += L"\r\nLocked strands: " + std::to_wstring(lockedCount);
+        if (m_brushStrokeActive)
+        {
+            previewLabel += L"  Active brush guides: " + std::to_wstring(m_brushStrokeAffectedGuideCount);
         }
         SetWindowTextFormat(m_labelQuickEditVisualization, previewLabel);
+
+        SetWindowTextFormat(m_btnQuickEditReplace, L"Update Layer");
+        SetWindowTextFormat(m_btnQuickEditAppend, L"New Layer");
+        SetWindowTextFormat(m_btnQuickEditDuplicate, L"Duplicate");
+        SetWindowTextFormat(m_btnQuickEditDelete, L"Delete");
+        SetWindowTextFormat(m_btnQuickEditMoveUp, L"Move Up");
+        SetWindowTextFormat(m_btnQuickEditMoveDown, L"Move Down");
+
+        SetWindowTextFormat(m_labelEditLegend, BuildHistorySummaryText());
     }
+
 
     int GpuHairViewer::GetSelectedInlineLayerIndex() const
     {
@@ -7119,6 +7531,449 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         return true;
     }
 
+
+    bool GpuHairViewer::IsBrushDrivenTool() const
+    {
+        if (!IsGroomWorkspace())
+        {
+            return false;
+        }
+        switch (m_groomTool)
+        {
+        case GroomTool::Comb:
+        case GroomTool::Grab:
+        case GroomTool::Smooth:
+        case GroomTool::Length:
+        case GroomTool::Volume:
+        case GroomTool::Part:
+        case GroomTool::Freeze:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool GpuHairViewer::IsStrandLocked(uint32_t strandIndex) const
+    {
+        if (strandIndex >= m_lockedStrands.size())
+        {
+            return false;
+        }
+        return m_lockedStrands[strandIndex] != 0u;
+    }
+
+    bool GpuHairViewer::ComputeBrushCenterUvFromScreenPoint(POINT clientPoint, Vec2& outUv, int32_t* outGuideIndex, float* outScreenDistancePx) const
+    {
+        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        if (guideCount == 0u || m_asset.rootBindings.size() < guideCount)
+        {
+            return false;
+        }
+
+        std::vector<GpuParticle> particles;
+        const bool haveParticles = const_cast<GpuHairViewer*>(this)->ReadBackCurrentParticlePositions(particles) && particles.size() >= m_asset.restPoints.size();
+
+        float bestDistSq = 70.0f * 70.0f;
+        int32_t bestGuide = -1;
+        Vec2 bestUv = { 0.5f, 0.5f };
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        {
+            const StrandRange& strand = m_asset.strands[guideIndex];
+            if (strand.pointCount == 0u)
+            {
+                continue;
+            }
+            Vec3 root = m_asset.restPoints[strand.pointOffset];
+            if (haveParticles)
+            {
+                const GpuParticle& p = particles[strand.pointOffset];
+                root = Vec3(p.x, p.y, p.z);
+            }
+            float sx = 0.0f;
+            float sy = 0.0f;
+            if (!ProjectWorldToScreen(root, sx, sy))
+            {
+                continue;
+            }
+            const float dx = static_cast<float>(clientPoint.x) - sx;
+            const float dy = static_cast<float>(clientPoint.y) - sy;
+            const float distSq = dx * dx + dy * dy;
+            if (distSq < bestDistSq)
+            {
+                bestDistSq = distSq;
+                bestGuide = static_cast<int32_t>(guideIndex);
+                bestUv = m_asset.rootBindings[guideIndex].rootUv;
+            }
+        }
+
+        if (bestGuide < 0)
+        {
+            return false;
+        }
+        outUv = bestUv;
+        if (outGuideIndex)
+        {
+            *outGuideIndex = bestGuide;
+        }
+        if (outScreenDistancePx)
+        {
+            *outScreenDistancePx = std::sqrt(bestDistSq);
+        }
+        return true;
+    }
+
+    Vec3 GpuHairViewer::ComputeWorldDeltaFromScreenDelta(float dxPixels, float dyPixels) const
+    {
+        const Vec3 forward = Normalize(m_cameraTarget - m_cameraPosition);
+        const Vec3 safeUp = (std::fabs(forward.y) > 0.98f) ? Vec3(0.0f, 0.0f, 1.0f) : Vec3(0.0f, 1.0f, 0.0f);
+        const Vec3 right = Normalize(Cross(forward, safeUp));
+        const Vec3 up = Normalize(Cross(right, forward));
+        const float scale = std::max(0.00045f, m_cameraDistance * 0.00085f);
+        return right * (dxPixels * scale) + up * (-dyPixels * scale);
+    }
+
+    hairgpu::EditLayer GpuHairViewer::BuildViewportBrushLayer(const Vec2& centerUv,
+                                                              const Vec2& startUv,
+                                                              const Vec2& currentUv,
+                                                              const POINT& currentPoint,
+                                                              uint32_t* outAffectedGuideCount) const
+    {
+        hairgpu::EditLayer layer = {};
+        ++const_cast<GpuHairViewer*>(this)->m_viewportStrokeSerial;
+        std::ostringstream name;
+        switch (m_groomTool)
+        {
+        case GroomTool::Comb: name << "comb_stroke_"; break;
+        case GroomTool::Grab: name << "grab_stroke_"; break;
+        case GroomTool::Smooth: name << "smooth_stroke_"; break;
+        case GroomTool::Length: name << "length_stroke_"; break;
+        case GroomTool::Volume: name << "volume_stroke_"; break;
+        case GroomTool::Part: name << "part_stroke_"; break;
+        case GroomTool::Freeze: name << "freeze_mask_"; break;
+        default: name << "stroke_"; break;
+        }
+        name << m_viewportStrokeSerial;
+        layer.name = name.str();
+        layer.enabled = true;
+        layer.layerWeight = hairgpu::Clamp(m_quickEditLayerWeight, 0.0f, 1.5f);
+        layer.region.mode = m_quickEditMode;
+        layer.region.centerUv = centerUv;
+        layer.region.radiusUv = { hairgpu::Clamp(m_quickEditRadiusU, 0.01f, 0.60f), hairgpu::Clamp(m_quickEditRadiusV, 0.01f, 0.60f) };
+        layer.region.innerRadius = hairgpu::Clamp(m_quickEditInnerRadius, 0.0f, std::min(layer.region.radiusUv.x, layer.region.radiusUv.y) * 0.95f);
+        layer.region.angleCenterRadians = std::atan2(currentUv.y - startUv.y, currentUv.x - startUv.x);
+        layer.region.angleHalfExtentRadians = hairgpu::Clamp(m_quickEditAngleHalfExtentRadians, 0.05f, 3.1415926f);
+        layer.region.feather = hairgpu::Clamp(m_quickEditFeather, 0.0f, 1.0f);
+        layer.region.groupId = m_quickEditGroupId;
+        layer.region.guidesOnly = true;
+        layer.edit.lengthScale = hairgpu::Clamp(m_quickEditLengthScale, 0.6f, 1.4f);
+        layer.edit.widthScale = hairgpu::Clamp(m_quickEditWidthScale, 0.5f, 1.8f);
+        layer.edit.followerInfluence = hairgpu::Clamp(m_quickEditFollowerInfluence, 0.0f, 1.5f);
+
+        const float dxPixels = static_cast<float>(currentPoint.x - m_brushStrokeStartPoint.x);
+        const float dyPixels = static_cast<float>(currentPoint.y - m_brushStrokeStartPoint.y);
+        const float pixelDistance = std::sqrt(dxPixels * dxPixels + dyPixels * dyPixels);
+        const float signedMagnitude = hairgpu::Clamp(pixelDistance / 180.0f, 0.0f, 1.0f) * std::max(0.15f, layer.layerWeight);
+        const float verticalSign = (dyPixels <= 0.0f) ? 1.0f : -1.0f;
+        const Vec3 worldDelta = ComputeWorldDeltaFromScreenDelta(dxPixels, dyPixels) * std::max(0.25f, layer.layerWeight);
+        const float angle = std::atan2(-dyPixels, dxPixels);
+
+        switch (m_groomTool)
+        {
+        case GroomTool::Comb:
+            layer.edit.rootOffset = worldDelta * 0.10f;
+            layer.edit.tipOffset = worldDelta;
+            layer.edit.sideOffset = hairgpu::Clamp(dxPixels * 0.0008f, -0.20f, 0.20f);
+            layer.edit.yawRadians = hairgpu::Clamp(angle * 0.20f, -1.0f, 1.0f);
+            break;
+        case GroomTool::Grab:
+            layer.edit.rootOffset = worldDelta * 0.35f;
+            layer.edit.tipOffset = worldDelta;
+            break;
+        case GroomTool::Smooth:
+            layer.layerWeight = hairgpu::Clamp(0.35f + signedMagnitude * 0.35f, 0.0f, 1.0f);
+            layer.edit.rootOffset = worldDelta * 0.03f;
+            layer.edit.tipOffset = worldDelta * 0.08f;
+            layer.edit.widthScale = 1.0f;
+            layer.edit.lengthScale = 1.0f;
+            layer.edit.followerInfluence = 1.25f;
+            break;
+        case GroomTool::Length:
+            layer.edit.lengthScale = hairgpu::Clamp(1.0f + verticalSign * signedMagnitude * 0.35f, 0.6f, 1.4f);
+            layer.edit.tipOffset.y += verticalSign * signedMagnitude * 0.015f;
+            break;
+        case GroomTool::Volume:
+            layer.edit.widthScale = hairgpu::Clamp(1.0f + verticalSign * signedMagnitude * 0.55f, 0.5f, 1.8f);
+            layer.edit.sideOffset = hairgpu::Clamp(verticalSign * signedMagnitude * 0.08f, -0.20f, 0.20f);
+            layer.edit.tipOffset = worldDelta * 0.20f;
+            break;
+        case GroomTool::Part:
+            layer.region.angleCenterRadians = angle;
+            layer.edit.yawRadians = hairgpu::Clamp(angle * 0.35f, -1.2f, 1.2f);
+            layer.edit.sideOffset = hairgpu::Clamp(dxPixels * 0.0007f, -0.20f, 0.20f);
+            layer.edit.tipOffset = worldDelta * 0.40f;
+            break;
+        case GroomTool::Freeze:
+            layer.layerWeight = 1.0f;
+            layer.edit.lengthScale = 1.0f;
+            layer.edit.widthScale = 1.0f;
+            layer.edit.followerInfluence = 1.0f;
+            break;
+        default:
+            break;
+        }
+
+        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        const float radiusUSq = std::max(layer.region.radiusUv.x * layer.region.radiusUv.x, 1.0e-6f);
+        const float radiusVSq = std::max(layer.region.radiusUv.y * layer.region.radiusUv.y, 1.0e-6f);
+        uint32_t affected = 0u;
+        if (m_asset.rootBindings.size() >= guideCount)
+        {
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                if (IsStrandLocked(guideIndex) && m_groomTool != GroomTool::Freeze)
+                {
+                    continue;
+                }
+                const Vec2 uv = m_asset.rootBindings[guideIndex].rootUv;
+                const float du = uv.x - centerUv.x;
+                const float dv = uv.y - centerUv.y;
+                const float ellipse = (du * du) / radiusUSq + (dv * dv) / radiusVSq;
+                if (ellipse <= 1.0f)
+                {
+                    layer.strandSelection.push_back(guideIndex);
+                    ++affected;
+                }
+            }
+        }
+        layer.strandSelectionMode = hairgpu::StrandSelectionMode::GuideFamily;
+        layer.strandSelectionWeight = 1.0f;
+        if (outAffectedGuideCount)
+        {
+            *outAffectedGuideCount = affected;
+        }
+        return layer;
+    }
+
+    bool GpuHairViewer::BeginViewportBrushStroke(POINT clientPoint)
+    {
+        Vec2 centerUv = { 0.5f, 0.5f };
+        int32_t guideIndex = -1;
+        float screenDistance = 0.0f;
+        if (!ComputeBrushCenterUvFromScreenPoint(clientPoint, centerUv, &guideIndex, &screenDistance))
+        {
+            return false;
+        }
+        PushStrandEditUndoSnapshot();
+        m_selectedStrandIndex = guideIndex;
+        m_lastSelectedStrandScreenDistance = screenDistance;
+        m_brushStrokeActive = true;
+        m_brushStrokeStartPoint = clientPoint;
+        m_brushStrokeLastPoint = clientPoint;
+        m_brushStrokeStartUv = centerUv;
+        m_brushStrokeCurrentUv = centerUv;
+        m_brushStrokeAffectedGuideCount = 0u;
+        m_brushStrokeBaseStack = {};
+        const std::string inlineUtf8 = WideToUtf8(GetInlineEditStackText());
+        std::string parseError;
+        if (!inlineUtf8.empty())
+        {
+            LocalLoadEditStackCsvText(inlineUtf8, m_brushStrokeBaseStack, parseError);
+        }
+        if (!ApplyViewportBrushStroke(clientPoint, false))
+        {
+            m_brushStrokeActive = false;
+            return false;
+        }
+        return true;
+    }
+
+    void GpuHairViewer::UpdateViewportBrushStroke(POINT clientPoint)
+    {
+        if (!m_brushStrokeActive)
+        {
+            return;
+        }
+        m_brushStrokeLastPoint = clientPoint;
+        ApplyViewportBrushStroke(clientPoint, false);
+    }
+
+    bool GpuHairViewer::ApplyViewportBrushStroke(POINT clientPoint, bool commitStroke)
+    {
+        if (!m_brushStrokeActive && !commitStroke)
+        {
+            return false;
+        }
+        Vec2 centerUv = m_brushStrokeCurrentUv;
+        int32_t guideIndex = m_selectedStrandIndex;
+        float screenDistance = 0.0f;
+        if (!ComputeBrushCenterUvFromScreenPoint(clientPoint, centerUv, &guideIndex, &screenDistance))
+        {
+            return false;
+        }
+        m_brushStrokeCurrentUv = centerUv;
+        m_selectedStrandIndex = guideIndex;
+        m_lastSelectedStrandScreenDistance = screenDistance;
+
+        hairgpu::EditStack previewStack = m_brushStrokeBaseStack;
+        previewStack.boundarySmoothing = hairgpu::Clamp(std::max(m_quickEditBoundarySmoothing,
+            (m_groomTool == GroomTool::Smooth) ? 0.72f : ((m_groomTool == GroomTool::Comb || m_groomTool == GroomTool::Volume) ? 0.50f : m_quickEditBoundarySmoothing)), 0.0f, 1.0f);
+        previewStack.boundaryRadiusUv = hairgpu::Clamp(std::max(m_quickEditBoundaryRadiusUv,
+            (m_groomTool == GroomTool::Smooth) ? 0.14f : m_quickEditBoundaryRadiusUv), 0.01f, 0.30f);
+
+        hairgpu::EditLayer layer = BuildViewportBrushLayer(centerUv, m_brushStrokeStartUv, m_brushStrokeCurrentUv, clientPoint, &m_brushStrokeAffectedGuideCount);
+        if (m_groomTool == GroomTool::Freeze)
+        {
+            for (uint32_t guideIndex : layer.strandSelection)
+            {
+                if (guideIndex >= m_lockedStrands.size())
+                {
+                    m_lockedStrands.resize(m_asset.strands.size(), 0u);
+                }
+                m_lockedStrands[guideIndex] = 1u;
+                for (uint32_t strandIndex = m_asset.guideStrandCount; strandIndex < m_asset.strands.size() && strandIndex < m_asset.followData.size(); ++strandIndex)
+                {
+                    if (m_asset.followData[strandIndex].parentGuide == static_cast<int32_t>(guideIndex))
+                    {
+                        if (strandIndex >= m_lockedStrands.size())
+                        {
+                            m_lockedStrands.resize(m_asset.strands.size(), 0u);
+                        }
+                        m_lockedStrands[strandIndex] = 1u;
+                    }
+                }
+            }
+            UpdateWindowTitle();
+            RefreshQuickEditFormLabels();
+            if (commitStroke)
+            {
+                RecordViewportHistory(L"Freeze brush locked " + std::to_wstring(layer.strandSelection.size()) + L" guides");
+            }
+            return true;
+        }
+
+        if (layer.strandSelection.empty())
+        {
+            return false;
+        }
+        previewStack.layers.push_back(layer);
+
+        hairgpu::HairAsset previewAsset = m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+        std::string outError;
+        hairgpu::RuntimeEditState runtimeState = {};
+        if (!hairgpu::ApplyEditStackToAsset(previewAsset, m_baseAsset.strands.empty() ? m_asset : m_baseAsset, previewStack, &runtimeState, outError))
+        {
+            return false;
+        }
+        m_runtimeEditState = runtimeState;
+        m_asset = std::move(previewAsset);
+        if (m_initialParticles.size() != m_asset.restPoints.size())
+        {
+            CreateSimulationResources();
+            RebuildActiveSetFoundation();
+        }
+        else
+        {
+            for (size_t i = 0; i < m_asset.restPoints.size() && i < m_initialParticles.size(); ++i)
+            {
+                m_initialParticles[i].x = m_asset.restPoints[i].x;
+                m_initialParticles[i].y = m_asset.restPoints[i].y;
+                m_initialParticles[i].z = m_asset.restPoints[i].z;
+            }
+            CommitEditedRestState();
+        }
+        QueueVisibilityRecovery();
+
+        std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(previewStack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        m_selectedInlineLayerIndex = static_cast<int>(previewStack.layers.size()) - 1;
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+
+        if (commitStroke)
+        {
+            std::wstring entry = std::wstring(GetGroomToolDisplayName()) + L" stroke | guides=" + std::to_wstring(m_brushStrokeAffectedGuideCount) +
+                L" | overlay=" + GetMaskOverlayModeDisplayName();
+            RecordViewportHistory(entry);
+        }
+        UpdateWindowTitle();
+        return true;
+    }
+
+    void GpuHairViewer::EndViewportBrushStroke(bool cancelStroke)
+    {
+        if (!m_brushStrokeActive)
+        {
+            return;
+        }
+        if (cancelStroke)
+        {
+            if (!m_strandUndoStack.empty())
+            {
+                StrandEditSnapshot snapshot = m_strandUndoStack.back();
+                m_strandUndoStack.pop_back();
+                m_asset.restPoints = std::move(snapshot.restPoints);
+                m_initialParticles = std::move(snapshot.initialParticles);
+                m_selectedStrandIndex = snapshot.selectedStrandIndex;
+                m_lockedStrands = std::move(snapshot.lockedStrands);
+                SetWindowTextW(m_editInlineEditStack, snapshot.inlineEditStackText.c_str());
+                m_selectedInlineLayerIndex = snapshot.selectedInlineLayerIndex;
+                LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+                CommitEditedRestState();
+            }
+        }
+        else
+        {
+            ApplyViewportBrushStroke(m_brushStrokeLastPoint, true);
+        }
+        m_brushStrokeActive = false;
+        m_brushStrokeBaseStack = {};
+        m_brushStrokeAffectedGuideCount = 0u;
+    }
+
+    void GpuHairViewer::RecordViewportHistory(const std::wstring& entry)
+    {
+        if (entry.empty())
+        {
+            return;
+        }
+        m_viewportHistory.push_back(entry);
+        if (m_viewportHistory.size() > 10u)
+        {
+            m_viewportHistory.erase(m_viewportHistory.begin());
+        }
+        RefreshQuickEditFormLabels();
+    }
+
+    std::wstring GpuHairViewer::BuildHistorySummaryText() const
+    {
+        std::wstring text = L"History / Notes\r\n";
+        if (m_viewportHistory.empty())
+        {
+            text += L"- No viewport strokes yet.\r\n";
+        }
+        else
+        {
+            for (auto it = m_viewportHistory.rbegin(); it != m_viewportHistory.rend(); ++it)
+            {
+                text += L"- ";
+                text += *it;
+                text += L"\r\n";
+            }
+        }
+        uint32_t lockedCount = 0u;
+        for (uint8_t v : m_lockedStrands)
+        {
+            lockedCount += (v != 0u) ? 1u : 0u;
+        }
+        text += L"Locked strands: " + std::to_wstring(lockedCount);
+        if (m_brushStrokeActive)
+        {
+            text += L"\r\nBrush active: ";
+            text += GetGroomToolDisplayName();
+            text += L" guides=" + std::to_wstring(m_brushStrokeAffectedGuideCount);
+        }
+        return text;
+    }
+
     Vec3 GpuHairViewer::GetSelectedStrandAnchorPoint(bool root) const
     {
         if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
@@ -7431,7 +8286,10 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         StrandEditSnapshot snapshot = {};
         snapshot.restPoints = m_asset.restPoints;
         snapshot.initialParticles = m_initialParticles;
+        snapshot.inlineEditStackText = GetInlineEditStackText();
+        snapshot.lockedStrands = m_lockedStrands;
         snapshot.selectedStrandIndex = m_selectedStrandIndex;
+        snapshot.selectedInlineLayerIndex = m_selectedInlineLayerIndex;
         m_strandUndoStack.push_back(std::move(snapshot));
         if (m_strandUndoStack.size() > 64u)
         {
@@ -7450,15 +8308,23 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         StrandEditSnapshot current = {};
         current.restPoints = m_asset.restPoints;
         current.initialParticles = m_initialParticles;
+        current.inlineEditStackText = GetInlineEditStackText();
+        current.lockedStrands = m_lockedStrands;
         current.selectedStrandIndex = m_selectedStrandIndex;
+        current.selectedInlineLayerIndex = m_selectedInlineLayerIndex;
         m_strandRedoStack.push_back(std::move(current));
 
         StrandEditSnapshot snapshot = std::move(m_strandUndoStack.back());
         m_strandUndoStack.pop_back();
         m_asset.restPoints = std::move(snapshot.restPoints);
         m_initialParticles = std::move(snapshot.initialParticles);
+        m_lockedStrands = std::move(snapshot.lockedStrands);
         m_selectedStrandIndex = snapshot.selectedStrandIndex;
+        m_selectedInlineLayerIndex = snapshot.selectedInlineLayerIndex;
+        SetWindowTextW(m_editInlineEditStack, snapshot.inlineEditStackText.c_str());
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
         CommitEditedRestState();
+        RecordViewportHistory(L"Undo");
         return true;
     }
 
@@ -7472,15 +8338,23 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         StrandEditSnapshot current = {};
         current.restPoints = m_asset.restPoints;
         current.initialParticles = m_initialParticles;
+        current.inlineEditStackText = GetInlineEditStackText();
+        current.lockedStrands = m_lockedStrands;
         current.selectedStrandIndex = m_selectedStrandIndex;
+        current.selectedInlineLayerIndex = m_selectedInlineLayerIndex;
         m_strandUndoStack.push_back(std::move(current));
 
         StrandEditSnapshot snapshot = std::move(m_strandRedoStack.back());
         m_strandRedoStack.pop_back();
         m_asset.restPoints = std::move(snapshot.restPoints);
         m_initialParticles = std::move(snapshot.initialParticles);
+        m_lockedStrands = std::move(snapshot.lockedStrands);
         m_selectedStrandIndex = snapshot.selectedStrandIndex;
+        m_selectedInlineLayerIndex = snapshot.selectedInlineLayerIndex;
+        SetWindowTextW(m_editInlineEditStack, snapshot.inlineEditStackText.c_str());
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
         CommitEditedRestState();
+        RecordViewportHistory(L"Redo");
         return true;
     }
 
@@ -7491,8 +8365,39 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         {
             return false;
         }
-        out << "version=1\n";
+        out << "version=2\n";
         out << "selected=" << m_selectedStrandIndex << "\n";
+        out << "selectedLayer=" << m_selectedInlineLayerIndex << "\n";
+        uint32_t lockedCount = 0u;
+        for (uint8_t v : m_lockedStrands)
+        {
+            lockedCount += (v != 0u) ? 1u : 0u;
+        }
+        out << "lockedCount=" << lockedCount << "\n";
+        out << "locked=";
+        bool first = true;
+        for (size_t i = 0; i < m_lockedStrands.size(); ++i)
+        {
+            if (!m_lockedStrands[i])
+            {
+                continue;
+            }
+            if (!first)
+            {
+                out << ',';
+            }
+            out << i;
+            first = false;
+        }
+        out << "\n";
+        const std::wstring inlineStack = GetInlineEditStackText();
+        out << "inlineStackBegin\n";
+        out << WideToUtf8(inlineStack);
+        if (inlineStack.empty() || (inlineStack.back() != L'\n' && inlineStack.back() != L'\r'))
+        {
+            out << "\n";
+        }
+        out << "inlineStackEnd\n";
         out << "pointCount=" << m_asset.restPoints.size() << "\n";
         for (const Vec3& p : m_asset.restPoints)
         {
@@ -7510,10 +8415,32 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         }
         std::string line;
         int32_t selected = -1;
-        size_t pointCount = 0;
+        int32_t selectedLayer = -1;
+        size_t pointCount = 0u;
         std::vector<Vec3> restPoints;
+        std::vector<uint8_t> lockedStrands(m_asset.strands.size(), 0u);
+        std::string inlineStackUtf8;
+        bool readingInlineStack = false;
         while (std::getline(in, line))
         {
+            if (readingInlineStack)
+            {
+                if (line == "inlineStackEnd")
+                {
+                    readingInlineStack = false;
+                }
+                else
+                {
+                    inlineStackUtf8 += line;
+                    inlineStackUtf8.push_back('\n');
+                }
+                continue;
+            }
+            if (line == "inlineStackBegin")
+            {
+                readingInlineStack = true;
+                continue;
+            }
             if (line.rfind("version=", 0) == 0)
             {
                 continue;
@@ -7521,6 +8448,29 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             if (line.rfind("selected=", 0) == 0)
             {
                 selected = static_cast<int32_t>(std::stoi(line.substr(9)));
+                continue;
+            }
+            if (line.rfind("selectedLayer=", 0) == 0)
+            {
+                selectedLayer = static_cast<int32_t>(std::stoi(line.substr(14)));
+                continue;
+            }
+            if (line.rfind("locked=", 0) == 0)
+            {
+                std::stringstream ss(line.substr(7));
+                std::string token;
+                while (std::getline(ss, token, ','))
+                {
+                    if (token.empty())
+                    {
+                        continue;
+                    }
+                    const size_t index = static_cast<size_t>(std::stoull(token));
+                    if (index < lockedStrands.size())
+                    {
+                        lockedStrands[index] = 1u;
+                    }
+                }
                 continue;
             }
             if (line.rfind("pointCount=", 0) == 0)
@@ -7549,8 +8499,13 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             m_initialParticles[i].y = m_asset.restPoints[i].y;
             m_initialParticles[i].z = m_asset.restPoints[i].z;
         }
+        m_lockedStrands = std::move(lockedStrands);
         m_selectedStrandIndex = selected;
+        SetWindowTextW(m_editInlineEditStack, Utf8ToWide(inlineStackUtf8).c_str());
+        m_selectedInlineLayerIndex = selectedLayer;
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
         CommitEditedRestState();
+        RecordViewportHistory(L"Loaded strand edit session");
         return true;
     }
 
@@ -7609,6 +8564,8 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         m_selectedStrandIndex = -1;
         m_strandUndoStack.clear();
         m_strandRedoStack.clear();
+        m_lockedStrands.assign(m_asset.strands.size(), 0u);
+        m_viewportHistory.clear();
         hairgpu::HairAsset editedAsset = m_baseAsset;
         if (m_editStackPath.empty())
         {
@@ -7684,6 +8641,10 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             if (m_debugColorMode == DebugColorMode::Editability)
             {
                 const uint32_t category = (strandIndex < m_editVisualizationCategories.size()) ? m_editVisualizationCategories[strandIndex] : 1u;
+                if (IsStrandLocked(strandIndex))
+                {
+                    return Vec3(0.58f, 0.58f, 0.66f);
+                }
                 switch (category)
                 {
                 case 0u: return Vec3(0.12f, 0.95f, 0.48f);
@@ -8158,6 +9119,23 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             }
         }
 
+        if (!m_lockedStrands.empty())
+        {
+            const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+            for (uint32_t strandIndex = 0u; strandIndex < std::min<uint32_t>(guideCount, static_cast<uint32_t>(m_lockedStrands.size())); ++strandIndex)
+            {
+                if (!IsStrandLocked(strandIndex))
+                {
+                    continue;
+                }
+                const StrandRange& strand = m_asset.strands[strandIndex];
+                if (strand.pointCount > 0u)
+                {
+                    addRootMarker(strand.pointOffset, true);
+                }
+            }
+        }
+
         if (m_showColliderDebug)
         {
             constexpr int segments = 24;
@@ -8341,7 +9319,12 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             {
                 m_mouseDownPoint = p;
                 m_lastMouse = p;
-                if (!BeginStrandGizmoDrag(p))
+                const bool orbitOverride = (GetKeyState(VK_MENU) & 0x8000) != 0;
+                if (!orbitOverride && IsBrushDrivenTool() && BeginViewportBrushStroke(p))
+                {
+                    // brush stroke owns the drag until mouse-up or escape.
+                }
+                else if (!BeginStrandGizmoDrag(p))
                 {
                     m_dragging = true;
                 }
@@ -8356,10 +9339,12 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             const int dy = p.y - m_mouseDownPoint.y;
             const bool wasClick = (dx * dx + dy * dy) <= 16;
             const bool wasGizmoDrag = m_gizmoDragging;
+            const bool wasBrushStroke = m_brushStrokeActive;
             EndStrandGizmoDrag(false);
+            EndViewportBrushStroke(false);
             m_dragging = false;
             ReleaseCapture();
-            if (wasClick && !wasGizmoDrag)
+            if (wasClick && !wasGizmoDrag && !wasBrushStroke)
             {
                 PickStrandAtPoint(p);
                 UpdateWindowTitle();
@@ -8372,6 +9357,10 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             if (m_gizmoDragging)
             {
                 UpdateStrandGizmoDrag(p);
+            }
+            else if (m_brushStrokeActive)
+            {
+                UpdateViewportBrushStroke(p);
             }
             else if (m_dragging)
             {
@@ -8391,7 +9380,16 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             if (PtInRect(&renderRect, screenPoint))
             {
                 const float wheel = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
-                m_cameraDistance = Clamp(m_cameraDistance - wheel * 0.15f, 0.6f, 8.0f);
+                if (IsBrushDrivenTool())
+                {
+                    m_quickEditRadiusU = Clamp(m_quickEditRadiusU + wheel * 0.015f, 0.01f, 0.60f);
+                    m_quickEditRadiusV = Clamp(m_quickEditRadiusV + wheel * 0.015f, 0.01f, 0.60f);
+                    SyncQuickEditFormControlsFromState();
+                }
+                else
+                {
+                    m_cameraDistance = Clamp(m_cameraDistance - wheel * 0.15f, 0.6f, 8.0f);
+                }
             }
             return 0;
         }
@@ -8418,6 +9416,93 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             }
             switch (id)
             {
+            case IDC_BTN_WORKSPACE_GROOM:
+                ApplyWorkspaceMode(WorkspaceMode::Groom);
+                return 0;
+            case IDC_BTN_WORKSPACE_SIM:
+                ApplyWorkspaceMode(WorkspaceMode::Sim);
+                return 0;
+            case IDC_BTN_WORKSPACE_REVIEW:
+                ApplyWorkspaceMode(WorkspaceMode::Review);
+                return 0;
+            case IDC_BTN_WORKSPACE_REPORT:
+                ApplyWorkspaceMode(WorkspaceMode::Report);
+                return 0;
+            case IDC_BTN_TOOL_SELECT:
+                ApplyGroomToolPreset(GroomTool::Select);
+                return 0;
+            case IDC_BTN_TOOL_COMB:
+                ApplyGroomToolPreset(GroomTool::Comb);
+                return 0;
+            case IDC_BTN_TOOL_GRAB:
+                ApplyGroomToolPreset(GroomTool::Grab);
+                return 0;
+            case IDC_BTN_TOOL_SMOOTH:
+                ApplyGroomToolPreset(GroomTool::Smooth);
+                return 0;
+            case IDC_BTN_TOOL_LENGTH:
+                ApplyGroomToolPreset(GroomTool::Length);
+                return 0;
+            case IDC_BTN_TOOL_VOLUME:
+                ApplyGroomToolPreset(GroomTool::Volume);
+                return 0;
+            case IDC_BTN_TOOL_PART:
+                ApplyGroomToolPreset(GroomTool::Part);
+                return 0;
+            case IDC_BTN_TOOL_FREEZE:
+                ApplyGroomToolPreset(GroomTool::Freeze);
+                return 0;
+            case IDC_BTN_TOOL_STRAND_FIX:
+                ApplyGroomToolPreset(GroomTool::StrandFix);
+                return 0;
+            case IDC_BTN_UNDO_EDIT:
+                UndoStrandEdit();
+                RefreshAssetStatsText();
+                RefreshQuickEditFormLabels();
+                return 0;
+            case IDC_BTN_REDO_EDIT:
+                RedoStrandEdit();
+                RefreshAssetStatsText();
+                RefreshQuickEditFormLabels();
+                return 0;
+            case IDC_BTN_TRAY_LAYERS:
+                m_bottomTrayTab = BottomTrayTab::Layers;
+                SyncControlsFromState();
+                LayoutUiControls();
+                return 0;
+            case IDC_BTN_TRAY_HISTORY:
+                m_bottomTrayTab = BottomTrayTab::History;
+                SyncControlsFromState();
+                LayoutUiControls();
+                return 0;
+            case IDC_BTN_TRAY_METRICS:
+                m_bottomTrayTab = BottomTrayTab::Metrics;
+                SyncControlsFromState();
+                LayoutUiControls();
+                return 0;
+            case IDC_BTN_TOGGLE_INSPECTOR:
+                m_showInspectorPane = !m_showInspectorPane;
+                SyncControlsFromState();
+                LayoutUiControls();
+                return 0;
+            case IDC_BTN_TOGGLE_TRAY:
+                m_showBottomTray = !m_showBottomTray;
+                SyncControlsFromState();
+                LayoutUiControls();
+                return 0;
+            case IDC_BTN_TOGGLE_ADVANCED:
+                m_showAdvancedInspector = !m_showAdvancedInspector;
+                if (m_showAdvancedInspector)
+                {
+                    m_showInspectorPane = true;
+                }
+                SyncControlsFromState();
+                LayoutUiControls();
+                return 0;
+            case IDC_BTN_FAST_VIEWPORT:
+                m_fastGroomViewport = !m_fastGroomViewport;
+                SyncControlsFromState();
+                return 0;
             case IDC_BTN_PLAYPAUSE:
                 m_paused = !m_paused;
                 SyncControlsFromState();
@@ -8745,6 +9830,14 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             break;
         }
         case WM_KEYDOWN:
+            if (wParam == VK_ESCAPE)
+            {
+                EndStrandGizmoDrag(true);
+                EndViewportBrushStroke(true);
+                ReleaseCapture();
+                m_dragging = false;
+                return 0;
+            }
             if ((GetKeyState(VK_CONTROL) & 0x8000) != 0)
             {
                 switch (wParam)
@@ -8791,6 +9884,29 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
                     break;
                 }
             }
+            if (IsGroomWorkspace() && (GetKeyState(VK_MENU) & 0x8000) == 0)
+            {
+                switch (wParam)
+                {
+                case 'Q': ApplyGroomToolPreset(GroomTool::Select); return 0;
+                case 'W': ApplyGroomToolPreset(GroomTool::Comb); return 0;
+                case 'E': ApplyGroomToolPreset(GroomTool::Grab); return 0;
+                case 'A': ApplyGroomToolPreset(GroomTool::Smooth); return 0;
+                case 'S': ApplyGroomToolPreset(GroomTool::Length); return 0;
+                case 'D': ApplyGroomToolPreset(GroomTool::Volume); return 0;
+                case 'P': ApplyGroomToolPreset(GroomTool::Part); return 0;
+                case 'X': ApplyGroomToolPreset(GroomTool::Freeze); return 0;
+                case 'V': ApplyGroomToolPreset(GroomTool::StrandFix); return 0;
+                case VK_TAB:
+                    m_showBottomTray = !m_showBottomTray;
+                    SyncControlsFromState();
+                    LayoutUiControls();
+                    return 0;
+                default:
+                    break;
+                }
+            }
+
             switch (wParam)
             {
             case VK_SPACE:

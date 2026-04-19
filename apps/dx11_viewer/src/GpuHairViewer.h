@@ -431,6 +431,34 @@ namespace hairgpu::viewer
             Edit = 1,
         };
 
+        enum class WorkspaceMode : uint32_t
+        {
+            Groom = 0,
+            Sim = 1,
+            Review = 2,
+            Report = 3,
+        };
+
+        enum class GroomTool : uint32_t
+        {
+            Select = 0,
+            Comb = 1,
+            Grab = 2,
+            Smooth = 3,
+            Length = 4,
+            Volume = 5,
+            Part = 6,
+            Freeze = 7,
+            StrandFix = 8,
+        };
+
+        enum class BottomTrayTab : uint32_t
+        {
+            Layers = 0,
+            History = 1,
+            Metrics = 2,
+        };
+
         enum class DebugColorMode : uint32_t
         {
             Natural = 0,
@@ -532,6 +560,15 @@ namespace hairgpu::viewer
         bool CreateUiControls();
         bool RebuildAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand);
         void LayoutUiControls();
+        void ApplyWorkspaceMode(WorkspaceMode workspace);
+        void ApplyGroomToolPreset(GroomTool tool);
+        const wchar_t* GetWorkspaceDisplayName() const;
+        const wchar_t* GetGroomToolDisplayName() const;
+        const wchar_t* GetBottomTrayDisplayName() const;
+        bool IsGroomWorkspace() const;
+        bool IsSimWorkspace() const;
+        bool IsReviewWorkspace() const;
+        bool IsReportWorkspace() const;
         void SyncControlsFromState();
         void SyncStateFromControls();
         void RefreshAssetStatsText();
@@ -581,6 +618,21 @@ namespace hairgpu::viewer
         bool BeginStrandGizmoDrag(POINT clientPoint);
         void UpdateStrandGizmoDrag(POINT clientPoint);
         void EndStrandGizmoDrag(bool cancelDrag);
+        bool IsBrushDrivenTool() const;
+        bool ComputeBrushCenterUvFromScreenPoint(POINT clientPoint, hairgpu::Vec2& outUv, int32_t* outGuideIndex = nullptr, float* outScreenDistancePx = nullptr) const;
+        hairgpu::Vec3 ComputeWorldDeltaFromScreenDelta(float dxPixels, float dyPixels) const;
+        bool BeginViewportBrushStroke(POINT clientPoint);
+        void UpdateViewportBrushStroke(POINT clientPoint);
+        void EndViewportBrushStroke(bool cancelStroke);
+        bool ApplyViewportBrushStroke(POINT clientPoint, bool commitStroke);
+        hairgpu::EditLayer BuildViewportBrushLayer(const hairgpu::Vec2& centerUv,
+                                                   const hairgpu::Vec2& startUv,
+                                                   const hairgpu::Vec2& currentUv,
+                                                   const POINT& currentPoint,
+                                                   uint32_t* outAffectedGuideCount = nullptr) const;
+        bool IsStrandLocked(uint32_t strandIndex) const;
+        void RecordViewportHistory(const std::wstring& entry);
+        std::wstring BuildHistorySummaryText() const;
         hairgpu::Vec3 GetSelectedStrandAnchorPoint(bool root) const;
         bool ProjectWorldToScreen(const hairgpu::Vec3& world, float& outX, float& outY) const;
         void CommitEditedRestState();
@@ -662,7 +714,10 @@ namespace hairgpu::viewer
         {
             std::vector<hairgpu::Vec3> restPoints;
             std::vector<GpuParticle> initialParticles;
+            std::wstring inlineEditStackText;
+            std::vector<uint8_t> lockedStrands;
             int32_t selectedStrandIndex = -1;
+            int32_t selectedInlineLayerIndex = -1;
         };
 
         int32_t m_selectedStrandIndex = -1;
@@ -674,6 +729,16 @@ namespace hairgpu::viewer
         std::vector<hairgpu::Vec3> m_gizmoDragBaseRestPoints;
         std::vector<StrandEditSnapshot> m_strandUndoStack;
         std::vector<StrandEditSnapshot> m_strandRedoStack;
+        bool m_brushStrokeActive = false;
+        POINT m_brushStrokeStartPoint = {};
+        POINT m_brushStrokeLastPoint = {};
+        hairgpu::Vec2 m_brushStrokeStartUv = { 0.5f, 0.5f };
+        hairgpu::Vec2 m_brushStrokeCurrentUv = { 0.5f, 0.5f };
+        hairgpu::EditStack m_brushStrokeBaseStack = {};
+        uint32_t m_brushStrokeAffectedGuideCount = 0u;
+        std::vector<uint8_t> m_lockedStrands;
+        std::vector<std::wstring> m_viewportHistory;
+        uint32_t m_viewportStrokeSerial = 0u;
         hairgpu::BoneAnimationClip m_scalpAnimationClip;
         std::vector<hairgpu::Mat4> m_currentScalpBoneMatrices;
         std::wstring m_lastScalpAnimationSource;
@@ -922,7 +987,14 @@ namespace hairgpu::viewer
 
         RenderMode m_renderMode = RenderMode::StrandRibbon;
         InteractionMode m_interactionMode = InteractionMode::Edit;
+        WorkspaceMode m_workspaceMode = WorkspaceMode::Groom;
+        GroomTool m_groomTool = GroomTool::Comb;
+        BottomTrayTab m_bottomTrayTab = BottomTrayTab::Layers;
         DebugColorMode m_debugColorMode = DebugColorMode::Natural;
+        bool m_showInspectorPane = true;
+        bool m_showBottomTray = false;
+        bool m_showAdvancedInspector = false;
+        bool m_fastGroomViewport = true;
 
         LARGE_INTEGER m_qpcFrequency = {};
         LARGE_INTEGER m_lastTick = {};
@@ -1102,5 +1174,33 @@ namespace hairgpu::viewer
         HWND m_trackActiveSetEditWeight = nullptr;
         HWND m_btnExportActiveSetJson = nullptr;
         HWND m_btnExportRuntimeReport = nullptr;
+
+        HWND m_btnWorkspaceGroom = nullptr;
+        HWND m_btnWorkspaceSim = nullptr;
+        HWND m_btnWorkspaceReview = nullptr;
+        HWND m_btnWorkspaceReport = nullptr;
+        HWND m_btnToolSelect = nullptr;
+        HWND m_btnToolComb = nullptr;
+        HWND m_btnToolGrab = nullptr;
+        HWND m_btnToolSmooth = nullptr;
+        HWND m_btnToolLength = nullptr;
+        HWND m_btnToolVolume = nullptr;
+        HWND m_btnToolPart = nullptr;
+        HWND m_btnToolFreeze = nullptr;
+        HWND m_btnToolStrandFix = nullptr;
+        HWND m_btnUndoEdit = nullptr;
+        HWND m_btnRedoEdit = nullptr;
+        HWND m_btnTrayLayers = nullptr;
+        HWND m_btnTrayHistory = nullptr;
+        HWND m_btnTrayMetrics = nullptr;
+        HWND m_btnToggleInspector = nullptr;
+        HWND m_btnToggleTray = nullptr;
+        HWND m_btnToggleAdvanced = nullptr;
+        HWND m_btnFastViewport = nullptr;
+        HWND m_labelWorkspaceTitle = nullptr;
+        HWND m_labelInspectorTitle = nullptr;
+        HWND m_labelTrayTitle = nullptr;
+        HWND m_labelToolHint = nullptr;
+        HWND m_labelSessionStatus = nullptr;
     };
 }
