@@ -450,6 +450,9 @@ namespace hairgpu::viewer
             Part = 6,
             Freeze = 7,
             StrandFix = 8,
+            Clump = 9,
+            Curl = 10,
+            Unclump = 11,
         };
 
         enum class BottomTrayTab : uint32_t

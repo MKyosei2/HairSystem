@@ -60,6 +60,8 @@ namespace hairgpu
         float temporalWeight = 0.09f;
         float leakageWeight = 0.08f;
         float modelErrorWeight = 0.10f;
+        float styleBreakWeight = 0.12f;
+        float recentEditWeight = 0.08f;
         float naturalnessGainWeight = 0.70f;
         float efficiencyWeight = 0.30f;
         float velocitySoftRange = 0.35f;
@@ -109,6 +111,8 @@ namespace hairgpu
         float leakageScore = 0.0f;
         float modelErrorScore = 0.0f;
         float editScore = 0.0f;
+        float styleBreakScore = 0.0f;
+        float recentEditScore = 0.0f;
         float clusterSizeScore = 0.0f;
         float naturalnessGain = 0.0f;
         float estimatedTimeCostMilliseconds = 0.0f;

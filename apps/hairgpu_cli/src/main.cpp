@@ -903,7 +903,7 @@ namespace
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,0.18,0.00,0.012,0.50,0.14,,,1.00\n";
         out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,0.10,0.018,0.000,0.50,0.14,,,1.00\n";
         out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,0.00,0.00,0.000,0.50,0.14,42,replace,1.00\n";

@@ -257,6 +257,9 @@ HairShapeComparisonReport CompareHairShape(const HairAsset& reference, const Hai
     const float lengthTerm = lodReport.averageLengthDelta / (std::max(refMetrics.averageLength, 1.0e-4f) * 0.35f + 1.0e-4f);
     const float differentialPenalty = report.averageTangentError * 0.35f + report.averageCurvatureError * 0.85f + report.clumpAxisVariance * 3.0f;
     report.clumpPreservationScore = Clamp(1.0f - (lengthTerm + differentialPenalty), 0.0f, 1.0f);
+    report.flowCoherenceScore = Clamp(1.0f - report.averageTangentError * 0.55f - report.clumpAxisVariance * 1.75f, 0.0f, 1.0f);
+    report.curlRetentionScore = Clamp(1.0f - report.averageCurvatureError * 1.10f, 0.0f, 1.0f);
+    report.partLineStabilityScore = Clamp(0.55f * report.rootLocalityScore + 0.45f * report.flowCoherenceScore, 0.0f, 1.0f);
     return report;
 }
 
@@ -356,6 +359,7 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
     report.averageBoundaryTangentJump = boundaryCount > 0u ? static_cast<float>(boundaryTangentAccum / static_cast<double>(boundaryCount)) : 0.0f;
     const float avgBoundaryCurvatureJump = boundaryCount > 0u ? static_cast<float>(boundaryCurvatureAccum / static_cast<double>(boundaryCount)) : 0.0f;
     report.boundaryNaturalnessScore = Clamp(1.0f - (avgBoundaryJump / (0.08f * avgLength + 1.0e-4f) + report.averageBoundaryTangentJump * 0.60f + avgBoundaryCurvatureJump * 0.85f), 0.0f, 1.0f);
+    report.toolLocalityPreservation = Clamp(0.60f * report.editLocalityScore + 0.40f * report.boundaryNaturalnessScore, 0.0f, 1.0f);
     return report;
 }
 

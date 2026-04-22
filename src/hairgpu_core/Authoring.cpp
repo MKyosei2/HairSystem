@@ -165,6 +165,74 @@ namespace hairgpu
             }
             return false;
         }
+        bool ParseEditFalloffZoneToken(const std::string& text, EditFalloffZone& outZone)
+        {
+            const std::string lowered = ToLower(Trim(text));
+            if (lowered.empty() || lowered == "full") { outZone = EditFalloffZone::Full; return true; }
+            if (lowered == "root") { outZone = EditFalloffZone::Root; return true; }
+            if (lowered == "mid" || lowered == "middle") { outZone = EditFalloffZone::Mid; return true; }
+            if (lowered == "tip") { outZone = EditFalloffZone::Tip; return true; }
+            return false;
+        }
+
+        const char* EditFalloffZoneToken(EditFalloffZone zone)
+        {
+            switch (zone)
+            {
+            case EditFalloffZone::Root: return "root";
+            case EditFalloffZone::Mid: return "mid";
+            case EditFalloffZone::Tip: return "tip";
+            default: return "full";
+            }
+        }
+
+        bool ParseGroomEditSemanticToken(const std::string& text, GroomEditSemantic& outSemantic)
+        {
+            const std::string lowered = ToLower(Trim(text));
+            if (lowered.empty() || lowered == "generic") { outSemantic = GroomEditSemantic::Generic; return true; }
+            if (lowered == "comb") { outSemantic = GroomEditSemantic::Comb; return true; }
+            if (lowered == "grab") { outSemantic = GroomEditSemantic::Grab; return true; }
+            if (lowered == "smooth") { outSemantic = GroomEditSemantic::Smooth; return true; }
+            if (lowered == "length") { outSemantic = GroomEditSemantic::Length; return true; }
+            if (lowered == "volume") { outSemantic = GroomEditSemantic::Volume; return true; }
+            if (lowered == "part") { outSemantic = GroomEditSemantic::Part; return true; }
+            if (lowered == "clump") { outSemantic = GroomEditSemantic::Clump; return true; }
+            if (lowered == "curl") { outSemantic = GroomEditSemantic::Curl; return true; }
+            if (lowered == "freeze") { outSemantic = GroomEditSemantic::Freeze; return true; }
+            if (lowered == "strandfix" || lowered == "strand_fix") { outSemantic = GroomEditSemantic::StrandFix; return true; }
+            return false;
+        }
+
+        const char* GroomEditSemanticToken(GroomEditSemantic semantic)
+        {
+            switch (semantic)
+            {
+            case GroomEditSemantic::Comb: return "comb";
+            case GroomEditSemantic::Grab: return "grab";
+            case GroomEditSemantic::Smooth: return "smooth";
+            case GroomEditSemantic::Length: return "length";
+            case GroomEditSemantic::Volume: return "volume";
+            case GroomEditSemantic::Part: return "part";
+            case GroomEditSemantic::Clump: return "clump";
+            case GroomEditSemantic::Curl: return "curl";
+            case GroomEditSemantic::Freeze: return "freeze";
+            case GroomEditSemantic::StrandFix: return "strandfix";
+            default: return "generic";
+            }
+        }
+
+        float EvaluateZoneEnvelope(EditFalloffZone zone, float u)
+        {
+            u = Clamp01(u);
+            switch (zone)
+            {
+            case EditFalloffZone::Root: return Clamp01(1.0f - u * 2.2f);
+            case EditFalloffZone::Mid: return Clamp01(1.0f - std::fabs(u - 0.5f) * 2.6f);
+            case EditFalloffZone::Tip: return Clamp01((u - 0.25f) / 0.75f);
+            default: return 1.0f;
+            }
+        }
+
 
         std::string EscapeCsvToken(const std::string& token)
         {
@@ -544,10 +612,28 @@ namespace hairgpu
                     return false;
                 }
                 layer.region.groupId = groupId;
-                const bool hasExtendedEditColumns = tokens.size() >= 34u;
-                const size_t strandSelectionColumn = hasExtendedEditColumns ? 31u : 26u;
-                const size_t strandSelectionModeColumn = hasExtendedEditColumns ? 32u : 27u;
-                const size_t strandSelectionWeightColumn = hasExtendedEditColumns ? 33u : 28u;
+                if (tokens.size() > 31u && !tokens[31].empty() && !ParseEditFalloffZoneToken(tokens[31], layer.edit.zone))
+                {
+                    outError = "Malformed edit zone at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (tokens.size() > 32u && !tokens[32].empty() && !ParseGroomEditSemanticToken(tokens[32], layer.edit.semantic))
+                {
+                    outError = "Malformed edit semantic at line " + std::to_string(lineNumber);
+                    return false;
+                }
+                if (!parseFloatOptional(33u, layer.edit.flowAlignStrength, "flowAlignStrength") ||
+                    !parseFloatOptional(34u, layer.edit.smoothStrength, "smoothStrength") ||
+                    !parseFloatOptional(35u, layer.edit.liftStrength, "liftStrength") ||
+                    !parseFloatOptional(36u, layer.edit.pressStrength, "pressStrength") ||
+                    !parseFloatOptional(37u, layer.edit.twistStrength, "twistStrength"))
+                {
+                    return false;
+                }
+                const bool hasExtendedEditColumns = tokens.size() >= 41u;
+                const size_t strandSelectionColumn = hasExtendedEditColumns ? 38u : (tokens.size() >= 34u ? 31u : 26u);
+                const size_t strandSelectionModeColumn = hasExtendedEditColumns ? 39u : (tokens.size() >= 34u ? 32u : 27u);
+                const size_t strandSelectionWeightColumn = hasExtendedEditColumns ? 40u : (tokens.size() >= 34u ? 33u : 28u);
                 if (tokens.size() > strandSelectionColumn && !tokens[strandSelectionColumn].empty())
                 {
                     if (!ParseStrandSelectionSpecLocal(tokens[strandSelectionColumn], layer.strandSelection, outError))
@@ -1003,21 +1089,34 @@ namespace hairgpu
             for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
             {
                 const float u = (strand.pointCount > 1u) ? static_cast<float>(localIndex) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
+                const float zoneEnvelope = EvaluateZoneEnvelope(settings.zone, u);
+                const float zoneSelection = selectionWeight * zoneEnvelope;
                 Vec3 p = originalPoints[strand.pointOffset + localIndex] - root;
-                p = RotateYaw(p, settings.yawRadians * selectionWeight);
-                p = p * Lerp(1.0f, settings.lengthScale, u * selectionWeight);
+                p = RotateYaw(p, settings.yawRadians * zoneSelection);
+                p = p * Lerp(1.0f, settings.lengthScale, u * zoneSelection);
 
-                const Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * selectionWeight;
-                const Vec3 side = lateral * (settings.sideOffset * selectionWeight);
+                Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * zoneSelection;
+                Vec3 side = lateral * (settings.sideOffset * zoneSelection);
+                side += binormal * ((settings.liftStrength - settings.pressStrength) * zoneSelection * (0.25f + 0.75f * (1.0f - u)));
 
-                const float curlEnvelope = selectionWeight * settings.curlStrength * (0.20f + 0.80f * u) * u;
-                const float curlPhase = strandPhase + u * 10.0f;
-                const Vec3 curlOffset = (lateral * std::sin(curlPhase) + binormal * std::cos(curlPhase)) * curlEnvelope;
+                const float semanticCombBoost = (settings.semantic == GroomEditSemantic::Comb) ? 1.15f : 1.0f;
+                const float semanticSmoothBoost = (settings.semantic == GroomEditSemantic::Smooth) ? 1.20f : 1.0f;
+                const float semanticPartBoost = (settings.semantic == GroomEditSemantic::Part) ? 1.15f : 1.0f;
+                const float semanticClumpBoost = (settings.semantic == GroomEditSemantic::Clump) ? 1.20f : 1.0f;
+                const float semanticCurlBoost = (settings.semantic == GroomEditSemantic::Curl) ? 1.20f : 1.0f;
 
-                const float partingEnvelope = selectionWeight * settings.partingStrength * partLineWeight * frontBias * (1.0f - 0.75f * u);
+                const float curlEnvelope = zoneSelection * settings.curlStrength * semanticCurlBoost * (0.20f + 0.80f * u) * u;
+                const float curlPhase = strandPhase + u * (10.0f + 4.0f * settings.twistStrength);
+                Vec3 curlOffset = (lateral * std::sin(curlPhase) + binormal * std::cos(curlPhase)) * curlEnvelope;
+                if (settings.twistStrength != 0.0f)
+                {
+                    curlOffset += Normalize(Cross(rootToTip, lateral)) * (curlEnvelope * settings.twistStrength * 0.20f);
+                }
+
+                const float partingEnvelope = zoneSelection * settings.partingStrength * semanticPartBoost * partLineWeight * frontBias * (1.0f - 0.75f * u);
                 const Vec3 partingOffset = lateral * (partDirection * partingEnvelope) + Vec3(0.0f, partingEnvelope * 0.18f, 0.0f);
 
-                float clumpEnvelope = selectionWeight * settings.clumpStrength * (0.10f + 0.90f * u) * (0.35f + 0.65f * guideFamilyStrength);
+                float clumpEnvelope = zoneSelection * settings.clumpStrength * semanticClumpBoost * (0.10f + 0.90f * u) * (0.35f + 0.65f * guideFamilyStrength);
                 Vec3 clumpOffset = {};
                 if (selected.strandIndex >= guideCount && selected.strandIndex < asset.followData.size())
                 {
@@ -1034,10 +1133,24 @@ namespace hairgpu
                     }
                 }
 
+                if (settings.flowAlignStrength > 0.0f && localIndex > 0u)
+                {
+                    const Vec3 currentDir = Normalize(p);
+                    const Vec3 targetDir = Normalize(Lerp(currentDir, rootToTip, Clamp01(settings.flowAlignStrength * semanticCombBoost)));
+                    const float segLen = std::max(Length(p), 1.0e-5f);
+                    p = targetDir * segLen;
+                }
+                if (settings.smoothStrength > 0.0f && localIndex > 0u && localIndex + 1u < strand.pointCount)
+                {
+                    const Vec3 prevRest = originalPoints[strand.pointOffset + localIndex - 1u] - root;
+                    const Vec3 nextRest = originalPoints[strand.pointOffset + localIndex + 1u] - root;
+                    const Vec3 smoothTarget = (prevRest + nextRest) * 0.5f;
+                    p = Lerp(p, smoothTarget, Clamp01(settings.smoothStrength * semanticSmoothBoost * zoneEnvelope));
+                }
                 asset.restPoints[strand.pointOffset + localIndex] = root + p + additive + side + curlOffset + partingOffset + clumpOffset;
                 if (strand.pointOffset + localIndex < asset.pointWidths.size())
                 {
-                    const float widthBlend = Clamp01(selectionWeight * (0.70f + 0.30f * (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
+                    const float widthBlend = Clamp01(zoneSelection * (0.70f + 0.30f * (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
                     asset.pointWidths[strand.pointOffset + localIndex] *= Lerp(1.0f, settings.widthScale, widthBlend);
                 }
             }
@@ -1116,7 +1229,7 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack," << stack.boundarySmoothing << "," << stack.boundaryRadiusUv << "\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         for (const EditLayer& layer : stack.layers)
         {
             out << "layer,"
@@ -1174,7 +1287,7 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,0.18,0.00,0.012,0.50,0.14,,,1.00\n";
         out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,0.10,0.018,0.000,0.50,0.14,,,1.00\n";
         out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,0.00,0.00,0.000,0.50,0.14,42,replace,1.00\n";

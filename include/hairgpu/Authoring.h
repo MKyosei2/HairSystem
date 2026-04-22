@@ -41,6 +41,29 @@ namespace hairgpu
         std::vector<SelectedStrand> strands;
     };
 
+    enum class EditFalloffZone : uint32_t
+    {
+        Full = 0,
+        Root = 1,
+        Mid = 2,
+        Tip = 3,
+    };
+
+    enum class GroomEditSemantic : uint32_t
+    {
+        Generic = 0,
+        Comb = 1,
+        Grab = 2,
+        Smooth = 3,
+        Length = 4,
+        Volume = 5,
+        Part = 6,
+        Clump = 7,
+        Curl = 8,
+        Freeze = 9,
+        StrandFix = 10,
+    };
+
     struct EditSettings
     {
         float lengthScale = 1.0f;
@@ -55,6 +78,13 @@ namespace hairgpu
         float partingStrength = 0.0f;
         float partingCenterU = 0.50f;
         float partingWidthUv = 0.14f;
+        EditFalloffZone zone = EditFalloffZone::Full;
+        GroomEditSemantic semantic = GroomEditSemantic::Generic;
+        float flowAlignStrength = 0.0f;
+        float smoothStrength = 0.0f;
+        float liftStrength = 0.0f;
+        float pressStrength = 0.0f;
+        float twistStrength = 0.0f;
     };
 
     enum class StrandSelectionMode : uint32_t

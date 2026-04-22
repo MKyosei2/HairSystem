@@ -4720,6 +4720,20 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         case GroomTool::StrandFix:
             m_maskOverlayMode = MaskOverlayMode::EditInfluence;
             break;
+        case GroomTool::Clump:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_quickEditFeather = std::max(m_quickEditFeather, 0.24f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        case GroomTool::Curl:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_quickEditFeather = std::max(m_quickEditFeather, 0.26f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        case GroomTool::Unclump:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
         }
         SyncControlsFromState();
         LayoutUiControls();
@@ -4750,6 +4764,9 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         case GroomTool::Part: return L"Part";
         case GroomTool::Freeze: return L"Freeze";
         case GroomTool::StrandFix: return L"Strand Fix";
+        case GroomTool::Clump: return L"Clump";
+        case GroomTool::Curl: return L"Curl";
+        case GroomTool::Unclump: return L"Unclump";
         default: return L"Comb";
         }
     }

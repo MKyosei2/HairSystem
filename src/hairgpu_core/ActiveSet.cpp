@@ -349,6 +349,8 @@ namespace hairgpu
                                      float leakage,
                                      float modelError,
                                      float edit,
+                                     float styleBreak,
+                                     float recentEdit,
                                      float clusterSizeScore)
         {
             const float weightedSum =
@@ -364,6 +366,8 @@ namespace hairgpu
                 leakage * std::max(scoringSettings.leakageWeight, 0.0f) +
                 modelError * std::max(scoringSettings.modelErrorWeight, 0.0f) +
                 edit * std::max(scoringSettings.editWeight, 0.0f) +
+                styleBreak * std::max(scoringSettings.styleBreakWeight, 0.0f) +
+                recentEdit * std::max(scoringSettings.recentEditWeight, 0.0f) +
                 clusterSizeScore * std::max(scoringSettings.clusterSizeWeight, 0.0f);
             const float weightSum =
                 std::max(scoringSettings.motionWeight, 0.0f) +
@@ -378,6 +382,8 @@ namespace hairgpu
                 std::max(scoringSettings.leakageWeight, 0.0f) +
                 std::max(scoringSettings.modelErrorWeight, 0.0f) +
                 std::max(scoringSettings.editWeight, 0.0f) +
+                std::max(scoringSettings.styleBreakWeight, 0.0f) +
+                std::max(scoringSettings.recentEditWeight, 0.0f) +
                 std::max(scoringSettings.clusterSizeWeight, 0.0f);
             if (weightSum <= 1.0e-6f)
             {
@@ -657,6 +663,8 @@ namespace hairgpu
             const float derivedLeakage = Clamp((1.0f - edit) * displacement * 0.70f + boundary * 0.30f, 0.0f, 1.0f);
             const float leakage = AverageOptionalScalar(runtimeInput.guideLeakageScores, cluster.guideStrandIndices, derivedLeakage);
             const float clusterSizeScore = Clamp(static_cast<float>(cluster.strandIndices.size()) / maxClusterStrandsF, 0.0f, 1.0f);
+            const float styleBreak = Clamp(boundary * 0.45f + leakage * 0.35f + temporal * 0.20f, 0.0f, 1.0f);
+            const float recentEdit = Clamp(std::sqrt(std::max(edit, 0.0f)) * (0.55f + 0.45f * temporal), 0.0f, 1.0f);
             const bool mandatoryEdit = budget.enforceEditCoverage && edit >= Clamp(budget.mandatoryEditThreshold, 0.0f, 1.0f);
             if (mandatoryEdit)
             {
@@ -684,6 +692,8 @@ namespace hairgpu
                                                                  leakage,
                                                                  modelError,
                                                                  edit,
+                                                                 styleBreak,
+                                                                 recentEdit,
                                                                  clusterSizeScore);
             const float timeCostMs = EstimateClusterTimeCost(budget, clusterSizeScore, naturalnessGain, mandatoryEdit);
             const float memoryCostMb = EstimateClusterMemoryCost(budget,
@@ -718,6 +728,8 @@ namespace hairgpu
             score.leakageScore = leakage;
             score.modelErrorScore = modelError;
             score.editScore = edit;
+            score.styleBreakScore = styleBreak;
+            score.recentEditScore = recentEdit;
             score.clusterSizeScore = clusterSizeScore;
             score.naturalnessGain = naturalnessGain;
             score.estimatedTimeCostMilliseconds = timeCostMs;
