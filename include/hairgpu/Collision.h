@@ -26,6 +26,14 @@ namespace hairgpu
         float maxPenetration = 0.0f;
     };
 
+    struct SignedDistanceSample
+    {
+        float signedDistance = 0.0f;
+        Vec3 normal = { 0.0f, 1.0f, 0.0f };
+        uint32_t colliderType = UINT32_MAX;
+        uint32_t colliderIndex = UINT32_MAX;
+    };
+
     bool ApplyScalpMeshCollision(HairAsset& asset,
                                  const HairCollisionSettings& settings,
                                  HairCollisionReport* outReport = nullptr);
@@ -49,4 +57,11 @@ namespace hairgpu
     bool ExportSdfGridColliderCsv(const SdfGridCollider& grid,
                                   const std::filesystem::path& filePath,
                                   std::string& outError);
+
+    SignedDistanceSample QuerySignedDistanceToSphere(const SphereCollider& sphere, const Vec3& p);
+    SignedDistanceSample QuerySignedDistanceToCapsule(const CapsuleCollider& capsule, const Vec3& p);
+    SignedDistanceSample QuerySignedDistanceToPlane(const PlaneCollider& plane, const Vec3& p);
+    SignedDistanceSample QuerySignedDistanceToAabb(const AabbCollider& box, const Vec3& p);
+    SignedDistanceSample QuerySignedDistanceToSdfGrid(const SdfGridCollider& grid, const Vec3& p);
+    SignedDistanceSample QueryClosestColliderDistance(const ColliderSet& colliders, const Vec3& p);
 }

@@ -23,6 +23,7 @@
 #include "hairgpu/AssetIO.h"
 #include "hairgpu/BoneAnimation.h"
 #include "hairgpu/Binding.h"
+#include "hairgpu/Collision.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/Math.h"
 #include "hairgpu/Metrics.h"
@@ -1112,18 +1113,6 @@ namespace hairgpu::viewer
         float DistanceToSphereSurface(const hairgpu::Vec3& p, const hairgpu::SphereCollider& sphere)
         {
             return hairgpu::Length(p - sphere.center) - sphere.radius;
-        }
-
-        float DistanceToCapsuleSurface(const hairgpu::Vec3& p, const hairgpu::CapsuleCollider& capsule)
-        {
-            const hairgpu::Vec3 ab = capsule.pointB - capsule.pointA;
-            const float denom = hairgpu::Dot(ab, ab);
-            const float t = (denom > 1.0e-6f)
-                ? hairgpu::Clamp(hairgpu::Dot(p - capsule.pointA, ab) / denom, 0.0f, 1.0f)
-                : 0.0f;
-            const hairgpu::Vec3 closest = capsule.pointA + ab * t;
-            const float radius = hairgpu::Lerp(capsule.radiusA, capsule.radiusB, t);
-            return hairgpu::Length(p - closest) - radius;
         }
 
         bool ProjectWorldToNdc(const hairgpu::Vec3& world, const hairgpu::Vec3& eye, const hairgpu::Vec3& target, float aspectRatio, hairgpu::Vec3& outNdc)
@@ -2963,7 +2952,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             }
             for (const hairgpu::CapsuleCollider& capsule : m_colliders.capsules)
             {
-                const float surfaceDistance = DistanceToCapsuleSurface(p, capsule);
+                const float surfaceDistance = hairgpu::QuerySignedDistanceToCapsule(capsule, p).signedDistance;
                 const float depth = std::max(-surfaceDistance, 0.0f);
                 proximityScore = std::max(proximityScore, hairgpu::Clamp(depth / 0.020f + (0.045f - surfaceDistance) / 0.045f, 0.0f, 1.0f));
             }
@@ -3105,7 +3094,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                     }
                     for (const hairgpu::CapsuleCollider& capsule : m_colliders.capsules)
                     {
-                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-DistanceToCapsuleSurface(p, capsule) / 0.020f, 0.0f, 1.0f));
+                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-hairgpu::QuerySignedDistanceToCapsule(capsule, p).signedDistance / 0.020f, 0.0f, 1.0f));
                     }
                     for (const hairgpu::PlaneCollider& plane : m_colliders.planes)
                     {

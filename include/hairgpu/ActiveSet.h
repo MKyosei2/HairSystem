@@ -106,6 +106,7 @@ namespace hairgpu
         float uncertaintyScore = 0.0f;
         float contactScore = 0.0f;
         float penetrationScore = 0.0f;
+        float contactRisk = 0.0f;
         float boundaryScore = 0.0f;
         float temporalScore = 0.0f;
         float leakageScore = 0.0f;
@@ -113,6 +114,7 @@ namespace hairgpu
         float editScore = 0.0f;
         float styleBreakScore = 0.0f;
         float recentEditScore = 0.0f;
+        float editRisk = 0.0f;
         float clusterSizeScore = 0.0f;
         float naturalnessGain = 0.0f;
         float estimatedTimeCostMilliseconds = 0.0f;

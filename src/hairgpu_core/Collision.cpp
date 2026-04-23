@@ -515,4 +515,155 @@ namespace hairgpu
         outError.clear();
         return true;
     }
+
+    SignedDistanceSample QuerySignedDistanceToSphere(const SphereCollider& sphere, const Vec3& p)
+    {
+        const Vec3 delta = p - sphere.center;
+        const float len = Length(delta);
+        SignedDistanceSample sample = {};
+        sample.signedDistance = len - sphere.radius;
+        sample.normal = (len > 1.0e-6f) ? (delta / len) : Vec3(0.0f, 1.0f, 0.0f);
+        sample.colliderType = 0u;
+        return sample;
+    }
+
+    SignedDistanceSample QuerySignedDistanceToCapsule(const CapsuleCollider& capsule, const Vec3& p)
+    {
+        const Vec3 ab = capsule.pointB - capsule.pointA;
+        const float denom = Dot(ab, ab);
+        const float t = (denom > 1.0e-6f) ? Clamp(Dot(p - capsule.pointA, ab) / denom, 0.0f, 1.0f) : 0.0f;
+        const Vec3 closest = capsule.pointA + ab * t;
+        const float radius = Lerp(capsule.radiusA, capsule.radiusB, t);
+        const Vec3 delta = p - closest;
+        const float len = Length(delta);
+        SignedDistanceSample sample = {};
+        sample.signedDistance = len - radius;
+        sample.normal = (len > 1.0e-6f) ? (delta / len) : Vec3(0.0f, 1.0f, 0.0f);
+        sample.colliderType = 1u;
+        return sample;
+    }
+
+    SignedDistanceSample QuerySignedDistanceToPlane(const PlaneCollider& plane, const Vec3& p)
+    {
+        const Vec3 n = (Length(plane.normal) > 1.0e-6f) ? Normalize(plane.normal) : Vec3(0.0f, 1.0f, 0.0f);
+        SignedDistanceSample sample = {};
+        sample.signedDistance = Dot(p - plane.point, n);
+        sample.normal = n;
+        sample.colliderType = 2u;
+        return sample;
+    }
+
+    SignedDistanceSample QuerySignedDistanceToAabb(const AabbCollider& box, const Vec3& p)
+    {
+        const Vec3 clamped{
+            Clamp(p.x, box.minBounds.x, box.maxBounds.x),
+            Clamp(p.y, box.minBounds.y, box.maxBounds.y),
+            Clamp(p.z, box.minBounds.z, box.maxBounds.z)
+        };
+        const Vec3 delta = p - clamped;
+        const float outsideLen = Length(delta);
+        SignedDistanceSample sample = {};
+        sample.colliderType = 3u;
+        if (outsideLen > 1.0e-6f)
+        {
+            sample.signedDistance = outsideLen;
+            sample.normal = delta / outsideLen;
+            return sample;
+        }
+
+        const float dxMin = std::fabs(p.x - box.minBounds.x);
+        const float dxMax = std::fabs(box.maxBounds.x - p.x);
+        const float dyMin = std::fabs(p.y - box.minBounds.y);
+        const float dyMax = std::fabs(box.maxBounds.y - p.y);
+        const float dzMin = std::fabs(p.z - box.minBounds.z);
+        const float dzMax = std::fabs(box.maxBounds.z - p.z);
+        float minDist = dxMin;
+        sample.normal = Vec3(-1.0f, 0.0f, 0.0f);
+        if (dxMax < minDist) { minDist = dxMax; sample.normal = Vec3(1.0f, 0.0f, 0.0f); }
+        if (dyMin < minDist) { minDist = dyMin; sample.normal = Vec3(0.0f, -1.0f, 0.0f); }
+        if (dyMax < minDist) { minDist = dyMax; sample.normal = Vec3(0.0f, 1.0f, 0.0f); }
+        if (dzMin < minDist) { minDist = dzMin; sample.normal = Vec3(0.0f, 0.0f, -1.0f); }
+        if (dzMax < minDist) { minDist = dzMax; sample.normal = Vec3(0.0f, 0.0f, 1.0f); }
+        sample.signedDistance = -minDist;
+        return sample;
+    }
+
+    SignedDistanceSample QuerySignedDistanceToSdfGrid(const SdfGridCollider& grid, const Vec3& p)
+    {
+        SignedDistanceSample sample = {};
+        sample.colliderType = 4u;
+        if (grid.resolutionX == 0u || grid.resolutionY == 0u || grid.resolutionZ == 0u || grid.values.empty())
+        {
+            sample.signedDistance = FLT_MAX;
+            return sample;
+        }
+
+        const Vec3 extents = grid.boundsMax - grid.boundsMin;
+        const Vec3 safeExtents(std::max(extents.x, 1.0e-6f), std::max(extents.y, 1.0e-6f), std::max(extents.z, 1.0e-6f));
+        const Vec3 uvw = {
+            Clamp((p.x - grid.boundsMin.x) / safeExtents.x, 0.0f, 1.0f),
+            Clamp((p.y - grid.boundsMin.y) / safeExtents.y, 0.0f, 1.0f),
+            Clamp((p.z - grid.boundsMin.z) / safeExtents.z, 0.0f, 1.0f)
+        };
+        const float gx = uvw.x * static_cast<float>(std::max(grid.resolutionX - 1u, 1u));
+        const float gy = uvw.y * static_cast<float>(std::max(grid.resolutionY - 1u, 1u));
+        const float gz = uvw.z * static_cast<float>(std::max(grid.resolutionZ - 1u, 1u));
+        const uint32_t x0 = std::min<uint32_t>(static_cast<uint32_t>(std::floor(gx)), grid.resolutionX - 1u);
+        const uint32_t y0 = std::min<uint32_t>(static_cast<uint32_t>(std::floor(gy)), grid.resolutionY - 1u);
+        const uint32_t z0 = std::min<uint32_t>(static_cast<uint32_t>(std::floor(gz)), grid.resolutionZ - 1u);
+        const uint32_t x1 = std::min<uint32_t>(x0 + 1u, grid.resolutionX - 1u);
+        const uint32_t y1 = std::min<uint32_t>(y0 + 1u, grid.resolutionY - 1u);
+        const uint32_t z1 = std::min<uint32_t>(z0 + 1u, grid.resolutionZ - 1u);
+        const float tx = gx - static_cast<float>(x0);
+        const float ty = gy - static_cast<float>(y0);
+        const float tz = gz - static_cast<float>(z0);
+        auto idx = [&](uint32_t x, uint32_t y, uint32_t z) -> size_t { return (static_cast<size_t>(z) * grid.resolutionY + y) * grid.resolutionX + x; };
+        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+        const float c000 = grid.values[idx(x0,y0,z0)];
+        const float c100 = grid.values[idx(x1,y0,z0)];
+        const float c010 = grid.values[idx(x0,y1,z0)];
+        const float c110 = grid.values[idx(x1,y1,z0)];
+        const float c001 = grid.values[idx(x0,y0,z1)];
+        const float c101 = grid.values[idx(x1,y0,z1)];
+        const float c011 = grid.values[idx(x0,y1,z1)];
+        const float c111 = grid.values[idx(x1,y1,z1)];
+        const float c00 = lerp(c000, c100, tx);
+        const float c10 = lerp(c010, c110, tx);
+        const float c01 = lerp(c001, c101, tx);
+        const float c11 = lerp(c011, c111, tx);
+        const float c0 = lerp(c00, c10, ty);
+        const float c1 = lerp(c01, c11, ty);
+        sample.signedDistance = lerp(c0, c1, tz);
+        sample.normal = Vec3(0.0f, 1.0f, 0.0f);
+        return sample;
+    }
+
+    SignedDistanceSample QueryClosestColliderDistance(const ColliderSet& colliders, const Vec3& p)
+    {
+        SignedDistanceSample best = {};
+        best.signedDistance = FLT_MAX;
+
+        auto consider = [&](SignedDistanceSample s, uint32_t index)
+        {
+            s.colliderIndex = index;
+            if (s.signedDistance < best.signedDistance)
+            {
+                best = s;
+            }
+        };
+
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(colliders.spheres.size()); ++i)
+            consider(QuerySignedDistanceToSphere(colliders.spheres[i], p), i);
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(colliders.capsules.size()); ++i)
+            consider(QuerySignedDistanceToCapsule(colliders.capsules[i], p), i);
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(colliders.planes.size()); ++i)
+            consider(QuerySignedDistanceToPlane(colliders.planes[i], p), i);
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(colliders.aabbs.size()); ++i)
+            consider(QuerySignedDistanceToAabb(colliders.aabbs[i], p), i);
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(colliders.sdfGrids.size()); ++i)
+            consider(QuerySignedDistanceToSdfGrid(colliders.sdfGrids[i], p), i);
+
+        return best;
+    }
+
 }

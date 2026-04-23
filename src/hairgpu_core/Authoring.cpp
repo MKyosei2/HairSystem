@@ -21,6 +21,11 @@ namespace hairgpu
             return std::clamp(v, 0.0f, 1.0f);
         }
 
+        float EvaluateSemanticBoost(GroomEditSemantic semantic, GroomEditSemantic target, float boost)
+        {
+            return (semantic == target) ? boost : 1.0f;
+        }
+
         float WrapAngleRadians(float radians)
         {
             while (radians > kPi)
@@ -1090,22 +1095,31 @@ namespace hairgpu
             {
                 const float u = (strand.pointCount > 1u) ? static_cast<float>(localIndex) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
                 const float zoneEnvelope = EvaluateZoneEnvelope(settings.zone, u);
-                const float zoneSelection = selectionWeight * zoneEnvelope;
+                const float baseEditGain = selectionWeight * zoneEnvelope;
+                const float semanticCombBoost = EvaluateSemanticBoost(settings.semantic, GroomEditSemantic::Comb, 1.15f);
+                const float semanticSmoothBoost = EvaluateSemanticBoost(settings.semantic, GroomEditSemantic::Smooth, 1.20f);
+                const float semanticPartBoost = EvaluateSemanticBoost(settings.semantic, GroomEditSemantic::Part, 1.15f);
+                const float semanticClumpBoost = EvaluateSemanticBoost(settings.semantic, GroomEditSemantic::Clump, 1.20f);
+                const float semanticCurlBoost = EvaluateSemanticBoost(settings.semantic, GroomEditSemantic::Curl, 1.20f);
+                const float combEditGain = baseEditGain * semanticCombBoost;
+                const float smoothEditGain = baseEditGain * semanticSmoothBoost;
+                const float partEditGain = baseEditGain * semanticPartBoost;
+                const float clumpEditGain = baseEditGain * semanticClumpBoost;
+                const float curlEditGain = baseEditGain * semanticCurlBoost;
+                const float normalOffsetStrength =
+                    (std::fabs(settings.normalOffsetStrength) > 1.0e-6f)
+                    ? settings.normalOffsetStrength
+                    : (settings.liftStrength - settings.pressStrength);
+
                 Vec3 p = originalPoints[strand.pointOffset + localIndex] - root;
-                p = RotateYaw(p, settings.yawRadians * zoneSelection);
-                p = p * Lerp(1.0f, settings.lengthScale, u * zoneSelection);
+                p = RotateYaw(p, settings.yawRadians * baseEditGain);
+                p = p * Lerp(1.0f, settings.lengthScale, u * baseEditGain);
 
-                Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * zoneSelection;
-                Vec3 side = lateral * (settings.sideOffset * zoneSelection);
-                side += binormal * ((settings.liftStrength - settings.pressStrength) * zoneSelection * (0.25f + 0.75f * (1.0f - u)));
+                Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * baseEditGain;
+                Vec3 side = lateral * (settings.sideOffset * baseEditGain);
+                side += binormal * (normalOffsetStrength * baseEditGain * (0.25f + 0.75f * (1.0f - u)));
 
-                const float semanticCombBoost = (settings.semantic == GroomEditSemantic::Comb) ? 1.15f : 1.0f;
-                const float semanticSmoothBoost = (settings.semantic == GroomEditSemantic::Smooth) ? 1.20f : 1.0f;
-                const float semanticPartBoost = (settings.semantic == GroomEditSemantic::Part) ? 1.15f : 1.0f;
-                const float semanticClumpBoost = (settings.semantic == GroomEditSemantic::Clump) ? 1.20f : 1.0f;
-                const float semanticCurlBoost = (settings.semantic == GroomEditSemantic::Curl) ? 1.20f : 1.0f;
-
-                const float curlEnvelope = zoneSelection * settings.curlStrength * semanticCurlBoost * (0.20f + 0.80f * u) * u;
+                const float curlEnvelope = curlEditGain * settings.curlStrength * (0.20f + 0.80f * u) * u;
                 const float curlPhase = strandPhase + u * (10.0f + 4.0f * settings.twistStrength);
                 Vec3 curlOffset = (lateral * std::sin(curlPhase) + binormal * std::cos(curlPhase)) * curlEnvelope;
                 if (settings.twistStrength != 0.0f)
@@ -1113,10 +1127,10 @@ namespace hairgpu
                     curlOffset += Normalize(Cross(rootToTip, lateral)) * (curlEnvelope * settings.twistStrength * 0.20f);
                 }
 
-                const float partingEnvelope = zoneSelection * settings.partingStrength * semanticPartBoost * partLineWeight * frontBias * (1.0f - 0.75f * u);
+                const float partingEnvelope = partEditGain * settings.partingStrength * partLineWeight * frontBias * (1.0f - 0.75f * u);
                 const Vec3 partingOffset = lateral * (partDirection * partingEnvelope) + Vec3(0.0f, partingEnvelope * 0.18f, 0.0f);
 
-                float clumpEnvelope = zoneSelection * settings.clumpStrength * semanticClumpBoost * (0.10f + 0.90f * u) * (0.35f + 0.65f * guideFamilyStrength);
+                float clumpEnvelope = clumpEditGain * settings.clumpStrength * (0.10f + 0.90f * u) * (0.35f + 0.65f * guideFamilyStrength);
                 Vec3 clumpOffset = {};
                 if (selected.strandIndex >= guideCount && selected.strandIndex < asset.followData.size())
                 {
@@ -1136,7 +1150,8 @@ namespace hairgpu
                 if (settings.flowAlignStrength > 0.0f && localIndex > 0u)
                 {
                     const Vec3 currentDir = Normalize(p);
-                    const Vec3 targetDir = Normalize(Lerp(currentDir, rootToTip, Clamp01(settings.flowAlignStrength * semanticCombBoost)));
+                    const float flowBlend = Clamp01(settings.flowAlignStrength * combEditGain);
+                    const Vec3 targetDir = Normalize(Lerp(currentDir, rootToTip, flowBlend));
                     const float segLen = std::max(Length(p), 1.0e-5f);
                     p = targetDir * segLen;
                 }
@@ -1145,12 +1160,12 @@ namespace hairgpu
                     const Vec3 prevRest = originalPoints[strand.pointOffset + localIndex - 1u] - root;
                     const Vec3 nextRest = originalPoints[strand.pointOffset + localIndex + 1u] - root;
                     const Vec3 smoothTarget = (prevRest + nextRest) * 0.5f;
-                    p = Lerp(p, smoothTarget, Clamp01(settings.smoothStrength * semanticSmoothBoost * zoneEnvelope));
+                    p = Lerp(p, smoothTarget, Clamp01(settings.smoothStrength * smoothEditGain));
                 }
                 asset.restPoints[strand.pointOffset + localIndex] = root + p + additive + side + curlOffset + partingOffset + clumpOffset;
                 if (strand.pointOffset + localIndex < asset.pointWidths.size())
                 {
-                    const float widthBlend = Clamp01(zoneSelection * (0.70f + 0.30f * (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
+                    const float widthBlend = Clamp01(baseEditGain * (0.70f + 0.30f * (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
                     asset.pointWidths[strand.pointOffset + localIndex] *= Lerp(1.0f, settings.widthScale, widthBlend);
                 }
             }
@@ -1229,7 +1244,7 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack," << stack.boundarySmoothing << "," << stack.boundaryRadiusUv << "\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,normalOffsetStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         for (const EditLayer& layer : stack.layers)
         {
             out << "layer,"
@@ -1287,7 +1302,7 @@ namespace hairgpu
         out << "# edit stack csv\n";
         out << "# stack,boundarySmoothing,boundaryRadiusUv\n";
         out << "stack,0.42,0.10\n";
-        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
+        out << "# layer,name,enabled,layerWeight,mode,cx,cy,rx,ry,innerRadius,angleCenterRadians,angleHalfExtentRadians,feather,groupId,guidesOnly,lengthScale,widthScale,rootOffsetX,rootOffsetY,rootOffsetZ,tipOffsetX,tipOffsetY,tipOffsetZ,sideOffset,yawRadians,followerInfluence,clumpStrength,curlStrength,partingStrength,partingCenterU,partingWidthUv,zone,semantic,flowAlignStrength,smoothStrength,liftStrength,pressStrength,normalOffsetStrength,twistStrength,strandSelection,strandSelectionMode,strandSelectionWeight\n";
         out << "layer,front_sector,1,1.0,sector,0.50,0.50,0.50,0.50,0.00,0.0000000,3.1415926,0.20,,1,1.05,1.00,0.00,-0.01,0.00,0.00,-0.03,0.00,0.00,0.05,1.00,0.18,0.00,0.012,0.50,0.14,,,1.00\n";
         out << "layer,tip_refine,1,0.85,ellipse,0.50,0.50,0.16,0.16,0.00,0.00,3.1415926,0.35,,1,0.97,1.00,0.00,0.00,0.00,0.00,0.02,0.00,0.01,-0.08,0.85,0.10,0.018,0.000,0.50,0.14,,,1.00\n";
         out << "layer,single_strand_fix,1,1.00,all,0.50,0.50,0.20,0.20,0.00,0.00,3.1415926,0.20,,0,1.00,1.00,0.00,0.00,0.00,0.00,0.01,0.00,0.00,0.10,0.00,0.00,0.00,0.000,0.50,0.14,42,replace,1.00\n";

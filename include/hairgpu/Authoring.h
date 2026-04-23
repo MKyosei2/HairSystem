@@ -84,6 +84,7 @@ namespace hairgpu
         float smoothStrength = 0.0f;
         float liftStrength = 0.0f;
         float pressStrength = 0.0f;
+        float normalOffsetStrength = 0.0f;
         float twistStrength = 0.0f;
     };
 

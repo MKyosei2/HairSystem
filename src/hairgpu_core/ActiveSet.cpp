@@ -336,37 +336,36 @@ namespace hairgpu
             return Clamp(AverageScalar(values, indices), 0.0f, 1.0f);
         }
 
-        float ComputeNaturalnessGain(const ActiveSetScoringSettings& scoringSettings,
-                                     float motion,
-                                     float displacement,
-                                     float visibility,
-                                     float silhouette,
-                                     float uncertainty,
-                                     float contact,
-                                     float penetration,
-                                     float boundary,
-                                     float temporal,
-                                     float leakage,
-                                     float modelError,
-                                     float edit,
-                                     float styleBreak,
-                                     float recentEdit,
-                                     float clusterSizeScore)
+        float ComputeNaturalnessGainCompact(const ActiveSetScoringSettings& scoringSettings,
+                                            float motion,
+                                            float displacement,
+                                            float visibility,
+                                            float silhouette,
+                                            float uncertainty,
+                                            float contactRisk,
+                                            float editRisk,
+                                            float recentEdit,
+                                            float clusterSizeScore)
         {
+            const float combinedContactWeight =
+                std::max(scoringSettings.contactWeight, 0.0f) +
+                std::max(scoringSettings.penetrationWeight, 0.0f);
+            const float combinedEditWeight =
+                std::max(scoringSettings.boundaryWeight, 0.0f) +
+                std::max(scoringSettings.temporalWeight, 0.0f) +
+                std::max(scoringSettings.leakageWeight, 0.0f) +
+                std::max(scoringSettings.modelErrorWeight, 0.0f) +
+                std::max(scoringSettings.editWeight, 0.0f) +
+                std::max(scoringSettings.styleBreakWeight, 0.0f);
+
             const float weightedSum =
                 motion * std::max(scoringSettings.motionWeight, 0.0f) +
                 displacement * std::max(scoringSettings.displacementWeight, 0.0f) +
                 visibility * std::max(scoringSettings.visibilityWeight, 0.0f) +
                 silhouette * std::max(scoringSettings.silhouetteWeight, 0.0f) +
                 uncertainty * std::max(scoringSettings.uncertaintyWeight, 0.0f) +
-                contact * std::max(scoringSettings.contactWeight, 0.0f) +
-                penetration * std::max(scoringSettings.penetrationWeight, 0.0f) +
-                boundary * std::max(scoringSettings.boundaryWeight, 0.0f) +
-                temporal * std::max(scoringSettings.temporalWeight, 0.0f) +
-                leakage * std::max(scoringSettings.leakageWeight, 0.0f) +
-                modelError * std::max(scoringSettings.modelErrorWeight, 0.0f) +
-                edit * std::max(scoringSettings.editWeight, 0.0f) +
-                styleBreak * std::max(scoringSettings.styleBreakWeight, 0.0f) +
+                contactRisk * combinedContactWeight +
+                editRisk * combinedEditWeight +
                 recentEdit * std::max(scoringSettings.recentEditWeight, 0.0f) +
                 clusterSizeScore * std::max(scoringSettings.clusterSizeWeight, 0.0f);
             const float weightSum =
@@ -375,14 +374,8 @@ namespace hairgpu
                 std::max(scoringSettings.visibilityWeight, 0.0f) +
                 std::max(scoringSettings.silhouetteWeight, 0.0f) +
                 std::max(scoringSettings.uncertaintyWeight, 0.0f) +
-                std::max(scoringSettings.contactWeight, 0.0f) +
-                std::max(scoringSettings.penetrationWeight, 0.0f) +
-                std::max(scoringSettings.boundaryWeight, 0.0f) +
-                std::max(scoringSettings.temporalWeight, 0.0f) +
-                std::max(scoringSettings.leakageWeight, 0.0f) +
-                std::max(scoringSettings.modelErrorWeight, 0.0f) +
-                std::max(scoringSettings.editWeight, 0.0f) +
-                std::max(scoringSettings.styleBreakWeight, 0.0f) +
+                combinedContactWeight +
+                combinedEditWeight +
                 std::max(scoringSettings.recentEditWeight, 0.0f) +
                 std::max(scoringSettings.clusterSizeWeight, 0.0f);
             if (weightSum <= 1.0e-6f)
@@ -679,22 +672,26 @@ namespace hairgpu
                     pointCount += asset.strands[strandIndex].pointCount;
                 }
             }
-            const float naturalnessGain = ComputeNaturalnessGain(scoringSettings,
-                                                                 motion,
-                                                                 displacement,
-                                                                 visibility,
-                                                                 silhouette,
-                                                                 uncertainty,
-                                                                 contact,
-                                                                 penetration,
-                                                                 boundary,
-                                                                 temporal,
-                                                                 leakage,
-                                                                 modelError,
-                                                                 edit,
-                                                                 styleBreak,
-                                                                 recentEdit,
-                                                                 clusterSizeScore);
+            const float contactRisk = Clamp(0.55f * contact + 0.45f * penetration, 0.0f, 1.0f);
+            const float editRisk = Clamp(
+                0.32f * edit +
+                0.20f * boundary +
+                0.16f * temporal +
+                0.12f * leakage +
+                0.10f * modelError +
+                0.10f * styleBreak,
+                0.0f,
+                1.0f);
+            const float naturalnessGain = ComputeNaturalnessGainCompact(scoringSettings,
+                                                                        motion,
+                                                                        displacement,
+                                                                        visibility,
+                                                                        silhouette,
+                                                                        uncertainty,
+                                                                        contactRisk,
+                                                                        editRisk,
+                                                                        recentEdit,
+                                                                        clusterSizeScore);
             const float timeCostMs = EstimateClusterTimeCost(budget, clusterSizeScore, naturalnessGain, mandatoryEdit);
             const float memoryCostMb = EstimateClusterMemoryCost(budget,
                                                                  clusterSizeScore,
@@ -723,6 +720,7 @@ namespace hairgpu
             score.uncertaintyScore = uncertainty;
             score.contactScore = contact;
             score.penetrationScore = penetration;
+            score.contactRisk = contactRisk;
             score.boundaryScore = boundary;
             score.temporalScore = temporal;
             score.leakageScore = leakage;
@@ -730,6 +728,7 @@ namespace hairgpu
             score.editScore = edit;
             score.styleBreakScore = styleBreak;
             score.recentEditScore = recentEdit;
+            score.editRisk = editRisk;
             score.clusterSizeScore = clusterSizeScore;
             score.naturalnessGain = naturalnessGain;
             score.estimatedTimeCostMilliseconds = timeCostMs;
