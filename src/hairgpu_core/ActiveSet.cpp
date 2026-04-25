@@ -10,6 +10,7 @@
 #include <sstream>
 #include <tuple>
 
+#include "hairgpu/BinaryIO.h"
 namespace hairgpu
 {
     namespace
@@ -17,57 +18,6 @@ namespace hairgpu
 
         constexpr std::array<char, 8> kDispatchPackMagic = { 'H','D','S','P','A','C','K','1' };
         constexpr uint32_t kDispatchPackVersion = 1u;
-
-        template <typename T>
-        bool WriteValue(std::ofstream& out, const T& value)
-        {
-            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadValue(std::ifstream& in, T& value)
-        {
-            in.read(reinterpret_cast<char*>(&value), sizeof(T));
-            return static_cast<bool>(in);
-        }
-
-        template <typename T>
-        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
-        {
-            const uint64_t count = static_cast<uint64_t>(values.size());
-            if (!WriteValue(out, count))
-            {
-                return false;
-            }
-            if (!values.empty())
-            {
-                out.write(reinterpret_cast<const char*>(values.data()),
-                          static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadVector(std::ifstream& in, std::vector<T>& values)
-        {
-            uint64_t count = 0u;
-            if (!ReadValue(in, count))
-            {
-                return false;
-            }
-            if (count > (1ull << 31))
-            {
-                return false;
-            }
-            values.resize(static_cast<size_t>(count));
-            if (!values.empty())
-            {
-                in.read(reinterpret_cast<char*>(values.data()),
-                        static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(in);
-        }
 
         template <typename T>
         bool WriteRawVectorFile(const std::filesystem::path& filePath, const std::vector<T>& values)
@@ -256,11 +206,8 @@ namespace hairgpu
                                         float nearDistance,
                                         float farDistance)
         {
-            const Vec3 toPoint = position - cameraPosition;
-            const float distance = Length(toPoint);
-            const Vec3 direction = Normalize(toPoint);
-            const float front = Clamp((Dot(Normalize(cameraForward), direction) + 1.0f) * 0.5f, 0.0f, 1.0f);
-            const float distanceFactor = 1.0f - Clamp((distance - nearDistance) / std::max(farDistance - nearDistance, 1.0e-4f), 0.0f, 1.0f);
+            const float front = FrontFactor(position, cameraPosition, cameraForward);
+            const float distanceFactor = DistanceFactor(position, cameraPosition, nearDistance, farDistance);
             return Clamp(front * 0.65f + distanceFactor * 0.35f, 0.0f, 1.0f);
         }
 
@@ -270,12 +217,7 @@ namespace hairgpu
             outMax = Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
             for (const Vec3& p : guideRoots)
             {
-                outMin.x = std::min(outMin.x, p.x);
-                outMin.y = std::min(outMin.y, p.y);
-                outMin.z = std::min(outMin.z, p.z);
-                outMax.x = std::max(outMax.x, p.x);
-                outMax.y = std::max(outMax.y, p.y);
-                outMax.z = std::max(outMax.z, p.z);
+                ExpandBounds(outMin, outMax, p);
             }
             if (outMin.x > outMax.x)
             {

@@ -9,6 +9,11 @@
 #include <limits>
 #include <unordered_map>
 
+#include "hairgpu/StrandSampling.h"
+
+#include "hairgpu/CsvUtil.h"
+#include "hairgpu/ParseUtil.h"
+#include "hairgpu/ProceduralMath.h"
 namespace hairgpu
 {
     namespace
@@ -39,110 +44,19 @@ namespace hairgpu
             return radians;
         }
 
-        std::string Trim(std::string text)
-        {
-            const auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
-            while (!text.empty() && isSpace(static_cast<unsigned char>(text.front())))
-            {
-                text.erase(text.begin());
-            }
-            while (!text.empty() && isSpace(static_cast<unsigned char>(text.back())))
-            {
-                text.pop_back();
-            }
-            return text;
-        }
-
-        std::string ToLower(std::string text)
-        {
-            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c)
-            {
-                return static_cast<char>(std::tolower(c));
-            });
-            return text;
-        }
-
-        std::vector<std::string> SplitSimpleCsv(const std::string& line)
-        {
-            std::vector<std::string> tokens;
-            std::string current;
-            bool inQuotes = false;
-            for (size_t i = 0; i < line.size(); ++i)
-            {
-                const char c = line[i];
-                if (c == '"')
-                {
-                    if (inQuotes && i + 1 < line.size() && line[i + 1] == '"')
-                    {
-                        current.push_back('"');
-                        ++i;
-                    }
-                    else
-                    {
-                        inQuotes = !inQuotes;
-                    }
-                }
-                else if (c == ',' && !inQuotes)
-                {
-                    tokens.push_back(current);
-                    current.clear();
-                }
-                else
-                {
-                    current.push_back(c);
-                }
-            }
-            tokens.push_back(current);
-            return tokens;
-        }
-
         bool TryParseFloatToken(const std::string& token, float& outValue)
         {
-            try
-            {
-                size_t consumed = 0u;
-                outValue = std::stof(token, &consumed);
-                return consumed == token.size();
-            }
-            catch (...)
-            {
-                return false;
-            }
+            return ::hairgpu::TryParseFloat(token, outValue);
         }
 
         bool TryParseUIntToken(const std::string& token, uint32_t& outValue)
         {
-            try
-            {
-                size_t consumed = 0u;
-                const unsigned long value = std::stoul(token, &consumed, 10);
-                if (consumed != token.size())
-                {
-                    return false;
-                }
-                outValue = static_cast<uint32_t>(value);
-                return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
+            return ::hairgpu::TryParseUInt(token, outValue);
         }
 
         bool TryParseBoolToken(const std::string& token, bool& outValue)
         {
-            const std::string lowered = ToLower(Trim(token));
-            if (lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on")
-            {
-                outValue = true;
-                return true;
-            }
-            if (lowered == "0" || lowered == "false" || lowered == "no" || lowered == "off")
-            {
-                outValue = false;
-                return true;
-            }
-            return false;
+            return ::hairgpu::TryParseBool(token, outValue);
         }
 
         bool ParseRegionModeToken(const std::string& text, RegionSelectMode& outMode)
@@ -238,28 +152,6 @@ namespace hairgpu
             }
         }
 
-
-        std::string EscapeCsvToken(const std::string& token)
-        {
-            if (token.find_first_of(",\"\n\r") == std::string::npos)
-            {
-                return token;
-            }
-            std::string escaped = "\"";
-            for (char c : token)
-            {
-                if (c == '"')
-                {
-                    escaped += "\"\"";
-                }
-                else
-                {
-                    escaped.push_back(c);
-                }
-            }
-            escaped.push_back('"');
-            return escaped;
-        }
 
         const char* RegionModeToToken(RegionSelectMode mode)
         {
@@ -670,13 +562,6 @@ namespace hairgpu
             return true;
         }
 
-        Vec3 RotateYaw(const Vec3& p, float radians)
-        {
-            const float c = std::cos(radians);
-            const float s = std::sin(radians);
-            return {p.x * c - p.z * s, p.y, p.x * s + p.z * c};
-        }
-
         Vec3 MakeSafeAxis(const Vec3& primary, const Vec3& fallback)
         {
             const Vec3 axis = Normalize(primary);
@@ -685,12 +570,7 @@ namespace hairgpu
 
         float Hash01(uint32_t value)
         {
-            value ^= value >> 16u;
-            value *= 0x7feb352du;
-            value ^= value >> 15u;
-            value *= 0x846ca68bu;
-            value ^= value >> 16u;
-            return static_cast<float>(value & 0x00ffffffu) / static_cast<float>(0x01000000u);
+            return ::hairgpu::Hash01Murmur(value);
         }
 
         Vec3 GetStrandRoot(const HairAsset& asset, uint32_t strandIndex)
@@ -723,7 +603,7 @@ namespace hairgpu
                 return 1.0f;
             }
             const float t = Clamp01((normalizedDistance - start) / safeFeather);
-            return 1.0f - t * t * (3.0f - 2.0f * t);
+            return 1.0f - SmoothStep01(t);
         }
 
         bool StrandMatchesRegion(const HairAsset& asset, uint32_t strandIndex, const RegionSelectionSettings& settings, float& outWeight)
@@ -1112,7 +992,7 @@ namespace hairgpu
                     : (settings.liftStrength - settings.pressStrength);
 
                 Vec3 p = originalPoints[strand.pointOffset + localIndex] - root;
-                p = RotateYaw(p, settings.yawRadians * baseEditGain);
+                p = ::hairgpu::RotateYaw(p, settings.yawRadians * baseEditGain);
                 p = p * Lerp(1.0f, settings.lengthScale, u * baseEditGain);
 
                 Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * baseEditGain;
@@ -1690,36 +1570,12 @@ namespace hairgpu
     {
         Vec3 SampleCanonicalPoint(const HairAsset& asset, const StrandRange& strand, float t)
         {
-            if (strand.pointCount == 0u || strand.pointOffset >= asset.restPoints.size())
-            {
-                return {};
-            }
-            if (strand.pointCount == 1u)
-            {
-                return asset.restPoints[strand.pointOffset];
-            }
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float alpha = scaled - static_cast<float>(i0);
-            return Lerp(asset.restPoints[strand.pointOffset + i0], asset.restPoints[strand.pointOffset + i1], alpha);
+            return SampleStrandPoint(asset, strand, t);
         }
 
         float SampleCanonicalWidth(const HairAsset& asset, const StrandRange& strand, float t)
         {
-            if (strand.pointCount == 0u || strand.pointOffset >= asset.pointWidths.size())
-            {
-                return 0.004f;
-            }
-            if (strand.pointCount == 1u)
-            {
-                return asset.pointWidths[strand.pointOffset];
-            }
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float alpha = scaled - static_cast<float>(i0);
-            return Lerp(asset.pointWidths[strand.pointOffset + i0], asset.pointWidths[strand.pointOffset + i1], alpha);
+            return SampleStrandWidth(asset, strand, t, 0.004f);
         }
 
         bool SourceStrandIsGuide(const HairAsset& asset, uint32_t strandIndex)

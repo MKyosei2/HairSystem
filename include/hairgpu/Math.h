@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 namespace hairgpu
@@ -46,6 +47,12 @@ namespace hairgpu
             0,0,0,1 };
     };
 
+    template <typename T>
+    inline T Clamp(const T& value, const T& minValue, const T& maxValue)
+    {
+        return (value < minValue) ? minValue : ((value > maxValue) ? maxValue : value);
+    }
+
     inline float Dot(const Vec3& a, const Vec3& b)
     {
         return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -80,12 +87,81 @@ namespace hairgpu
         return a * (1.0f - t) + b * t;
     }
 
-    template <typename T>
-    inline T Clamp(const T& value, const T& minValue, const T& maxValue)
+    inline float BiLerp(float c00, float c10,
+                        float c01, float c11,
+                        float tx, float ty)
     {
-        return (value < minValue) ? minValue : ((value > maxValue) ? maxValue : value);
+        return Lerp(Lerp(c00, c10, tx),
+                    Lerp(c01, c11, tx),
+                    ty);
     }
 
+    inline Vec3 BiLerp(const Vec3& c00, const Vec3& c10,
+                       const Vec3& c01, const Vec3& c11,
+                       float tx, float ty)
+    {
+        return Lerp(Lerp(c00, c10, tx),
+                    Lerp(c01, c11, tx),
+                    ty);
+    }
+
+    inline float TriLerp(float c000, float c100,
+                         float c010, float c110,
+                         float c001, float c101,
+                         float c011, float c111,
+                         float tx, float ty, float tz)
+    {
+        const float c00 = Lerp(c000, c100, tx);
+        const float c10 = Lerp(c010, c110, tx);
+        const float c01 = Lerp(c001, c101, tx);
+        const float c11 = Lerp(c011, c111, tx);
+        const float c0 = Lerp(c00, c10, ty);
+        const float c1 = Lerp(c01, c11, ty);
+        return Lerp(c0, c1, tz);
+    }
+
+    inline void ExpandBounds(Vec3& boundsMin, Vec3& boundsMax, const Vec3& p)
+    {
+        boundsMin.x = std::min(boundsMin.x, p.x);
+        boundsMin.y = std::min(boundsMin.y, p.y);
+        boundsMin.z = std::min(boundsMin.z, p.z);
+        boundsMax.x = std::max(boundsMax.x, p.x);
+        boundsMax.y = std::max(boundsMax.y, p.y);
+        boundsMax.z = std::max(boundsMax.z, p.z);
+    }
+
+    inline float DistanceFactor(const Vec3& position,
+                                const Vec3& cameraPosition,
+                                float nearDistance,
+                                float farDistance,
+                                float epsilon = 1.0e-4f)
+    {
+        const float distance = Length(position - cameraPosition);
+        return 1.0f - Clamp((distance - nearDistance) /
+                            std::max(farDistance - nearDistance, epsilon),
+                            0.0f,
+                            1.0f);
+    }
+
+    inline float FrontFactor(const Vec3& position,
+                             const Vec3& cameraPosition,
+                             const Vec3& cameraForward)
+    {
+        const Vec3 direction = Normalize(position - cameraPosition);
+        return Clamp((Dot(Normalize(cameraForward), direction) + 1.0f) * 0.5f,
+                     0.0f,
+                     1.0f);
+    }
+
+    inline float SilhouetteFactorX(const Vec3& root,
+                                   const Vec3& center,
+                                   float halfWidth,
+                                   float epsilon = 1.0e-4f)
+    {
+        return Clamp(std::fabs(root.x - center.x) / std::max(halfWidth, epsilon),
+                     0.0f,
+                     1.0f);
+    }
 
     Mat4 Identity();
     Mat4 PerspectiveFovRH(float fovYRadians, float aspectRatio, float nearZ, float farZ);

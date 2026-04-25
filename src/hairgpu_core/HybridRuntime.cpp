@@ -15,7 +15,10 @@
 #include "hairgpu/HairCache.h"
 #include "hairgpu/Metrics.h"
 #include "hairgpu/ReducedModel.h"
+#include "hairgpu/Geometry.h"
+#include "hairgpu/SdfGridUtil.h"
 
+#include "hairgpu/ErrorMetrics.h"
 namespace hairgpu
 {
     namespace
@@ -82,14 +85,6 @@ namespace hairgpu
             return static_cast<float>(static_cast<double>(bytes) / (1024.0 * 1024.0));
         }
 
-        Vec3 ClosestPointOnSegment(const Vec3& a, const Vec3& b, const Vec3& p)
-        {
-            const Vec3 ab = b - a;
-            const float denom = std::max(Dot(ab, ab), 1.0e-8f);
-            const float t = Clamp(Dot(p - a, ab) / denom, 0.0f, 1.0f);
-            return a + ab * t;
-        }
-
         float StrandSegmentRestLength(const HairAsset& asset, uint32_t strandIndex, uint32_t pointIndex)
         {
             if (strandIndex >= asset.strands.size())
@@ -145,18 +140,11 @@ namespace hairgpu
         {
             PenetrationResult result = {};
             result.correctedPoint = point;
-            const Vec3 closest = ClosestPointOnSegment(capsule.pointA, capsule.pointB, point);
-            const Vec3 axis = capsule.pointB - capsule.pointA;
-            const float axisDenom = std::max(Dot(axis, axis), 1.0e-8f);
-            const float t = Clamp(Dot(closest - capsule.pointA, axis) / axisDenom, 0.0f, 1.0f);
-            const float capsuleRadius = Lerp(capsule.radiusA, capsule.radiusB, t) + shellDistance;
-            const Vec3 delta = point - closest;
-            const float distance = Length(delta);
-            if (distance < capsuleRadius)
+            const CapsuleProjection projection = ProjectToCapsule(capsule, point, shellDistance);
+            if (projection.distance < projection.radius)
             {
-                const Vec3 normal = (distance > 1.0e-6f) ? (delta / distance) : Vec3(0.0f, 1.0f, 0.0f);
-                result.penetration = capsuleRadius - distance;
-                result.correctedPoint = closest + normal * capsuleRadius;
+                result.penetration = projection.radius - projection.distance;
+                result.correctedPoint = projection.closest + projection.normal * projection.radius;
                 result.corrected = true;
             }
             return result;
@@ -253,6 +241,52 @@ namespace hairgpu
             }
         }
 
+
+        void SmoothGuidePoints(std::vector<Vec3>& smoothed,
+                               const std::vector<Vec3>& current,
+                               float alpha)
+        {
+            const float a = Clamp(alpha, 0.01f, 1.0f);
+            const size_t count = std::min(smoothed.size(), current.size());
+            for (size_t i = 0u; i < count; ++i)
+            {
+                smoothed[i] = Lerp(smoothed[i], current[i], a);
+            }
+        }
+
+        std::vector<Vec3> PredictSecondOrderGuidePoints(const std::vector<Vec3>& current,
+                                                        const std::vector<Vec3>& previous,
+                                                        const std::vector<Vec3>& previousPrevious,
+                                                        float velocityGain,
+                                                        float accelerationGain)
+        {
+            std::vector<Vec3> predicted = current;
+            const size_t count = std::min(predicted.size(), previous.size());
+            for (size_t i = 0u; i < count; ++i)
+            {
+                const Vec3 velocity = current[i] - previous[i];
+                predicted[i] += velocity * velocityGain;
+                if (i < previousPrevious.size())
+                {
+                    const Vec3 acceleration = current[i] - previous[i] * 2.0f + previousPrevious[i];
+                    predicted[i] += acceleration * accelerationGain;
+                }
+            }
+            return predicted;
+        }
+
+        void BlendGuidePoints(std::vector<Vec3>& base,
+                              const std::vector<Vec3>& target,
+                              float blend)
+        {
+            const float t = Clamp(blend, 0.0f, 1.0f);
+            const size_t count = std::min(base.size(), target.size());
+            for (size_t i = 0u; i < count; ++i)
+            {
+                base[i] = Lerp(base[i], target[i], t);
+            }
+        }
+
         float EstimateSecondOrderPredictionGain(const std::vector<Vec3>& previousPreviousPoints,
                                                 const std::vector<Vec3>& previousPoints,
                                                 const std::vector<Vec3>& currentPoints,
@@ -290,12 +324,8 @@ namespace hairgpu
 
         float SignedDistanceToCapsule(const Vec3& point, const CapsuleCollider& capsule)
         {
-            const Vec3 closest = ClosestPointOnSegment(capsule.pointA, capsule.pointB, point);
-            const Vec3 axis = capsule.pointB - capsule.pointA;
-            const float axisDenom = std::max(Dot(axis, axis), 1.0e-8f);
-            const float t = Clamp(Dot(closest - capsule.pointA, axis) / axisDenom, 0.0f, 1.0f);
-            const float radius = Lerp(capsule.radiusA, capsule.radiusB, t);
-            return Length(point - closest) - radius;
+            const CapsuleProjection projection = ProjectToCapsule(capsule, point);
+            return projection.distance - projection.radius;
         }
 
         float SignedDistanceToPlane(const Vec3& point, const PlaneCollider& plane)
@@ -401,97 +431,17 @@ namespace hairgpu
             return result;
         }
 
-        bool IsValidSdfGrid(const SdfGridCollider& grid)
-        {
-            return grid.resolutionX >= 2u &&
-                   grid.resolutionY >= 2u &&
-                   grid.resolutionZ >= 2u &&
-                   grid.values.size() == static_cast<size_t>(grid.resolutionX) * grid.resolutionY * grid.resolutionZ;
-        }
-
-        size_t SdfGridIndex(const SdfGridCollider& grid, uint32_t x, uint32_t y, uint32_t z)
-        {
-            return (static_cast<size_t>(z) * grid.resolutionY + y) * grid.resolutionX + x;
-        }
-
-        Vec3 SdfGridCellSize(const SdfGridCollider& grid)
-        {
-            return Vec3(
-                (grid.boundsMax.x - grid.boundsMin.x) / std::max(1u, grid.resolutionX - 1u),
-                (grid.boundsMax.y - grid.boundsMin.y) / std::max(1u, grid.resolutionY - 1u),
-                (grid.boundsMax.z - grid.boundsMin.z) / std::max(1u, grid.resolutionZ - 1u));
-        }
-
-        float SampleSdfGrid(const SdfGridCollider& grid, const Vec3& point)
-        {
-            if (!IsValidSdfGrid(grid))
-            {
-                return std::numeric_limits<float>::max();
-            }
-
-            const Vec3 cellSize = SdfGridCellSize(grid);
-            const float gx = Clamp((point.x - grid.boundsMin.x) / std::max(cellSize.x, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionX - 1u));
-            const float gy = Clamp((point.y - grid.boundsMin.y) / std::max(cellSize.y, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionY - 1u));
-            const float gz = Clamp((point.z - grid.boundsMin.z) / std::max(cellSize.z, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionZ - 1u));
-
-            const uint32_t x0 = static_cast<uint32_t>(std::floor(gx));
-            const uint32_t y0 = static_cast<uint32_t>(std::floor(gy));
-            const uint32_t z0 = static_cast<uint32_t>(std::floor(gz));
-            const uint32_t x1 = std::min(x0 + 1u, grid.resolutionX - 1u);
-            const uint32_t y1 = std::min(y0 + 1u, grid.resolutionY - 1u);
-            const uint32_t z1 = std::min(z0 + 1u, grid.resolutionZ - 1u);
-            const float tx = gx - static_cast<float>(x0);
-            const float ty = gy - static_cast<float>(y0);
-            const float tz = gz - static_cast<float>(z0);
-
-            auto at = [&](uint32_t x, uint32_t y, uint32_t z) -> float
-            {
-                return grid.values[SdfGridIndex(grid, x, y, z)];
-            };
-
-            const float c000 = at(x0, y0, z0);
-            const float c100 = at(x1, y0, z0);
-            const float c010 = at(x0, y1, z0);
-            const float c110 = at(x1, y1, z0);
-            const float c001 = at(x0, y0, z1);
-            const float c101 = at(x1, y0, z1);
-            const float c011 = at(x0, y1, z1);
-            const float c111 = at(x1, y1, z1);
-
-            const float c00 = Lerp(c000, c100, tx);
-            const float c10 = Lerp(c010, c110, tx);
-            const float c01 = Lerp(c001, c101, tx);
-            const float c11 = Lerp(c011, c111, tx);
-            const float c0 = Lerp(c00, c10, ty);
-            const float c1 = Lerp(c01, c11, ty);
-            return Lerp(c0, c1, tz);
-        }
-
-        Vec3 EstimateSdfGradient(const SdfGridCollider& grid, const Vec3& point)
-        {
-            const Vec3 cellSize = SdfGridCellSize(grid);
-            const float epsX = std::max(cellSize.x, 1.0e-4f);
-            const float epsY = std::max(cellSize.y, 1.0e-4f);
-            const float epsZ = std::max(cellSize.z, 1.0e-4f);
-            const float dx = SampleSdfGrid(grid, point + Vec3(epsX, 0.0f, 0.0f)) - SampleSdfGrid(grid, point - Vec3(epsX, 0.0f, 0.0f));
-            const float dy = SampleSdfGrid(grid, point + Vec3(0.0f, epsY, 0.0f)) - SampleSdfGrid(grid, point - Vec3(0.0f, epsY, 0.0f));
-            const float dz = SampleSdfGrid(grid, point + Vec3(0.0f, 0.0f, epsZ)) - SampleSdfGrid(grid, point - Vec3(0.0f, 0.0f, epsZ));
-            Vec3 gradient(dx, dy, dz);
-            gradient = Normalize(gradient);
-            return (Length(gradient) > 1.0e-6f) ? gradient : Vec3(0.0f, 1.0f, 0.0f);
-        }
-
         PenetrationResult ResolveAgainstSdfGrid(const Vec3& point, const SdfGridCollider& grid, float shellDistance)
         {
             PenetrationResult result = {};
             result.correctedPoint = point;
-            const float signedDistance = SampleSdfGrid(grid, point);
+            const float signedDistance = SampleSdfGridTrilinear(grid, point);
             if (signedDistance >= shellDistance || signedDistance == std::numeric_limits<float>::max())
             {
                 return result;
             }
 
-            const Vec3 normal = EstimateSdfGradient(grid, point);
+            const Vec3 normal = EstimateSdfGridGradient(grid, point);
             result.penetration = shellDistance - signedDistance;
             result.correctedPoint = point + normal * result.penetration;
             result.corrected = true;
@@ -529,7 +479,7 @@ namespace hairgpu
             }
             for (const SdfGridCollider& grid : colliders.sdfGrids)
             {
-                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SampleSdfGrid(grid, point), shellDistance, 3.0f));
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SampleSdfGridTrilinear(grid, point), shellDistance, 3.0f));
             }
             return Clamp(bestScore, 0.0f, 1.0f);
         }
@@ -1596,13 +1546,12 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
             {
                 return 0.0f;
             }
-            double sumSq = 0.0;
+            RmsAccumulator rms;
             for (size_t i = 0u; i < a.size(); ++i)
             {
-                const Vec3 d = a[i] - b[i];
-                sumSq += static_cast<double>(Dot(d, d));
+                rms.AddVectorError(a[i] - b[i]);
             }
-            return static_cast<float>(std::sqrt(sumSq / static_cast<double>(a.size())));
+            return rms.Rms();
         }
 
         float ComputeAverageMagnitude(const std::vector<Vec3>& points)
@@ -1697,12 +1646,7 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
             outMax = roots.front();
             for (const Vec3& root : roots)
             {
-                outMin.x = std::min(outMin.x, root.x);
-                outMin.y = std::min(outMin.y, root.y);
-                outMin.z = std::min(outMin.z, root.z);
-                outMax.x = std::max(outMax.x, root.x);
-                outMax.y = std::max(outMax.y, root.y);
-                outMax.z = std::max(outMax.z, root.z);
+                ExpandBounds(outMin, outMax, root);
             }
         }
 
@@ -3185,17 +3129,12 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
                                                                                                priorVelocityPredictionGain,
                                                                                                outBundle.priorAccelerationPredictionGain,
                                                                                                0.50f);
-                std::vector<Vec3> predictedPriorGuidePoints = trainingSmoothedPriorGuidePoints;
-                for (uint32_t i = 0u; i < predictedPriorGuidePoints.size() && i < trainingPreviousSmoothedPriorGuidePoints.size(); ++i)
-                {
-                    const Vec3 velocity = trainingSmoothedPriorGuidePoints[i] - trainingPreviousSmoothedPriorGuidePoints[i];
-                    predictedPriorGuidePoints[i] += velocity * priorVelocityPredictionGain;
-                    if (i < trainingPreviousPreviousSmoothedPriorGuidePoints.size())
-                    {
-                        const Vec3 acceleration = trainingSmoothedPriorGuidePoints[i] - trainingPreviousSmoothedPriorGuidePoints[i] * 2.0f + trainingPreviousPreviousSmoothedPriorGuidePoints[i];
-                        predictedPriorGuidePoints[i] += acceleration * priorAccelerationPredictionGain;
-                    }
-                }
+                std::vector<Vec3> predictedPriorGuidePoints = PredictSecondOrderGuidePoints(
+                    trainingSmoothedPriorGuidePoints,
+                    trainingPreviousSmoothedPriorGuidePoints,
+                    trainingPreviousPreviousSmoothedPriorGuidePoints,
+                    priorVelocityPredictionGain,
+                    priorAccelerationPredictionGain);
                 if (frameIndex >= 2u && IsTemporalGuideNetworkReady(outBundle.priorTemporalNetwork))
                 {
                     std::vector<Vec3> temporalPriorGuidePoints;
@@ -3209,11 +3148,9 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
                     {
                         return false;
                     }
-                    const float temporalBlend = Clamp(outBundle.priorTemporalBlend, 0.0f, 1.0f);
-                    for (uint32_t i = 0u; i < predictedPriorGuidePoints.size() && i < temporalPriorGuidePoints.size(); ++i)
-                    {
-                        predictedPriorGuidePoints[i] = Lerp(predictedPriorGuidePoints[i], temporalPriorGuidePoints[i], temporalBlend);
-                    }
+                    BlendGuidePoints(predictedPriorGuidePoints,
+                                     temporalPriorGuidePoints,
+                                     outBundle.priorTemporalBlend);
                 }
                 HairAsset priorAsset;
                 if (!ReconstructReducedModelFrame(outBundle.priorModel, predictedPriorGuidePoints, priorAsset, outError))
@@ -3609,12 +3546,9 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
 
             std::vector<Vec3> currentPriorGuidePoints;
             BuildGuideFramePointsForModel(bundle.priorModel, teacherFrame, currentPriorGuidePoints);
-            for (uint32_t i = 0u; i < smoothedPriorGuidePoints.size() && i < currentPriorGuidePoints.size(); ++i)
-            {
-                smoothedPriorGuidePoints[i] = Lerp(smoothedPriorGuidePoints[i],
-                                                   currentPriorGuidePoints[i],
-                                                   Clamp(bundle.trainingSettings.priorGuideSmoothingAlpha, 0.01f, 1.0f));
-            }
+            SmoothGuidePoints(smoothedPriorGuidePoints,
+                              currentPriorGuidePoints,
+                              bundle.trainingSettings.priorGuideSmoothingAlpha);
 
             const float priorVelocityPredictionGain = Clamp(bundle.priorVelocityPredictionGain, 0.0f, 1.0f);
             const float priorAccelerationPredictionGain = EstimateSecondOrderPredictionGain(previousPreviousSmoothedPriorGuidePoints,
@@ -3623,17 +3557,12 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
                                                                                            priorVelocityPredictionGain,
                                                                                            bundle.priorAccelerationPredictionGain,
                                                                                            0.50f);
-            std::vector<Vec3> predictedPriorGuidePoints = smoothedPriorGuidePoints;
-            for (uint32_t i = 0u; i < predictedPriorGuidePoints.size() && i < previousSmoothedPriorGuidePoints.size(); ++i)
-            {
-                const Vec3 velocity = smoothedPriorGuidePoints[i] - previousSmoothedPriorGuidePoints[i];
-                predictedPriorGuidePoints[i] += velocity * priorVelocityPredictionGain;
-                if (i < previousPreviousSmoothedPriorGuidePoints.size())
-                {
-                    const Vec3 acceleration = smoothedPriorGuidePoints[i] - previousSmoothedPriorGuidePoints[i] * 2.0f + previousPreviousSmoothedPriorGuidePoints[i];
-                    predictedPriorGuidePoints[i] += acceleration * priorAccelerationPredictionGain;
-                }
-            }
+            std::vector<Vec3> predictedPriorGuidePoints = PredictSecondOrderGuidePoints(
+                smoothedPriorGuidePoints,
+                previousSmoothedPriorGuidePoints,
+                previousPreviousSmoothedPriorGuidePoints,
+                priorVelocityPredictionGain,
+                priorAccelerationPredictionGain);
             if (settings.enableTemporalNetworks && frameIndex >= 2u && IsTemporalGuideNetworkReady(bundle.priorTemporalNetwork))
             {
                 std::vector<Vec3> temporalPriorGuidePoints;
@@ -3645,11 +3574,9 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
                                               temporalPriorGuidePoints,
                                               outError))
                 {
-                    const float temporalBlend = Clamp(bundle.priorTemporalBlend, 0.0f, 1.0f);
-                    for (uint32_t i = 0u; i < predictedPriorGuidePoints.size() && i < temporalPriorGuidePoints.size(); ++i)
-                    {
-                        predictedPriorGuidePoints[i] = Lerp(predictedPriorGuidePoints[i], temporalPriorGuidePoints[i], temporalBlend);
-                    }
+                    BlendGuidePoints(predictedPriorGuidePoints,
+                                     temporalPriorGuidePoints,
+                                     bundle.priorTemporalBlend);
                 }
                 else
                 {

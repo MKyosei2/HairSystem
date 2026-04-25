@@ -2,63 +2,15 @@
 
 #include <algorithm>
 
+#include "hairgpu/Geometry.h"
+#include "hairgpu/ScalpGeometry.h"
 namespace hairgpu
 {
     namespace
     {
-        Vec3 ComputeScalpCenter(const ScalpMesh& scalpMesh)
-        {
-            if (scalpMesh.positions.empty())
-            {
-                return Vec3(0.0f, 1.6f, 0.0f);
-            }
-
-            Vec3 sum(0.0f, 0.0f, 0.0f);
-            for (const Vec3& p : scalpMesh.positions)
-            {
-                sum += p;
-            }
-            return sum / static_cast<float>(scalpMesh.positions.size());
-        }
-
         Vec3 ProjectOntoPlane(const Vec3& v, const Vec3& n)
         {
             return v - n * Dot(v, n);
-        }
-
-        Vec3 EvaluateBindingNormal(const ScalpMesh& scalpMesh, const RootBinding& binding)
-        {
-            if (scalpMesh.triangles.empty())
-            {
-                return Vec3(0.0f, 1.0f, 0.0f);
-            }
-
-            const TriangleIndices& tri = scalpMesh.triangles[std::min<size_t>(binding.triangleIndex, scalpMesh.triangles.size() - 1u)];
-            if (tri.a < scalpMesh.normals.size() && tri.b < scalpMesh.normals.size() && tri.c < scalpMesh.normals.size())
-            {
-                const Vec3 n = scalpMesh.normals[tri.a] * binding.barycentric.x +
-                               scalpMesh.normals[tri.b] * binding.barycentric.y +
-                               scalpMesh.normals[tri.c] * binding.barycentric.z;
-                const Vec3 normalized = Normalize(n);
-                if (Length(normalized) > 1.0e-6f)
-                {
-                    return normalized;
-                }
-            }
-
-            if (tri.a < scalpMesh.positions.size() && tri.b < scalpMesh.positions.size() && tri.c < scalpMesh.positions.size())
-            {
-                const Vec3 a = scalpMesh.positions[tri.a];
-                const Vec3 b = scalpMesh.positions[tri.b];
-                const Vec3 c = scalpMesh.positions[tri.c];
-                const Vec3 faceNormal = Normalize(Cross(b - a, c - a));
-                if (Length(faceNormal) > 1.0e-6f)
-                {
-                    return faceNormal;
-                }
-            }
-
-            return Vec3(0.0f, 1.0f, 0.0f);
         }
 
         
@@ -135,7 +87,7 @@ namespace hairgpu
 
             const RootBinding& binding = asset.rootBindings[strandIndex];
             const Vec3 root = EvaluateRootBindingPosition(asset.scalpMesh, binding);
-            const Vec3 rootNormal = EvaluateBindingNormal(asset.scalpMesh, binding);
+            const Vec3 rootNormal = EvaluateScalpNormal(asset.scalpMesh, binding);
             Vec3 originalFirstDir = Normalize(originalPoints[1] - originalPoints[0]);
             if (Length(originalFirstDir) <= 1.0e-6f)
             {

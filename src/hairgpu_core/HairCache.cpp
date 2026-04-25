@@ -6,6 +6,9 @@
 #include <fstream>
 #include <sstream>
 
+#include "hairgpu/FrameSampling.h"
+
+#include "hairgpu/BinaryIO.h"
 namespace hairgpu
 {
     namespace
@@ -13,19 +16,6 @@ namespace hairgpu
         constexpr std::array<char, 8> kHairCacheMagic = { 'H','H','A','I','R','1','\0','\0' };
         constexpr uint32_t kHairCacheVersion = 1u;
 
-        template <typename T>
-        bool WriteValue(std::ofstream& out, const T& value)
-        {
-            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadValue(std::ifstream& in, T& value)
-        {
-            in.read(reinterpret_cast<char*>(&value), sizeof(T));
-            return static_cast<bool>(in);
-        }
     }
 
     bool InitializeHairCacheForAsset(const HairAsset& asset, float frameRate, HairCache& outCache, std::string& outError)
@@ -85,33 +75,19 @@ namespace hairgpu
             return false;
         }
 
-        const float frameTime = 1.0f / cache.frameRate;
-        const float totalDuration = frameTime * static_cast<float>(frameCount);
-        float sampleTime = std::max(timeSeconds, 0.0f);
-        if (loop && totalDuration > 1.0e-6f)
+        FrameSample sample = {};
+        if (!ComputeFrameSample(frameCount, cache.frameRate, timeSeconds, loop, sample))
         {
-            sampleTime = std::fmod(sampleTime, totalDuration);
-            if (sampleTime < 0.0f)
-            {
-                sampleTime += totalDuration;
-            }
+            outPoints.clear();
+            return false;
         }
-        else
-        {
-            sampleTime = std::min(sampleTime, std::max(totalDuration - frameTime, 0.0f));
-        }
-
-        const float frameIndexF = sampleTime / frameTime;
-        const uint32_t frame0 = std::min<uint32_t>(static_cast<uint32_t>(std::floor(frameIndexF)), frameCount - 1u);
-        const uint32_t frame1 = loop ? ((frame0 + 1u) % frameCount) : std::min<uint32_t>(frame0 + 1u, frameCount - 1u);
-        const float t = std::clamp(frameIndexF - std::floor(frameIndexF), 0.0f, 1.0f);
 
         outPoints.resize(pointCount);
-        const size_t base0 = static_cast<size_t>(frame0) * pointCount;
-        const size_t base1 = static_cast<size_t>(frame1) * pointCount;
+        const size_t base0 = static_cast<size_t>(sample.frame0) * pointCount;
+        const size_t base1 = static_cast<size_t>(sample.frame1) * pointCount;
         for (uint32_t i = 0u; i < pointCount; ++i)
         {
-            outPoints[i] = Lerp(cache.frames[base0 + i], cache.frames[base1 + i], t);
+            outPoints[i] = Lerp(cache.frames[base0 + i], cache.frames[base1 + i], sample.t);
         }
         return true;
     }

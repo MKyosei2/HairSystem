@@ -8,63 +8,20 @@
 
 #include "hairgpu/Math.h"
 
+#include "hairgpu/StrandSampling.h"
+
+#include "hairgpu/Geometry.h"
+#include "hairgpu/ScalpGeometry.h"
+#include "hairgpu/ObjWriter.h"
 namespace hairgpu
 {
     namespace
     {
-        Vec3 SampleStrandPoint(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.restPoints.size())
-            {
-                return {};
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.restPoints[strand.pointOffset];
-            }
-
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            const Vec3& p0 = asset.restPoints[strand.pointOffset + i0];
-            const Vec3& p1 = asset.restPoints[strand.pointOffset + i1];
-            return Lerp(p0, p1, localT);
-        }
-
-        float SampleStrandWidth(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.pointWidths.size())
-            {
-                return 0.0035f;
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.pointWidths[strand.pointOffset];
-            }
-
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            const float w0 = asset.pointWidths[strand.pointOffset + i0];
-            const float w1 = asset.pointWidths[strand.pointOffset + i1];
-            return Lerp(w0, w1, localT);
-        }
-
         Vec3 EvaluateRootNormal(const HairAsset& asset, uint32_t strandIndex)
         {
             if (strandIndex < asset.rootBindings.size())
             {
-                const RootBinding& binding = asset.rootBindings[strandIndex];
-                if (binding.triangleIndex < asset.scalpMesh.triangles.size())
-                {
-                    const TriangleIndices& tri = asset.scalpMesh.triangles[binding.triangleIndex];
-                    const Vec3 na = (tri.a < asset.scalpMesh.normals.size()) ? asset.scalpMesh.normals[tri.a] : Vec3{ 0.0f, 1.0f, 0.0f };
-                    const Vec3 nb = (tri.b < asset.scalpMesh.normals.size()) ? asset.scalpMesh.normals[tri.b] : Vec3{ 0.0f, 1.0f, 0.0f };
-                    const Vec3 nc = (tri.c < asset.scalpMesh.normals.size()) ? asset.scalpMesh.normals[tri.c] : Vec3{ 0.0f, 1.0f, 0.0f };
-                    return Normalize(na * binding.barycentric.x + nb * binding.barycentric.y + nc * binding.barycentric.z);
-                }
+                return EvaluateScalpNormal(asset.scalpMesh, asset.rootBindings[strandIndex]);
             }
             return Vec3(0.0f, 1.0f, 0.0f);
         }
@@ -148,7 +105,7 @@ namespace hairgpu
                     {
                         const StrandRange& strand = asset.strands[cluster[i]];
                         center += SampleStrandPoint(asset, strand, t);
-                        avgWidth += SampleStrandWidth(asset, strand, t);
+                        avgWidth += SampleStrandWidth(asset, strand, t, 0.0035f);
                         ++count;
                     }
                     if (count == 0u)
@@ -234,37 +191,22 @@ namespace hairgpu
 
     bool SaveHairCardMeshToObj(const std::filesystem::path& filePath, const HairCardMesh& mesh, std::string& outError)
     {
-        std::ofstream out(filePath);
-        if (!out)
+        std::vector<Vec3> positions;
+        std::vector<Vec2> uvs;
+        std::vector<Vec3> normals;
+        positions.reserve(mesh.vertices.size());
+        uvs.reserve(mesh.vertices.size());
+        normals.reserve(mesh.vertices.size());
+
+        for (const HairCardVertex& vertex : mesh.vertices)
         {
-            outError = "Failed to write hair cards OBJ: " + filePath.string();
-            return false;
+            positions.push_back(vertex.position);
+            uvs.push_back(vertex.uv);
+            normals.push_back(vertex.normal);
         }
 
-        out << "# hairgpu card mesh\n";
-        for (const HairCardVertex& v : mesh.vertices)
-        {
-            out << "v " << v.position.x << ' ' << v.position.y << ' ' << v.position.z << "\n";
-        }
-        for (const HairCardVertex& v : mesh.vertices)
-        {
-            out << "vt " << v.uv.x << ' ' << v.uv.y << "\n";
-        }
-        for (const HairCardVertex& v : mesh.vertices)
-        {
-            out << "vn " << v.normal.x << ' ' << v.normal.y << ' ' << v.normal.z << "\n";
-        }
-        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
-        {
-            const uint32_t a = mesh.indices[i] + 1u;
-            const uint32_t b = mesh.indices[i + 1u] + 1u;
-            const uint32_t c = mesh.indices[i + 2u] + 1u;
-            out << "f " << a << '/' << a << '/' << a << ' '
-                << b << '/' << b << '/' << b << ' '
-                << c << '/' << c << '/' << c << "\n";
-        }
-
-        outError.clear();
-        return true;
+        const ObjMeshView objMesh{ &positions, &uvs, &normals, &mesh.indices };
+        return WriteObjMesh(filePath, objMesh, "hairgpu card mesh", outError);
     }
+
 }

@@ -4,46 +4,11 @@
 #include <cmath>
 #include <unordered_map>
 
+#include "hairgpu/StrandSampling.h"
 namespace hairgpu
 {
     namespace
     {
-        Vec3 SampleStrandPoint(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.restPoints.size())
-            {
-                return {};
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.restPoints[strand.pointOffset];
-            }
-
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            return Lerp(asset.restPoints[strand.pointOffset + i0], asset.restPoints[strand.pointOffset + i1], localT);
-        }
-
-        float SampleStrandWidth(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.pointWidths.size())
-            {
-                return 0.004f;
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.pointWidths[strand.pointOffset];
-            }
-
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            return Lerp(asset.pointWidths[strand.pointOffset + i0], asset.pointWidths[strand.pointOffset + i1], localT);
-        }
-
         std::vector<uint32_t> EvenlySampleIndices(uint32_t count, uint32_t keepCount)
         {
             std::vector<uint32_t> indices;
