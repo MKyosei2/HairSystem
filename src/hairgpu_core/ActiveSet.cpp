@@ -256,11 +256,8 @@ namespace hairgpu
                                         float nearDistance,
                                         float farDistance)
         {
-            const Vec3 toPoint = position - cameraPosition;
-            const float distance = Length(toPoint);
-            const Vec3 direction = Normalize(toPoint);
-            const float front = Clamp((Dot(Normalize(cameraForward), direction) + 1.0f) * 0.5f, 0.0f, 1.0f);
-            const float distanceFactor = 1.0f - Clamp((distance - nearDistance) / std::max(farDistance - nearDistance, 1.0e-4f), 0.0f, 1.0f);
+            const float front = FrontFactor(position, cameraPosition, cameraForward);
+            const float distanceFactor = DistanceFactor(position, cameraPosition, nearDistance, farDistance);
             return Clamp(front * 0.65f + distanceFactor * 0.35f, 0.0f, 1.0f);
         }
 
@@ -270,12 +267,7 @@ namespace hairgpu
             outMax = Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
             for (const Vec3& p : guideRoots)
             {
-                outMin.x = std::min(outMin.x, p.x);
-                outMin.y = std::min(outMin.y, p.y);
-                outMin.z = std::min(outMin.z, p.z);
-                outMax.x = std::max(outMax.x, p.x);
-                outMax.y = std::max(outMax.y, p.y);
-                outMax.z = std::max(outMax.z, p.z);
+                ExpandBounds(outMin, outMax, p);
             }
             if (outMin.x > outMax.x)
             {

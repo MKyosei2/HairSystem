@@ -28,12 +28,7 @@ namespace hairgpu
                 continue;
             }
             const Vec3 p = asset.restPoints[strand.pointOffset];
-            boundsMin.x = std::min(boundsMin.x, p.x);
-            boundsMin.y = std::min(boundsMin.y, p.y);
-            boundsMin.z = std::min(boundsMin.z, p.z);
-            boundsMax.x = std::max(boundsMax.x, p.x);
-            boundsMax.y = std::max(boundsMax.y, p.y);
-            boundsMax.z = std::max(boundsMax.z, p.z);
+            ExpandBounds(boundsMin, boundsMax, p);
         }
         if (boundsMin.x > boundsMax.x)
         {
@@ -69,9 +64,9 @@ namespace hairgpu
             }
 
             const float distanceToCamera = Length(worldRoot - cameraPosition);
-            const float distanceFactor = 1.0f - Clamp((distanceToCamera - settings.fullDistance) / std::max(settings.reducedDistance - settings.fullDistance, 1.0e-3f), 0.0f, 1.0f);
-            const float frontFactor = Clamp((Dot(camF, Normalize(worldRoot - cameraPosition)) + 1.0f) * 0.5f, 0.0f, 1.0f);
-            const float silhouetteFactor = Clamp(std::fabs(restRoot.x - center.x) / halfWidth, 0.0f, 1.0f);
+            const float distanceFactor = DistanceFactor(worldRoot, cameraPosition, settings.fullDistance, settings.reducedDistance, 1.0e-3f);
+            const float frontFactor = FrontFactor(worldRoot, cameraPosition, camF);
+            const float silhouetteFactor = SilhouetteFactorX(restRoot, center, halfWidth, 1.0e-3f);
             const float visibleFront = restRoot.z >= settings.visibleFrontZ ? 1.0f : 0.0f;
             const float importance = std::max(distanceFactor, silhouetteFactor * settings.silhouetteBoost) * (1.0f - settings.frontPriority)
                                    + std::max(frontFactor, visibleFront) * settings.frontPriority;

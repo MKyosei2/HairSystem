@@ -41,6 +41,26 @@ namespace hairgpu
             return v * v * (3.0f - 2.0f * v);
         }
 
+        float SmoothFalloff01(float x)
+        {
+            return Smooth01(1.0f - Clamp(x, 0.0f, 1.0f));
+        }
+
+        float SmoothDistanceBand(float distance, float width)
+        {
+            return SmoothFalloff01(distance / std::max(width, 1.0e-6f));
+        }
+
+        float SmoothBand(float value, float center, float width)
+        {
+            return SmoothFalloff01(std::fabs(value - center) / std::max(width, 1.0e-6f));
+        }
+
+        float SmoothRamp(float value, float start, float width)
+        {
+            return Smooth01(Clamp((value - start) / std::max(width, 1.0e-6f), 0.0f, 1.0f));
+        }
+
         float WrapSignedUnitDelta(float v)
         {
             while (v > 0.5f)
@@ -65,9 +85,9 @@ namespace hairgpu
             const float wrapped = WrapUnit(u + partingOffset);
             float d = std::fabs(wrapped - 0.47f);
             d = std::min(d, 1.0f - d);
-            const float centerBand = Smooth01(1.0f - Clamp(d / 0.085f, 0.0f, 1.0f));
-            const float crownBand = Smooth01(1.0f - Clamp(std::fabs(v - 0.18f) / 0.16f, 0.0f, 1.0f));
-            const float upperBand = Smooth01(1.0f - Clamp((v - 0.42f) / 0.24f, 0.0f, 1.0f));
+            const float centerBand = SmoothDistanceBand(d, 0.085f);
+            const float crownBand = SmoothBand(v, 0.18f, 0.16f);
+            const float upperBand = SmoothFalloff01((v - 0.42f) / 0.24f);
             return centerBand * crownBand * upperBand;
         }
 
@@ -76,9 +96,9 @@ namespace hairgpu
             const float angle = WrapUnit(u) * kTau;
             const float side = std::cos(angle);
             const float frontBack = std::sin(angle);
-            const float crown = Smooth01(1.0f - Clamp(std::fabs(v - 0.16f) / 0.13f, 0.0f, 1.0f));
-            const float temple = Smooth01(Clamp((std::fabs(side) - 0.36f) / 0.42f, 0.0f, 1.0f)) * Smooth01(1.0f - Clamp(std::fabs(v - 0.34f) / 0.18f, 0.0f, 1.0f));
-            const float nape = Smooth01(Clamp((v - 0.58f) / 0.20f, 0.0f, 1.0f)) * Smooth01(Clamp((-frontBack + 0.10f) / 0.90f, 0.0f, 1.0f));
+            const float crown = SmoothBand(v, 0.16f, 0.13f);
+            const float temple = Smooth01(Clamp((std::fabs(side) - 0.36f) / 0.42f, 0.0f, 1.0f)) * SmoothBand(v, 0.34f, 0.18f);
+            const float nape = SmoothRamp(v, 0.58f, 0.20f) * SmoothRamp(-frontBack, -0.10f, 0.90f);
             return Vec3(crown, temple, nape);
         }
 
@@ -86,10 +106,10 @@ namespace hairgpu
         {
             float du = std::fabs(WrapUnit(u) - 0.25f);
             du = std::min(du, 1.0f - du);
-            const float frontCenter = Smooth01(1.0f - Clamp(du / 0.115f, 0.0f, 1.0f));
-            const float foreheadBand = Smooth01(Clamp((v - 0.10f) / 0.10f, 0.0f, 1.0f)) *
-                                       Smooth01(1.0f - Clamp((v - 0.64f) / 0.14f, 0.0f, 1.0f));
-            const float cheekTaper = Smooth01(1.0f - Clamp(std::fabs(v - 0.34f) / 0.24f, 0.0f, 1.0f));
+            const float frontCenter = SmoothDistanceBand(du, 0.115f);
+            const float foreheadBand = SmoothRamp(v, 0.10f, 0.10f) *
+                                       SmoothFalloff01((v - 0.64f) / 0.14f);
+            const float cheekTaper = SmoothBand(v, 0.34f, 0.24f);
             return frontCenter * foreheadBand * cheekTaper;
         }
 
@@ -136,7 +156,7 @@ namespace hairgpu
 
             float du = std::fabs(WrapUnit(u) - 0.25f);
             du = std::min(du, 1.0f - du);
-            const float fringe = Smooth01(1.0f - Clamp(du / 0.11f, 0.0f, 1.0f));
+            const float fringe = SmoothDistanceBand(du, 0.11f);
             maxV = std::min(maxV, Lerp(maxV, 0.26f, fringe));
             return Clamp(maxV, 0.16f, 0.58f);
         }

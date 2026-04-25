@@ -6,20 +6,13 @@
 #include <fstream>
 #include <vector>
 
+#include "hairgpu/Geometry.h"
 #include "hairgpu/Math.h"
 
 namespace hairgpu
 {
     namespace
     {
-        struct ClosestTrianglePoint
-        {
-            Vec3 position = {};
-            Vec3 barycentric = { 1.0f, 0.0f, 0.0f };
-            float distanceSq = FLT_MAX;
-            uint32_t triangleIndex = 0u;
-        };
-
         struct SdfGrid
         {
             uint32_t resolutionX = 0u;
@@ -31,65 +24,36 @@ namespace hairgpu
             std::vector<float> values;
         };
 
-        ClosestTrianglePoint ClosestPointOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c)
+        struct CapsuleProjection
         {
-            const Vec3 ab = b - a;
-            const Vec3 ac = c - a;
-            const Vec3 ap = p - a;
-            const float d1 = Dot(ab, ap);
-            const float d2 = Dot(ac, ap);
-            if (d1 <= 0.0f && d2 <= 0.0f)
-            {
-                return { a, {1.0f, 0.0f, 0.0f}, Dot(p - a, p - a), 0u };
-            }
+            float t = 0.0f;
+            Vec3 closest = {};
+            float radius = 0.0f;
+            Vec3 delta = {};
+            float distance = 0.0f;
+            Vec3 normal = { 0.0f, 1.0f, 0.0f };
+        };
 
-            const Vec3 bp = p - b;
-            const float d3 = Dot(ab, bp);
-            const float d4 = Dot(ac, bp);
-            if (d3 >= 0.0f && d4 <= d3)
-            {
-                return { b, {0.0f, 1.0f, 0.0f}, Dot(p - b, p - b), 0u };
-            }
+        CapsuleProjection ProjectToCapsule(const CapsuleCollider& capsule,
+                                           const Vec3& point,
+                                           float radiusOffset = 0.0f)
+        {
+            const Vec3 axis = capsule.pointB - capsule.pointA;
+            const float denom = Dot(axis, axis);
+            const float t = (denom > 1.0e-6f)
+                ? Clamp(Dot(point - capsule.pointA, axis) / denom, 0.0f, 1.0f)
+                : 0.0f;
 
-            const float vc = d1 * d4 - d3 * d2;
-            if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f)
-            {
-                const float v = d1 / std::max(d1 - d3, 1.0e-8f);
-                const Vec3 q = a + ab * v;
-                return { q, {1.0f - v, v, 0.0f}, Dot(p - q, p - q), 0u };
-            }
-
-            const Vec3 cp = p - c;
-            const float d5 = Dot(ab, cp);
-            const float d6 = Dot(ac, cp);
-            if (d6 >= 0.0f && d5 <= d6)
-            {
-                return { c, {0.0f, 0.0f, 1.0f}, Dot(p - c, p - c), 0u };
-            }
-
-            const float vb = d5 * d2 - d1 * d6;
-            if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f)
-            {
-                const float w = d2 / std::max(d2 - d6, 1.0e-8f);
-                const Vec3 q = a + ac * w;
-                return { q, {1.0f - w, 0.0f, w}, Dot(p - q, p - q), 0u };
-            }
-
-            const float va = d3 * d6 - d5 * d4;
-            if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f)
-            {
-                const Vec3 bc = c - b;
-                const float w = (d4 - d3) / std::max((d4 - d3) + (d5 - d6), 1.0e-8f);
-                const Vec3 q = b + bc * w;
-                return { q, {0.0f, 1.0f - w, w}, Dot(p - q, p - q), 0u };
-            }
-
-            const float denom = 1.0f / std::max(va + vb + vc, 1.0e-8f);
-            const float v = vb * denom;
-            const float w = vc * denom;
-            const float u = 1.0f - v - w;
-            const Vec3 q = a * u + b * v + c * w;
-            return { q, {u, v, w}, Dot(p - q, p - q), 0u };
+            CapsuleProjection projection = {};
+            projection.t = t;
+            projection.closest = capsule.pointA + axis * t;
+            projection.radius = Lerp(capsule.radiusA, capsule.radiusB, t) + radiusOffset;
+            projection.delta = point - projection.closest;
+            projection.distance = Length(projection.delta);
+            projection.normal = (projection.distance > 1.0e-6f)
+                ? (projection.delta / projection.distance)
+                : Vec3(0.0f, 1.0f, 0.0f);
+            return projection;
         }
 
         Vec3 ComputeScalpCenter(const ScalpMesh& scalpMesh)
@@ -212,12 +176,7 @@ namespace hairgpu
             Vec3 boundsMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
             for (const Vec3& p : scalpMesh.positions)
             {
-                boundsMin.x = std::min(boundsMin.x, p.x);
-                boundsMin.y = std::min(boundsMin.y, p.y);
-                boundsMin.z = std::min(boundsMin.z, p.z);
-                boundsMax.x = std::max(boundsMax.x, p.x);
-                boundsMax.y = std::max(boundsMax.y, p.y);
-                boundsMax.z = std::max(boundsMax.z, p.z);
+                ExpandBounds(boundsMin, boundsMax, p);
             }
             const float pad = std::max(padding, 0.001f);
             boundsMin = boundsMin - Vec3(pad, pad, pad);
@@ -281,13 +240,11 @@ namespace hairgpu
             const float c011 = SampleGridNearest(grid, x0, y1, z1);
             const float c111 = SampleGridNearest(grid, x1, y1, z1);
 
-            const float c00 = Lerp(c000, c100, tx);
-            const float c10 = Lerp(c010, c110, tx);
-            const float c01 = Lerp(c001, c101, tx);
-            const float c11 = Lerp(c011, c111, tx);
-            const float c0 = Lerp(c00, c10, ty);
-            const float c1 = Lerp(c01, c11, ty);
-            return Lerp(c0, c1, tz);
+            return TriLerp(c000, c100,
+                           c010, c110,
+                           c001, c101,
+                           c011, c111,
+                           tx, ty, tz);
         }
 
         Vec3 EstimateGridGradient(const SdfGrid& grid, const Vec3& point)
@@ -529,16 +486,10 @@ namespace hairgpu
 
     SignedDistanceSample QuerySignedDistanceToCapsule(const CapsuleCollider& capsule, const Vec3& p)
     {
-        const Vec3 ab = capsule.pointB - capsule.pointA;
-        const float denom = Dot(ab, ab);
-        const float t = (denom > 1.0e-6f) ? Clamp(Dot(p - capsule.pointA, ab) / denom, 0.0f, 1.0f) : 0.0f;
-        const Vec3 closest = capsule.pointA + ab * t;
-        const float radius = Lerp(capsule.radiusA, capsule.radiusB, t);
-        const Vec3 delta = p - closest;
-        const float len = Length(delta);
+        const CapsuleProjection projection = ProjectToCapsule(capsule, p);
         SignedDistanceSample sample = {};
-        sample.signedDistance = len - radius;
-        sample.normal = (len > 1.0e-6f) ? (delta / len) : Vec3(0.0f, 1.0f, 0.0f);
+        sample.signedDistance = projection.distance - projection.radius;
+        sample.normal = projection.normal;
         sample.colliderType = 1u;
         return sample;
     }
@@ -618,7 +569,6 @@ namespace hairgpu
         const float ty = gy - static_cast<float>(y0);
         const float tz = gz - static_cast<float>(z0);
         auto idx = [&](uint32_t x, uint32_t y, uint32_t z) -> size_t { return (static_cast<size_t>(z) * grid.resolutionY + y) * grid.resolutionX + x; };
-        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
         const float c000 = grid.values[idx(x0,y0,z0)];
         const float c100 = grid.values[idx(x1,y0,z0)];
         const float c010 = grid.values[idx(x0,y1,z0)];
@@ -627,13 +577,11 @@ namespace hairgpu
         const float c101 = grid.values[idx(x1,y0,z1)];
         const float c011 = grid.values[idx(x0,y1,z1)];
         const float c111 = grid.values[idx(x1,y1,z1)];
-        const float c00 = lerp(c000, c100, tx);
-        const float c10 = lerp(c010, c110, tx);
-        const float c01 = lerp(c001, c101, tx);
-        const float c11 = lerp(c011, c111, tx);
-        const float c0 = lerp(c00, c10, ty);
-        const float c1 = lerp(c01, c11, ty);
-        sample.signedDistance = lerp(c0, c1, tz);
+        sample.signedDistance = TriLerp(c000, c100,
+                                        c010, c110,
+                                        c001, c101,
+                                        c011, c111,
+                                        tx, ty, tz);
         sample.normal = Vec3(0.0f, 1.0f, 0.0f);
         return sample;
     }

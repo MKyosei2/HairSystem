@@ -495,40 +495,44 @@ namespace hairgpu
             return fallback;
         }
 
-        Vec3 SamplePolylinePosition(const std::vector<ImportedPoint>& points, float t)
+        template <typename T, typename Getter>
+        T SamplePolylineValue(const std::vector<ImportedPoint>& points,
+                              float t,
+                              const T& fallback,
+                              Getter getter)
         {
             if (points.empty())
             {
-                return {};
+                return fallback;
             }
             if (points.size() == 1)
             {
-                return points.front().position;
+                return getter(points.front());
             }
 
             const float scaled = std::clamp(t, 0.0f, 1.0f) * static_cast<float>(points.size() - 1);
             const size_t i0 = static_cast<size_t>(std::floor(scaled));
             const size_t i1 = std::min(i0 + 1, points.size() - 1);
             const float localT = scaled - static_cast<float>(i0);
-            return Lerp(points[i0].position, points[i1].position, localT);
+            return Lerp(getter(points[i0]), getter(points[i1]), localT);
+        }
+
+        Vec3 SamplePolylinePosition(const std::vector<ImportedPoint>& points, float t)
+        {
+            return SamplePolylineValue<Vec3>(
+                points,
+                t,
+                Vec3{},
+                [](const ImportedPoint& point) { return point.position; });
         }
 
         float SamplePolylineWidth(const std::vector<ImportedPoint>& points, float t)
         {
-            if (points.empty())
-            {
-                return 0.004f;
-            }
-            if (points.size() == 1)
-            {
-                return points.front().width;
-            }
-
-            const float scaled = std::clamp(t, 0.0f, 1.0f) * static_cast<float>(points.size() - 1);
-            const size_t i0 = static_cast<size_t>(std::floor(scaled));
-            const size_t i1 = std::min(i0 + 1, points.size() - 1);
-            const float localT = scaled - static_cast<float>(i0);
-            return Lerp(points[i0].width, points[i1].width, localT);
+            return SamplePolylineValue<float>(
+                points,
+                t,
+                0.004f,
+                [](const ImportedPoint& point) { return point.width; });
         }
 
         void BuildSyntheticScalpForRoots(HairAsset& asset, const std::vector<Vec3>& roots)
