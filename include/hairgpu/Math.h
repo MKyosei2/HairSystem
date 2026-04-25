@@ -87,6 +87,24 @@ namespace hairgpu
         return a * (1.0f - t) + b * t;
     }
 
+    inline float BiLerp(float c00, float c10,
+                        float c01, float c11,
+                        float tx, float ty)
+    {
+        return Lerp(Lerp(c00, c10, tx),
+                    Lerp(c01, c11, tx),
+                    ty);
+    }
+
+    inline Vec3 BiLerp(const Vec3& c00, const Vec3& c10,
+                       const Vec3& c01, const Vec3& c11,
+                       float tx, float ty)
+    {
+        return Lerp(Lerp(c00, c10, tx),
+                    Lerp(c01, c11, tx),
+                    ty);
+    }
+
     inline float TriLerp(float c000, float c100,
                          float c010, float c110,
                          float c001, float c101,

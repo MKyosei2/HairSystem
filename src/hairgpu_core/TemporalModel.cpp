@@ -14,6 +14,7 @@
 #include "hairgpu/BinaryIO.h"
 
 #include "hairgpu/ErrorMetrics.h"
+#include "hairgpu/FeatureStats.h"
 namespace hairgpu
 {
     namespace
@@ -107,15 +108,7 @@ namespace hairgpu
                            std::vector<float>& outMean,
                            std::vector<float>& outStd)
         {
-            outMean.resize(kFeatureCount);
-            outStd.resize(kFeatureCount);
-            for (uint32_t i = 0u; i < kFeatureCount; ++i)
-            {
-                const double mean = (count > 0.0) ? (sum[i] / count) : 0.0;
-                const double variance = (count > 0.0) ? std::max(0.0, (sqSum[i] / count) - mean * mean) : 1.0;
-                outMean[i] = static_cast<float>(mean);
-                outStd[i] = static_cast<float>(std::sqrt(variance) + 1.0e-4);
-            }
+            FinalizeArrayStats(sum, sqSum, count, outMean, outStd, 1.0e-4f);
         }
 
         void FinalizeStats(const std::array<double, kTargetCount>& sum,
@@ -124,25 +117,7 @@ namespace hairgpu
                            std::vector<float>& outMean,
                            std::vector<float>& outStd)
         {
-            outMean.resize(kTargetCount);
-            outStd.resize(kTargetCount);
-            for (uint32_t i = 0u; i < kTargetCount; ++i)
-            {
-                const double mean = (count > 0.0) ? (sum[i] / count) : 0.0;
-                const double variance = (count > 0.0) ? std::max(0.0, (sqSum[i] / count) - mean * mean) : 1.0;
-                outMean[i] = static_cast<float>(mean);
-                outStd[i] = static_cast<float>(std::sqrt(variance) + 1.0e-4);
-            }
-        }
-
-        float NormalizeValue(float value, float mean, float stddev)
-        {
-            return (std::fabs(stddev) > 1.0e-8f) ? ((value - mean) / stddev) : (value - mean);
-        }
-
-        float DenormalizeValue(float value, float mean, float stddev)
-        {
-            return value * ((std::fabs(stddev) > 1.0e-8f) ? stddev : 1.0f) + mean;
+            FinalizeArrayStats(sum, sqSum, count, outMean, outStd, 1.0e-4f);
         }
 
         void Forward(const TemporalGuideNetwork& model,
@@ -155,7 +130,7 @@ namespace hairgpu
             std::array<float, kFeatureCount> normalizedFeatures = {};
             for (uint32_t i = 0u; i < model.featureCount; ++i)
             {
-                normalizedFeatures[i] = NormalizeValue(features[i], model.inputMean[i], model.inputStd[i]);
+                normalizedFeatures[i] = ::hairgpu::NormalizeValue(features[i], model.inputMean[i], model.inputStd[i]);
             }
             for (uint32_t h = 0u; h < model.hiddenWidth; ++h)
             {
@@ -542,7 +517,7 @@ namespace hairgpu
         {
             for (uint32_t i = 0u; i < outModel.featureCount; ++i)
             {
-                normalizedFeatures[i] = NormalizeValue(sample.features[i], outModel.inputMean[i], outModel.inputStd[i]);
+                normalizedFeatures[i] = ::hairgpu::NormalizeValue(sample.features[i], outModel.inputMean[i], outModel.inputStd[i]);
             }
             for (uint32_t h = 0u; h < outModel.hiddenWidth; ++h)
             {
@@ -583,7 +558,7 @@ namespace hairgpu
                     }
                 }
                 output[o] = sum;
-                targetNorm[o] = NormalizeValue(sample.target[o], outModel.targetMean[o], outModel.targetStd[o]);
+                targetNorm[o] = ::hairgpu::NormalizeValue(sample.target[o], outModel.targetMean[o], outModel.targetStd[o]);
             }
         };
 
@@ -621,9 +596,9 @@ namespace hairgpu
                 const TemporalTrainingSample& sample = samples[sampleIndex];
                 forwardDetailed(sample);
                 Vec3 predicted(
-                    DenormalizeValue(output[0], outModel.targetMean[0], outModel.targetStd[0]),
-                    DenormalizeValue(output[1], outModel.targetMean[1], outModel.targetStd[1]),
-                    DenormalizeValue(output[2], outModel.targetMean[2], outModel.targetStd[2]));
+                    ::hairgpu::DenormalizeValue(output[0], outModel.targetMean[0], outModel.targetStd[0]),
+                    ::hairgpu::DenormalizeValue(output[1], outModel.targetMean[1], outModel.targetStd[1]),
+                    ::hairgpu::DenormalizeValue(output[2], outModel.targetMean[2], outModel.targetStd[2]));
                 Vec3 target(sample.target[0], sample.target[1], sample.target[2]);
                 if (sample.lockOutput)
                 {
@@ -800,9 +775,9 @@ namespace hairgpu
             Forward(model, features, hidden, output);
             const Vec3 rest = restGuidePoints[pointIndex];
             outPredictedFrame[pointIndex] = Vec3(
-                rest.x + DenormalizeValue(output[0], model.targetMean[0], model.targetStd[0]),
-                rest.y + DenormalizeValue(output[1], model.targetMean[1], model.targetStd[1]),
-                rest.z + DenormalizeValue(output[2], model.targetMean[2], model.targetStd[2]));
+                rest.x + ::hairgpu::DenormalizeValue(output[0], model.targetMean[0], model.targetStd[0]),
+                rest.y + ::hairgpu::DenormalizeValue(output[1], model.targetMean[1], model.targetStd[1]),
+                rest.z + ::hairgpu::DenormalizeValue(output[2], model.targetMean[2], model.targetStd[2]));
         }
         return true;
     }

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "hairgpu/CsvUtil.h"
+#include "hairgpu/ObjWriter.h"
 namespace hairgpu
 {
     namespace
@@ -210,37 +211,22 @@ namespace hairgpu
 
     bool SaveScalpMeshToObj(const std::filesystem::path& filePath, const ScalpMesh& mesh, std::string& outError)
     {
-        std::ofstream out(filePath);
-        if (!out)
-        {
-            outError = "Failed to write OBJ: " + filePath.string();
-            return false;
-        }
-
-        for (const Vec3& p : mesh.positions)
-        {
-            out << "v " << p.x << ' ' << p.y << ' ' << p.z << "\n";
-        }
-        for (const Vec2& uv : mesh.uvs)
-        {
-            out << "vt " << uv.x << ' ' << uv.y << "\n";
-        }
-        for (const Vec3& n : mesh.normals)
-        {
-            out << "vn " << n.x << ' ' << n.y << ' ' << n.z << "\n";
-        }
+        std::vector<uint32_t> indices;
+        indices.reserve(mesh.triangles.size() * 3u);
         for (const TriangleIndices& tri : mesh.triangles)
         {
-            const uint32_t a = tri.a + 1u;
-            const uint32_t b = tri.b + 1u;
-            const uint32_t c = tri.c + 1u;
-            out << "f "
-                << a << '/' << a << '/' << a << ' '
-                << b << '/' << b << '/' << b << ' '
-                << c << '/' << c << '/' << c << "\n";
+            indices.push_back(tri.a);
+            indices.push_back(tri.b);
+            indices.push_back(tri.c);
         }
 
-        outError.clear();
-        return true;
+        const ObjMeshView objMesh{
+            &mesh.positions,
+            mesh.uvs.empty() ? nullptr : &mesh.uvs,
+            mesh.normals.empty() ? nullptr : &mesh.normals,
+            &indices
+        };
+        return WriteObjMesh(filePath, objMesh, "hairgpu scalp mesh", outError);
     }
+
 }

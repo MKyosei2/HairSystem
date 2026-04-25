@@ -13,6 +13,7 @@
 #include "hairgpu/AssetIO.h"
 
 #include "hairgpu/Geometry.h"
+#include "hairgpu/ScalpGeometry.h"
 
 #include "hairgpu/BinaryIO.h"
 
@@ -135,33 +136,11 @@ namespace hairgpu
 
         Vec3 EvaluateBindingNormal(const HairAsset& asset, uint32_t strandIndex)
         {
-            if (strandIndex >= asset.rootBindings.size() || asset.scalpMesh.triangles.empty())
+            if (strandIndex >= asset.rootBindings.size())
             {
                 return {0.0f, 1.0f, 0.0f};
             }
-            const RootBinding& binding = asset.rootBindings[strandIndex];
-            if (binding.triangleIndex >= asset.scalpMesh.triangles.size())
-            {
-                return {0.0f, 1.0f, 0.0f};
-            }
-            const TriangleIndices& tri = asset.scalpMesh.triangles[binding.triangleIndex];
-            if (tri.a < asset.scalpMesh.normals.size() && tri.b < asset.scalpMesh.normals.size() && tri.c < asset.scalpMesh.normals.size())
-            {
-                const Vec3 n = asset.scalpMesh.normals[tri.a] * binding.barycentric.x +
-                               asset.scalpMesh.normals[tri.b] * binding.barycentric.y +
-                               asset.scalpMesh.normals[tri.c] * binding.barycentric.z;
-                const float len = Length(n);
-                if (len > 1.0e-6f)
-                {
-                    return n / len;
-                }
-            }
-            if (tri.a < asset.scalpMesh.positions.size() && tri.b < asset.scalpMesh.positions.size() && tri.c < asset.scalpMesh.positions.size())
-            {
-                return Normalize(Cross(asset.scalpMesh.positions[tri.b] - asset.scalpMesh.positions[tri.a],
-                                       asset.scalpMesh.positions[tri.c] - asset.scalpMesh.positions[tri.a]));
-            }
-            return {0.0f, 1.0f, 0.0f};
+            return EvaluateScalpNormal(asset.scalpMesh, asset.rootBindings[strandIndex]);
         }
 
         Vec3 EvaluateBindingPosition(const HairAsset& asset, uint32_t strandIndex)

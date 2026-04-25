@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "hairgpu/Geometry.h"
+#include "hairgpu/ProceduralMath.h"
+#include "hairgpu/ScalpGeometry.h"
 namespace hairgpu
 {
     namespace
@@ -22,24 +24,22 @@ namespace hairgpu
 
         float Fract(float value)
         {
-            return value - std::floor(value);
+            return ::hairgpu::Fract(value);
         }
 
         float Hash01(uint32_t value)
         {
-            return Fract(std::sin(static_cast<float>(value) * 12.9898f + 78.233f) * 43758.5453f);
+            return ::hairgpu::Hash01Sine(value);
         }
 
         float WrapUnit(float v)
         {
-            v = std::fmod(v, 1.0f);
-            return (v < 0.0f) ? (v + 1.0f) : v;
+            return ::hairgpu::WrapUnit(v);
         }
 
         float Smooth01(float v)
         {
-            v = Clamp(v, 0.0f, 1.0f);
-            return v * v * (3.0f - 2.0f * v);
+            return ::hairgpu::SmoothStep01(v);
         }
 
         float SmoothFalloff01(float x)
@@ -623,33 +623,12 @@ namespace hairgpu
 
         Vec3 EvaluateTriangleNormal(const ScalpMesh& scalp, const RootBinding& binding)
         {
-            if (binding.triangleIndex >= scalp.triangles.size())
-            {
-                return Vec3(0.0f, 1.0f, 0.0f);
-            }
-
-            const TriangleIndices& tri = scalp.triangles[binding.triangleIndex];
-            const Vec3& a = scalp.normals[tri.a];
-            const Vec3& b = scalp.normals[tri.b];
-            const Vec3& c = scalp.normals[tri.c];
-            return Normalize(a * binding.barycentric.x + b * binding.barycentric.y + c * binding.barycentric.z);
+            return EvaluateScalpNormal(scalp, binding);
         }
 
         Vec2 EvaluateTriangleUv(const ScalpMesh& scalp, const RootBinding& binding)
         {
-            if (binding.triangleIndex >= scalp.triangles.size())
-            {
-                return {};
-            }
-
-            const TriangleIndices& tri = scalp.triangles[binding.triangleIndex];
-            const Vec2& a = scalp.uvs[tri.a];
-            const Vec2& b = scalp.uvs[tri.b];
-            const Vec2& c = scalp.uvs[tri.c];
-            return {
-                a.x * binding.barycentric.x + b.x * binding.barycentric.y + c.x * binding.barycentric.z,
-                a.y * binding.barycentric.x + b.y * binding.barycentric.y + c.y * binding.barycentric.z,
-            };
+            return EvaluateScalpUv(scalp, binding);
         }
 
         Vec3 ComputeWrappedUvBarycentric(const Vec2& uvA, const Vec2& uvB, const Vec2& uvC, float targetU, float targetV)

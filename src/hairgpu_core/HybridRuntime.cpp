@@ -16,6 +16,7 @@
 #include "hairgpu/Metrics.h"
 #include "hairgpu/ReducedModel.h"
 #include "hairgpu/Geometry.h"
+#include "hairgpu/SdfGridUtil.h"
 
 #include "hairgpu/ErrorMetrics.h"
 namespace hairgpu
@@ -430,95 +431,17 @@ namespace hairgpu
             return result;
         }
 
-        bool IsValidSdfGrid(const SdfGridCollider& grid)
-        {
-            return grid.resolutionX >= 2u &&
-                   grid.resolutionY >= 2u &&
-                   grid.resolutionZ >= 2u &&
-                   grid.values.size() == static_cast<size_t>(grid.resolutionX) * grid.resolutionY * grid.resolutionZ;
-        }
-
-        size_t SdfGridIndex(const SdfGridCollider& grid, uint32_t x, uint32_t y, uint32_t z)
-        {
-            return (static_cast<size_t>(z) * grid.resolutionY + y) * grid.resolutionX + x;
-        }
-
-        Vec3 SdfGridCellSize(const SdfGridCollider& grid)
-        {
-            return Vec3(
-                (grid.boundsMax.x - grid.boundsMin.x) / std::max(1u, grid.resolutionX - 1u),
-                (grid.boundsMax.y - grid.boundsMin.y) / std::max(1u, grid.resolutionY - 1u),
-                (grid.boundsMax.z - grid.boundsMin.z) / std::max(1u, grid.resolutionZ - 1u));
-        }
-
-        float SampleSdfGrid(const SdfGridCollider& grid, const Vec3& point)
-        {
-            if (!IsValidSdfGrid(grid))
-            {
-                return std::numeric_limits<float>::max();
-            }
-
-            const Vec3 cellSize = SdfGridCellSize(grid);
-            const float gx = Clamp((point.x - grid.boundsMin.x) / std::max(cellSize.x, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionX - 1u));
-            const float gy = Clamp((point.y - grid.boundsMin.y) / std::max(cellSize.y, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionY - 1u));
-            const float gz = Clamp((point.z - grid.boundsMin.z) / std::max(cellSize.z, 1.0e-6f), 0.0f, static_cast<float>(grid.resolutionZ - 1u));
-
-            const uint32_t x0 = static_cast<uint32_t>(std::floor(gx));
-            const uint32_t y0 = static_cast<uint32_t>(std::floor(gy));
-            const uint32_t z0 = static_cast<uint32_t>(std::floor(gz));
-            const uint32_t x1 = std::min(x0 + 1u, grid.resolutionX - 1u);
-            const uint32_t y1 = std::min(y0 + 1u, grid.resolutionY - 1u);
-            const uint32_t z1 = std::min(z0 + 1u, grid.resolutionZ - 1u);
-            const float tx = gx - static_cast<float>(x0);
-            const float ty = gy - static_cast<float>(y0);
-            const float tz = gz - static_cast<float>(z0);
-
-            auto at = [&](uint32_t x, uint32_t y, uint32_t z) -> float
-            {
-                return grid.values[SdfGridIndex(grid, x, y, z)];
-            };
-
-            const float c000 = at(x0, y0, z0);
-            const float c100 = at(x1, y0, z0);
-            const float c010 = at(x0, y1, z0);
-            const float c110 = at(x1, y1, z0);
-            const float c001 = at(x0, y0, z1);
-            const float c101 = at(x1, y0, z1);
-            const float c011 = at(x0, y1, z1);
-            const float c111 = at(x1, y1, z1);
-
-            return TriLerp(c000, c100,
-                           c010, c110,
-                           c001, c101,
-                           c011, c111,
-                           tx, ty, tz);
-        }
-
-        Vec3 EstimateSdfGradient(const SdfGridCollider& grid, const Vec3& point)
-        {
-            const Vec3 cellSize = SdfGridCellSize(grid);
-            const float epsX = std::max(cellSize.x, 1.0e-4f);
-            const float epsY = std::max(cellSize.y, 1.0e-4f);
-            const float epsZ = std::max(cellSize.z, 1.0e-4f);
-            const float dx = SampleSdfGrid(grid, point + Vec3(epsX, 0.0f, 0.0f)) - SampleSdfGrid(grid, point - Vec3(epsX, 0.0f, 0.0f));
-            const float dy = SampleSdfGrid(grid, point + Vec3(0.0f, epsY, 0.0f)) - SampleSdfGrid(grid, point - Vec3(0.0f, epsY, 0.0f));
-            const float dz = SampleSdfGrid(grid, point + Vec3(0.0f, 0.0f, epsZ)) - SampleSdfGrid(grid, point - Vec3(0.0f, 0.0f, epsZ));
-            Vec3 gradient(dx, dy, dz);
-            gradient = Normalize(gradient);
-            return (Length(gradient) > 1.0e-6f) ? gradient : Vec3(0.0f, 1.0f, 0.0f);
-        }
-
         PenetrationResult ResolveAgainstSdfGrid(const Vec3& point, const SdfGridCollider& grid, float shellDistance)
         {
             PenetrationResult result = {};
             result.correctedPoint = point;
-            const float signedDistance = SampleSdfGrid(grid, point);
+            const float signedDistance = SampleSdfGridTrilinear(grid, point);
             if (signedDistance >= shellDistance || signedDistance == std::numeric_limits<float>::max())
             {
                 return result;
             }
 
-            const Vec3 normal = EstimateSdfGradient(grid, point);
+            const Vec3 normal = EstimateSdfGridGradient(grid, point);
             result.penetration = shellDistance - signedDistance;
             result.correctedPoint = point + normal * result.penetration;
             result.corrected = true;
@@ -556,7 +479,7 @@ namespace hairgpu
             }
             for (const SdfGridCollider& grid : colliders.sdfGrids)
             {
-                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SampleSdfGrid(grid, point), shellDistance, 3.0f));
+                bestScore = std::max(bestScore, ComputeContactScoreFromSignedDistance(SampleSdfGridTrilinear(grid, point), shellDistance, 3.0f));
             }
             return Clamp(bestScore, 0.0f, 1.0f);
         }

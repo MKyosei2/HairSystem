@@ -12,6 +12,8 @@
 #include "hairgpu/StrandSampling.h"
 
 #include "hairgpu/CsvUtil.h"
+#include "hairgpu/ParseUtil.h"
+#include "hairgpu/ProceduralMath.h"
 namespace hairgpu
 {
     namespace
@@ -44,51 +46,17 @@ namespace hairgpu
 
         bool TryParseFloatToken(const std::string& token, float& outValue)
         {
-            try
-            {
-                size_t consumed = 0u;
-                outValue = std::stof(token, &consumed);
-                return consumed == token.size();
-            }
-            catch (...)
-            {
-                return false;
-            }
+            return ::hairgpu::TryParseFloat(token, outValue);
         }
 
         bool TryParseUIntToken(const std::string& token, uint32_t& outValue)
         {
-            try
-            {
-                size_t consumed = 0u;
-                const unsigned long value = std::stoul(token, &consumed, 10);
-                if (consumed != token.size())
-                {
-                    return false;
-                }
-                outValue = static_cast<uint32_t>(value);
-                return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
+            return ::hairgpu::TryParseUInt(token, outValue);
         }
 
         bool TryParseBoolToken(const std::string& token, bool& outValue)
         {
-            const std::string lowered = ToLower(Trim(token));
-            if (lowered == "1" || lowered == "true" || lowered == "yes" || lowered == "on")
-            {
-                outValue = true;
-                return true;
-            }
-            if (lowered == "0" || lowered == "false" || lowered == "no" || lowered == "off")
-            {
-                outValue = false;
-                return true;
-            }
-            return false;
+            return ::hairgpu::TryParseBool(token, outValue);
         }
 
         bool ParseRegionModeToken(const std::string& text, RegionSelectMode& outMode)
@@ -594,13 +562,6 @@ namespace hairgpu
             return true;
         }
 
-        Vec3 RotateYaw(const Vec3& p, float radians)
-        {
-            const float c = std::cos(radians);
-            const float s = std::sin(radians);
-            return {p.x * c - p.z * s, p.y, p.x * s + p.z * c};
-        }
-
         Vec3 MakeSafeAxis(const Vec3& primary, const Vec3& fallback)
         {
             const Vec3 axis = Normalize(primary);
@@ -609,12 +570,7 @@ namespace hairgpu
 
         float Hash01(uint32_t value)
         {
-            value ^= value >> 16u;
-            value *= 0x7feb352du;
-            value ^= value >> 15u;
-            value *= 0x846ca68bu;
-            value ^= value >> 16u;
-            return static_cast<float>(value & 0x00ffffffu) / static_cast<float>(0x01000000u);
+            return ::hairgpu::Hash01Murmur(value);
         }
 
         Vec3 GetStrandRoot(const HairAsset& asset, uint32_t strandIndex)
@@ -647,7 +603,7 @@ namespace hairgpu
                 return 1.0f;
             }
             const float t = Clamp01((normalizedDistance - start) / safeFeather);
-            return 1.0f - t * t * (3.0f - 2.0f * t);
+            return 1.0f - SmoothStep01(t);
         }
 
         bool StrandMatchesRegion(const HairAsset& asset, uint32_t strandIndex, const RegionSelectionSettings& settings, float& outWeight)
@@ -1036,7 +992,7 @@ namespace hairgpu
                     : (settings.liftStrength - settings.pressStrength);
 
                 Vec3 p = originalPoints[strand.pointOffset + localIndex] - root;
-                p = RotateYaw(p, settings.yawRadians * baseEditGain);
+                p = ::hairgpu::RotateYaw(p, settings.yawRadians * baseEditGain);
                 p = p * Lerp(1.0f, settings.lengthScale, u * baseEditGain);
 
                 Vec3 additive = Lerp(settings.rootOffset, settings.tipOffset, u) * baseEditGain;
