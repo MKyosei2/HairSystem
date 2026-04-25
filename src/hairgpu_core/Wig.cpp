@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "hairgpu/Geometry.h"
 namespace hairgpu
 {
     namespace

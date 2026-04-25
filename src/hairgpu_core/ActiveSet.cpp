@@ -10,6 +10,7 @@
 #include <sstream>
 #include <tuple>
 
+#include "hairgpu/BinaryIO.h"
 namespace hairgpu
 {
     namespace
@@ -17,57 +18,6 @@ namespace hairgpu
 
         constexpr std::array<char, 8> kDispatchPackMagic = { 'H','D','S','P','A','C','K','1' };
         constexpr uint32_t kDispatchPackVersion = 1u;
-
-        template <typename T>
-        bool WriteValue(std::ofstream& out, const T& value)
-        {
-            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadValue(std::ifstream& in, T& value)
-        {
-            in.read(reinterpret_cast<char*>(&value), sizeof(T));
-            return static_cast<bool>(in);
-        }
-
-        template <typename T>
-        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
-        {
-            const uint64_t count = static_cast<uint64_t>(values.size());
-            if (!WriteValue(out, count))
-            {
-                return false;
-            }
-            if (!values.empty())
-            {
-                out.write(reinterpret_cast<const char*>(values.data()),
-                          static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadVector(std::ifstream& in, std::vector<T>& values)
-        {
-            uint64_t count = 0u;
-            if (!ReadValue(in, count))
-            {
-                return false;
-            }
-            if (count > (1ull << 31))
-            {
-                return false;
-            }
-            values.resize(static_cast<size_t>(count));
-            if (!values.empty())
-            {
-                in.read(reinterpret_cast<char*>(values.data()),
-                        static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(in);
-        }
 
         template <typename T>
         bool WriteRawVectorFile(const std::filesystem::path& filePath, const std::vector<T>& values)

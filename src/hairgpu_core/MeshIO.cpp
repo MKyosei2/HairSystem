@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "hairgpu/CsvUtil.h"
 namespace hairgpu
 {
     namespace
@@ -17,21 +18,6 @@ namespace hairgpu
             int texcoord = 0;
             int normal = 0;
         };
-
-        std::string Trim(const std::string& value)
-        {
-            size_t begin = 0;
-            while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) != 0)
-            {
-                ++begin;
-            }
-            size_t end = value.size();
-            while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
-            {
-                --end;
-            }
-            return value.substr(begin, end - begin);
-        }
 
         int ResolveObjIndex(int rawIndex, size_t count)
         {

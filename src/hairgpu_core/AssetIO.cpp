@@ -16,6 +16,9 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "hairgpu/CsvUtil.h"
+
+#include "hairgpu/BinaryIO.h"
 namespace hairgpu
 {
     namespace
@@ -382,54 +385,6 @@ namespace hairgpu
             float clumpWeight = 0.0f;
             float noiseWeight = 0.0f;
         };
-
-        std::string Trim(std::string value)
-        {
-            auto notSpace = [](unsigned char c) { return !std::isspace(c); };
-            value.erase(value.begin(), std::find_if(value.begin(), value.end(), notSpace));
-            value.erase(std::find_if(value.rbegin(), value.rend(), notSpace).base(), value.end());
-            return value;
-        }
-
-        std::string ToLower(std::string value)
-        {
-            std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return value;
-        }
-
-        std::vector<std::string> SplitCsvLine(const std::string& line)
-        {
-            std::vector<std::string> values;
-            std::string current;
-            bool inQuotes = false;
-            for (size_t i = 0; i < line.size(); ++i)
-            {
-                const char c = line[i];
-                if (c == '"')
-                {
-                    if (inQuotes && i + 1 < line.size() && line[i + 1] == '"')
-                    {
-                        current.push_back('"');
-                        ++i;
-                    }
-                    else
-                    {
-                        inQuotes = !inQuotes;
-                    }
-                }
-                else if (c == ',' && !inQuotes)
-                {
-                    values.push_back(Trim(current));
-                    current.clear();
-                }
-                else
-                {
-                    current.push_back(c);
-                }
-            }
-            values.push_back(Trim(current));
-            return values;
-        }
 
         bool TryGetField(const std::unordered_map<std::string, size_t>& columns, const std::vector<std::string>& values, std::initializer_list<const char*> names, std::string& outValue)
         {
@@ -1625,38 +1580,6 @@ namespace hairgpu
             return true;
         }
 #endif
-        template <typename T>
-        bool WriteRaw(std::ofstream& out, const T& value)
-        {
-            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadRaw(std::ifstream& in, T& value)
-        {
-            in.read(reinterpret_cast<char*>(&value), sizeof(T));
-            return static_cast<bool>(in);
-        }
-
-        template <typename T>
-        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
-        {
-            uint64_t count = static_cast<uint64_t>(values.size());
-            if (!WriteRaw(out, count)) return false;
-            if (!values.empty()) out.write(reinterpret_cast<const char*>(values.data()), sizeof(T) * values.size());
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadVector(std::ifstream& in, std::vector<T>& values)
-        {
-            uint64_t count = 0;
-            if (!ReadRaw(in, count)) return false;
-            values.resize(static_cast<size_t>(count));
-            if (!values.empty()) in.read(reinterpret_cast<char*>(values.data()), sizeof(T) * values.size());
-            return static_cast<bool>(in);
-        }
     }
 
     bool SaveHairAssetToAlembic(const std::filesystem::path& filePath,
@@ -1795,14 +1718,14 @@ namespace hairgpu
         const char magic[8] = {'H','G','P','U','H','B','I','N'};
         out.write(magic, sizeof(magic));
         uint32_t version = 1;
-        WriteRaw(out, version);
-        WriteRaw(out, asset.guideStrandCount);
-        WriteRaw(out, asset.followerStrandCount);
-        WriteRaw(out, asset.particlesPerStrand);
+        WriteValue(out, version);
+        WriteValue(out, asset.guideStrandCount);
+        WriteValue(out, asset.followerStrandCount);
+        WriteValue(out, asset.particlesPerStrand);
         if (!WriteVector(out, asset.strands) || !WriteVector(out, asset.restPoints) || !WriteVector(out, asset.pointWidths) ||
             !WriteVector(out, asset.materials) || !WriteVector(out, asset.rootBindings) || !WriteVector(out, asset.followData) ||
             !WriteVector(out, asset.scalpMesh.positions) || !WriteVector(out, asset.scalpMesh.normals) || !WriteVector(out, asset.scalpMesh.uvs) ||
-            !WriteVector(out, asset.scalpMesh.triangles) || !WriteVector(out, asset.scalpMesh.skinWeights) || !WriteRaw(out, asset.scalpMesh.boneCount))
+            !WriteVector(out, asset.scalpMesh.triangles) || !WriteVector(out, asset.scalpMesh.skinWeights) || !WriteValue(out, asset.scalpMesh.boneCount))
         {
             outError = "Failed while writing binary hair asset.";
             return false;
@@ -1827,16 +1750,16 @@ namespace hairgpu
             return false;
         }
         uint32_t version = 0;
-        if (!ReadRaw(in, version) || version != 1)
+        if (!ReadValue(in, version) || version != 1)
         {
             outError = "Unsupported hair binary version.";
             return false;
         }
-        if (!ReadRaw(in, outAsset.guideStrandCount) || !ReadRaw(in, outAsset.followerStrandCount) || !ReadRaw(in, outAsset.particlesPerStrand) ||
+        if (!ReadValue(in, outAsset.guideStrandCount) || !ReadValue(in, outAsset.followerStrandCount) || !ReadValue(in, outAsset.particlesPerStrand) ||
             !ReadVector(in, outAsset.strands) || !ReadVector(in, outAsset.restPoints) || !ReadVector(in, outAsset.pointWidths) ||
             !ReadVector(in, outAsset.materials) || !ReadVector(in, outAsset.rootBindings) || !ReadVector(in, outAsset.followData) ||
             !ReadVector(in, outAsset.scalpMesh.positions) || !ReadVector(in, outAsset.scalpMesh.normals) || !ReadVector(in, outAsset.scalpMesh.uvs) ||
-            !ReadVector(in, outAsset.scalpMesh.triangles) || !ReadVector(in, outAsset.scalpMesh.skinWeights) || !ReadRaw(in, outAsset.scalpMesh.boneCount))
+            !ReadVector(in, outAsset.scalpMesh.triangles) || !ReadVector(in, outAsset.scalpMesh.skinWeights) || !ReadValue(in, outAsset.scalpMesh.boneCount))
         {
             outError = "Failed while reading binary hair asset.";
             return false;

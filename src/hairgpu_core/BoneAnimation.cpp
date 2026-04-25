@@ -6,6 +6,7 @@
 
 #include "hairgpu/Binding.h"
 
+#include "hairgpu/FrameSampling.h"
 namespace hairgpu
 {
     namespace
@@ -173,32 +174,17 @@ namespace hairgpu
             return false;
         }
 
-        const uint32_t frameCount = static_cast<uint32_t>(clip.frames.size());
-        const float frameTime = 1.0f / clip.frameRate;
-        const float totalDuration = frameTime * static_cast<float>(frameCount);
-        float sampleTime = std::max(timeSeconds, 0.0f);
-        if (loop && totalDuration > 1.0e-6f)
+        FrameSample sample = {};
+        if (!ComputeFrameSample(static_cast<uint32_t>(clip.frames.size()), clip.frameRate, timeSeconds, loop, sample))
         {
-            sampleTime = std::fmod(sampleTime, totalDuration);
-            if (sampleTime < 0.0f)
-            {
-                sampleTime += totalDuration;
-            }
+            outMatrices.clear();
+            return false;
         }
-        else
-        {
-            sampleTime = std::min(sampleTime, std::max(totalDuration - frameTime, 0.0f));
-        }
-
-        const float frameIndexF = sampleTime / frameTime;
-        const uint32_t frame0 = std::min<uint32_t>(static_cast<uint32_t>(std::floor(frameIndexF)), frameCount - 1u);
-        const uint32_t frame1 = loop ? ((frame0 + 1u) % frameCount) : std::min<uint32_t>(frame0 + 1u, frameCount - 1u);
-        const float t = std::clamp(frameIndexF - std::floor(frameIndexF), 0.0f, 1.0f);
 
         outMatrices.resize(clip.boneCount, Identity());
         for (uint32_t boneIndex = 0u; boneIndex < clip.boneCount; ++boneIndex)
         {
-            outMatrices[boneIndex] = LerpMatrix(clip.frames[frame0].boneMatrices[boneIndex], clip.frames[frame1].boneMatrices[boneIndex], t);
+            outMatrices[boneIndex] = LerpMatrix(clip.frames[sample.frame0].boneMatrices[boneIndex], clip.frames[sample.frame1].boneMatrices[boneIndex], sample.t);
         }
         return true;
     }

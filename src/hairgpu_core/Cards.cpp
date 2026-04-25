@@ -8,50 +8,13 @@
 
 #include "hairgpu/Math.h"
 
+#include "hairgpu/StrandSampling.h"
+
+#include "hairgpu/Geometry.h"
 namespace hairgpu
 {
     namespace
     {
-        Vec3 SampleStrandPoint(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.restPoints.size())
-            {
-                return {};
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.restPoints[strand.pointOffset];
-            }
-
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            const Vec3& p0 = asset.restPoints[strand.pointOffset + i0];
-            const Vec3& p1 = asset.restPoints[strand.pointOffset + i1];
-            return Lerp(p0, p1, localT);
-        }
-
-        float SampleStrandWidth(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.pointWidths.size())
-            {
-                return 0.0035f;
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.pointWidths[strand.pointOffset];
-            }
-
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            const float w0 = asset.pointWidths[strand.pointOffset + i0];
-            const float w1 = asset.pointWidths[strand.pointOffset + i1];
-            return Lerp(w0, w1, localT);
-        }
-
         Vec3 EvaluateRootNormal(const HairAsset& asset, uint32_t strandIndex)
         {
             if (strandIndex < asset.rootBindings.size())
@@ -63,7 +26,7 @@ namespace hairgpu
                     const Vec3 na = (tri.a < asset.scalpMesh.normals.size()) ? asset.scalpMesh.normals[tri.a] : Vec3{ 0.0f, 1.0f, 0.0f };
                     const Vec3 nb = (tri.b < asset.scalpMesh.normals.size()) ? asset.scalpMesh.normals[tri.b] : Vec3{ 0.0f, 1.0f, 0.0f };
                     const Vec3 nc = (tri.c < asset.scalpMesh.normals.size()) ? asset.scalpMesh.normals[tri.c] : Vec3{ 0.0f, 1.0f, 0.0f };
-                    return Normalize(na * binding.barycentric.x + nb * binding.barycentric.y + nc * binding.barycentric.z);
+                    return EvaluateBarycentricNormal(na, nb, nc, binding.barycentric);
                 }
             }
             return Vec3(0.0f, 1.0f, 0.0f);
@@ -148,7 +111,7 @@ namespace hairgpu
                     {
                         const StrandRange& strand = asset.strands[cluster[i]];
                         center += SampleStrandPoint(asset, strand, t);
-                        avgWidth += SampleStrandWidth(asset, strand, t);
+                        avgWidth += SampleStrandWidth(asset, strand, t, 0.0035f);
                         ++count;
                     }
                     if (count == 0u)

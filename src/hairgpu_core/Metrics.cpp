@@ -6,45 +6,13 @@
 
 #include "hairgpu/Math.h"
 
+#include "hairgpu/StrandSampling.h"
+
+#include "hairgpu/ErrorMetrics.h"
 namespace hairgpu
 {
     namespace
     {
-        Vec3 SampleStrandPoint(const HairAsset& asset, const StrandRange& strand, float t)
-        {
-            if (strand.pointCount == 0 || strand.pointOffset >= asset.restPoints.size())
-            {
-                return {};
-            }
-            if (strand.pointCount == 1)
-            {
-                return asset.restPoints[strand.pointOffset];
-            }
-            const float scaled = Clamp(t, 0.0f, 1.0f) * static_cast<float>(strand.pointCount - 1u);
-            const uint32_t i0 = static_cast<uint32_t>(std::floor(scaled));
-            const uint32_t i1 = std::min(i0 + 1u, strand.pointCount - 1u);
-            const float localT = scaled - static_cast<float>(i0);
-            const Vec3& p0 = asset.restPoints[strand.pointOffset + i0];
-            const Vec3& p1 = asset.restPoints[strand.pointOffset + i1];
-            return Lerp(p0, p1, localT);
-        }
-
-
-Vec3 SampleStrandTangent(const HairAsset& asset, const StrandRange& strand, float t)
-{
-    const float eps = 1.0f / std::max<float>(static_cast<float>(std::max<uint32_t>(strand.pointCount, 2u) - 1u), 1.0f);
-    const Vec3 a = SampleStrandPoint(asset, strand, Clamp(t - eps, 0.0f, 1.0f));
-    const Vec3 b = SampleStrandPoint(asset, strand, Clamp(t + eps, 0.0f, 1.0f));
-    return Normalize(b - a);
-}
-
-float SampleStrandCurvatureProxy(const HairAsset& asset, const StrandRange& strand, float t)
-{
-    const float eps = 1.0f / std::max<float>(static_cast<float>(std::max<uint32_t>(strand.pointCount, 3u) - 1u), 1.0f);
-    const Vec3 ta = SampleStrandTangent(asset, strand, Clamp(t - eps, 0.0f, 1.0f));
-    const Vec3 tb = SampleStrandTangent(asset, strand, Clamp(t + eps, 0.0f, 1.0f));
-    return Length(tb - ta);
-}
 
 float ComputeGuideFamilySpread(const HairAsset& asset, uint32_t guideIndex)
 {
@@ -83,21 +51,6 @@ float ComputeGuideFamilySpread(const HairAsset& asset, uint32_t guideIndex)
     return (count > 0u) ? static_cast<float>(total / static_cast<double>(count)) : 0.0f;
 }
 
-        float ComputeStrandLength(const HairAsset& asset, const StrandRange& strand)
-        {
-            float length = 0.0f;
-            if (strand.pointCount < 2u)
-            {
-                return length;
-            }
-            for (uint32_t i = 0; i + 1u < strand.pointCount; ++i)
-            {
-                const Vec3& a = asset.restPoints[strand.pointOffset + i];
-                const Vec3& b = asset.restPoints[strand.pointOffset + i + 1u];
-                length += Length(b - a);
-            }
-            return length;
-        }
     }
 
     HairAssetMetrics ComputeHairAssetMetrics(const HairAsset& asset)
@@ -157,8 +110,7 @@ float ComputeGuideFamilySpread(const HairAsset& asset, uint32_t guideIndex)
             return report;
         }
 
-        double sumSq = 0.0;
-        uint64_t sampleCount = 0u;
+        RmsAccumulator rmsPosition;
         for (uint32_t strandIndex = 0; strandIndex < strandPairs; ++strandIndex)
         {
             const StrandRange& refStrand = reference.strands[strandIndex];
@@ -175,14 +127,13 @@ float ComputeGuideFamilySpread(const HairAsset& asset, uint32_t guideIndex)
                 const Vec3 refPos = SampleStrandPoint(reference, refStrand, t);
                 const Vec3 lodPos = SampleStrandPoint(candidate, lodStrand, t);
                 const float d = Length(refPos - lodPos);
-                sumSq += static_cast<double>(d) * static_cast<double>(d);
+                rmsPosition.AddScalarError(d);
                 report.maxPositionError = std::max(report.maxPositionError, d);
-                ++sampleCount;
             }
         }
 
         report.averageLengthDelta /= static_cast<float>(strandPairs);
-        report.rmsPositionError = (sampleCount > 0u) ? static_cast<float>(std::sqrt(sumSq / static_cast<double>(sampleCount))) : 0.0f;
+        report.rmsPositionError = rmsPosition.Rms();
         return report;
     }
 
@@ -287,7 +238,7 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
     {
         const StrandRange& refStrand = reference.strands[strandIndex];
         const StrandRange& editStrand = edited.strands[strandIndex];
-        double sumSq = 0.0;
+        RmsAccumulator strandRms;
         double tangentAccum = 0.0;
         double curvatureAccum = 0.0;
         for (uint32_t sampleIndex = 0u; sampleIndex < samplesPerStrand; ++sampleIndex)
@@ -296,11 +247,11 @@ HairEditComparisonReport CompareHairEditRegion(const HairAsset& reference, const
             const Vec3 a = SampleStrandPoint(reference, refStrand, t);
             const Vec3 b = SampleStrandPoint(edited, editStrand, t);
             const float d = Length(a - b);
-            sumSq += static_cast<double>(d * d);
+            strandRms.AddScalarError(d);
             tangentAccum += Length(SampleStrandTangent(reference, refStrand, t) - SampleStrandTangent(edited, editStrand, t));
             curvatureAccum += std::fabs(SampleStrandCurvatureProxy(reference, refStrand, t) - SampleStrandCurvatureProxy(edited, editStrand, t));
         }
-        strandDelta[strandIndex] = static_cast<float>(std::sqrt(sumSq / static_cast<double>(samplesPerStrand)));
+        strandDelta[strandIndex] = strandRms.Rms();
         strandTangentDelta[strandIndex] = static_cast<float>(tangentAccum / static_cast<double>(samplesPerStrand));
         strandCurvatureDelta[strandIndex] = static_cast<float>(curvatureAccum / static_cast<double>(samplesPerStrand));
         if (strandDelta[strandIndex] > 0.01f * avgLength)

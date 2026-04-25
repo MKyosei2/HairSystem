@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "hairgpu/Geometry.h"
 namespace hairgpu
 {
     namespace

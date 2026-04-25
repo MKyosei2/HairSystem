@@ -11,6 +11,9 @@
 #include <random>
 #include <sstream>
 
+#include "hairgpu/BinaryIO.h"
+
+#include "hairgpu/ErrorMetrics.h"
 namespace hairgpu
 {
     namespace
@@ -19,55 +22,6 @@ namespace hairgpu
         constexpr uint32_t kTemporalVersion = 3u;
         constexpr uint32_t kFeatureCount = 13u;
         constexpr uint32_t kTargetCount = 3u;
-
-        template <typename T>
-        bool WriteValue(std::ofstream& out, const T& value)
-        {
-            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadValue(std::ifstream& in, T& value)
-        {
-            in.read(reinterpret_cast<char*>(&value), sizeof(T));
-            return static_cast<bool>(in);
-        }
-
-        template <typename T>
-        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
-        {
-            uint64_t count = static_cast<uint64_t>(values.size());
-            if (!WriteValue(out, count))
-            {
-                return false;
-            }
-            if (!values.empty())
-            {
-                out.write(reinterpret_cast<const char*>(values.data()), static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadVector(std::ifstream& in, std::vector<T>& values)
-        {
-            uint64_t count = 0u;
-            if (!ReadValue(in, count))
-            {
-                return false;
-            }
-            if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max() / sizeof(T)))
-            {
-                return false;
-            }
-            values.resize(static_cast<size_t>(count));
-            if (!values.empty())
-            {
-                in.read(reinterpret_cast<char*>(values.data()), static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(in);
-        }
 
         struct TemporalTrainingSample
         {
@@ -661,7 +615,7 @@ namespace hairgpu
             {
                 return;
             }
-            double sumSq = 0.0;
+            RmsAccumulator rmsPosition;
             for (size_t sampleIndex : indices)
             {
                 const TemporalTrainingSample& sample = samples[sampleIndex];
@@ -677,13 +631,13 @@ namespace hairgpu
                 }
                 const Vec3 error = predicted - target;
                 const float errorLength = Length(error);
-                sumSq += static_cast<double>(Dot(error, error));
+                rmsPosition.AddVectorError(error);
                 outEval.maxPositionError = std::max(outEval.maxPositionError, errorLength);
                 ++outEval.sampleCount;
             }
             if (outEval.sampleCount > 0u)
             {
-                outEval.rmsPositionError = static_cast<float>(std::sqrt(sumSq / static_cast<double>(outEval.sampleCount)));
+                outEval.rmsPositionError = rmsPosition.Rms();
             }
         };
 

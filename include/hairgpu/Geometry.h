@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <limits>
 
-#include "hairgpu/Math.h"
+#include "hairgpu/Types.h"
 
 namespace hairgpu
 {
@@ -15,6 +15,40 @@ namespace hairgpu
         float distanceSq = std::numeric_limits<float>::max();
         uint32_t triangleIndex = 0u;
     };
+
+    inline Vec3 EvaluateBarycentric(const Vec3& a,
+                                    const Vec3& b,
+                                    const Vec3& c,
+                                    const Vec3& barycentric)
+    {
+        return a * barycentric.x + b * barycentric.y + c * barycentric.z;
+    }
+
+    inline Vec2 EvaluateBarycentric(const Vec2& a,
+                                    const Vec2& b,
+                                    const Vec2& c,
+                                    const Vec3& barycentric)
+    {
+        return {
+            a.x * barycentric.x + b.x * barycentric.y + c.x * barycentric.z,
+            a.y * barycentric.x + b.y * barycentric.y + c.y * barycentric.z
+        };
+    }
+
+    inline Vec3 NormalizeOrFallback(const Vec3& value, const Vec3& fallback = Vec3(0.0f, 1.0f, 0.0f))
+    {
+        const float length = Length(value);
+        return (length > 1.0e-6f) ? (value / length) : fallback;
+    }
+
+    inline Vec3 EvaluateBarycentricNormal(const Vec3& a,
+                                          const Vec3& b,
+                                          const Vec3& c,
+                                          const Vec3& barycentric,
+                                          const Vec3& fallback = Vec3(0.0f, 1.0f, 0.0f))
+    {
+        return NormalizeOrFallback(EvaluateBarycentric(a, b, c, barycentric), fallback);
+    }
 
     inline ClosestTrianglePoint ClosestPointOnTriangle(const Vec3& p,
                                                        const Vec3& a,
@@ -76,7 +110,37 @@ namespace hairgpu
         const float v = vb * denom;
         const float w = vc * denom;
         const float u = 1.0f - v - w;
-        const Vec3 q = a * u + b * v + c * w;
+        const Vec3 q = EvaluateBarycentric(a, b, c, Vec3(u, v, w));
         return { q, Vec3(u, v, w), Dot(p - q, p - q), 0u };
+    }
+
+    struct CapsuleProjection
+    {
+        float t = 0.0f;
+        Vec3 closest = {};
+        float radius = 0.0f;
+        Vec3 delta = {};
+        float distance = 0.0f;
+        Vec3 normal = { 0.0f, 1.0f, 0.0f };
+    };
+
+    inline CapsuleProjection ProjectToCapsule(const CapsuleCollider& capsule,
+                                              const Vec3& point,
+                                              float radiusOffset = 0.0f)
+    {
+        const Vec3 axis = capsule.pointB - capsule.pointA;
+        const float denom = Dot(axis, axis);
+        const float t = (denom > 1.0e-6f)
+            ? Clamp(Dot(point - capsule.pointA, axis) / denom, 0.0f, 1.0f)
+            : 0.0f;
+
+        CapsuleProjection projection = {};
+        projection.t = t;
+        projection.closest = capsule.pointA + axis * t;
+        projection.radius = Lerp(capsule.radiusA, capsule.radiusB, t) + radiusOffset;
+        projection.delta = point - projection.closest;
+        projection.distance = Length(projection.delta);
+        projection.normal = NormalizeOrFallback(projection.delta);
+        return projection;
     }
 }

@@ -12,6 +12,11 @@
 
 #include "hairgpu/AssetIO.h"
 
+#include "hairgpu/Geometry.h"
+
+#include "hairgpu/BinaryIO.h"
+
+#include "hairgpu/ErrorMetrics.h"
 namespace hairgpu
 {
     namespace
@@ -19,51 +24,6 @@ namespace hairgpu
         constexpr std::array<char, 8> kReducedMagic = { 'H', 'R', 'E', 'D', 'U', 'C', 'E', '1' };
         constexpr uint32_t kReducedVersion = 3u;
         constexpr const char* kSequenceManifestName = "sequence_manifest.txt";
-
-        template <typename T>
-        bool WriteValue(std::ofstream& out, const T& value)
-        {
-            out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadValue(std::ifstream& in, T& value)
-        {
-            in.read(reinterpret_cast<char*>(&value), sizeof(T));
-            return static_cast<bool>(in);
-        }
-
-        template <typename T>
-        bool WriteVector(std::ofstream& out, const std::vector<T>& values)
-        {
-            uint64_t count = static_cast<uint64_t>(values.size());
-            if (!WriteValue(out, count))
-            {
-                return false;
-            }
-            if (!values.empty())
-            {
-                out.write(reinterpret_cast<const char*>(values.data()), static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(out);
-        }
-
-        template <typename T>
-        bool ReadVector(std::ifstream& in, std::vector<T>& values)
-        {
-            uint64_t count = 0u;
-            if (!ReadValue(in, count))
-            {
-                return false;
-            }
-            values.resize(static_cast<size_t>(count));
-            if (!values.empty())
-            {
-                in.read(reinterpret_cast<char*>(values.data()), static_cast<std::streamsize>(sizeof(T) * values.size()));
-            }
-            return static_cast<bool>(in);
-        }
 
         std::string LowerExtension(const std::filesystem::path& path)
         {
@@ -1396,7 +1356,7 @@ bool AutoTuneReducedModel(const ReducedModelTrainingSequence& sequence,
         }
 
         ReducedModelEvaluationReport report = {};
-        double sumSq = 0.0;
+        RmsAccumulator rmsPosition;
         double tipSq = 0.0;
         double rootSq = 0.0;
         uint64_t pointSamples = 0u;
@@ -1431,7 +1391,7 @@ bool AutoTuneReducedModel(const ReducedModelTrainingSequence& sequence,
                 {
                     const uint32_t globalPoint = strand.pointOffset + pointIndex;
                     const float error = Length(reconstructed.restPoints[globalPoint] - frame[globalPoint]);
-                    sumSq += static_cast<double>(error) * error;
+                    rmsPosition.AddScalarError(error);
                     report.maxPositionError = std::max(report.maxPositionError, error);
                     ++pointSamples;
                 }
@@ -1441,7 +1401,7 @@ bool AutoTuneReducedModel(const ReducedModelTrainingSequence& sequence,
         report.frameCount = sequence.FrameCount();
         report.pointSamples = static_cast<uint32_t>(std::min<uint64_t>(pointSamples, std::numeric_limits<uint32_t>::max()));
         report.strandSamples = static_cast<uint32_t>(std::min<uint64_t>(strandSamples, std::numeric_limits<uint32_t>::max()));
-        report.rmsPositionError = (pointSamples > 0u) ? static_cast<float>(std::sqrt(sumSq / static_cast<double>(pointSamples))) : 0.0f;
+        report.rmsPositionError = rmsPosition.Rms();
         report.rmsTipError = (strandSamples > 0u) ? static_cast<float>(std::sqrt(tipSq / static_cast<double>(strandSamples))) : 0.0f;
         report.rmsRootError = (strandSamples > 0u) ? static_cast<float>(std::sqrt(rootSq / static_cast<double>(strandSamples))) : 0.0f;
         outReport = report;

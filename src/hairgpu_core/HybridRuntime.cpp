@@ -15,7 +15,9 @@
 #include "hairgpu/HairCache.h"
 #include "hairgpu/Metrics.h"
 #include "hairgpu/ReducedModel.h"
+#include "hairgpu/Geometry.h"
 
+#include "hairgpu/ErrorMetrics.h"
 namespace hairgpu
 {
     namespace
@@ -27,16 +29,6 @@ namespace hairgpu
             Vec3 correctedPoint = { 0.0f, 0.0f, 0.0f };
             float penetration = 0.0f;
             bool corrected = false;
-        };
-
-        struct CapsuleProjection
-        {
-            float t = 0.0f;
-            Vec3 closest = {};
-            float radius = 0.0f;
-            Vec3 delta = {};
-            float distance = 0.0f;
-            Vec3 normal = { 0.0f, 1.0f, 0.0f };
         };
 
         float ComputeAverageScalar(const std::vector<float>& values);
@@ -90,28 +82,6 @@ namespace hairgpu
                                            bundle.residualTemporalNetwork.outputWeights.size() + bundle.residualTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
             bytes += static_cast<uint64_t>(cachedFramePointCount) * static_cast<uint64_t>(sizeof(Vec3)) * 2u;
             return static_cast<float>(static_cast<double>(bytes) / (1024.0 * 1024.0));
-        }
-
-        CapsuleProjection ProjectToCapsule(const CapsuleCollider& capsule,
-                                           const Vec3& point,
-                                           float radiusOffset = 0.0f)
-        {
-            const Vec3 axis = capsule.pointB - capsule.pointA;
-            const float denom = Dot(axis, axis);
-            const float t = (denom > 1.0e-6f)
-                ? Clamp(Dot(point - capsule.pointA, axis) / denom, 0.0f, 1.0f)
-                : 0.0f;
-
-            CapsuleProjection projection = {};
-            projection.t = t;
-            projection.closest = capsule.pointA + axis * t;
-            projection.radius = Lerp(capsule.radiusA, capsule.radiusB, t) + radiusOffset;
-            projection.delta = point - projection.closest;
-            projection.distance = Length(projection.delta);
-            projection.normal = (projection.distance > 1.0e-6f)
-                ? (projection.delta / projection.distance)
-                : Vec3(0.0f, 1.0f, 0.0f);
-            return projection;
         }
 
         float StrandSegmentRestLength(const HairAsset& asset, uint32_t strandIndex, uint32_t pointIndex)
@@ -1653,13 +1623,12 @@ bool ApplySparseCorrectivePhysics(const HairAsset& asset,
             {
                 return 0.0f;
             }
-            double sumSq = 0.0;
+            RmsAccumulator rms;
             for (size_t i = 0u; i < a.size(); ++i)
             {
-                const Vec3 d = a[i] - b[i];
-                sumSq += static_cast<double>(Dot(d, d));
+                rms.AddVectorError(a[i] - b[i]);
             }
-            return static_cast<float>(std::sqrt(sumSq / static_cast<double>(a.size())));
+            return rms.Rms();
         }
 
         float ComputeAverageMagnitude(const std::vector<Vec3>& points)
