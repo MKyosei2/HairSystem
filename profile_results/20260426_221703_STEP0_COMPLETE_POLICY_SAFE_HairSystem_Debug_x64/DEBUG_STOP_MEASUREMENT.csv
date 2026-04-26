@@ -1,0 +1,2 @@
+reason,timestamp,preset,sample_count,avg_fps,avg_frame_ms,p95_frame_ms,worst_frame_ms,avg_sim_ms,avg_gpu_frame_ms,avg_gpu_sim_ms,avg_gpu_hair_ms,avg_active_set_ms,readback_frames,avg_readback_particles,avg_hair_primitives
+live_update_debug_stop_safe,20260426_221855,02_no_self_collision,17,2.98738,334.741,115.585,4289.05,15.0742,3900.06,3393.32,147.432,0,17,1.3056e+07,2.5908e+07

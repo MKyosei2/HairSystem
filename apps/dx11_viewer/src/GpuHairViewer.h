@@ -630,6 +630,15 @@ namespace hairgpu::viewer
         bool SaveSettingsToFile(const std::wstring& filePath) const;
         bool LoadSettingsFromFile(const std::wstring& filePath);
         void ApplyBenchmarkEnvironmentOverrides();
+        bool TryLoadStep0PendingBenchmark();
+        std::filesystem::path FindStep0PendingBenchmarkFile() const;
+        void CaptureStep0BaselineSettings();
+        void RestoreStep0BaselineSettings();
+        void ApplyStep0RealPreset(const std::wstring& presetName);
+        void StartStep0RealPreset();
+        bool CompleteStep0RealPresetAndAdvance();
+        void ExportStep0AggregateResult() const;
+        void ExportStep0StopSnapshot(const std::wstring& reason) const;
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
@@ -877,7 +886,35 @@ namespace hairgpu::viewer
         float m_activeSetEvaluationMilliseconds = 0.0f;
         hairgpu::SparseCorrectiveSettings m_sparseCorrectiveSettings;
         hairgpu::SparseCorrectiveReport m_sparseCorrectiveReport;
+        struct Step0BenchmarkBaseline
+        {
+            uint32_t solverIterations = 12u;
+            bool enableSelfCollision = false;
+            bool enableGridSelfCollision = false;
+            bool enableActiveSetRuntime = false;
+            CpuReadbackMode cpuReadbackMode = CpuReadbackMode::Off;
+            RenderMode renderMode = RenderMode::StrandRibbon;
+            bool showGridBounds = false;
+            bool showGuideSkeleton = false;
+            bool showFollowerSkeleton = false;
+            bool showRootMarkers = false;
+            bool showFollowLinks = false;
+            bool showFloorGuide = false;
+            bool showColliderDebug = false;
+            bool showScalpMesh = true;
+            bool fastGroomViewport = false;
+        };
+
         std::vector<PerformanceSample> m_performanceSamples;
+        bool m_step0RealBenchmarkMode = false;
+        bool m_step0BaselineCaptured = false;
+        Step0BenchmarkBaseline m_step0Baseline = {};
+        std::filesystem::path m_step0PendingFile;
+        std::filesystem::path m_step0RunDir;
+        std::vector<std::wstring> m_step0PresetNames;
+        std::vector<std::wstring> m_step0AggregateCsvLines;
+        size_t m_step0PresetIndex = 0u;
+        std::wstring m_step0CurrentPresetName;
         bool m_benchmarkMode = false;
         uint32_t m_benchmarkWarmupFrames = 120u;
         uint32_t m_benchmarkMeasureFrames = 600u;

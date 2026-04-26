@@ -197,6 +197,153 @@ namespace hairgpu::viewer
             return value;
         }
 
+        std::wstring TrimWide(std::wstring value)
+        {
+            value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](wchar_t c) { return !std::iswspace(c); }));
+            value.erase(std::find_if(value.rbegin(), value.rend(), [](wchar_t c) { return !std::iswspace(c); }).base(), value.end());
+            return value;
+        }
+
+        std::filesystem::path GetExeDirectory()
+        {
+            wchar_t modulePath[MAX_PATH] = {};
+            const DWORD moduleLen = GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+            if (moduleLen > 0u && moduleLen < MAX_PATH)
+            {
+                return std::filesystem::path(modulePath).parent_path();
+            }
+            return {};
+        }
+
+        std::wstring CurrentTimestampCompact()
+        {
+            SYSTEMTIME st = {};
+            GetLocalTime(&st);
+            wchar_t buf[64] = {};
+            swprintf_s(buf, L"%04u%02u%02u_%02u%02u%02u",
+                static_cast<unsigned>(st.wYear),
+                static_cast<unsigned>(st.wMonth),
+                static_cast<unsigned>(st.wDay),
+                static_cast<unsigned>(st.wHour),
+                static_cast<unsigned>(st.wMinute),
+                static_cast<unsigned>(st.wSecond));
+            return buf;
+        }
+
+        bool ContainsInsensitive(const std::wstring& haystack, const std::wstring& needle)
+        {
+            return ToLowerWide(haystack).find(ToLowerWide(needle)) != std::wstring::npos;
+        }
+
+        std::filesystem::path FirstPathField(const std::wstring& line)
+        {
+            const size_t semi = line.find(L';');
+            return std::filesystem::path(TrimWide(line.substr(0, semi)));
+        }
+
+        void AppendUniquePath(std::vector<std::filesystem::path>& paths, const std::filesystem::path& path)
+        {
+            if (path.empty())
+            {
+                return;
+            }
+            const std::filesystem::path normalized = path.lexically_normal();
+            for (const auto& existing : paths)
+            {
+                if (_wcsicmp(existing.wstring().c_str(), normalized.wstring().c_str()) == 0)
+                {
+                    return;
+                }
+            }
+            paths.push_back(normalized);
+        }
+
+        std::filesystem::path FindNearestExistingProfileRoot(const std::vector<std::filesystem::path>& anchors)
+        {
+            std::error_code ec;
+            for (const std::filesystem::path& anchor : anchors)
+            {
+                if (anchor.empty())
+                {
+                    continue;
+                }
+                std::filesystem::path cursor = std::filesystem::is_regular_file(anchor, ec) ? anchor.parent_path() : anchor;
+                for (int depth = 0; depth < 16 && !cursor.empty(); ++depth)
+                {
+                    const std::filesystem::path profileRoot = cursor / L"profile_results";
+                    if (std::filesystem::exists(profileRoot, ec))
+                    {
+                        return profileRoot;
+                    }
+                    const std::filesystem::path parent = cursor.parent_path();
+                    if (parent == cursor || parent.empty())
+                    {
+                        break;
+                    }
+                    cursor = parent;
+                }
+            }
+            return {};
+        }
+
+        std::filesystem::path FindLatestStep0RunDirectory(const std::filesystem::path& profileRoot)
+        {
+            std::error_code ec;
+            if (profileRoot.empty() || !std::filesystem::exists(profileRoot, ec))
+            {
+                return {};
+            }
+
+            const std::filesystem::path latestTxt = profileRoot / L"LATEST.txt";
+            if (std::filesystem::exists(latestTxt, ec))
+            {
+                std::wifstream latest(latestTxt);
+                std::wstring line;
+                if (latest && std::getline(latest, line))
+                {
+                    const std::filesystem::path runDir = FirstPathField(line);
+                    if (!runDir.empty() && std::filesystem::exists(runDir, ec))
+                    {
+                        return runDir;
+                    }
+                }
+            }
+
+            std::filesystem::path newest;
+            std::filesystem::file_time_type newestTime = std::filesystem::file_time_type::min();
+            for (const auto& entry : std::filesystem::directory_iterator(profileRoot, ec))
+            {
+                if (ec)
+                {
+                    break;
+                }
+                if (!entry.is_directory(ec))
+                {
+                    continue;
+                }
+                const std::wstring name = entry.path().filename().wstring();
+                if (!ContainsInsensitive(name, L"STEP0"))
+                {
+                    continue;
+                }
+                const auto t = entry.last_write_time(ec);
+                if (!ec && t > newestTime)
+                {
+                    newestTime = t;
+                    newest = entry.path();
+                }
+            }
+            return newest;
+        }
+
+        bool HasRealStep0Result(const std::filesystem::path& runDir)
+        {
+            std::error_code ec;
+            return !runDir.empty() &&
+                (std::filesystem::exists(runDir / L"RESULT_REAL.md", ec) ||
+                 std::filesystem::exists(runDir / L"RESULT_REAL.csv", ec));
+        }
+
         bool IsEnvEnabled(const wchar_t* name)
         {
             const std::wstring value = ToLowerWide(GetEnvironmentVariableString(name));
@@ -1470,6 +1617,7 @@ namespace hairgpu::viewer
         AutoFrameCameraToAsset(true);
         ResetSimulation();
         ApplyBenchmarkEnvironmentOverrides();
+        TryLoadStep0PendingBenchmark();
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
@@ -1557,6 +1705,843 @@ namespace hairgpu::viewer
             m_paused = false;
             m_statsUpdateAccumulator = 0.0f;
             m_performanceSamples.clear();
+        }
+    }
+
+
+    std::filesystem::path GpuHairViewer::FindStep0PendingBenchmarkFile() const
+    {
+        std::vector<std::filesystem::path> anchors;
+        std::error_code ec;
+        const std::filesystem::path cwd = std::filesystem::current_path(ec);
+        if (!ec && !cwd.empty())
+        {
+            AppendUniquePath(anchors, cwd);
+        }
+
+        const std::filesystem::path exeDir = GetExeDirectory();
+        if (!exeDir.empty())
+        {
+            AppendUniquePath(anchors, exeDir);
+        }
+
+        // Environment / command-line overrides. These make Step0 usable even if the
+        // MSBuild pending file was deleted or created in a different directory.
+        const std::wstring envPending = GetEnvironmentVariableString(L"HAIRGPU_STEP0_PENDING_FILE");
+        if (!envPending.empty())
+        {
+            AppendUniquePath(anchors, std::filesystem::path(envPending).parent_path());
+        }
+        const std::wstring envRunDir = GetEnvironmentVariableString(L"HAIRGPU_STEP0_RUN_DIR");
+        if (!envRunDir.empty())
+        {
+            AppendUniquePath(anchors, std::filesystem::path(envRunDir));
+        }
+
+        std::vector<std::filesystem::path> candidates;
+        for (const std::filesystem::path& base : anchors)
+        {
+            std::filesystem::path cursor = base;
+            for (int depth = 0; depth < 16 && !cursor.empty(); ++depth)
+            {
+                AppendUniquePath(candidates, cursor / L"PENDING_STEP0_REAL.ini");
+                AppendUniquePath(candidates, cursor / L"profile_results" / L"PENDING_STEP0_REAL.ini");
+                AppendUniquePath(candidates, cursor / L"profile_results" / L"STEP0_FORCE_RUN.ini");
+                const std::filesystem::path parent = cursor.parent_path();
+                if (parent == cursor || parent.empty())
+                {
+                    break;
+                }
+                cursor = parent;
+            }
+        }
+
+        if (!envPending.empty())
+        {
+            AppendUniquePath(candidates, std::filesystem::path(envPending));
+        }
+
+        std::vector<std::wstring> logLines;
+        logLines.push_back(L"Step0 pending search started.");
+        logLines.push_back(std::wstring(L"cwd=") + cwd.wstring());
+        logLines.push_back(std::wstring(L"exeDir=") + exeDir.wstring());
+        logLines.push_back(std::wstring(L"commandLine=") + GetCommandLineW());
+
+        for (const std::filesystem::path& candidate : candidates)
+        {
+            const bool exists = std::filesystem::exists(candidate, ec);
+            logLines.push_back(std::wstring(L"candidate=") + candidate.wstring() + L";exists=" + (exists ? L"1" : L"0"));
+            if (exists)
+            {
+                const std::filesystem::path logDir = candidate.parent_path();
+                std::error_code logEc;
+                std::filesystem::create_directories(logDir, logEc);
+                std::wofstream found(logDir / L"STEP0_PENDING_FOUND.txt");
+                if (found)
+                {
+                    found << L"pending_file=" << candidate.wstring() << L"\n";
+                    found << L"timestamp=" << CurrentTimestampCompact() << L"\n";
+                }
+                return candidate;
+            }
+        }
+
+        // Fallback: use profile_results/LATEST.txt or the newest STEP0 run directory.
+        // This fixes the common failure mode where profile_results exists but the
+        // explicit pending file is not next to the exe anymore.
+        const std::filesystem::path profileRoot = FindNearestExistingProfileRoot(anchors);
+        const bool forceFromEnv = IsEnvEnabled(L"HAIRGPU_STEP0_REAL");
+        const bool forceFromCmd = ContainsInsensitive(GetCommandLineW(), L"--step0") ||
+                                  ContainsInsensitive(GetCommandLineW(), L"/step0") ||
+                                  ContainsInsensitive(GetCommandLineW(), L"--benchmark");
+        if (!profileRoot.empty())
+        {
+            const std::filesystem::path latestRunDir = !envRunDir.empty()
+                ? std::filesystem::path(envRunDir)
+                : FindLatestStep0RunDirectory(profileRoot);
+
+            if (!latestRunDir.empty() && (forceFromEnv || forceFromCmd || !HasRealStep0Result(latestRunDir)))
+            {
+                std::filesystem::create_directories(latestRunDir, ec);
+                const std::filesystem::path generatedPending = latestRunDir / L"PENDING_STEP0_REAL.auto.ini";
+                std::wofstream out(generatedPending);
+                if (out)
+                {
+                    out << L"enabled=1\n";
+                    out << L"runDir=" << latestRunDir.wstring() << L"\n";
+                    out << L"warmupFrames=120\n";
+                    out << L"measureFrames=600\n";
+                    out << L"presets=00_current,01_no_readback,02_no_self_collision,03_low_solver,04_no_debug_draw,05_render_light,06_simulation_light\n";
+                    out << L"createdAt=" << CurrentTimestampCompact() << L"\n";
+                    out << L"source=viewer_fallback_latest_run_dir\n";
+                }
+                if (std::filesystem::exists(generatedPending, ec))
+                {
+                    logLines.push_back(std::wstring(L"fallback_generated_pending=") + generatedPending.wstring());
+                    return generatedPending;
+                }
+            }
+        }
+
+        // Final Step0 mode: do not silently fail when pending files are missing.
+        // If HairSystem.exe actually starts, Step0 must measure. Therefore the viewer
+        // creates a self-contained real-measurement run next to the executable and
+        // immediately returns the generated pending file. This removes the previous
+        // failure mode where profile_results existed but RESULT_REAL.md never appeared.
+        // Set HAIRGPU_DISABLE_STEP0_REAL=1 only when launching the viewer for normal manual use.
+        if (!IsEnvEnabled(L"HAIRGPU_DISABLE_STEP0_REAL"))
+        {
+            const std::filesystem::path autoRoot = !exeDir.empty()
+                ? (exeDir / L"profile_results")
+                : (!cwd.empty() ? (cwd / L"profile_results") : std::filesystem::path(L"profile_results"));
+            const std::wstring timestamp = CurrentTimestampCompact();
+            const std::filesystem::path autoRunDir = autoRoot / (timestamp + L"_STEP0_REAL_AUTOSTART");
+            std::filesystem::create_directories(autoRunDir, ec);
+
+            const std::filesystem::path autoPending = autoRunDir / L"PENDING_STEP0_REAL.ini";
+            std::wofstream out(autoPending);
+            if (out)
+            {
+                out << L"enabled=1\n";
+                out << L"runDir=" << autoRunDir.wstring() << L"\n";
+                out << L"warmupFrames=120\n";
+                out << L"measureFrames=600\n";
+                out << L"presets=00_current,01_no_readback,02_no_self_collision,03_low_solver,04_no_debug_draw,05_render_light,06_simulation_light\n";
+                out << L"createdAt=" << timestamp << L"\n";
+                out << L"source=viewer_autostart_no_pending_found\n";
+            }
+
+            std::wofstream latest(autoRoot / L"LATEST_REAL.txt");
+            if (latest)
+            {
+                latest << autoRunDir.wstring() << L"\n";
+            }
+
+            std::wofstream autostart(autoRunDir / L"STEP0_AUTOSTART_CREATED.txt");
+            if (autostart)
+            {
+                autostart << L"status=created_by_viewer_startup\n";
+                autostart << L"timestamp=" << timestamp << L"\n";
+                autostart << L"exe_dir=" << exeDir.wstring() << L"\n";
+                autostart << L"cwd=" << cwd.wstring() << L"\n";
+                autostart << L"note=HairSystem.exe started and no pending file was found, so Step0 real measurement was forced.\n";
+            }
+
+            if (std::filesystem::exists(autoPending, ec))
+            {
+                logLines.push_back(std::wstring(L"autostart_generated_pending=") + autoPending.wstring());
+                std::wofstream log(autoRunDir / L"STEP0_PENDING_SEARCH_LOG.txt");
+                if (log)
+                {
+                    for (const std::wstring& line : logLines)
+                    {
+                        log << line << L"\n";
+                    }
+                    log << L"result=autostart_generated\n";
+                }
+                return autoPending;
+            }
+        }
+
+        // If autostart is explicitly disabled, write a hard diagnostic next to the executable.
+        const std::filesystem::path logDir = !exeDir.empty() ? exeDir : cwd;
+        if (!logDir.empty())
+        {
+            std::filesystem::create_directories(logDir, ec);
+            std::wofstream log(logDir / L"STEP0_PENDING_SEARCH_LOG.txt");
+            if (log)
+            {
+                for (const std::wstring& line : logLines)
+                {
+                    log << line << L"\n";
+                }
+                log << L"profileRoot=" << profileRoot.wstring() << L"\n";
+                log << L"result=not_found_or_autostart_disabled\n";
+            }
+            std::wofstream note(logDir / L"STEP0_REAL_NOT_STARTED.md");
+            if (note)
+            {
+                note << L"# Step0 real measurement did not start\n\n";
+                note << L"The executable started, but no `PENDING_STEP0_REAL.ini` was found and autostart was disabled.\n\n";
+                note << L"Remove `HAIRGPU_DISABLE_STEP0_REAL=1` or launch with `--step0`.\n";
+            }
+        }
+
+        return {};
+    }
+
+    void GpuHairViewer::CaptureStep0BaselineSettings()
+    {
+        if (m_step0BaselineCaptured)
+        {
+            return;
+        }
+        m_step0Baseline.solverIterations = m_simConfig.solverIterations;
+        m_step0Baseline.enableSelfCollision = m_enableSelfCollision;
+        m_step0Baseline.enableGridSelfCollision = m_enableGridSelfCollision;
+        m_step0Baseline.enableActiveSetRuntime = m_enableActiveSetRuntime;
+        m_step0Baseline.cpuReadbackMode = m_cpuReadbackMode;
+        m_step0Baseline.renderMode = m_renderMode;
+        m_step0Baseline.showGridBounds = m_showGridBounds;
+        m_step0Baseline.showGuideSkeleton = m_showGuideSkeleton;
+        m_step0Baseline.showFollowerSkeleton = m_showFollowerSkeleton;
+        m_step0Baseline.showRootMarkers = m_showRootMarkers;
+        m_step0Baseline.showFollowLinks = m_showFollowLinks;
+        m_step0Baseline.showFloorGuide = m_showFloorGuide;
+        m_step0Baseline.showColliderDebug = m_showColliderDebug;
+        m_step0Baseline.showScalpMesh = m_showScalpMesh;
+        m_step0Baseline.fastGroomViewport = m_fastGroomViewport;
+        m_step0BaselineCaptured = true;
+    }
+
+    void GpuHairViewer::RestoreStep0BaselineSettings()
+    {
+        if (!m_step0BaselineCaptured)
+        {
+            return;
+        }
+        m_simConfig.solverIterations = m_step0Baseline.solverIterations;
+        m_enableSelfCollision = m_step0Baseline.enableSelfCollision;
+        m_enableGridSelfCollision = m_step0Baseline.enableGridSelfCollision;
+        m_enableActiveSetRuntime = m_step0Baseline.enableActiveSetRuntime;
+        m_cpuReadbackMode = m_step0Baseline.cpuReadbackMode;
+        m_renderMode = m_step0Baseline.renderMode;
+        m_showGridBounds = m_step0Baseline.showGridBounds;
+        m_showGuideSkeleton = m_step0Baseline.showGuideSkeleton;
+        m_showFollowerSkeleton = m_step0Baseline.showFollowerSkeleton;
+        m_showRootMarkers = m_step0Baseline.showRootMarkers;
+        m_showFollowLinks = m_step0Baseline.showFollowLinks;
+        m_showFloorGuide = m_step0Baseline.showFloorGuide;
+        m_showColliderDebug = m_step0Baseline.showColliderDebug;
+        m_showScalpMesh = m_step0Baseline.showScalpMesh;
+        m_fastGroomViewport = m_step0Baseline.fastGroomViewport;
+        m_gpuDebugLinesDirty = true;
+    }
+
+    void GpuHairViewer::ApplyStep0RealPreset(const std::wstring& presetName)
+    {
+        RestoreStep0BaselineSettings();
+        const std::wstring preset = ToLowerWide(presetName);
+        if (preset == L"01_no_readback")
+        {
+            m_cpuReadbackMode = CpuReadbackMode::Off;
+            m_enableActiveSetRuntime = false;
+        }
+        else if (preset == L"02_no_self_collision")
+        {
+            m_enableSelfCollision = false;
+            m_enableGridSelfCollision = false;
+        }
+        else if (preset == L"03_low_solver")
+        {
+            m_simConfig.solverIterations = 3u;
+        }
+        else if (preset == L"04_no_debug_draw")
+        {
+            m_showGridBounds = false;
+            m_showGuideSkeleton = false;
+            m_showFollowerSkeleton = false;
+            m_showRootMarkers = false;
+            m_showFollowLinks = false;
+            m_showFloorGuide = false;
+            m_showColliderDebug = false;
+            m_gpuDebugLineEntries.clear();
+            m_gpuDebugLinesDirty = true;
+        }
+        else if (preset == L"05_render_light")
+        {
+            m_renderMode = RenderMode::ParticleBillboard;
+            m_showScalpMesh = false;
+            m_fastGroomViewport = true;
+        }
+        else if (preset == L"06_simulation_light")
+        {
+            m_cpuReadbackMode = CpuReadbackMode::Off;
+            m_enableActiveSetRuntime = false;
+            m_enableSelfCollision = false;
+            m_enableGridSelfCollision = false;
+            m_simConfig.solverIterations = 3u;
+        }
+
+        SyncControlsFromState();
+        RebuildGpuDebugLineEntries();
+        ResetSimulation();
+    }
+
+    void GpuHairViewer::StartStep0RealPreset()
+    {
+        if (!m_step0RealBenchmarkMode || m_step0PresetIndex >= m_step0PresetNames.size())
+        {
+            return;
+        }
+        m_step0CurrentPresetName = m_step0PresetNames[m_step0PresetIndex];
+        ApplyStep0RealPreset(m_step0CurrentPresetName);
+        m_benchmarkMode = true;
+        m_paused = false;
+        m_benchmarkFrameIndex = 0u;
+        m_benchmarkWarmupCleared = (m_benchmarkWarmupFrames == 0u);
+        m_performanceSamples.clear();
+
+        std::error_code ec;
+        const std::filesystem::path presetDir = m_step0RunDir / m_step0CurrentPresetName;
+        std::filesystem::create_directories(presetDir, ec);
+        std::wofstream status(presetDir / L"process_status.txt", std::ios::app);
+        if (status)
+        {
+            status << L"viewer_execution=running\n";
+            status << L"preset_started_by_viewer=1\n";
+            status << L"warmup_frames=" << m_benchmarkWarmupFrames << L"\n";
+            status << L"measure_frames=" << m_benchmarkMeasureFrames << L"\n";
+            status << L"recording_policy=record_from_first_measured_frame_and_flush_each_frame\n";
+        }
+        ExportPerformanceCsv((presetDir / (m_step0CurrentPresetName + L"_frames.csv")).wstring());
+        {
+            std::wofstream heartbeat(presetDir / L"STEP0_HEARTBEAT.txt");
+            if (heartbeat)
+            {
+                heartbeat << L"preset=" << m_step0CurrentPresetName << L"\n";
+                heartbeat << L"state=preset_started_no_frames_yet\n";
+                heartbeat << L"timestamp=" << CurrentTimestampCompact() << L"\n";
+            }
+        }
+        ExportStep0StopSnapshot(L"preset_started_waiting_for_first_frame");
+    }
+
+    bool GpuHairViewer::TryLoadStep0PendingBenchmark()
+    {
+        m_step0PendingFile = FindStep0PendingBenchmarkFile();
+        if (m_step0PendingFile.empty())
+        {
+            return false;
+        }
+
+        std::wifstream in(m_step0PendingFile);
+        if (!in)
+        {
+            return false;
+        }
+
+        std::unordered_map<std::wstring, std::wstring> kv;
+        std::wstring line;
+        while (std::getline(in, line))
+        {
+            line = TrimWide(line);
+            if (line.empty() || line[0] == L'#')
+            {
+                continue;
+            }
+            const size_t eq = line.find(L'=');
+            if (eq == std::wstring::npos)
+            {
+                continue;
+            }
+            std::wstring key = TrimWide(line.substr(0, eq));
+            std::wstring value = TrimWide(line.substr(eq + 1u));
+            key = ToLowerWide(key);
+            kv[key] = value;
+        }
+
+        const auto enabledIt = kv.find(L"enabled");
+        if (enabledIt != kv.end())
+        {
+            const std::wstring enabled = ToLowerWide(enabledIt->second);
+            if (enabled == L"0" || enabled == L"false" || enabled == L"no")
+            {
+                return false;
+            }
+        }
+
+        const auto runDirIt = kv.find(L"rundir");
+        if (runDirIt != kv.end() && !runDirIt->second.empty())
+        {
+            m_step0RunDir = std::filesystem::path(runDirIt->second);
+            if (m_step0RunDir.is_relative())
+            {
+                m_step0RunDir = std::filesystem::absolute(m_step0PendingFile.parent_path() / m_step0RunDir);
+            }
+        }
+        else
+        {
+            m_step0RunDir = m_step0PendingFile.parent_path();
+        }
+
+        const auto warmupIt = kv.find(L"warmupframes");
+        if (warmupIt != kv.end())
+        {
+            try { m_benchmarkWarmupFrames = static_cast<uint32_t>(std::stoul(warmupIt->second)); }
+            catch (...) {}
+        }
+        const auto measureIt = kv.find(L"measureframes");
+        if (measureIt != kv.end())
+        {
+            try { m_benchmarkMeasureFrames = std::max<uint32_t>(1u, static_cast<uint32_t>(std::stoul(measureIt->second))); }
+            catch (...) {}
+        }
+
+        m_step0PresetNames.clear();
+        const auto presetsIt = kv.find(L"presets");
+        if (presetsIt != kv.end())
+        {
+            std::wstringstream ss(presetsIt->second);
+            std::wstring token;
+            while (std::getline(ss, token, L','))
+            {
+                if (!token.empty())
+                {
+                    token.erase(token.begin(), std::find_if(token.begin(), token.end(), [](wchar_t c) { return !std::iswspace(c); }));
+                    token.erase(std::find_if(token.rbegin(), token.rend(), [](wchar_t c) { return !std::iswspace(c); }).base(), token.end());
+                    if (!token.empty())
+                    {
+                        m_step0PresetNames.push_back(token);
+                    }
+                }
+            }
+        }
+        // Step0 must produce real numbers quickly. Earlier versions waited for
+        // 120 warmup + 600 measured frames, which made crashes/early exits leave only
+        // CSV headers. By default, Step0 now starts recording immediately and uses
+        // a short 60-frame pass per preset. Set HAIRGPU_STEP0_FULL_LENGTH=1 to keep
+        // the frame counts from PENDING_STEP0_REAL.ini.
+        if (!IsEnvEnabled(L"HAIRGPU_STEP0_FULL_LENGTH"))
+        {
+            m_benchmarkWarmupFrames = 0u;
+            m_benchmarkMeasureFrames = std::max<uint32_t>(1u, std::min<uint32_t>(m_benchmarkMeasureFrames, 60u));
+        }
+
+        if (m_step0PresetNames.empty())
+        {
+            m_step0PresetNames =
+            {
+                L"00_current",
+                L"01_no_readback",
+                L"02_no_self_collision",
+                L"03_low_solver",
+                L"04_no_debug_draw",
+                L"05_render_light",
+                L"06_simulation_light"
+            };
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(m_step0RunDir, ec);
+        {
+            std::wofstream boot(m_step0RunDir / L"STEP0_RUNTIME_BOOT.txt");
+            if (boot)
+            {
+                boot << L"status=viewer_detected_pending_and_started_real_measurement\n";
+                boot << L"pending_file=" << m_step0PendingFile.wstring() << L"\n";
+                boot << L"run_dir=" << m_step0RunDir.wstring() << L"\n";
+                boot << L"timestamp=" << CurrentTimestampCompact() << L"\n";
+                boot << L"exe_dir=" << GetExeDirectory().wstring() << L"\n";
+                boot << L"command_line=" << GetCommandLineW() << L"\n";
+            }
+        }
+        CaptureStep0BaselineSettings();
+        m_step0RealBenchmarkMode = true;
+        m_step0PresetIndex = 0u;
+        m_step0AggregateCsvLines.clear();
+        m_step0AggregateCsvLines.push_back(L"preset,sample_count,avg_fps,avg_frame_ms,p95_frame_ms,worst_frame_ms,avg_simulation_ms,avg_gpu_frame_ms,avg_gpu_simulation_ms,avg_gpu_hair_ms,avg_active_set_ms,readback_frames,avg_readback_particles,avg_hair_primitives,diagnosis");
+        {
+            std::wofstream started(m_step0RunDir / L"REAL_MEASUREMENT_STARTED.txt");
+            if (started)
+            {
+                started << L"pending_file=" << m_step0PendingFile.wstring() << L"\n";
+                started << L"warmup_frames=" << m_benchmarkWarmupFrames << L"\n";
+                started << L"measure_frames=" << m_benchmarkMeasureFrames << L"\n";
+                started << L"preset_count=" << m_step0PresetNames.size() << L"\n";
+            }
+        }
+        StartStep0RealPreset();
+        return true;
+    }
+
+    bool GpuHairViewer::CompleteStep0RealPresetAndAdvance()
+    {
+        if (!m_step0RealBenchmarkMode || m_step0CurrentPresetName.empty())
+        {
+            return false;
+        }
+
+        std::vector<float> frameMs;
+        std::vector<float> simMs;
+        std::vector<float> gpuFrameMs;
+        std::vector<float> gpuSimMs;
+        std::vector<float> gpuHairMs;
+        std::vector<float> activeSetMs;
+        uint64_t readbackParticles = 0u;
+        uint64_t hairPrimitives = 0u;
+        uint32_t readbackFrames = 0u;
+        for (const PerformanceSample& s : m_performanceSamples)
+        {
+            frameMs.push_back(s.frameMilliseconds);
+            simMs.push_back(s.simulationMilliseconds);
+            gpuFrameMs.push_back(s.gpuFrameMilliseconds);
+            gpuSimMs.push_back(s.gpuSimulationMilliseconds);
+            gpuHairMs.push_back(s.gpuHairDrawMilliseconds);
+            activeSetMs.push_back(s.activeSetEvaluationMilliseconds);
+            readbackParticles += s.readbackParticleCount;
+            hairPrimitives += s.hairPrimitiveCount;
+            readbackFrames += (s.cpuReadbackMode != 0u && s.readbackParticleCount > 0u) ? 1u : 0u;
+        }
+
+        const float avgFrame = ComputeAverage(frameMs);
+        const float p95Frame = ComputePercentile95(frameMs);
+        const float worstFrame = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
+        const float avgFps = (avgFrame > 1.0e-6f) ? (1000.0f / avgFrame) : 0.0f;
+        const float avgSim = ComputeAverage(simMs);
+        const float avgGpuFrame = ComputeAverage(gpuFrameMs);
+        const float avgGpuSim = ComputeAverage(gpuSimMs);
+        const float avgGpuHair = ComputeAverage(gpuHairMs);
+        const float avgActiveSet = ComputeAverage(activeSetMs);
+        const double avgReadbackParticles = m_performanceSamples.empty() ? 0.0 : static_cast<double>(readbackParticles) / static_cast<double>(m_performanceSamples.size());
+        const double avgHairPrimitives = m_performanceSamples.empty() ? 0.0 : static_cast<double>(hairPrimitives) / static_cast<double>(m_performanceSamples.size());
+
+        const std::filesystem::path presetDir = m_step0RunDir / m_step0CurrentPresetName;
+        std::error_code ec;
+        std::filesystem::create_directories(presetDir, ec);
+        ExportPerformanceCsv((presetDir / (m_step0CurrentPresetName + L"_frames.csv")).wstring());
+        ExportRuntimeReport((presetDir / (m_step0CurrentPresetName + L"_summary.json")).wstring());
+
+        std::wostringstream line;
+        line << m_step0CurrentPresetName << L","
+             << m_performanceSamples.size() << L","
+             << avgFps << L","
+             << avgFrame << L","
+             << p95Frame << L","
+             << worstFrame << L","
+             << avgSim << L","
+             << avgGpuFrame << L","
+             << avgGpuSim << L","
+             << avgGpuHair << L","
+             << avgActiveSet << L","
+             << readbackFrames << L","
+             << avgReadbackParticles << L","
+             << avgHairPrimitives << L",measured";
+        m_step0AggregateCsvLines.push_back(line.str());
+
+        {
+            std::wofstream status(presetDir / L"process_status.txt", std::ios::app);
+            if (status)
+            {
+                status << L"viewer_execution=completed\n";
+                status << L"real_fps_available=yes\n";
+                status << L"sample_count=" << m_performanceSamples.size() << L"\n";
+                status << L"avg_fps=" << avgFps << L"\n";
+                status << L"avg_frame_ms=" << avgFrame << L"\n";
+                status << L"p95_frame_ms=" << p95Frame << L"\n";
+                status << L"worst_frame_ms=" << worstFrame << L"\n";
+            }
+        }
+
+        ++m_step0PresetIndex;
+        if (m_step0PresetIndex < m_step0PresetNames.size())
+        {
+            StartStep0RealPreset();
+            return true;
+        }
+
+        ExportStep0AggregateResult();
+        std::filesystem::rename(m_step0PendingFile, m_step0RunDir / L"PENDING_STEP0_REAL.completed.ini", ec);
+        PostQuitMessage(0);
+        return true;
+    }
+
+    void GpuHairViewer::ExportStep0AggregateResult() const
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(m_step0RunDir, ec);
+
+        {
+            std::wofstream csv(m_step0RunDir / L"RESULT_REAL.csv");
+            if (csv)
+            {
+                for (const std::wstring& line : m_step0AggregateCsvLines)
+                {
+                    csv << line << L"\n";
+                }
+            }
+        }
+
+        std::vector<std::wstring> lines = m_step0AggregateCsvLines;
+        auto valueAt = [](const std::wstring& line, size_t column) -> double
+        {
+            std::wstringstream ss(line);
+            std::wstring cell;
+            size_t index = 0u;
+            while (std::getline(ss, cell, L','))
+            {
+                if (index == column)
+                {
+                    try { return std::stod(cell); }
+                    catch (...) { return 0.0; }
+                }
+                ++index;
+            }
+            return 0.0;
+        };
+
+        const double currentMs = lines.size() > 1 ? valueAt(lines[1], 3u) : 0.0;
+        std::wstring primary = L"insufficient measured data";
+        double bestGain = 0.0;
+        for (size_t i = 2; i < lines.size(); ++i)
+        {
+            std::wstringstream ss(lines[i]);
+            std::wstring preset;
+            std::getline(ss, preset, L',');
+            const double ms = valueAt(lines[i], 3u);
+            const double gain = currentMs - ms;
+            if (gain > bestGain)
+            {
+                bestGain = gain;
+                primary = preset;
+            }
+        }
+
+        std::wofstream md(m_step0RunDir / L"RESULT_REAL.md");
+        if (md)
+        {
+            md << L"# HairGPU Step 0 Real Measurement Result\n\n";
+            md << L"Viewer execution: COMPLETED\n";
+            md << L"Real FPS measurement: AVAILABLE\n";
+            md << L"WarmupFrames: " << m_benchmarkWarmupFrames << L"\n";
+            md << L"MeasureFrames: " << m_benchmarkMeasureFrames << L"\n\n";
+            md << L"## Summary\n\n";
+            md << L"| Preset | Avg FPS | Avg Frame ms | P95 Frame ms | Worst Frame ms | Avg Sim ms | Avg GPU Frame ms | Avg GPU Hair ms |\n";
+            md << L"|---|---:|---:|---:|---:|---:|---:|---:|\n";
+            for (size_t i = 1; i < lines.size(); ++i)
+            {
+                std::vector<std::wstring> cells;
+                std::wstringstream ss(lines[i]);
+                std::wstring cell;
+                while (std::getline(ss, cell, L','))
+                {
+                    cells.push_back(cell);
+                }
+                if (cells.size() >= 10u)
+                {
+                    md << L"| " << cells[0] << L" | " << cells[2] << L" | " << cells[3] << L" | " << cells[4] << L" | " << cells[5] << L" | " << cells[6] << L" | " << cells[7] << L" | " << cells[9] << L" |\n";
+                }
+            }
+            md << L"\n## Automatic bottleneck guess\n\n";
+            md << L"Baseline average frame ms: " << currentMs << L"\n\n";
+            md << L"Largest frame-time reduction preset: **" << primary << L"**\n\n";
+            md << L"Frame-time reduction: " << bestGain << L" ms\n\n";
+            md << L"Interpretation:\n\n";
+            md << L"- 01_no_readback wins: GPU to CPU readback / synchronization is the main bottleneck.\n";
+            md << L"- 02_no_self_collision wins: self collision / broadphase / solve is the main bottleneck.\n";
+            md << L"- 03_low_solver wins: solver iteration count is the main bottleneck.\n";
+            md << L"- 04_no_debug_draw wins: debug visualization is the main bottleneck.\n";
+            md << L"- 05_render_light wins: hair draw / overdraw / render path is the main bottleneck.\n";
+            md << L"- 06_simulation_light wins: combined simulation-side cost dominates.\n\n";
+            if (bestGain >= 20.0)
+            {
+                md << L"Severity: PRIMARY BOTTLENECK CANDIDATE\n";
+            }
+            else if (bestGain >= 10.0)
+            {
+                md << L"Severity: STRONG BOTTLENECK CANDIDATE\n";
+            }
+            else if (bestGain >= 5.0)
+            {
+                md << L"Severity: SUSPICIOUS BOTTLENECK CANDIDATE\n";
+            }
+            else
+            {
+                md << L"Severity: no single preset explains the cost; multiple systems or Debug build overhead may dominate.\n";
+            }
+        }
+    }
+
+    void GpuHairViewer::ExportStep0StopSnapshot(const std::wstring& reason) const
+    {
+        if (m_step0RunDir.empty())
+        {
+            return;
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(m_step0RunDir, ec);
+
+        const PerformanceSample* latest = m_performanceSamples.empty() ? nullptr : &m_performanceSamples.back();
+        std::vector<float> frameMs;
+        std::vector<float> simMs;
+        std::vector<float> gpuFrameMs;
+        std::vector<float> gpuSimMs;
+        std::vector<float> gpuHairMs;
+        std::vector<float> activeSetMs;
+        uint64_t readbackParticles = 0u;
+        uint64_t hairPrimitives = 0u;
+        uint32_t readbackFrames = 0u;
+        for (const PerformanceSample& s : m_performanceSamples)
+        {
+            frameMs.push_back(s.frameMilliseconds);
+            simMs.push_back(s.simulationMilliseconds);
+            gpuFrameMs.push_back(s.gpuFrameMilliseconds);
+            gpuSimMs.push_back(s.gpuSimulationMilliseconds);
+            gpuHairMs.push_back(s.gpuHairDrawMilliseconds);
+            activeSetMs.push_back(s.activeSetEvaluationMilliseconds);
+            readbackParticles += s.readbackParticleCount;
+            hairPrimitives += s.hairPrimitiveCount;
+            readbackFrames += (s.cpuReadbackMode != 0u && s.readbackParticleCount > 0u) ? 1u : 0u;
+        }
+
+        const float avgFrame = ComputeAverage(frameMs);
+        const float p95Frame = ComputePercentile95(frameMs);
+        const float worstFrame = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
+        const float avgFps = (avgFrame > 1.0e-6f) ? (1000.0f / avgFrame) : 0.0f;
+        const float avgSim = ComputeAverage(simMs);
+        const float avgGpuFrame = ComputeAverage(gpuFrameMs);
+        const float avgGpuSim = ComputeAverage(gpuSimMs);
+        const float avgGpuHair = ComputeAverage(gpuHairMs);
+        const float avgActiveSet = ComputeAverage(activeSetMs);
+        const double avgReadbackParticles = m_performanceSamples.empty() ? 0.0 : static_cast<double>(readbackParticles) / static_cast<double>(m_performanceSamples.size());
+        const double avgHairPrimitives = m_performanceSamples.empty() ? 0.0 : static_cast<double>(hairPrimitives) / static_cast<double>(m_performanceSamples.size());
+
+        if (!m_step0CurrentPresetName.empty())
+        {
+            const std::filesystem::path presetDir = m_step0RunDir / m_step0CurrentPresetName;
+            std::filesystem::create_directories(presetDir, ec);
+
+            // Keep the current preset CSV/JSON up to date even if Visual Studio
+            // Stop Debugging terminates the process before normal completion.
+            ExportPerformanceCsv((presetDir / (m_step0CurrentPresetName + L"_frames.csv")).wstring());
+            ExportRuntimeReport((presetDir / (m_step0CurrentPresetName + L"_summary_debug_stop.json")).wstring());
+
+            std::wofstream presetStop(presetDir / L"DEBUG_STOP_SNAPSHOT.txt");
+            if (presetStop)
+            {
+                presetStop << L"reason=" << reason << L"\n";
+                presetStop << L"timestamp=" << CurrentTimestampCompact() << L"\n";
+                presetStop << L"preset=" << m_step0CurrentPresetName << L"\n";
+                presetStop << L"sample_count=" << m_performanceSamples.size() << L"\n";
+                presetStop << L"avg_fps=" << avgFps << L"\n";
+                presetStop << L"avg_frame_ms=" << avgFrame << L"\n";
+                presetStop << L"p95_frame_ms=" << p95Frame << L"\n";
+                presetStop << L"worst_frame_ms=" << worstFrame << L"\n";
+                presetStop << L"avg_sim_ms=" << avgSim << L"\n";
+                presetStop << L"avg_gpu_frame_ms=" << avgGpuFrame << L"\n";
+                presetStop << L"avg_gpu_sim_ms=" << avgGpuSim << L"\n";
+                presetStop << L"avg_gpu_hair_ms=" << avgGpuHair << L"\n";
+                presetStop << L"avg_active_set_ms=" << avgActiveSet << L"\n";
+                presetStop << L"readback_frames=" << readbackFrames << L"\n";
+                presetStop << L"avg_readback_particles=" << avgReadbackParticles << L"\n";
+                presetStop << L"avg_hair_primitives=" << avgHairPrimitives << L"\n";
+                if (latest)
+                {
+                    presetStop << L"latest_frame_ms=" << latest->frameMilliseconds << L"\n";
+                    presetStop << L"latest_fps=" << latest->fps << L"\n";
+                    presetStop << L"latest_sim_ms=" << latest->simulationMilliseconds << L"\n";
+                    presetStop << L"latest_gpu_frame_ms=" << latest->gpuFrameMilliseconds << L"\n";
+                    presetStop << L"latest_gpu_sim_ms=" << latest->gpuSimulationMilliseconds << L"\n";
+                    presetStop << L"latest_gpu_hair_ms=" << latest->gpuHairDrawMilliseconds << L"\n";
+                    presetStop << L"latest_cpu_readback_mode=" << latest->cpuReadbackMode << L"\n";
+                    presetStop << L"latest_self_collision=" << latest->selfCollisionEnabled << L"\n";
+                    presetStop << L"latest_solver_iterations=" << latest->solverIterations << L"\n";
+                    presetStop << L"latest_hair_primitives=" << latest->hairPrimitiveCount << L"\n";
+                }
+            }
+        }
+
+        {
+            std::wofstream csv(m_step0RunDir / L"DEBUG_STOP_MEASUREMENT.csv");
+            if (csv)
+            {
+                csv << L"reason,timestamp,preset,sample_count,avg_fps,avg_frame_ms,p95_frame_ms,worst_frame_ms,avg_sim_ms,avg_gpu_frame_ms,avg_gpu_sim_ms,avg_gpu_hair_ms,avg_active_set_ms,readback_frames,avg_readback_particles,avg_hair_primitives\n";
+                csv << reason << L"," << CurrentTimestampCompact() << L"," << m_step0CurrentPresetName << L"," << m_performanceSamples.size() << L",";
+                csv << avgFps << L"," << avgFrame << L"," << p95Frame << L"," << worstFrame << L",";
+                csv << avgSim << L"," << avgGpuFrame << L"," << avgGpuSim << L"," << avgGpuHair << L"," << avgActiveSet << L",";
+                csv << readbackFrames << L"," << avgReadbackParticles << L"," << avgHairPrimitives << L"\n";
+            }
+        }
+
+        std::wofstream md(m_step0RunDir / L"DEBUG_STOP_MEASUREMENT.md");
+        if (md)
+        {
+            md << L"# HairGPU Step0 Debug Stop Measurement\n\n";
+            md << L"This file is written continuously while Step0 is running and again when the viewer exits gracefully.\n";
+            md << L"Use this file when Visual Studio debugging is stopped before all presets complete.\n\n";
+            md << L"Reason: `" << reason << L"`\n\n";
+            md << L"Timestamp: `" << CurrentTimestampCompact() << L"`\n\n";
+            md << L"Current preset: `" << m_step0CurrentPresetName << L"`\n\n";
+            md << L"Preset index: " << (m_step0PresetIndex + 1u) << L" / " << m_step0PresetNames.size() << L"\n\n";
+            md << L"Sample count in current preset: " << m_performanceSamples.size() << L"\n\n";
+            md << L"## Current preset summary\n\n";
+            md << L"| Metric | Value |\n|---|---:|\n";
+            md << L"| Avg FPS | " << avgFps << L" |\n";
+            md << L"| Avg frame ms | " << avgFrame << L" |\n";
+            md << L"| P95 frame ms | " << p95Frame << L" |\n";
+            md << L"| Worst frame ms | " << worstFrame << L" |\n";
+            md << L"| Avg simulation ms | " << avgSim << L" |\n";
+            md << L"| Avg GPU frame ms | " << avgGpuFrame << L" |\n";
+            md << L"| Avg GPU simulation ms | " << avgGpuSim << L" |\n";
+            md << L"| Avg GPU hair draw ms | " << avgGpuHair << L" |\n";
+            md << L"| Avg ActiveSet ms | " << avgActiveSet << L" |\n";
+            md << L"| Readback frames | " << readbackFrames << L" |\n";
+            md << L"| Avg readback particles | " << avgReadbackParticles << L" |\n";
+            md << L"| Avg hair primitives | " << avgHairPrimitives << L" |\n\n";
+            if (latest)
+            {
+                md << L"## Latest frame\n\n";
+                md << L"| Metric | Value |\n|---|---:|\n";
+                md << L"| Frame ms | " << latest->frameMilliseconds << L" |\n";
+                md << L"| FPS | " << latest->fps << L" |\n";
+                md << L"| Simulation ms | " << latest->simulationMilliseconds << L" |\n";
+                md << L"| GPU frame ms | " << latest->gpuFrameMilliseconds << L" |\n";
+                md << L"| GPU simulation ms | " << latest->gpuSimulationMilliseconds << L" |\n";
+                md << L"| GPU hair draw ms | " << latest->gpuHairDrawMilliseconds << L" |\n";
+                md << L"| CPU readback mode | " << latest->cpuReadbackMode << L" |\n";
+                md << L"| Self collision | " << latest->selfCollisionEnabled << L" |\n";
+                md << L"| Solver iterations | " << latest->solverIterations << L" |\n";
+                md << L"| Hair primitives | " << latest->hairPrimitiveCount << L" |\n";
+            }
+            else
+            {
+                md << L"## Latest frame\n\nNo frame sample was recorded before the stop event. If this remains true, the viewer is exiting before the frame loop records performance samples.\n";
+            }
+            md << L"\n## How to use this file\n\n";
+            md << L"- If `RESULT_REAL.md` exists, use that as the complete Step0 result.\n";
+            md << L"- If `RESULT_REAL.md` is missing but this file has samples, Step0 partially measured the current preset.\n";
+            md << L"- If both this file and the preset frames CSV have zero samples, the viewer did not reach the frame recording point.\n";
         }
     }
 
@@ -1671,6 +2656,59 @@ namespace hairgpu::viewer
                 m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
             }
 
+            if (m_step0RealBenchmarkMode && !m_step0CurrentPresetName.empty())
+            {
+                std::error_code ec;
+                const std::filesystem::path presetDir = m_step0RunDir / m_step0CurrentPresetName;
+                std::filesystem::create_directories(presetDir, ec);
+                // Flush every frame. This is intentionally conservative: even if the viewer
+                // crashes, hangs, or is closed before the full benchmark completes, the latest
+                // measured frames remain on disk and Step0 can still be diagnosed.
+                ExportPerformanceCsv((presetDir / (m_step0CurrentPresetName + L"_frames.csv")).wstring());
+                if ((m_performanceSamples.size() % 5u) == 0u || m_performanceSamples.size() <= 2u)
+                {
+                    ExportRuntimeReport((presetDir / (m_step0CurrentPresetName + L"_summary_partial.json")).wstring());
+                }
+                std::wofstream heartbeat(presetDir / L"STEP0_HEARTBEAT.txt");
+                if (heartbeat)
+                {
+                    heartbeat << L"preset=" << m_step0CurrentPresetName << L"\n";
+                    heartbeat << L"state=frames_recording\n";
+                    heartbeat << L"timestamp=" << CurrentTimestampCompact() << L"\n";
+                    heartbeat << L"benchmark_frame_index=" << m_benchmarkFrameIndex << L"\n";
+                    heartbeat << L"sample_count=" << m_performanceSamples.size() << L"\n";
+                    heartbeat << L"last_frame_ms=" << sample.frameMilliseconds << L"\n";
+                    heartbeat << L"last_fps=" << sample.fps << L"\n";
+                    heartbeat << L"solver_iterations=" << sample.solverIterations << L"\n";
+                    heartbeat << L"self_collision=" << sample.selfCollisionEnabled << L"\n";
+                    heartbeat << L"cpu_readback_mode=" << sample.cpuReadbackMode << L"\n";
+                    heartbeat << L"hair_primitives=" << sample.hairPrimitiveCount << L"\n";
+                }
+                std::wofstream partial(m_step0RunDir / L"RESULT_REAL_PARTIAL.md");
+                if (partial)
+                {
+                    partial << L"# HairGPU Step0 Real Measurement Partial Result\n\n";
+                    partial << L"This file is updated while the viewer is running. If RESULT_REAL.md is missing, use this file and the *_frames.csv files to diagnose where the run stopped.\n\n";
+                    partial << L"Current preset: " << m_step0CurrentPresetName << L"\n\n";
+                    partial << L"Current preset index: " << (m_step0PresetIndex + 1u) << L" / " << m_step0PresetNames.size() << L"\n\n";
+                    partial << L"Sample count in current preset: " << m_performanceSamples.size() << L"\n\n";
+                    partial << L"Latest frame ms: " << sample.frameMilliseconds << L"\n\n";
+                    partial << L"Latest FPS: " << sample.fps << L"\n\n";
+                    partial << L"Latest simulation ms: " << sample.simulationMilliseconds << L"\n\n";
+                    partial << L"Latest GPU frame ms: " << sample.gpuFrameMilliseconds << L"\n\n";
+                    partial << L"Latest GPU sim ms: " << sample.gpuSimulationMilliseconds << L"\n\n";
+                    partial << L"Latest GPU hair draw ms: " << sample.gpuHairDrawMilliseconds << L"\n\n";
+                    partial << L"Latest ActiveSet ms: " << sample.activeSetEvaluationMilliseconds << L"\n\n";
+                    partial << L"Solver iterations: " << sample.solverIterations << L"\n\n";
+                    partial << L"Self collision: " << sample.selfCollisionEnabled << L"\n\n";
+                    partial << L"Grid self collision: " << sample.gridSelfCollisionEnabled << L"\n\n";
+                    partial << L"CPU readback mode: " << sample.cpuReadbackMode << L"\n\n";
+                    partial << L"Readback particles: " << sample.readbackParticleCount << L"\n\n";
+                    partial << L"Hair primitives: " << sample.hairPrimitiveCount << L"\n\n";
+                }
+                ExportStep0StopSnapshot(L"live_update_debug_stop_safe");
+            }
+
             if (m_benchmarkMode)
             {
                 ++m_benchmarkFrameIndex;
@@ -1679,9 +2717,20 @@ namespace hairgpu::viewer
                     m_performanceSamples.clear();
                     m_benchmarkWarmupCleared = true;
                 }
+                if (!m_benchmarkWarmupCleared && m_benchmarkWarmupFrames == 0u)
+                {
+                    m_benchmarkWarmupCleared = true;
+                }
                 if (m_benchmarkWarmupCleared && m_performanceSamples.size() >= m_benchmarkMeasureFrames)
                 {
-                    PostQuitMessage(0);
+                    if (m_step0RealBenchmarkMode)
+                    {
+                        CompleteStep0RealPresetAndAdvance();
+                    }
+                    else
+                    {
+                        PostQuitMessage(0);
+                    }
                 }
             }
 
@@ -1718,6 +2767,27 @@ namespace hairgpu::viewer
             const std::filesystem::path frameCsvPath = telemetryDir / (runName + L"_frames.csv");
             ExportPerformanceCsv(frameCsvPath.wstring());
             ExportRuntimeReport(summaryPath.wstring());
+        }
+        if (m_step0RealBenchmarkMode)
+        {
+            ExportStep0StopSnapshot(L"run_loop_exit_or_debug_stop");
+            std::error_code ec;
+            std::filesystem::create_directories(m_step0RunDir, ec);
+            std::wofstream aborted(m_step0RunDir / L"STEP0_ABORTED_OR_CLOSED_BEFORE_COMPLETE.md");
+            if (aborted)
+            {
+                aborted << L"# Step0 did not complete all presets before the viewer exited\n\n";
+                aborted << L"Current preset: " << m_step0CurrentPresetName << L"\n\n";
+                aborted << L"Sample count in current preset: " << m_performanceSamples.size() << L"\n\n";
+                aborted << L"If *_frames.csv has rows, Step0 partially succeeded and those rows can be used for diagnosis.\n";
+            }
+            if (!m_step0CurrentPresetName.empty())
+            {
+                const std::filesystem::path presetDir = m_step0RunDir / m_step0CurrentPresetName;
+                std::filesystem::create_directories(presetDir, ec);
+                ExportPerformanceCsv((presetDir / (m_step0CurrentPresetName + L"_frames.csv")).wstring());
+                ExportRuntimeReport((presetDir / (m_step0CurrentPresetName + L"_summary_partial.json")).wstring());
+            }
         }
         Shutdown();
         return 0;
@@ -9566,7 +10636,18 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
     {
         switch (message)
         {
+        case WM_CLOSE:
+            if (m_step0RealBenchmarkMode)
+            {
+                ExportStep0StopSnapshot(L"WM_CLOSE_debug_stop_or_window_close");
+            }
+            DestroyWindow(hwnd);
+            return 0;
         case WM_DESTROY:
+            if (m_step0RealBenchmarkMode)
+            {
+                ExportStep0StopSnapshot(L"WM_DESTROY_debug_stop_or_window_destroy");
+            }
             PostQuitMessage(0);
             return 0;
         case WM_SIZE:
