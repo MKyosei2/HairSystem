@@ -1,0 +1,9 @@
+﻿Created by MSBuild built-in tasks only.
+CreatedAt=2026-04-26 16:52:26
+Timestamp=20260426_165226
+No local EXE was launched.
+Project=HairSystem
+Configuration=Debug
+Platform=x64
+TargetPath=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe
+RunDir=C:\Users\kyose\source\repos\HairSystem\profile_results\20260426_165226_MSBUILD_POLICY_SAFE_HairSystem_Debug_x64

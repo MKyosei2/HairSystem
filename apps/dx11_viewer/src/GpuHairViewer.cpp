@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
+#include <cwchar>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -187,6 +189,70 @@ namespace hairgpu::viewer
             const DWORD written = GetEnvironmentVariableW(name, value.data(), required);
             value.resize((written > 0u) ? (written - 1u) : 0u);
             return value;
+        }
+
+        std::wstring ToLowerWide(std::wstring value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+            return value;
+        }
+
+        bool IsEnvEnabled(const wchar_t* name)
+        {
+            const std::wstring value = ToLowerWide(GetEnvironmentVariableString(name));
+            return !value.empty() && value != L"0" && value != L"false" && value != L"off" && value != L"no";
+        }
+
+        bool IsEnvExplicitlyDisabled(const wchar_t* name)
+        {
+            const std::wstring value = ToLowerWide(GetEnvironmentVariableString(name));
+            return value == L"0" || value == L"false" || value == L"off" || value == L"no";
+        }
+
+        uint32_t ParseEnvUInt(const wchar_t* name, uint32_t fallback)
+        {
+            const std::wstring value = GetEnvironmentVariableString(name);
+            if (value.empty())
+            {
+                return fallback;
+            }
+            wchar_t* end = nullptr;
+            const unsigned long parsed = std::wcstoul(value.c_str(), &end, 10);
+            if (end == value.c_str())
+            {
+                return fallback;
+            }
+            return static_cast<uint32_t>(std::min<unsigned long>(parsed, 0xfffffffful));
+        }
+
+        float ParseEnvFloat(const wchar_t* name, float fallback)
+        {
+            const std::wstring value = GetEnvironmentVariableString(name);
+            if (value.empty())
+            {
+                return fallback;
+            }
+            wchar_t* end = nullptr;
+            const float parsed = std::wcstof(value.c_str(), &end);
+            return (end != value.c_str()) ? parsed : fallback;
+        }
+
+        uint32_t ParseCpuReadbackModeEnv(uint32_t fallback)
+        {
+            const std::wstring value = ToLowerWide(GetEnvironmentVariableString(L"HAIRGPU_CPU_READBACK"));
+            if (value.empty())
+            {
+                return fallback;
+            }
+            if (value == L"0" || value == L"off" || value == L"false" || value == L"none")
+            {
+                return 0u;
+            }
+            if (value == L"2" || value == L"full" || value == L"full-debug" || value == L"debug")
+            {
+                return 2u;
+            }
+            return 1u;
         }
 
         std::string JsonEscape(const std::string& value)
@@ -1358,6 +1424,8 @@ namespace hairgpu::viewer
         m_colliders.capsules.push_back({ {  0.19f, 1.36f, 0.02f }, 0.11f, {  0.42f, 1.15f, 0.04f }, 0.08f });
         m_colliders.capsules.push_back({ {  0.00f, 1.44f, -0.08f }, 0.14f, {  0.00f, 0.92f, -0.10f }, 0.16f });
 
+        ApplyBenchmarkEnvironmentOverrides();
+
         if (!CreateWindowAndDevice(instance, showCommand))
         {
             return false;
@@ -1401,6 +1469,7 @@ namespace hairgpu::viewer
         RecomputeAssetBounds();
         AutoFrameCameraToAsset(true);
         ResetSimulation();
+        ApplyBenchmarkEnvironmentOverrides();
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
@@ -1410,6 +1479,85 @@ namespace hairgpu::viewer
         RefreshAssetStatsText();
         UpdateWindowTitle();
         return true;
+    }
+
+    void GpuHairViewer::ApplyBenchmarkEnvironmentOverrides()
+    {
+        m_benchmarkMode = IsEnvEnabled(L"HAIRGPU_BENCHMARK");
+        m_benchmarkWarmupFrames = ParseEnvUInt(L"HAIRGPU_BENCHMARK_WARMUP", m_benchmarkWarmupFrames);
+        m_benchmarkMeasureFrames = ParseEnvUInt(L"HAIRGPU_BENCHMARK_FRAMES", m_benchmarkMeasureFrames);
+        m_benchmarkFrameIndex = 0u;
+        m_benchmarkWarmupCleared = false;
+
+        const uint32_t width = ParseEnvUInt(L"HAIRGPU_BENCHMARK_WIDTH", m_width);
+        const uint32_t height = ParseEnvUInt(L"HAIRGPU_BENCHMARK_HEIGHT", m_height);
+        m_width = std::max<uint32_t>(width, 320u);
+        m_height = std::max<uint32_t>(height, 240u);
+
+        m_simConfig.solverIterations = ParseEnvUInt(L"HAIRGPU_SOLVER_ITERATIONS", m_simConfig.solverIterations);
+        m_activeSetBudget.maxActiveClusters = ParseEnvUInt(L"HAIRGPU_ACTIVESET_MAX_CLUSTERS", m_activeSetBudget.maxActiveClusters);
+        m_activeSetBudget.maxActiveGuides = ParseEnvUInt(L"HAIRGPU_ACTIVESET_MAX_GUIDES", m_activeSetBudget.maxActiveGuides);
+        m_activeSetBudget.promoteScoreThreshold = ParseEnvFloat(L"HAIRGPU_ACTIVESET_THRESHOLD", m_activeSetBudget.promoteScoreThreshold);
+
+        if (!GetEnvironmentVariableString(L"HAIRGPU_SELF_COLLISION").empty())
+        {
+            m_enableSelfCollision = IsEnvEnabled(L"HAIRGPU_SELF_COLLISION");
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_GRID_SELF_COLLISION").empty())
+        {
+            m_enableGridSelfCollision = IsEnvEnabled(L"HAIRGPU_GRID_SELF_COLLISION");
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_ACTIVESET_RUNTIME").empty())
+        {
+            m_enableActiveSetRuntime = IsEnvEnabled(L"HAIRGPU_ACTIVESET_RUNTIME");
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_CPU_READBACK").empty())
+        {
+            m_cpuReadbackMode = static_cast<CpuReadbackMode>(std::min<uint32_t>(ParseCpuReadbackModeEnv(static_cast<uint32_t>(m_cpuReadbackMode)), 2u));
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_DEBUG_DRAW").empty() && IsEnvExplicitlyDisabled(L"HAIRGPU_DEBUG_DRAW"))
+        {
+            m_showGridBounds = false;
+            m_showGuideSkeleton = false;
+            m_showFollowerSkeleton = false;
+            m_showRootMarkers = false;
+            m_showFollowLinks = false;
+            m_showFloorGuide = false;
+            m_showColliderDebug = false;
+            m_gpuDebugLineEntries.clear();
+            m_gpuDebugLinesDirty = true;
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_SHOW_SCALP").empty())
+        {
+            m_showScalpMesh = IsEnvEnabled(L"HAIRGPU_SHOW_SCALP");
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_RENDER_MODE").empty())
+        {
+            const std::wstring mode = ToLowerWide(GetEnvironmentVariableString(L"HAIRGPU_RENDER_MODE"));
+            if (mode == L"point" || mode == L"points")
+            {
+                m_renderMode = RenderMode::ParticlePointSprite;
+            }
+            else if (mode == L"billboard" || mode == L"particle")
+            {
+                m_renderMode = RenderMode::ParticleBillboard;
+            }
+            else if (mode == L"ribbon")
+            {
+                m_renderMode = RenderMode::StrandRibbon;
+            }
+        }
+        if (!GetEnvironmentVariableString(L"HAIRGPU_FAST_VIEWPORT").empty())
+        {
+            m_fastGroomViewport = IsEnvEnabled(L"HAIRGPU_FAST_VIEWPORT");
+        }
+
+        if (m_benchmarkMode)
+        {
+            m_paused = false;
+            m_statsUpdateAccumulator = 0.0f;
+            m_performanceSamples.clear();
+        }
     }
 
     int GpuHairViewer::Run()
@@ -1475,6 +1623,10 @@ namespace hairgpu::viewer
             sample.elapsedSeconds = m_elapsedSeconds;
             sample.frameMilliseconds = dt * 1000.0f;
             sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
+            sample.gpuFrameMilliseconds = m_lastGpuFrameMilliseconds;
+            sample.gpuSimulationMilliseconds = m_lastGpuSimulationMilliseconds;
+            sample.gpuHairDrawMilliseconds = m_lastGpuHairDrawMilliseconds;
+            sample.gpuDebugDrawMilliseconds = m_lastGpuDebugDrawMilliseconds;
             sample.fps = instantFps;
             sample.guideCount = m_asset.guideStrandCount;
             sample.followerCount = m_asset.followerStrandCount;
@@ -1499,10 +1651,38 @@ namespace hairgpu::viewer
             sample.correctiveMaxPenetration = m_sparseCorrectiveReport.maxPenetration;
             sample.correctiveAverageLengthErrorBefore = m_sparseCorrectiveReport.averageLengthErrorBefore;
             sample.correctiveAverageLengthErrorAfter = m_sparseCorrectiveReport.averageLengthErrorAfter;
+            sample.solverIterations = m_simConfig.solverIterations;
+            sample.selfCollisionEnabled = m_enableSelfCollision ? 1u : 0u;
+            sample.gridSelfCollisionEnabled = m_enableGridSelfCollision ? 1u : 0u;
+            sample.cpuReadbackMode = static_cast<uint32_t>(m_cpuReadbackMode);
+            sample.readbackParticleCount = m_lastReadbackParticleCount;
+            sample.visibilityReadbackValid = m_lastVisibilityReadbackValid ? 1u : 0u;
+            sample.usedCpuVisibilityFallback = m_lastUsedCpuVisibilityFallback ? 1u : 0u;
+            sample.hairPrimitiveCount = m_lastCurrentHairPrimitiveCount;
+            sample.hairVertexCount = m_lastCurrentHairVertexCount;
+            sample.hairPsInvocations = m_lastHairPipelineStats.PSInvocations;
+            sample.debugPsInvocations = m_lastDebugPipelineStats.PSInvocations;
+            sample.debugLineCount = m_debugLineStats.totalLineCount;
+            sample.renderMode = static_cast<uint32_t>(m_renderMode);
+            sample.renderFollowerStride = (m_fastGroomViewport && IsGroomWorkspace()) ? 2u : 1u;
             m_performanceSamples.push_back(sample);
             if (m_performanceSamples.size() > 12000)
             {
                 m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
+            }
+
+            if (m_benchmarkMode)
+            {
+                ++m_benchmarkFrameIndex;
+                if (!m_benchmarkWarmupCleared && m_benchmarkFrameIndex >= m_benchmarkWarmupFrames)
+                {
+                    m_performanceSamples.clear();
+                    m_benchmarkWarmupCleared = true;
+                }
+                if (m_benchmarkWarmupCleared && m_performanceSamples.size() >= m_benchmarkMeasureFrames)
+                {
+                    PostQuitMessage(0);
+                }
             }
 
             UpdateCamera();
@@ -7368,7 +7548,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,gpuFrameMilliseconds,gpuSimulationMilliseconds,gpuHairDrawMilliseconds,gpuDebugDrawMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,solverIterations,selfCollisionEnabled,gridSelfCollisionEnabled,cpuReadbackMode,readbackParticleCount,visibilityReadbackValid,usedCpuVisibilityFallback,hairPrimitiveCount,hairVertexCount,hairPsInvocations,debugPsInvocations,debugLineCount,renderMode,renderFollowerStride\n";
         for (size_t i = 0; i < m_performanceSamples.size(); ++i)
         {
             const PerformanceSample& s = m_performanceSamples[i];
@@ -7376,6 +7556,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 << s.elapsedSeconds << ","
                 << s.frameMilliseconds << ","
                 << s.simulationMilliseconds << ","
+                << s.gpuFrameMilliseconds << ","
+                << s.gpuSimulationMilliseconds << ","
+                << s.gpuHairDrawMilliseconds << ","
+                << s.gpuDebugDrawMilliseconds << ","
                 << s.fps << ","
                 << s.guideCount << ","
                 << s.followerCount << ","
@@ -7399,7 +7583,21 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 << s.correctiveAveragePenetration << ","
                 << s.correctiveMaxPenetration << ","
                 << s.correctiveAverageLengthErrorBefore << ","
-                << s.correctiveAverageLengthErrorAfter << "\n";
+                << s.correctiveAverageLengthErrorAfter << ","
+                << s.solverIterations << ","
+                << s.selfCollisionEnabled << ","
+                << s.gridSelfCollisionEnabled << ","
+                << s.cpuReadbackMode << ","
+                << s.readbackParticleCount << ","
+                << s.visibilityReadbackValid << ","
+                << s.usedCpuVisibilityFallback << ","
+                << s.hairPrimitiveCount << ","
+                << s.hairVertexCount << ","
+                << s.hairPsInvocations << ","
+                << s.debugPsInvocations << ","
+                << s.debugLineCount << ","
+                << s.renderMode << ","
+                << s.renderFollowerStride << "\n";
         }
         return true;
     }
@@ -7417,18 +7615,45 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
 
         std::vector<float> frameMs;
         std::vector<float> simMs;
+        std::vector<float> gpuFrameMs;
+        std::vector<float> gpuSimMs;
+        std::vector<float> gpuHairMs;
+        std::vector<float> gpuDebugMs;
+        std::vector<float> activeSetMs;
         std::vector<float> selectedClusters;
         std::vector<float> correctivePenetration;
+        uint64_t totalHairPrimitives = 0ull;
+        uint64_t totalHairPsInvocations = 0ull;
+        uint64_t totalDebugPsInvocations = 0ull;
+        uint64_t totalReadbackParticles = 0ull;
+        uint32_t cpuFallbackFrames = 0u;
+        uint32_t readbackFrames = 0u;
         frameMs.reserve(m_performanceSamples.size());
         simMs.reserve(m_performanceSamples.size());
+        gpuFrameMs.reserve(m_performanceSamples.size());
+        gpuSimMs.reserve(m_performanceSamples.size());
+        gpuHairMs.reserve(m_performanceSamples.size());
+        gpuDebugMs.reserve(m_performanceSamples.size());
+        activeSetMs.reserve(m_performanceSamples.size());
         selectedClusters.reserve(m_performanceSamples.size());
         correctivePenetration.reserve(m_performanceSamples.size());
         for (const PerformanceSample& s : m_performanceSamples)
         {
             frameMs.push_back(s.frameMilliseconds);
             simMs.push_back(s.simulationMilliseconds);
+            gpuFrameMs.push_back(s.gpuFrameMilliseconds);
+            gpuSimMs.push_back(s.gpuSimulationMilliseconds);
+            gpuHairMs.push_back(s.gpuHairDrawMilliseconds);
+            gpuDebugMs.push_back(s.gpuDebugDrawMilliseconds);
+            activeSetMs.push_back(s.activeSetEvaluationMilliseconds);
             selectedClusters.push_back(static_cast<float>(s.activeSetSelectedClusterCount));
             correctivePenetration.push_back(s.correctiveAveragePenetration);
+            totalHairPrimitives += s.hairPrimitiveCount;
+            totalHairPsInvocations += s.hairPsInvocations;
+            totalDebugPsInvocations += s.debugPsInvocations;
+            totalReadbackParticles += s.readbackParticleCount;
+            cpuFallbackFrames += s.usedCpuVisibilityFallback ? 1u : 0u;
+            readbackFrames += (s.cpuReadbackMode != 0u && s.readbackParticleCount > 0u) ? 1u : 0u;
         }
 
         const std::filesystem::path baseDir = summaryPath.parent_path();
@@ -7442,6 +7667,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
 
         const float frameMax = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
         const float simMax = simMs.empty() ? 0.0f : *std::max_element(simMs.begin(), simMs.end());
+        const float gpuFrameMax = gpuFrameMs.empty() ? 0.0f : *std::max_element(gpuFrameMs.begin(), gpuFrameMs.end());
+        const float gpuHairMax = gpuHairMs.empty() ? 0.0f : *std::max_element(gpuHairMs.begin(), gpuHairMs.end());
         const float sixtyFpsRatio = frameMs.empty()
             ? 0.0f
             : static_cast<float>(std::count_if(frameMs.begin(), frameMs.end(), [](float v) { return v <= 16.67f; })) / static_cast<float>(frameMs.size());
@@ -7471,6 +7698,15 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         json << "  \"avg_simulation_ms\": " << ComputeAverage(simMs) << ",\n";
         json << "  \"p95_simulation_ms\": " << ComputePercentile95(simMs) << ",\n";
         json << "  \"worst_simulation_ms\": " << simMax << ",\n";
+        json << "  \"avg_gpu_frame_ms\": " << ComputeAverage(gpuFrameMs) << ",\n";
+        json << "  \"p95_gpu_frame_ms\": " << ComputePercentile95(gpuFrameMs) << ",\n";
+        json << "  \"worst_gpu_frame_ms\": " << gpuFrameMax << ",\n";
+        json << "  \"avg_gpu_simulation_ms\": " << ComputeAverage(gpuSimMs) << ",\n";
+        json << "  \"avg_gpu_hair_ms\": " << ComputeAverage(gpuHairMs) << ",\n";
+        json << "  \"p95_gpu_hair_ms\": " << ComputePercentile95(gpuHairMs) << ",\n";
+        json << "  \"worst_gpu_hair_ms\": " << gpuHairMax << ",\n";
+        json << "  \"avg_gpu_debug_ms\": " << ComputeAverage(gpuDebugMs) << ",\n";
+        json << "  \"avg_active_set_eval_ms\": " << ComputeAverage(activeSetMs) << ",\n";
         json << "  \"avg_fps\": " << ((ComputeAverage(frameMs) > 1.0e-6f) ? (1000.0f / ComputeAverage(frameMs)) : 0.0f) << ",\n";
         json << "  \"sixty_fps_ratio\": " << sixtyFpsRatio << ",\n";
         json << "  \"guide_count\": " << m_asset.guideStrandCount << ",\n";
@@ -7489,6 +7725,19 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         json << "  \"avg_boundary_naturalness\": " << hairgpu::Clamp(1.0f - m_quickEditBoundarySmoothing * 0.15f, 0.0f, 1.0f) << ",\n";
         json << "  \"avg_edit_to_run_latency_ms\": " << ComputeAverage(simMs) << ",\n";
         json << "  \"peak_ram_mb\": " << m_activeSetPlan.summary.estimatedMemoryMegabytes << ",\n";
+        json << "  \"solver_iterations\": " << m_simConfig.solverIterations << ",\n";
+        json << "  \"self_collision_enabled\": " << (m_enableSelfCollision ? "true" : "false") << ",\n";
+        json << "  \"grid_self_collision_enabled\": " << (m_enableGridSelfCollision ? "true" : "false") << ",\n";
+        json << "  \"cpu_readback_mode\": " << static_cast<uint32_t>(m_cpuReadbackMode) << ",\n";
+        json << "  \"cpu_fallback_frames\": " << cpuFallbackFrames << ",\n";
+        json << "  \"readback_frames\": " << readbackFrames << ",\n";
+        json << "  \"avg_readback_particles\": " << (m_performanceSamples.empty() ? 0.0 : static_cast<double>(totalReadbackParticles) / static_cast<double>(m_performanceSamples.size())) << ",\n";
+        json << "  \"avg_hair_primitives\": " << (m_performanceSamples.empty() ? 0.0 : static_cast<double>(totalHairPrimitives) / static_cast<double>(m_performanceSamples.size())) << ",\n";
+        json << "  \"avg_hair_ps_invocations\": " << (m_performanceSamples.empty() ? 0.0 : static_cast<double>(totalHairPsInvocations) / static_cast<double>(m_performanceSamples.size())) << ",\n";
+        json << "  \"avg_debug_ps_invocations\": " << (m_performanceSamples.empty() ? 0.0 : static_cast<double>(totalDebugPsInvocations) / static_cast<double>(m_performanceSamples.size())) << ",\n";
+        json << "  \"benchmark_mode\": " << (m_benchmarkMode ? "true" : "false") << ",\n";
+        json << "  \"benchmark_warmup_frames\": " << m_benchmarkWarmupFrames << ",\n";
+        json << "  \"benchmark_measure_frames\": " << m_benchmarkMeasureFrames << ",\n";
         json << "  \"exports\": {\n";
         json << "    \"frame_csv\": { \"ok\": " << (perfOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(perfPathUtf8) << "\" },\n";
         json << "    \"active_set_json\": { \"ok\": " << (planOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(planPathUtf8) << "\" },\n";

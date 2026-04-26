@@ -116,6 +116,10 @@ namespace hairgpu::viewer
             float elapsedSeconds = 0.0f;
             float frameMilliseconds = 0.0f;
             float simulationMilliseconds = 0.0f;
+            float gpuFrameMilliseconds = 0.0f;
+            float gpuSimulationMilliseconds = 0.0f;
+            float gpuHairDrawMilliseconds = 0.0f;
+            float gpuDebugDrawMilliseconds = 0.0f;
             float fps = 0.0f;
             uint32_t guideCount = 0;
             uint32_t followerCount = 0;
@@ -140,6 +144,20 @@ namespace hairgpu::viewer
             float correctiveMaxPenetration = 0.0f;
             float correctiveAverageLengthErrorBefore = 0.0f;
             float correctiveAverageLengthErrorAfter = 0.0f;
+            uint32_t solverIterations = 0u;
+            uint32_t selfCollisionEnabled = 0u;
+            uint32_t gridSelfCollisionEnabled = 0u;
+            uint32_t cpuReadbackMode = 0u;
+            uint32_t readbackParticleCount = 0u;
+            uint32_t visibilityReadbackValid = 1u;
+            uint32_t usedCpuVisibilityFallback = 0u;
+            uint64_t hairPrimitiveCount = 0ull;
+            uint64_t hairVertexCount = 0ull;
+            uint64_t hairPsInvocations = 0ull;
+            uint64_t debugPsInvocations = 0ull;
+            uint32_t debugLineCount = 0u;
+            uint32_t renderMode = 0u;
+            uint32_t renderFollowerStride = 1u;
         };
 
         struct Float4
@@ -611,6 +629,7 @@ namespace hairgpu::viewer
         void ResolveGpuTimingFrame(GpuTimingFrame& frame);
         bool SaveSettingsToFile(const std::wstring& filePath) const;
         bool LoadSettingsFromFile(const std::wstring& filePath);
+        void ApplyBenchmarkEnvironmentOverrides();
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
@@ -859,6 +878,11 @@ namespace hairgpu::viewer
         hairgpu::SparseCorrectiveSettings m_sparseCorrectiveSettings;
         hairgpu::SparseCorrectiveReport m_sparseCorrectiveReport;
         std::vector<PerformanceSample> m_performanceSamples;
+        bool m_benchmarkMode = false;
+        uint32_t m_benchmarkWarmupFrames = 120u;
+        uint32_t m_benchmarkMeasureFrames = 600u;
+        uint32_t m_benchmarkFrameIndex = 0u;
+        bool m_benchmarkWarmupCleared = false;
 
         Microsoft::WRL::ComPtr<ID3D11Device> m_device;
         Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;

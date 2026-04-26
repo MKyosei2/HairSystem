@@ -1,0 +1,53 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Policy-safe HairGPU profile_results creator.
+    This file is picked up automatically by MSBuild/Visual Studio for projects below this directory.
+    It uses only built-in MSBuild tasks: MakeDir and WriteLinesToFile.
+    It never launches HairSystem.exe, hairgpu_auto_profile_runner.exe, PowerShell, or a .bat file.
+
+    Timestamped output was added so each Visual Studio build produces a clearly identifiable run folder.
+  -->
+  <PropertyGroup>
+    <HairGpuPolicySafeProfileEnabled Condition="'$(HairGpuPolicySafeProfileEnabled)' == ''">true</HairGpuPolicySafeProfileEnabled>
+    <HairGpuProfileRoot>$(MSBuildThisFileDirectory)profile_results</HairGpuProfileRoot>
+
+    <!-- Safe for folder names: 20260426_153012 -->
+    <HairGpuProfileTimestamp Condition="'$(HairGpuProfileTimestamp)' == ''">$([System.DateTime]::Now.ToString('yyyyMMdd_HHmmss'))</HairGpuProfileTimestamp>
+
+    <!-- Human-readable local timestamp written inside result files. -->
+    <HairGpuProfileTimestampHuman Condition="'$(HairGpuProfileTimestampHuman)' == ''">$([System.DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))</HairGpuProfileTimestampHuman>
+
+    <HairGpuPolicySafeRunDir>$(HairGpuProfileRoot)\$(HairGpuProfileTimestamp)_MSBUILD_POLICY_SAFE_$(MSBuildProjectName)_$(Configuration)_$(Platform)</HairGpuPolicySafeRunDir>
+  </PropertyGroup>
+
+  <Target Name="HairGpuCreatePolicySafeProfileResults" AfterTargets="Build" Condition="'$(HairGpuPolicySafeProfileEnabled)' == 'true'">
+    <MakeDir Directories="$(HairGpuProfileRoot)" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)\00_current" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)\01_no_readback" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)\02_no_self_collision" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)\03_low_solver" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)\04_no_debug_draw" />
+    <MakeDir Directories="$(HairGpuPolicySafeRunDir)\05_render_light" />
+
+    <WriteLinesToFile File="$(HairGpuProfileRoot)\LATEST.txt" Lines="$(HairGpuPolicySafeRunDir);CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\AUTO_PROFILE_STARTED.txt" Lines="Created by MSBuild built-in tasks only.;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp);No local EXE was launched.;Project=$(MSBuildProjectName);Configuration=$(Configuration);Platform=$(Platform);TargetPath=$(TargetPath);RunDir=$(HairGpuPolicySafeRunDir)" Overwrite="true" Encoding="UTF-8" />
+
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\WINDOWS_POLICY_NOTE.txt" Lines="CreatedAt=$(HairGpuProfileTimestampHuman);Windows Application Control/AppLocker/WDAC is blocking the built HairSystem executable.;This policy-safe profile only proves that Visual Studio/MSBuild can create profile_results without launching blocked binaries.;Real FPS measurement requires the HairSystem executable to be allowed by Windows policy." Overwrite="true" Encoding="UTF-8" />
+
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\RESULT.csv" Lines="timestamp,preset,status,viewer_execution,real_fps_available,reason;$(HairGpuProfileTimestampHuman),00_current,created,skipped,no,policy_safe_msbuild_only;$(HairGpuProfileTimestampHuman),01_no_readback,created,skipped,no,policy_safe_msbuild_only;$(HairGpuProfileTimestampHuman),02_no_self_collision,created,skipped,no,policy_safe_msbuild_only;$(HairGpuProfileTimestampHuman),03_low_solver,created,skipped,no,policy_safe_msbuild_only;$(HairGpuProfileTimestampHuman),04_no_debug_draw,created,skipped,no,policy_safe_msbuild_only;$(HairGpuProfileTimestampHuman),05_render_light,created,skipped,no,policy_safe_msbuild_only" Overwrite="true" Encoding="UTF-8" />
+
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\RESULT.md" Overwrite="true" Encoding="UTF-8" Lines="# HairGPU Policy-Safe Profile Results; ;CreatedAt: $(HairGpuProfileTimestampHuman);Timestamp: $(HairGpuProfileTimestamp);RunDir: $(HairGpuPolicySafeRunDir); ;profile_results creation: PASS;Visual Studio/MSBuild build hook: PASS;PowerShell: NOT_USED;BAT: NOT_USED;local runner EXE: NOT_USED;HairSystem.exe execution: SKIPPED_BY_DEFAULT;real FPS measurement: NOT_AVAILABLE_UNTIL_WINDOWS_POLICY_ALLOWS_THE_EXE; ;## Why this exists;Windows is blocking the built HairSystem.exe by Application Control/AppLocker/WDAC. Therefore this build hook intentionally does not launch any newly built local executable. It only creates the expected profile_results folder and placeholder result files using MSBuild built-in file tasks.; ;## Output naming;Each build creates a timestamped folder using yyyyMMdd_HHmmss, for example 20260426_153012_MSBUILD_POLICY_SAFE_HairSystem_Debug_x64.; ;## Next step for real profiling;Allow the built HairSystem.exe by Windows policy, or run on an unrestricted PC. After the EXE is allowed, enable the real benchmark mode and run the viewer with HAIRGPU_BENCHMARK=1." />
+
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\00_current\RUN_STARTED.txt" Lines="created_without_launching_viewer;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\01_no_readback\RUN_STARTED.txt" Lines="created_without_launching_viewer;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\02_no_self_collision\RUN_STARTED.txt" Lines="created_without_launching_viewer;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\03_low_solver\RUN_STARTED.txt" Lines="created_without_launching_viewer;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\04_no_debug_draw\RUN_STARTED.txt" Lines="created_without_launching_viewer;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(HairGpuPolicySafeRunDir)\05_render_light\RUN_STARTED.txt" Lines="created_without_launching_viewer;CreatedAt=$(HairGpuProfileTimestampHuman);Timestamp=$(HairGpuProfileTimestamp)" Overwrite="true" Encoding="UTF-8" />
+
+    <Message Importance="high" Text="[HairGPU] Policy-safe profile_results created at: $(HairGpuPolicySafeRunDir)" />
+    <Message Importance="high" Text="[HairGPU] CreatedAt: $(HairGpuProfileTimestampHuman)" />
+  </Target>
+</Project>

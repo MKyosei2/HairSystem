@@ -1,0 +1,45 @@
+[
+  {
+    "name": "00_current",
+    "description": "Current viewer defaults, used as the baseline for the 15 FPS problem.",
+    "env": {}
+  },
+  {
+    "name": "01_no_readback",
+    "description": "Disable CPU particle readback to estimate GPU/CPU synchronization cost.",
+    "env": {
+      "HAIRGPU_CPU_READBACK": "off"
+    }
+  },
+  {
+    "name": "02_no_self_collision",
+    "description": "Disable density/grid self collision to estimate broadphase and collision cost.",
+    "env": {
+      "HAIRGPU_SELF_COLLISION": "0",
+      "HAIRGPU_GRID_SELF_COLLISION": "0"
+    }
+  },
+  {
+    "name": "03_low_solver",
+    "description": "Reduce solver iterations to 3 to estimate iteration cost.",
+    "env": {
+      "HAIRGPU_SOLVER_ITERATIONS": "3"
+    }
+  },
+  {
+    "name": "04_no_debug_draw",
+    "description": "Disable debug draw overlays and guide/follower debug lines.",
+    "env": {
+      "HAIRGPU_DEBUG_DRAW": "0"
+    }
+  },
+  {
+    "name": "05_render_light",
+    "description": "Use billboard rendering and hide scalp to estimate draw/overdraw contribution.",
+    "env": {
+      "HAIRGPU_RENDER_MODE": "billboard",
+      "HAIRGPU_SHOW_SCALP": "0",
+      "HAIRGPU_FAST_VIEWPORT": "1"
+    }
+  }
+]
