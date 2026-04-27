@@ -1,7 +1,0 @@
-﻿{
-"preset":"02_no_self_collision",
-"description":"Disable self collision and grid self collision.",
-"status":"not_executed_by_policy_safe_build",
-"real_fps_available":"pending",
-"expected_diagnosis":"If this improves frame time, self collision/broadphase/solve is a bottleneck."
-}

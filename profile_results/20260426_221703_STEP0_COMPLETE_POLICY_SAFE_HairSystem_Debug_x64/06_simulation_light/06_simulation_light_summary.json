@@ -1,7 +1,0 @@
-﻿{
-"preset":"06_simulation_light",
-"description":"Minimal simulation stress: no readback, no self collision, low solver.",
-"status":"not_executed_by_policy_safe_build",
-"real_fps_available":"pending",
-"expected_diagnosis":"Lower-bound check for how much of the current cost is simulation side."
-}

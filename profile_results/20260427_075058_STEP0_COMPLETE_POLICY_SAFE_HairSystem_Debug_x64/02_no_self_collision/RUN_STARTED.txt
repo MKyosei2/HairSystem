@@ -1,6 +1,0 @@
-﻿preset=02_no_self_collision
-description=Disable self collision and grid self collision.
-CreatedAt=2026-04-27 07:50:58
-Timestamp=20260427_075058
-status=created_without_launching_viewer
-reason=policy_safe_step0_complete

@@ -1,7 +1,0 @@
-﻿timestamp,preset,status,viewer_execution,real_fps_available,reason
-2026-04-26 16:52:26,00_current,created,skipped,no,policy_safe_msbuild_only
-2026-04-26 16:52:26,01_no_readback,created,skipped,no,policy_safe_msbuild_only
-2026-04-26 16:52:26,02_no_self_collision,created,skipped,no,policy_safe_msbuild_only
-2026-04-26 16:52:26,03_low_solver,created,skipped,no,policy_safe_msbuild_only
-2026-04-26 16:52:26,04_no_debug_draw,created,skipped,no,policy_safe_msbuild_only
-2026-04-26 16:52:26,05_render_light,created,skipped,no,policy_safe_msbuild_only

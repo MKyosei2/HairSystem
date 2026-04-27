@@ -1,4 +1,0 @@
-﻿CreatedAt=2026-04-26 16:52:26
-Windows Application Control/AppLocker/WDAC is blocking the built HairSystem executable.
-This policy-safe profile only proves that Visual Studio/MSBuild can create profile_results without launching blocked binaries.
-Real FPS measurement requires the HairSystem executable to be allowed by Windows policy.

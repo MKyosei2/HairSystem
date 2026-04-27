@@ -1,4 +1,0 @@
-pending_file=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\PENDING_STEP0_REAL.ini
-warmup_frames=0
-measure_frames=8
-preset_count=7

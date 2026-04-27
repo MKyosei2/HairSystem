@@ -1,1 +1,0 @@
-﻿If this improves frame time, hair draw/overdraw/render path is a bottleneck.
