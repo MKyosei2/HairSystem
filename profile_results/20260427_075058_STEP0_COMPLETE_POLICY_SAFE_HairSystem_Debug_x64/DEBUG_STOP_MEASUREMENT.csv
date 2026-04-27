@@ -1,0 +1,2 @@
+reason,timestamp,preset,sample_count,avg_fps,avg_frame_ms,p95_frame_ms,worst_frame_ms,avg_sim_ms,avg_gpu_frame_ms,avg_gpu_sim_ms,avg_gpu_hair_ms,avg_active_set_ms,readback_frames,avg_readback_particles,avg_hair_primitives
+run_loop_exit_or_debug_stop,20260427_075239,06_simulation_light,9,2.87289,348.082,170.286,2513.59,22.8015,1919,1721.32,112.597,0,0,0,2.5908e+07

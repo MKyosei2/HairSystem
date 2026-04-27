@@ -1,0 +1,6 @@
+status=viewer_detected_pending_and_started_real_measurement
+pending_file=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\PENDING_STEP0_REAL.ini
+run_dir=C:\Users\kyose\source\repos\HairSystem\profile_results\20260427_075058_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
+timestamp=20260427_075207
+exe_dir=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem
+command_line="C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe" 

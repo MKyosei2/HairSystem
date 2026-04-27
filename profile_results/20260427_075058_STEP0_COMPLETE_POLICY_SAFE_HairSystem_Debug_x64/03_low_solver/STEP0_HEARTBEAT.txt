@@ -1,0 +1,11 @@
+preset=03_low_solver
+state=frames_recording
+timestamp=20260427_075229
+benchmark_frame_index=7
+sample_count=8
+last_frame_ms=44.9167
+last_fps=22.2634
+solver_iterations=3
+self_collision=0
+cpu_readback_mode=1
+hair_primitives=25908000

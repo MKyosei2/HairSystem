@@ -1809,8 +1809,8 @@ namespace hairgpu::viewer
                 {
                     out << L"enabled=1\n";
                     out << L"runDir=" << latestRunDir.wstring() << L"\n";
-                    out << L"warmupFrames=120\n";
-                    out << L"measureFrames=600\n";
+                    out << L"warmupFrames=0\n";
+                    out << L"measureFrames=8\n";
                     out << L"presets=00_current,01_no_readback,02_no_self_collision,03_low_solver,04_no_debug_draw,05_render_light,06_simulation_light\n";
                     out << L"createdAt=" << CurrentTimestampCompact() << L"\n";
                     out << L"source=viewer_fallback_latest_run_dir\n";
@@ -1844,8 +1844,8 @@ namespace hairgpu::viewer
             {
                 out << L"enabled=1\n";
                 out << L"runDir=" << autoRunDir.wstring() << L"\n";
-                out << L"warmupFrames=120\n";
-                out << L"measureFrames=600\n";
+                out << L"warmupFrames=0\n";
+                out << L"measureFrames=8\n";
                 out << L"presets=00_current,01_no_readback,02_no_self_collision,03_low_solver,04_no_debug_draw,05_render_light,06_simulation_light\n";
                 out << L"createdAt=" << timestamp << L"\n";
                 out << L"source=viewer_autostart_no_pending_found\n";
@@ -2138,14 +2138,14 @@ namespace hairgpu::viewer
             }
         }
         // Step0 must produce real numbers quickly. Earlier versions waited for
-        // 120 warmup + 600 measured frames, which made crashes/early exits leave only
+        // long warmup plus hundreds of measured frames, which made crashes/early exits leave only
         // CSV headers. By default, Step0 now starts recording immediately and uses
-        // a short 60-frame pass per preset. Set HAIRGPU_STEP0_FULL_LENGTH=1 to keep
+        // a short 8-frame pass per preset. Set HAIRGPU_STEP0_FULL_LENGTH=1 to keep
         // the frame counts from PENDING_STEP0_REAL.ini.
         if (!IsEnvEnabled(L"HAIRGPU_STEP0_FULL_LENGTH"))
         {
             m_benchmarkWarmupFrames = 0u;
-            m_benchmarkMeasureFrames = std::max<uint32_t>(1u, std::min<uint32_t>(m_benchmarkMeasureFrames, 60u));
+            m_benchmarkMeasureFrames = std::max<uint32_t>(1u, std::min<uint32_t>(m_benchmarkMeasureFrames, 8u));
         }
 
         if (m_step0PresetNames.empty())

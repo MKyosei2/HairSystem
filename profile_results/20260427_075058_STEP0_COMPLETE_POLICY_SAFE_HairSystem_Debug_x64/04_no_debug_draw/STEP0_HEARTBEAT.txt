@@ -1,0 +1,11 @@
+preset=04_no_debug_draw
+state=frames_recording
+timestamp=20260427_075233
+benchmark_frame_index=7
+sample_count=8
+last_frame_ms=82.8115
+last_fps=12.0756
+solver_iterations=12
+self_collision=0
+cpu_readback_mode=1
+hair_primitives=25908000
