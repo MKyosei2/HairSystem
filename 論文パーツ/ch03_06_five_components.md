@@ -1,0 +1,15 @@
+﻿# 3.6 本研究で扱う5つの構成要素
+
+本研究では、十万本規模の編集可能髪を固定60FPS制約下で扱うために、五つの構成要素を導入する。これらは個別にも意味を持つが、統合することで、髪をストランドごとに制御可能な仮想化物理対象として扱うランタイムを構成する。
+
+第一の構成要素は、Physics-Certified Strand Microtypeである。これは、髪を通常のfloat32点列として保持するのではなく、root frame、arc-length、curvature、torsion、residual、certificateを持つ圧縮データ型として表現するものである。このmicrotypeは、単にデータ量を削減するための量子化ではなく、圧縮表現上で長さ、曲げ、ねじれ、decode誤差を評価し、物理的な安全性をcertificateとして保持できる点に特徴がある。
+
+第二の構成要素は、Counterfactual Budgeted Mode Allocationである。これは、各ストランドについて、複数の計算モードを選択した場合の誤差、破綻確率、計算コストを予測し、固定フレーム予算下で処理モードを割り当てる方式である。単純なLODやリスク閾値ではなく、各modeを選んだ場合の反実仮想的な結果に基づいて処理を決定する。
+
+第三の構成要素は、Self-Materializing Strand Physics Islandsである。これは、接触、編集、破綻予測によって危険と判定されたpersistent strand ID集合を、一時的な局所物理空間として生成する方式である。islandは、ガイドクラスタや固定空間分割ではなく、実ストランドの近接グラフに基づいて定義され、merge、split、solver budget、commit certificateを持つ。
+
+第四の構成要素は、Certificate-Driven Rod Repair Calculusである。これは、破綻したストランドまたは局所セグメント帯を、長さ、曲げ、ねじれ、貫通残差に基づいて修復する方式である。repairの対象範囲、iteration数、成功判定はcertificateによって決定され、修復が失敗した場合はPhysics Islandやfallbackへ戻す。
+
+第五の構成要素は、GPU-Resident Strand Runtimeである。これは、前述の四つの構成要素をGPU上で閉ループ化する実行基盤である。risk計算、mode allocation、compaction、island生成、repair task生成、dispatch argument生成をGPU上で行うことで、CPU readbackを極力避け、フレーム時間の安定性を高める。
+
+これら五つの構成要素は、役割が異なる。Microtypeはデータ量を削減し、Mode Allocationは計算予算を割り当て、Physics Islandsは局所接触を解決し、Rod Repairは残った局所破綻を修復し、GPU Runtimeは全体を閉ループとして実行する。
