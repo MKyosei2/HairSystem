@@ -140,6 +140,53 @@ namespace hairgpu::viewer
             float correctiveMaxPenetration = 0.0f;
             float correctiveAverageLengthErrorBefore = 0.0f;
             float correctiveAverageLengthErrorAfter = 0.0f;
+            uint32_t globalFrameIndex = 0u;
+            uint32_t measuredFrameIndex = 0u;
+            uint32_t warmupFrames = 0u;
+            uint32_t measurementFrames = 0u;
+            uint32_t seed = 0u;
+            uint32_t certificateFailureCount = 0u;
+            float certificateFailureRate = 0.0f;
+            uint32_t fallbackCount = 0u;
+            uint32_t modeSkipCount = 0u;
+            uint32_t modeQSOnlyCount = 0u;
+            uint32_t modeDynamicCount = 0u;
+            uint32_t modeIslandCount = 0u;
+            uint32_t modeRepairCount = 0u;
+            uint32_t modeFloatFallbackCount = 0u;
+            uint32_t islandCount = 0u;
+            uint32_t islandMemberCount = 0u;
+            uint32_t islandCommitCount = 0u;
+            uint32_t islandRejectCount = 0u;
+            uint32_t repairTaskCount = 0u;
+            uint32_t repairCommittedCount = 0u;
+            uint32_t repairRejectedCount = 0u;
+            uint32_t repairDeferredCount = 0u;
+            float repairSuccessRate = 0.0f;
+            uint32_t cpuReadbackCount = 0u;
+            float gpuHairMilliseconds = 0.0f;
+            float vramMegabytes = 0.0f;
+            float bandwidthMegabytesPerFrame = 0.0f;
+            float meanDecodeErrorMm = 0.0f;
+            float maxPenetrationMm = 0.0f;
+        };
+
+        struct ExperimentCaseConfig
+        {
+            bool enabled = false;
+            bool autoExitAfterCapture = false;
+            std::wstring caseId;
+            std::wstring variant;
+            std::wstring scenario;
+            uint32_t seed = 0u;
+            uint32_t warmupFrames = 0u;
+            uint32_t measurementFrames = 0u;
+            bool enableMicrotype = false;
+            bool enableCBMA = false;
+            bool enablePhysicsIslands = false;
+            bool enableRodRepair = false;
+            bool enableGpuResident = false;
+            std::wstring settingsHash;
         };
 
         struct Float4
@@ -613,8 +660,15 @@ namespace hairgpu::viewer
         bool LoadSettingsFromFile(const std::wstring& filePath);
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
+        bool ExportPerformanceJsonl(const std::wstring& filePath) const;
+        bool ExportExperimentSettingsJson(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
+        void LoadExperimentCaseFromEnvironment();
+        bool IsExperimentModeEnabled() const;
+        bool ShouldCaptureCurrentFrame() const;
+        bool ShouldAutoExitAfterCurrentFrame() const;
+        PerformanceSample BuildPerformanceSample(float frameSeconds, float instantFps) const;
         bool ReadBackCurrentParticlePositions(std::vector<GpuParticle>& outParticles);
         bool PickStrandAtPoint(POINT clientPoint);
         bool ApplySelectedStrandOffset(const hairgpu::Vec3& rootOffset, const hairgpu::Vec3& tipOffset);
@@ -859,6 +913,9 @@ namespace hairgpu::viewer
         hairgpu::SparseCorrectiveSettings m_sparseCorrectiveSettings;
         hairgpu::SparseCorrectiveReport m_sparseCorrectiveReport;
         std::vector<PerformanceSample> m_performanceSamples;
+        ExperimentCaseConfig m_experimentCase;
+        uint32_t m_globalFrameIndex = 0u;
+        uint32_t m_measuredFrameIndex = 0u;
 
         Microsoft::WRL::ComPtr<ID3D11Device> m_device;
         Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;

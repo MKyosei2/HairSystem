@@ -23,7 +23,15 @@ METHOD_ALIASES = {
     "proposal-hybrid": "proposal_hybrid",
     "full_physics": "full_physics",
     "full-physics": "full_physics",
+    "Baseline_CurrentProject": "Baseline_CurrentProject",
+    "baseline_current_project": "Baseline_CurrentProject",
+    "Proposed_FullSystem": "Proposed_FullSystem",
+    "proposed_full_system": "Proposed_FullSystem",
 }
+for _mask in range(32):
+    _name = f"Combo_{_mask:05b}"
+    METHOD_ALIASES[_name] = _name
+    METHOD_ALIASES[_name.lower()] = _name
 
 
 def normalize_method_code(method_code: str) -> str:
@@ -39,24 +47,60 @@ def wait_for_file(path: Path, timeout_seconds: int) -> None:
     raise TimeoutError(f"Timed out waiting for {path}")
 
 
-def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_seconds: int) -> tuple[Path, Path]:
+def run_viewer(
+    viewer_exe: Path,
+    telemetry_dir: Path,
+    run_name: str,
+    timeout_seconds: int,
+    case: dict[str, Any] | None = None,
+) -> tuple[Path, Path, Path | None, Path | None]:
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["HAIRGPU_AUTO_TELEMETRY"] = "1"
     env["HAIRGPU_TELEMETRY_DIR"] = str(telemetry_dir)
     env["HAIRGPU_TELEMETRY_RUN_NAME"] = run_name
 
+    if case:
+        env["HAIRGPU_EXPERIMENT_CASE_ID"] = str(case.get("case_id", ""))
+        env["HAIRGPU_VARIANT"] = str(case.get("method", case.get("variant", "")))
+        env["HAIRGPU_SCENARIO"] = str(case.get("scenario", ""))
+        env["HAIRGPU_SEED"] = str(case.get("seed", 0))
+        env["HAIRGPU_WARMUP_FRAMES"] = str(case.get("warmup_frames", 0))
+        env["HAIRGPU_MEASUREMENT_FRAMES"] = str(case.get("measurement_frames", 0))
+        env["HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"] = "1"
+        env["HAIRGPU_ENABLE_MICROTYPE"] = "1" if case.get("enableMicrotype") else "0"
+        env["HAIRGPU_ENABLE_CBMA"] = "1" if case.get("enableCBMA") else "0"
+        env["HAIRGPU_ENABLE_PHYSICS_ISLANDS"] = "1" if case.get("enablePhysicsIslands") else "0"
+        env["HAIRGPU_ENABLE_ROD_REPAIR"] = "1" if case.get("enableRodRepair") else "0"
+        env["HAIRGPU_ENABLE_GPU_RESIDENT"] = "1" if case.get("enableGpuResident") else "0"
+        env["HAIRGPU_SETTINGS_HASH"] = str(case.get("settings_hash", ""))
+
     process = subprocess.Popen([str(viewer_exe)], env=env)
     try:
         process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         process.terminate()
-        process.wait(timeout=10)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        raise TimeoutError(f"Timed out waiting for viewer process for run '{run_name}'") from exc
 
     summary_json = telemetry_dir / f"{run_name}_summary.json"
     frame_csv = telemetry_dir / f"{run_name}_frames.csv"
+    frame_jsonl = telemetry_dir / f"{run_name}_frames.jsonl"
+    settings_json = telemetry_dir / f"{run_name}_settings.json"
     wait_for_file(summary_json, 10)
     wait_for_file(frame_csv, 10)
-    return summary_json, frame_csv
+    try:
+        wait_for_file(frame_jsonl, 10)
+    except TimeoutError:
+        frame_jsonl = None
+    try:
+        wait_for_file(settings_json, 10)
+    except TimeoutError:
+        settings_json = None
+    return summary_json, frame_csv, frame_jsonl, settings_json
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -121,6 +165,8 @@ def main() -> int:
     parser.add_argument("--telemetry-dir")
     parser.add_argument("--summary-json")
     parser.add_argument("--frame-csv")
+    parser.add_argument("--frame-jsonl")
+    parser.add_argument("--settings-json")
     parser.add_argument("--timeout-seconds", type=int, default=120)
     parser.add_argument("--config-json", help="Optional JSON config with the same fields as the CLI arguments.")
     parser.add_argument("--output-dir", help="Optional directory to copy telemetry and harvested artifacts into.")
@@ -161,9 +207,13 @@ def main() -> int:
     if args.summary_json and args.frame_csv:
         summary_json = Path(args.summary_json)
         frame_csv = Path(args.frame_csv)
+        frame_jsonl = Path(args.frame_jsonl) if args.frame_jsonl else None
+        settings_json = Path(args.settings_json) if args.settings_json else None
     elif config.get("summary_json") and config.get("frame_csv"):
         summary_json = Path(config["summary_json"])
         frame_csv = Path(config["frame_csv"])
+        frame_jsonl = Path(config["frame_jsonl"]) if config.get("frame_jsonl") else None
+        settings_json = Path(config["settings_json"]) if config.get("settings_json") else None
     else:
         viewer_exe_value = args.viewer_exe or config.get("viewer_exe")
         if not viewer_exe_value:
@@ -171,7 +221,8 @@ def main() -> int:
         if sys.platform != "win32":
             print("Viewer launch is Windows-only. Use --summary-json/--frame-csv to ingest existing telemetry on this platform.", file=sys.stderr)
             return 2
-        summary_json, frame_csv = run_viewer(Path(viewer_exe_value), telemetry_dir, run_name, timeout_seconds)
+        case_config = config.get("case") if isinstance(config.get("case"), dict) else config
+        summary_json, frame_csv, frame_jsonl, settings_json = run_viewer(Path(viewer_exe_value), telemetry_dir, run_name, timeout_seconds, case_config)
 
     metadata = RuntimeRunMetadata(
         experiment_name=experiment_name,
@@ -183,7 +234,7 @@ def main() -> int:
         operator_name=operator_name,
         notes=notes,
     )
-    run_id = db.import_runtime_run(metadata, summary_json, frame_csv)
+    run_id = db.import_runtime_run(metadata, summary_json, frame_csv, frame_jsonl_path=frame_jsonl, settings_json_path=settings_json)
 
     output_dir_value = args.output_dir or config.get("output_dir")
     harvested: list[dict[str, Any]] = []
@@ -194,6 +245,14 @@ def main() -> int:
         copied_frame = copy_artifact(frame_csv, output_dir / run_name)
         copied_frame["label"] = "frame_csv"
         harvested.extend([copied_summary, copied_frame])
+        if frame_jsonl and frame_jsonl.exists():
+            copied_jsonl = copy_artifact(frame_jsonl, output_dir / run_name)
+            copied_jsonl["label"] = "frame_jsonl"
+            harvested.append(copied_jsonl)
+        if settings_json and settings_json.exists():
+            copied_settings = copy_artifact(settings_json, output_dir / run_name)
+            copied_settings["label"] = "settings_json"
+            harvested.append(copied_settings)
         for artifact in harvest_artifacts(list(config.get("artifacts", [])) + list(args.artifact), output_dir / run_name):
             harvested.append(artifact)
         manifest = {
@@ -208,8 +267,12 @@ def main() -> int:
             "telemetry": {
                 "summaryJson": str(summary_json),
                 "frameCsv": str(frame_csv),
+                "frameJsonl": str(frame_jsonl) if frame_jsonl else None,
+                "settingsJson": str(settings_json) if settings_json else None,
                 "summarySha256": sha256_file(summary_json),
                 "frameSha256": sha256_file(frame_csv),
+                "frameJsonlSha256": sha256_file(frame_jsonl) if frame_jsonl and frame_jsonl.exists() else None,
+                "settingsSha256": sha256_file(settings_json) if settings_json and settings_json.exists() else None,
             },
             "artifacts": harvested,
             "configSnapshot": config if config else None,

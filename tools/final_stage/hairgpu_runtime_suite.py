@@ -68,6 +68,54 @@ def resolve_path(base_dir: Path, value: str | None) -> Path | None:
     return (base_dir / path).resolve()
 
 
+def parse_filter_list(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(',') if item.strip()}
+
+
+def run_matches_filters(run: dict[str, Any], *, case_filter: set[str], variant_filter: set[str], scenario_filter: set[str]) -> bool:
+    if case_filter and str(run.get('case_id', '')) not in case_filter:
+        return False
+    method = normalize_method_code(str(run.get('method', run.get('variant', ''))))
+    variant = normalize_method_code(str(run.get('variant', method)))
+    if variant_filter and method not in variant_filter and variant not in variant_filter:
+        return False
+    if scenario_filter and str(run.get('scenario', '')) not in scenario_filter:
+        return False
+    return True
+
+
+def expected_telemetry_paths(base_dir: Path, run: dict[str, Any], default_telemetry_dir: Path) -> tuple[Path, Path, Path, Path, Path]:
+    run_name = run['run_name']
+    telemetry_dir = resolve_path(base_dir, run.get('telemetry_dir')) or default_telemetry_dir
+    summary_json = resolve_path(base_dir, run.get('summary_json')) or (telemetry_dir / f'{run_name}_summary.json')
+    frame_csv = resolve_path(base_dir, run.get('frame_csv')) or (telemetry_dir / f'{run_name}_frames.csv')
+    frame_jsonl = resolve_path(base_dir, run.get('frame_jsonl')) or (telemetry_dir / f'{run_name}_frames.jsonl')
+    settings_json = resolve_path(base_dir, run.get('settings_json')) or (telemetry_dir / f'{run_name}_settings.json')
+    error_json = telemetry_dir / 'error.json'
+    return summary_json, frame_csv, frame_jsonl, settings_json, error_json
+
+
+def is_completed_case(base_dir: Path, run: dict[str, Any], default_telemetry_dir: Path) -> bool:
+    summary_json, frame_csv, _frame_jsonl, _settings_json, _error_json = expected_telemetry_paths(base_dir, run, default_telemetry_dir)
+    return summary_json.exists() and summary_json.stat().st_size > 0 and frame_csv.exists() and frame_csv.stat().st_size > 0
+
+
+def write_error_json(path: Path, run: dict[str, Any], exc: BaseException, stage: str = 'viewer_or_import') -> None:
+    payload = {
+        'case_id': run.get('case_id', ''),
+        'run_name': run.get('run_name', ''),
+        'method': run.get('method', run.get('variant', '')),
+        'scenario': run.get('scenario', ''),
+        'seed': run.get('seed', 0),
+        'error_type': type(exc).__name__,
+        'message': str(exc),
+        'stage': stage,
+    }
+    write_json(path, payload)
+
+
 def load_metric_definitions(base_dir: Path, config: dict[str, Any]) -> dict[str, Any] | None:
     metric_path = resolve_path(base_dir, config.get("metric_definitions"))
     if metric_path and metric_path.exists():
@@ -251,7 +299,13 @@ def import_run(db: FinalStageDatabase, base_dir: Path, run: dict[str, Any], defa
     run_name = run['run_name']
     summary_json = resolve_path(base_dir, run.get('summary_json'))
     frame_csv = resolve_path(base_dir, run.get('frame_csv'))
+    frame_jsonl = resolve_path(base_dir, run.get('frame_jsonl'))
+    settings_json = resolve_path(base_dir, run.get('settings_json'))
     viewer_exe = resolve_path(base_dir, run.get('viewer_exe'))
+    if viewer_exe and not viewer_exe.exists() and run.get('viewer_exe'):
+        cwd_candidate = Path(str(run.get('viewer_exe'))).resolve()
+        if cwd_candidate.exists():
+            viewer_exe = cwd_candidate
     telemetry_dir = resolve_path(base_dir, run.get('telemetry_dir')) or default_telemetry_dir
     timeout_seconds = int(run.get('timeout_seconds', 120))
 
@@ -260,10 +314,17 @@ def import_run(db: FinalStageDatabase, base_dir: Path, run: dict[str, Any], defa
             raise ValueError(f"Run '{run_name}' must provide summary/frame telemetry or a viewer_exe")
         if sys.platform != 'win32':
             raise RuntimeError(f"Run '{run_name}' requires viewer launch, which is only supported on Windows")
-        summary_json, frame_csv = run_viewer(viewer_exe, telemetry_dir, run_name, timeout_seconds)
+        summary_json, frame_csv, frame_jsonl, settings_json = run_viewer(viewer_exe, telemetry_dir, run_name, timeout_seconds, run)
+    else:
+        if frame_jsonl is None:
+            candidate = summary_json.parent / f"{run_name}_frames.jsonl"
+            frame_jsonl = candidate if candidate.exists() else None
+        if settings_json is None:
+            candidate = summary_json.parent / f"{run_name}_settings.json"
+            settings_json = candidate if candidate.exists() else None
 
     metadata = RuntimeRunMetadata(
-        experiment_name=run['experiment'],
+        experiment_name=run.get('experiment', run.get('experiment_name', 'runtime_suite')),
         method_code=normalize_method_code(run['method']),
         scenario_code=run['scenario'],
         asset_name=run.get('asset', ''),
@@ -271,8 +332,20 @@ def import_run(db: FinalStageDatabase, base_dir: Path, run: dict[str, Any], defa
         runtime_source=run.get('runtime_source', 'dx11_viewer'),
         operator_name=run.get('operator', ''),
         notes=run.get('notes', ''),
+        case_id=str(run.get('case_id', '')),
+        variant_code=normalize_method_code(str(run.get('variant', run.get('method', '')))),
+        seed=int(run.get('seed', 0)),
+        warmup_frames=int(run.get('warmup_frames', 0)),
+        measurement_frames=int(run.get('measurement_frames', 0)),
+        enable_microtype=bool(run.get('enableMicrotype', False)),
+        enable_cbma=bool(run.get('enableCBMA', False)),
+        enable_physics_islands=bool(run.get('enablePhysicsIslands', False)),
+        enable_rod_repair=bool(run.get('enableRodRepair', False)),
+        enable_gpu_resident=bool(run.get('enableGpuResident', False)),
+        frame_jsonl_path=str(frame_jsonl or ''),
+        settings_json_path=str(settings_json or ''),
     )
-    run_id = db.import_runtime_run(metadata, summary_json, frame_csv)
+    run_id = db.import_runtime_run(metadata, summary_json, frame_csv, frame_jsonl_path=frame_jsonl, settings_json_path=settings_json)
     for artifact in run.get('artifacts', []):
         category = artifact.get('category', 'artifact')
         label = artifact.get('label', Path(artifact['path']).name)
@@ -280,7 +353,6 @@ def import_run(db: FinalStageDatabase, base_dir: Path, run: dict[str, Any], defa
         if artifact_path and artifact_path.exists():
             db.add_artifact(run_id, category, label, artifact_path)
     return run_id
-
 
 def build_pairwise_rows(comparison_rows: list[dict[str, Any]], baseline_method: str) -> list[dict[str, Any]]:
     by_scenario_method = {(row['scenario_code'], row['method_code']): row for row in comparison_rows}
@@ -533,17 +605,29 @@ def maybe_package_zip(outputs_dir: Path, zip_path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Run/import a final runtime suite and emit summary artifacts.')
-    parser.add_argument('--config', required=True, help='Path to a runtime suite manifest JSON file.')
+    parser.add_argument('--config', '--suite', dest='config', required=True, help='Path to a runtime suite manifest JSON file.')
+    parser.add_argument('--viewer-exe', help='Override viewer executable for runs that launch the DX11 viewer.')
+    parser.add_argument('--output', help='Override suite base output directory, e.g. results/exp_650.')
+    parser.add_argument('--resume', action='store_true', help='Skip cases with existing non-empty summary JSON and frame CSV.')
+    parser.add_argument('--fail-policy', choices=['stop', 'continue'], default='stop')
+    parser.add_argument('--case-filter', help='Comma-separated case_id filter, e.g. case_0001,case_0002.')
+    parser.add_argument('--variant-filter', help='Comma-separated method/variant filter, e.g. Combo_11111.')
+    parser.add_argument('--scenario-filter', help='Comma-separated scenario filter, e.g. S05_ContactHeavy_Sphere.')
+    parser.add_argument('--rerun-failed', action='store_true', help='When used with --resume, rerun cases that have error.json.')
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
     config = read_json(config_path)
-    base_dir = config_path.parent
+    base_dir = Path(args.output).resolve() if args.output else config_path.parent
 
     db_path = resolve_path(base_dir, config.get('db')) or (base_dir / 'runtime_suite.sqlite')
     excel_path = resolve_path(base_dir, config.get('excel')) or db_path.with_suffix('.xlsx')
     telemetry_dir = resolve_path(base_dir, config.get('telemetry_dir')) or (base_dir / 'runtime_telemetry')
     schema_path = resolve_path(base_dir, config.get('schema')) or (THIS_DIR / 'schema.sql')
+    if schema_path and not schema_path.exists() and config.get('schema'):
+        cwd_schema = Path(str(config.get('schema'))).resolve()
+        if cwd_schema.exists():
+            schema_path = cwd_schema
     outputs_dir = resolve_path(base_dir, config.get('outputs_dir')) or (base_dir / 'runtime_suite_outputs')
     baseline_method = normalize_method_code(config.get('baseline_method', 'prediction_only'))
     metric_definitions = load_metric_definitions(base_dir, config)
@@ -554,9 +638,78 @@ def main() -> int:
     db.initialize(schema_path)
     db.clear_suite_rows(suite_name)
 
+    case_filter = parse_filter_list(args.case_filter)
+    variant_filter = {normalize_method_code(item) for item in parse_filter_list(args.variant_filter)}
+    scenario_filter = parse_filter_list(args.scenario_filter)
+
+    selected_runs: list[dict[str, Any]] = []
+    for source_run in config.get('runs', []):
+        run = dict(source_run)
+        if args.viewer_exe:
+            run['viewer_exe'] = args.viewer_exe
+        if not run_matches_filters(run, case_filter=case_filter, variant_filter=variant_filter, scenario_filter=scenario_filter):
+            continue
+        selected_runs.append(run)
+
     imported_run_ids = []
-    for run in config.get('runs', []):
-        imported_run_ids.append(import_run(db, base_dir, run, telemetry_dir))
+    skipped_cases: list[dict[str, Any]] = []
+    failed_cases: list[dict[str, Any]] = []
+    for run in selected_runs:
+        summary_json, frame_csv, frame_jsonl, settings_json, error_json = expected_telemetry_paths(base_dir, run, telemetry_dir)
+        if args.resume and is_completed_case(base_dir, run, telemetry_dir):
+            if args.rerun_failed and error_json.exists():
+                pass
+            else:
+                skipped_cases.append({
+                    'case_id': run.get('case_id', ''),
+                    'run_name': run.get('run_name', ''),
+                    'method': run.get('method', ''),
+                    'scenario': run.get('scenario', ''),
+                    'seed': run.get('seed', 0),
+                    'summary_json': str(summary_json),
+                    'frame_csv': str(frame_csv),
+                })
+                if not db.runtime_run_exists(str(run.get('run_name', ''))):
+                    run_for_import = dict(run)
+                    run_for_import['summary_json'] = str(summary_json)
+                    run_for_import['frame_csv'] = str(frame_csv)
+                    if frame_jsonl.exists():
+                        run_for_import['frame_jsonl'] = str(frame_jsonl)
+                    if settings_json.exists():
+                        run_for_import['settings_json'] = str(settings_json)
+                    try:
+                        imported_run_ids.append(import_run(db, base_dir, run_for_import, telemetry_dir))
+                    except Exception as exc:
+                        write_error_json(error_json, run, exc, stage='resume_import')
+                        failed_cases.append({
+                            'case_id': run.get('case_id', ''),
+                            'run_name': run.get('run_name', ''),
+                            'method': run.get('method', ''),
+                            'scenario': run.get('scenario', ''),
+                            'seed': run.get('seed', 0),
+                            'error_type': type(exc).__name__,
+                            'message': str(exc),
+                            'error_json': str(error_json),
+                        })
+                        if args.fail_policy == 'stop':
+                            raise
+                continue
+        try:
+            imported_run_ids.append(import_run(db, base_dir, run, telemetry_dir))
+        except Exception as exc:
+            write_error_json(error_json, run, exc)
+            failed_cases.append({
+                'case_id': run.get('case_id', ''),
+                'run_name': run.get('run_name', ''),
+                'method': run.get('method', ''),
+                'scenario': run.get('scenario', ''),
+                'seed': run.get('seed', 0),
+                'error_type': type(exc).__name__,
+                'message': str(exc),
+                'error_json': str(error_json),
+            })
+            if args.fail_policy == 'stop':
+                raise
 
     task_results_csv = resolve_path(base_dir, config.get('user_task_results_csv'))
     imported_task_rows = import_user_task_results(db, experiment_name, task_results_csv) if task_results_csv else []
@@ -614,6 +767,12 @@ def main() -> int:
     user_tasks_csv_path = outputs_dir / 'runtime_suite_user_task_checklist.csv'
     user_task_results_csv_path = outputs_dir / 'runtime_suite_user_task_results_imported.csv'
     user_task_summary_csv_path = outputs_dir / 'runtime_suite_user_task_summary.csv'
+    failed_cases_csv_path = outputs_dir / 'failed_cases.csv'
+    skipped_cases_csv_path = outputs_dir / 'skipped_cases.csv'
+    performance_table_csv_path = outputs_dir / 'performance_table.csv'
+    quality_table_csv_path = outputs_dir / 'quality_table.csv'
+    ablation_table_csv_path = outputs_dir / 'ablation_table.csv'
+    scenario_table_csv_path = outputs_dir / 'scenario_table.csv'
     markdown_path = outputs_dir / 'runtime_suite_summary.md'
     repro_manifest_path = outputs_dir / 'runtime_suite_repro_manifest.json'
     charts_dir = outputs_dir / 'charts'
@@ -623,6 +782,9 @@ def main() -> int:
         'suiteName': suite_name,
         'experimentName': experiment_name,
         'importedRunIds': imported_run_ids,
+        'selectedRunCount': len(selected_runs),
+        'skippedCases': skipped_cases,
+        'failedCases': failed_cases,
         'summary': summary,
         'methodSummary': method_rows,
         'scenarioSummary': scenario_rows,
@@ -655,6 +817,12 @@ def main() -> int:
     write_csv(user_tasks_csv_path, user_task_rows)
     write_csv(user_task_results_csv_path, imported_task_rows)
     write_csv(user_task_summary_csv_path, task_summary_rows)
+    write_csv(failed_cases_csv_path, failed_cases)
+    write_csv(skipped_cases_csv_path, skipped_cases)
+    write_csv(performance_table_csv_path, method_rows)
+    write_csv(quality_table_csv_path, scenario_rows)
+    write_csv(ablation_table_csv_path, ablation_rows)
+    write_csv(scenario_table_csv_path, scenario_rows)
     write_markdown(markdown_path, summary, method_rows, scenario_rows, pairwise_rows, goal_rows, metric_definitions, scenario_coverage_rows, hypothesis_rows, task_summary_rows)
 
     generated_files = [
@@ -669,6 +837,12 @@ def main() -> int:
         user_tasks_csv_path,
         user_task_results_csv_path,
         user_task_summary_csv_path,
+        failed_cases_csv_path,
+        skipped_cases_csv_path,
+        performance_table_csv_path,
+        quality_table_csv_path,
+        ablation_table_csv_path,
+        scenario_table_csv_path,
         markdown_path,
         excel_path,
         db_path,
@@ -682,6 +856,9 @@ def main() -> int:
     if package_zip:
         maybe_package_zip(outputs_dir, package_zip)
 
+    print(f'Selected {len(selected_runs)} runs')
+    print(f'Skipped {len(skipped_cases)} completed runs')
+    print(f'Failed {len(failed_cases)} runs')
     print(f'Imported {len(imported_run_ids)} runs')
     print(f'Imported user task rows: {len(imported_task_rows)}')
     print(f'Database: {db_path}')

@@ -20,6 +20,19 @@ class RuntimeRunMetadata:
     runtime_source: str = "dx11_viewer"
     operator_name: str = ""
     notes: str = ""
+    case_id: str = ""
+    variant_code: str = ""
+    seed: int = 0
+    warmup_frames: int = 0
+    measurement_frames: int = 0
+    enable_microtype: bool = False
+    enable_cbma: bool = False
+    enable_physics_islands: bool = False
+    enable_rod_repair: bool = False
+    enable_gpu_resident: bool = False
+    frame_jsonl_path: str = ""
+    settings_json_path: str = ""
+    error_json_path: str = ""
 
 
 class FinalStageDatabase:
@@ -35,7 +48,74 @@ class FinalStageDatabase:
     def initialize(self, schema_path: Path) -> None:
         sql = Path(schema_path).read_text(encoding="utf-8")
         self.connection.executescript(sql)
+        self._ensure_runtime_schema_columns()
         self.connection.commit()
+
+    def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
+        existing = {row["name"] for row in self.connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, ddl in columns.items():
+            if name not in existing:
+                self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+    def _ensure_runtime_schema_columns(self) -> None:
+        self._ensure_columns("runtime_runs", {
+            "frame_jsonl_path": "TEXT",
+            "settings_json_path": "TEXT",
+            "error_json_path": "TEXT",
+            "case_id": "TEXT",
+            "variant_code": "TEXT",
+            "seed": "INTEGER DEFAULT 0",
+            "settings_hash": "TEXT",
+            "warmup_frames": "INTEGER DEFAULT 0",
+            "measurement_frames": "INTEGER DEFAULT 0",
+            "enable_microtype": "INTEGER DEFAULT 0",
+            "enable_cbma": "INTEGER DEFAULT 0",
+            "enable_physics_islands": "INTEGER DEFAULT 0",
+            "enable_rod_repair": "INTEGER DEFAULT 0",
+            "enable_gpu_resident": "INTEGER DEFAULT 0",
+            "p50_frame_ms": "REAL",
+            "p99_frame_ms": "REAL",
+            "p50_simulation_ms": "REAL",
+            "p95_simulation_ms": "REAL",
+            "p99_simulation_ms": "REAL",
+            "avg_gpu_hair_ms": "REAL",
+            "p95_gpu_hair_ms": "REAL",
+            "p99_gpu_hair_ms": "REAL",
+            "vram_mb": "REAL",
+            "bandwidth_mb_frame": "REAL",
+            "certificate_failure_rate": "REAL",
+            "fallback_rate": "REAL",
+            "repair_success_rate": "REAL",
+            "cpu_readback_count": "INTEGER DEFAULT 0",
+        })
+        self._ensure_columns("runtime_frame_metrics", {
+            "global_frame_index": "INTEGER",
+            "measured_frame_index": "INTEGER",
+            "certificate_failure_count": "INTEGER DEFAULT 0",
+            "certificate_failure_rate": "REAL DEFAULT 0",
+            "fallback_count": "INTEGER DEFAULT 0",
+            "mode_skip_count": "INTEGER DEFAULT 0",
+            "mode_qs_count": "INTEGER DEFAULT 0",
+            "mode_dynamic_count": "INTEGER DEFAULT 0",
+            "mode_island_count": "INTEGER DEFAULT 0",
+            "mode_repair_count": "INTEGER DEFAULT 0",
+            "mode_float_fallback_count": "INTEGER DEFAULT 0",
+            "island_count": "INTEGER DEFAULT 0",
+            "island_member_count": "INTEGER DEFAULT 0",
+            "island_commit_count": "INTEGER DEFAULT 0",
+            "island_reject_count": "INTEGER DEFAULT 0",
+            "repair_task_count": "INTEGER DEFAULT 0",
+            "repair_committed_count": "INTEGER DEFAULT 0",
+            "repair_rejected_count": "INTEGER DEFAULT 0",
+            "repair_deferred_count": "INTEGER DEFAULT 0",
+            "repair_success_rate": "REAL DEFAULT 0",
+            "cpu_readback_count": "INTEGER DEFAULT 0",
+            "gpu_hair_ms": "REAL DEFAULT 0",
+            "vram_mb": "REAL DEFAULT 0",
+            "bandwidth_mb_frame": "REAL DEFAULT 0",
+            "mean_decode_error_mm": "REAL DEFAULT 0",
+            "max_penetration_mm": "REAL DEFAULT 0",
+        })
 
     def upsert_experiment(self, experiment_name: str, operator_name: str, notes: str) -> int:
         row = self.connection.execute(
@@ -248,24 +328,52 @@ class FinalStageDatabase:
         )
         self.connection.commit()
 
+
+    def runtime_run_exists(self, run_name: str) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM runtime_runs WHERE run_name = ? LIMIT 1",
+            (run_name,),
+        ).fetchone()
+        return row is not None
+
     def import_runtime_run(
         self,
         metadata: RuntimeRunMetadata,
         summary_json_path: Path,
         frame_csv_path: Path,
+        *,
+        frame_jsonl_path: Path | None = None,
+        settings_json_path: Path | None = None,
+        error_json_path: Path | None = None,
     ) -> int:
         summary = self._read_summary(summary_json_path)
+        flags = summary.get("feature_flags", {}) if isinstance(summary.get("feature_flags", {}), dict) else {}
+        case_id = str(summary.get("case_id") or metadata.case_id or "")
+        variant_code = str(summary.get("variant") or metadata.variant_code or metadata.method_code)
+        seed = int(summary.get("seed", metadata.seed or 0) or 0)
+        warmup_frames = int(summary.get("warmup_frames", metadata.warmup_frames or 0) or 0)
+        measurement_frames = int(summary.get("measurement_frames", metadata.measurement_frames or 0) or 0)
+        settings_hash = str(summary.get("settings_hash", ""))
+        frame_jsonl_final = Path(frame_jsonl_path) if frame_jsonl_path else (Path(summary.get("frame_jsonl")) if summary.get("frame_jsonl") else None)
+        settings_json_final = Path(settings_json_path) if settings_json_path else (Path(summary.get("settings_json")) if summary.get("settings_json") else None)
+        error_json_final = Path(error_json_path) if error_json_path else None
+
         experiment_id = self.upsert_experiment(metadata.experiment_name, metadata.operator_name, metadata.notes)
         cursor = self.connection.execute(
             """
             INSERT INTO runtime_runs (
                 experiment_id, run_name, method_code, scenario_code, asset_name, runtime_source,
-                summary_json_path, frame_csv_path, sample_count, avg_frame_ms, p95_frame_ms,
-                worst_frame_ms, avg_simulation_ms, avg_fps, sixty_fps_ratio, guide_count,
+                summary_json_path, frame_csv_path, frame_jsonl_path, settings_json_path, error_json_path,
+                case_id, variant_code, seed, settings_hash, warmup_frames, measurement_frames,
+                enable_microtype, enable_cbma, enable_physics_islands, enable_rod_repair, enable_gpu_resident,
+                sample_count, avg_frame_ms, p50_frame_ms, p95_frame_ms, p99_frame_ms,
+                worst_frame_ms, avg_simulation_ms, p50_simulation_ms, p95_simulation_ms, p99_simulation_ms,
+                avg_gpu_hair_ms, p95_gpu_hair_ms, p99_gpu_hair_ms, avg_fps, sixty_fps_ratio, guide_count,
                 follower_count, total_strand_count, total_particle_count, avg_silhouette_error,
                 avg_clump_preservation, avg_edit_locality, avg_boundary_naturalness,
-                avg_edit_to_run_latency_ms, avg_penetration_per_sec, peak_ram_mb, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                avg_edit_to_run_latency_ms, avg_penetration_per_sec, peak_ram_mb, vram_mb, bandwidth_mb_frame,
+                certificate_failure_rate, fallback_rate, repair_success_rate, cpu_readback_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 experiment_id,
@@ -276,11 +384,33 @@ class FinalStageDatabase:
                 metadata.runtime_source,
                 str(summary_json_path),
                 str(frame_csv_path),
+                str(frame_jsonl_final or metadata.frame_jsonl_path or ""),
+                str(settings_json_final or metadata.settings_json_path or ""),
+                str(error_json_final or metadata.error_json_path or ""),
+                case_id,
+                variant_code,
+                seed,
+                settings_hash,
+                warmup_frames,
+                measurement_frames,
+                1 if flags.get("enableMicrotype", metadata.enable_microtype) else 0,
+                1 if flags.get("enableCBMA", metadata.enable_cbma) else 0,
+                1 if flags.get("enablePhysicsIslands", metadata.enable_physics_islands) else 0,
+                1 if flags.get("enableRodRepair", metadata.enable_rod_repair) else 0,
+                1 if flags.get("enableGpuResident", metadata.enable_gpu_resident) else 0,
                 int(self._resolve_summary_value(summary, "sample_count", "sampleCount", default=0)),
                 float(self._resolve_summary_value(summary, "avg_frame_ms", "avgFrameMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p50_frame_ms", "p50FrameMs", default=0.0)),
                 float(self._resolve_summary_value(summary, "p95_frame_ms", "p95FrameMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p99_frame_ms", "p99FrameMs", default=0.0)),
                 float(self._resolve_summary_value(summary, "worst_frame_ms", "worstFrameMs", default=0.0)),
                 float(self._resolve_summary_value(summary, "avg_simulation_ms", "avgSimulationMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p50_simulation_ms", "p50SimulationMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p95_simulation_ms", "p95SimulationMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p99_simulation_ms", "p99SimulationMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_gpu_hair_ms", "avgGpuHairMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p95_gpu_hair_ms", "p95GpuHairMs", default=0.0)),
+                float(self._resolve_summary_value(summary, "p99_gpu_hair_ms", "p99GpuHairMs", default=0.0)),
                 float(self._resolve_summary_value(summary, "avg_fps", "avgFps", default=0.0)),
                 float(self._resolve_summary_value(summary, "sixty_fps_ratio", "sixtyFpsRatio", default=0.0)),
                 int(self._resolve_summary_value(summary, "guide_count", "guideCount", default=0)),
@@ -294,6 +424,12 @@ class FinalStageDatabase:
                 float(self._resolve_summary_value(summary, "avg_edit_to_run_latency_ms", "averageEditToRunLatencyMs", default=0.0)),
                 float(self._resolve_summary_value(summary, "avg_penetration_per_sec", "avgPenetrationPerSec", default=0.0)),
                 float(self._resolve_summary_value(summary, "peak_ram_mb", "peakRamMb", default=0.0)),
+                float(self._resolve_summary_value(summary, "vram_mb", "vramMb", default=0.0)),
+                float(self._resolve_summary_value(summary, "bandwidth_mb_frame", "bandwidthMbFrame", default=0.0)),
+                float(self._resolve_summary_value(summary, "certificate_failure_rate", "certificateFailureRate", default=0.0)),
+                float(self._resolve_summary_value(summary, "fallback_rate", "fallbackRate", default=0.0)),
+                float(self._resolve_summary_value(summary, "repair_success_rate", "repairSuccessRate", default=0.0)),
+                int(self._resolve_summary_value(summary, "cpu_readback_count", "cpuReadbackCount", default=0)),
                 datetime.utcnow().isoformat(timespec="seconds"),
             ),
         )
@@ -304,15 +440,41 @@ class FinalStageDatabase:
             rows = [
                 (
                     run_id,
-                    int(self._pick_csv_value(row, "sampleIndex", "sample_index", default="0")),
+                    int(float(self._pick_csv_value(row, "sampleIndex", "sample_index", default="0"))),
                     float(self._pick_csv_value(row, "elapsedSeconds", "elapsed_seconds", default="0")),
                     float(self._pick_csv_value(row, "frameMilliseconds", "frame_ms", default="0")),
                     float(self._pick_csv_value(row, "simulationMilliseconds", "simulation_ms", default="0")),
                     float(self._pick_csv_value(row, "fps", default="0")),
-                    int(self._pick_csv_value(row, "guideCount", "guide_count", default="0")),
-                    int(self._pick_csv_value(row, "followerCount", "follower_count", default="0")),
-                    int(self._pick_csv_value(row, "totalStrandCount", "total_strand_count", default="0")),
-                    int(self._pick_csv_value(row, "totalParticleCount", "total_particle_count", default="0")),
+                    int(float(self._pick_csv_value(row, "guideCount", "guide_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "followerCount", "follower_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "totalStrandCount", "total_strand_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "totalParticleCount", "total_particle_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "globalFrameIndex", "global_frame_index", default="0"))),
+                    int(float(self._pick_csv_value(row, "measuredFrameIndex", "measured_frame_index", default="0"))),
+                    int(float(self._pick_csv_value(row, "certificateFailureCount", "certificate_failure_count", default="0"))),
+                    float(self._pick_csv_value(row, "certificateFailureRate", "certificate_failure_rate", default="0")),
+                    int(float(self._pick_csv_value(row, "fallbackCount", "fallback_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "modeSkipCount", "mode_skip_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "modeQSOnlyCount", "modeQsCount", "mode_qs_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "modeDynamicCount", "mode_dynamic_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "modeIslandCount", "mode_island_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "modeRepairCount", "mode_repair_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "modeFloatFallbackCount", "mode_float_fallback_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "islandCount", "island_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "islandMemberCount", "island_member_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "islandCommitCount", "island_commit_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "islandRejectCount", "island_reject_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairTaskCount", "repair_task_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairCommittedCount", "repair_committed_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairRejectedCount", "repair_rejected_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairDeferredCount", "repair_deferred_count", default="0"))),
+                    float(self._pick_csv_value(row, "repairSuccessRate", "repair_success_rate", default="0")),
+                    int(float(self._pick_csv_value(row, "cpuReadbackCount", "cpu_readback_count", default="0"))),
+                    float(self._pick_csv_value(row, "gpuHairMilliseconds", "gpuHairMs", "gpu_hair_ms", default="0")),
+                    float(self._pick_csv_value(row, "vramMegabytes", "vramMb", "vram_mb", default="0")),
+                    float(self._pick_csv_value(row, "bandwidthMegabytesPerFrame", "bandwidthMbFrame", "bandwidth_mb_frame", default="0")),
+                    float(self._pick_csv_value(row, "meanDecodeErrorMm", "mean_decode_error_mm", default="0")),
+                    float(self._pick_csv_value(row, "maxPenetrationMm", "max_penetration_mm", default="0")),
                 )
                 for row in reader
             ]
@@ -320,8 +482,13 @@ class FinalStageDatabase:
             """
             INSERT INTO runtime_frame_metrics (
                 run_id, sample_index, elapsed_seconds, frame_ms, simulation_ms, fps,
-                guide_count, follower_count, total_strand_count, total_particle_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                guide_count, follower_count, total_strand_count, total_particle_count,
+                global_frame_index, measured_frame_index, certificate_failure_count, certificate_failure_rate, fallback_count,
+                mode_skip_count, mode_qs_count, mode_dynamic_count, mode_island_count, mode_repair_count, mode_float_fallback_count,
+                island_count, island_member_count, island_commit_count, island_reject_count,
+                repair_task_count, repair_committed_count, repair_rejected_count, repair_deferred_count, repair_success_rate,
+                cpu_readback_count, gpu_hair_ms, vram_mb, bandwidth_mb_frame, mean_decode_error_mm, max_penetration_mm
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -335,24 +502,14 @@ class FinalStageDatabase:
         particle_count = int(self._resolve_summary_value(summary, "total_particle_count", "totalParticleCount", default=0))
         self.add_derived_metric("run", metadata.run_name, "budget_headroom_ms", 16.67 - p95_frame_ms, run_id=run_id, units="ms")
         self.add_derived_metric("run", metadata.run_name, "fps_success_percent", sixty_fps_ratio * 100.0, run_id=run_id, units="percent")
-        self.add_derived_metric(
-            "run",
-            metadata.run_name,
-            "simulation_share_ratio",
-            (avg_simulation_ms / avg_frame_ms) if avg_frame_ms > 0.0 else 0.0,
-            run_id=run_id,
-            units="ratio",
-        )
-        self.add_derived_metric(
-            "run",
-            metadata.run_name,
-            "particles_per_guide",
-            (particle_count / guide_count) if guide_count > 0 else 0.0,
-            run_id=run_id,
-            units="count",
-        )
+        self.add_derived_metric("run", metadata.run_name, "simulation_share_ratio", (avg_simulation_ms / avg_frame_ms) if avg_frame_ms > 0.0 else 0.0, run_id=run_id, units="ratio")
+        self.add_derived_metric("run", metadata.run_name, "particles_per_guide", (particle_count / guide_count) if guide_count > 0 else 0.0, run_id=run_id, units="count")
         self.add_artifact(run_id, "telemetry", "summary_json", summary_json_path)
         self.add_artifact(run_id, "telemetry", "frame_csv", frame_csv_path)
+        if frame_jsonl_final and Path(frame_jsonl_final).exists():
+            self.add_artifact(run_id, "telemetry", "frame_jsonl", Path(frame_jsonl_final))
+        if settings_json_final and Path(settings_json_final).exists():
+            self.add_artifact(run_id, "telemetry", "settings_json", Path(settings_json_final))
         return run_id
 
     @staticmethod
@@ -437,6 +594,12 @@ class FinalStageDatabase:
                 COUNT(*) AS run_count,
                 AVG(avg_frame_ms) AS avg_frame_ms,
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(p99_frame_ms) AS avg_p99_frame_ms,
+                AVG(avg_gpu_hair_ms) AS avg_gpu_hair_ms,
+                AVG(vram_mb) AS avg_vram_mb,
+                AVG(certificate_failure_rate) AS avg_certificate_failure_rate,
+                AVG(fallback_rate) AS avg_fallback_rate,
+                AVG(repair_success_rate) AS avg_repair_success_rate,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
                 AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
@@ -458,6 +621,9 @@ class FinalStageDatabase:
                 COUNT(*) AS run_count,
                 AVG(avg_frame_ms) AS avg_frame_ms,
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(p99_frame_ms) AS avg_p99_frame_ms,
+                AVG(avg_gpu_hair_ms) AS avg_gpu_hair_ms,
+                AVG(vram_mb) AS avg_vram_mb,
                 AVG(avg_fps) AS avg_fps,
                 AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
                 AVG(avg_edit_locality) AS avg_edit_locality,
@@ -478,6 +644,12 @@ class FinalStageDatabase:
                 COUNT(*) AS run_count,
                 AVG(avg_frame_ms) AS avg_frame_ms,
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(p99_frame_ms) AS avg_p99_frame_ms,
+                AVG(avg_gpu_hair_ms) AS avg_gpu_hair_ms,
+                AVG(vram_mb) AS avg_vram_mb,
+                AVG(certificate_failure_rate) AS avg_certificate_failure_rate,
+                AVG(fallback_rate) AS avg_fallback_rate,
+                AVG(repair_success_rate) AS avg_repair_success_rate,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
                 AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
@@ -501,6 +673,12 @@ class FinalStageDatabase:
                 COUNT(*) AS run_count,
                 AVG(avg_frame_ms) AS avg_frame_ms,
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(p99_frame_ms) AS avg_p99_frame_ms,
+                AVG(avg_gpu_hair_ms) AS avg_gpu_hair_ms,
+                AVG(vram_mb) AS avg_vram_mb,
+                AVG(certificate_failure_rate) AS avg_certificate_failure_rate,
+                AVG(fallback_rate) AS avg_fallback_rate,
+                AVG(repair_success_rate) AS avg_repair_success_rate,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
                 AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,
@@ -526,6 +704,12 @@ class FinalStageDatabase:
                 MAX(created_at) AS last_created_at,
                 AVG(avg_frame_ms) AS avg_frame_ms,
                 AVG(p95_frame_ms) AS avg_p95_frame_ms,
+                AVG(p99_frame_ms) AS avg_p99_frame_ms,
+                AVG(avg_gpu_hair_ms) AS avg_gpu_hair_ms,
+                AVG(vram_mb) AS avg_vram_mb,
+                AVG(certificate_failure_rate) AS avg_certificate_failure_rate,
+                AVG(fallback_rate) AS avg_fallback_rate,
+                AVG(repair_success_rate) AS avg_repair_success_rate,
                 AVG(worst_frame_ms) AS avg_worst_frame_ms,
                 AVG(avg_fps) AS avg_fps,
                 AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio,

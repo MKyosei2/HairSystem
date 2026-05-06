@@ -189,6 +189,47 @@ namespace hairgpu::viewer
             return value;
         }
 
+        bool EnvironmentValueIsTrue(const std::wstring& value)
+        {
+            std::wstring normalized = value;
+            std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+            return normalized == L"1" || normalized == L"true" || normalized == L"yes" || normalized == L"on";
+        }
+
+        uint32_t EnvironmentValueToUInt(const std::wstring& value, uint32_t fallback = 0u)
+        {
+            if (value.empty())
+            {
+                return fallback;
+            }
+            try
+            {
+                return static_cast<uint32_t>(std::stoul(value));
+            }
+            catch (...)
+            {
+                return fallback;
+            }
+        }
+
+        std::string CsvEscapeUtf8(const std::string& value)
+        {
+            std::string out = "\"";
+            for (char ch : value)
+            {
+                if (ch == '"')
+                {
+                    out += "\"\"";
+                }
+                else
+                {
+                    out.push_back(ch);
+                }
+            }
+            out += "\"";
+            return out;
+        }
+
         std::string JsonEscape(const std::string& value)
         {
             std::ostringstream out;
@@ -216,15 +257,28 @@ namespace hairgpu::viewer
             return out.str();
         }
 
-        float ComputePercentile95(std::vector<float> values)
+        float ComputePercentile(std::vector<float> values, float percentile)
         {
             if (values.empty())
             {
                 return 0.0f;
             }
             std::sort(values.begin(), values.end());
-            const size_t idx = std::min(values.size() - 1u, static_cast<size_t>(std::floor(0.95 * static_cast<double>(values.size() - 1u))));
-            return values[idx];
+            const float clamped = std::clamp(percentile, 0.0f, 100.0f);
+            const float rank = (clamped / 100.0f) * static_cast<float>(values.size() - 1u);
+            const size_t lo = static_cast<size_t>(std::floor(rank));
+            const size_t hi = static_cast<size_t>(std::ceil(rank));
+            if (lo == hi)
+            {
+                return values[lo];
+            }
+            const float t = rank - static_cast<float>(lo);
+            return values[lo] * (1.0f - t) + values[hi] * t;
+        }
+
+        float ComputePercentile95(std::vector<float> values)
+        {
+            return ComputePercentile(std::move(values), 95.0f);
         }
 
         float ComputeAverage(const std::vector<float>& values)
@@ -1415,6 +1469,9 @@ namespace hairgpu::viewer
     int GpuHairViewer::Run()
     {
         MSG msg = {};
+        LoadExperimentCaseFromEnvironment();
+        m_globalFrameIndex = 0u;
+        m_measuredFrameIndex = 0u;
         while (m_running)
         {
             ResolveGpuTimingFrame(m_gpuTimingFrames[m_gpuTimingWriteIndex]);
@@ -1471,42 +1528,24 @@ namespace hairgpu::viewer
                 m_context->End(gpuFrame.simEnd.Get());
             }
 
-            PerformanceSample sample = {};
-            sample.elapsedSeconds = m_elapsedSeconds;
-            sample.frameMilliseconds = dt * 1000.0f;
-            sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
-            sample.fps = instantFps;
-            sample.guideCount = m_asset.guideStrandCount;
-            sample.followerCount = m_asset.followerStrandCount;
-            sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
-            sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
-            sample.activeSetClusterCount = m_activeSetPlan.summary.clusterCount;
-            sample.activeSetSelectedClusterCount = m_activeSetPlan.summary.selectedClusterCount;
-            sample.activeSetSelectedGuideCount = m_activeSetPlan.summary.selectedGuideCount;
-            sample.activeSetSelectedStrandCount = m_activeSetPlan.summary.selectedStrandCount;
-            sample.activeSetHighestScore = m_activeSetPlan.summary.highestScore;
-            sample.activeSetAverageSelectedScore = m_activeSetPlan.summary.averageSelectedScore;
-            sample.activeSetEvaluationMilliseconds = m_activeSetEvaluationMilliseconds;
-            sample.activeSetBudgetScale = m_activeSetPlan.summary.budgetScale;
-            sample.activeSetRecommendedSolverIterations = m_activeSetPlan.summary.recommendedSolverIterations;
-            sample.fullTierCount = m_activeSetPlan.summary.fullTierCount;
-            sample.reducedTierCount = m_activeSetPlan.summary.reducedTierCount;
-            sample.frozenTierCount = m_activeSetPlan.summary.frozenTierCount;
-            sample.cachedTierCount = m_activeSetPlan.summary.cachedTierCount;
-            sample.correctiveStrandCount = m_sparseCorrectiveReport.correctedStrandCount;
-            sample.correctivePointCount = m_sparseCorrectiveReport.correctedPointCount;
-            sample.correctiveAveragePenetration = m_sparseCorrectiveReport.averagePenetration;
-            sample.correctiveMaxPenetration = m_sparseCorrectiveReport.maxPenetration;
-            sample.correctiveAverageLengthErrorBefore = m_sparseCorrectiveReport.averageLengthErrorBefore;
-            sample.correctiveAverageLengthErrorAfter = m_sparseCorrectiveReport.averageLengthErrorAfter;
-            m_performanceSamples.push_back(sample);
-            if (m_performanceSamples.size() > 12000)
+            PerformanceSample sample = BuildPerformanceSample(dt, instantFps);
+            if (ShouldCaptureCurrentFrame())
             {
-                m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
+                sample.measuredFrameIndex = m_measuredFrameIndex++;
+                m_performanceSamples.push_back(sample);
+                if (m_performanceSamples.size() > 12000)
+                {
+                    m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
+                }
             }
 
             UpdateCamera();
             Render();
+            ++m_globalFrameIndex;
+            if (ShouldAutoExitAfterCurrentFrame())
+            {
+                m_running = false;
+            }
             if (!m_gpuTimingFrames.empty())
             {
                 m_gpuTimingWriteIndex = (m_gpuTimingWriteIndex + 1u) % static_cast<uint32_t>(m_gpuTimingFrames.size());
@@ -1536,7 +1575,11 @@ namespace hairgpu::viewer
             std::filesystem::create_directories(telemetryDir, ec);
             const std::filesystem::path summaryPath = telemetryDir / (runName + L"_summary.json");
             const std::filesystem::path frameCsvPath = telemetryDir / (runName + L"_frames.csv");
+            const std::filesystem::path frameJsonlPath = telemetryDir / (runName + L"_frames.jsonl");
+            const std::filesystem::path settingsJsonPath = telemetryDir / (runName + L"_settings.json");
             ExportPerformanceCsv(frameCsvPath.wstring());
+            ExportPerformanceJsonl(frameJsonlPath.wstring());
+            ExportExperimentSettingsJson(settingsJsonPath.wstring());
             ExportRuntimeReport(summaryPath.wstring());
         }
         Shutdown();
@@ -2346,34 +2389,9 @@ namespace hairgpu::viewer
         m_elapsedSeconds += m_simConfig.fixedTimeStep;
         m_lastSimulationStepMilliseconds = static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
 
-        PerformanceSample sample = {};
-        sample.elapsedSeconds = m_elapsedSeconds;
-        sample.frameMilliseconds = m_simConfig.fixedTimeStep * 1000.0f;
-        sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
-        sample.fps = (m_simConfig.fixedTimeStep > 1.0e-6f) ? (1.0f / m_simConfig.fixedTimeStep) : 0.0f;
-        sample.guideCount = m_asset.guideStrandCount;
-        sample.followerCount = m_asset.followerStrandCount;
-        sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
-        sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
-        sample.activeSetClusterCount = m_activeSetPlan.summary.clusterCount;
-        sample.activeSetSelectedClusterCount = m_activeSetPlan.summary.selectedClusterCount;
-        sample.activeSetSelectedGuideCount = m_activeSetPlan.summary.selectedGuideCount;
-        sample.activeSetSelectedStrandCount = m_activeSetPlan.summary.selectedStrandCount;
-        sample.activeSetHighestScore = m_activeSetPlan.summary.highestScore;
-        sample.activeSetAverageSelectedScore = m_activeSetPlan.summary.averageSelectedScore;
-        sample.activeSetEvaluationMilliseconds = m_activeSetEvaluationMilliseconds;
-        sample.activeSetBudgetScale = m_activeSetPlan.summary.budgetScale;
-        sample.activeSetRecommendedSolverIterations = m_activeSetPlan.summary.recommendedSolverIterations;
-        sample.fullTierCount = m_activeSetPlan.summary.fullTierCount;
-        sample.reducedTierCount = m_activeSetPlan.summary.reducedTierCount;
-        sample.frozenTierCount = m_activeSetPlan.summary.frozenTierCount;
-        sample.cachedTierCount = m_activeSetPlan.summary.cachedTierCount;
-        sample.correctiveStrandCount = m_sparseCorrectiveReport.correctedStrandCount;
-        sample.correctivePointCount = m_sparseCorrectiveReport.correctedPointCount;
-        sample.correctiveAveragePenetration = m_sparseCorrectiveReport.averagePenetration;
-        sample.correctiveMaxPenetration = m_sparseCorrectiveReport.maxPenetration;
-        sample.correctiveAverageLengthErrorBefore = m_sparseCorrectiveReport.averageLengthErrorBefore;
-        sample.correctiveAverageLengthErrorAfter = m_sparseCorrectiveReport.averageLengthErrorAfter;
+        PerformanceSample sample = BuildPerformanceSample(m_simConfig.fixedTimeStep, (m_simConfig.fixedTimeStep > 1.0e-6f) ? (1.0f / m_simConfig.fixedTimeStep) : 0.0f);
+        sample.globalFrameIndex = m_globalFrameIndex++;
+        sample.measuredFrameIndex = m_measuredFrameIndex++;
         m_performanceSamples.push_back(sample);
         if (m_performanceSamples.size() > 12000)
         {
@@ -7360,6 +7378,122 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         return true;
     }
 
+    void GpuHairViewer::LoadExperimentCaseFromEnvironment()
+    {
+        const std::wstring caseId = GetEnvironmentVariableString(L"HAIRGPU_EXPERIMENT_CASE_ID");
+        m_experimentCase = {};
+        if (caseId.empty())
+        {
+            return;
+        }
+        m_experimentCase.enabled = true;
+        m_experimentCase.caseId = caseId;
+        m_experimentCase.variant = GetEnvironmentVariableString(L"HAIRGPU_VARIANT");
+        m_experimentCase.scenario = GetEnvironmentVariableString(L"HAIRGPU_SCENARIO");
+        m_experimentCase.seed = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_SEED"), 0u);
+        m_experimentCase.warmupFrames = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_WARMUP_FRAMES"), 0u);
+        m_experimentCase.measurementFrames = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_MEASUREMENT_FRAMES"), 0u);
+        m_experimentCase.autoExitAfterCapture = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"));
+        m_experimentCase.enableMicrotype = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_MICROTYPE"));
+        m_experimentCase.enableCBMA = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_CBMA"));
+        m_experimentCase.enablePhysicsIslands = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_PHYSICS_ISLANDS"));
+        m_experimentCase.enableRodRepair = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_ROD_REPAIR"));
+        m_experimentCase.enableGpuResident = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_GPU_RESIDENT"));
+        m_experimentCase.settingsHash = GetEnvironmentVariableString(L"HAIRGPU_SETTINGS_HASH");
+    }
+
+    bool GpuHairViewer::IsExperimentModeEnabled() const
+    {
+        return m_experimentCase.enabled;
+    }
+
+    bool GpuHairViewer::ShouldCaptureCurrentFrame() const
+    {
+        if (!m_experimentCase.enabled)
+        {
+            return true;
+        }
+        if (m_globalFrameIndex < m_experimentCase.warmupFrames)
+        {
+            return false;
+        }
+        const uint32_t measured = m_globalFrameIndex - m_experimentCase.warmupFrames;
+        return measured < m_experimentCase.measurementFrames;
+    }
+
+    bool GpuHairViewer::ShouldAutoExitAfterCurrentFrame() const
+    {
+        if (!m_experimentCase.enabled || !m_experimentCase.autoExitAfterCapture)
+        {
+            return false;
+        }
+        const uint32_t totalFrames = m_experimentCase.warmupFrames + m_experimentCase.measurementFrames;
+        return totalFrames > 0u && m_globalFrameIndex >= totalFrames;
+    }
+
+    GpuHairViewer::PerformanceSample GpuHairViewer::BuildPerformanceSample(float frameSeconds, float instantFps) const
+    {
+        PerformanceSample sample = {};
+        sample.elapsedSeconds = m_elapsedSeconds;
+        sample.frameMilliseconds = frameSeconds * 1000.0f;
+        sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
+        sample.fps = instantFps;
+        sample.guideCount = m_asset.guideStrandCount;
+        sample.followerCount = m_asset.followerStrandCount;
+        sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+        sample.totalParticleCount = static_cast<uint32_t>(m_asset.restPoints.size());
+        sample.activeSetClusterCount = m_activeSetPlan.summary.clusterCount;
+        sample.activeSetSelectedClusterCount = m_activeSetPlan.summary.selectedClusterCount;
+        sample.activeSetSelectedGuideCount = m_activeSetPlan.summary.selectedGuideCount;
+        sample.activeSetSelectedStrandCount = m_activeSetPlan.summary.selectedStrandCount;
+        sample.activeSetHighestScore = m_activeSetPlan.summary.highestScore;
+        sample.activeSetAverageSelectedScore = m_activeSetPlan.summary.averageSelectedScore;
+        sample.activeSetEvaluationMilliseconds = m_activeSetEvaluationMilliseconds;
+        sample.activeSetBudgetScale = m_activeSetPlan.summary.budgetScale;
+        sample.activeSetRecommendedSolverIterations = m_activeSetPlan.summary.recommendedSolverIterations;
+        sample.fullTierCount = m_activeSetPlan.summary.fullTierCount;
+        sample.reducedTierCount = m_activeSetPlan.summary.reducedTierCount;
+        sample.frozenTierCount = m_activeSetPlan.summary.frozenTierCount;
+        sample.cachedTierCount = m_activeSetPlan.summary.cachedTierCount;
+        sample.correctiveStrandCount = m_sparseCorrectiveReport.correctedStrandCount;
+        sample.correctivePointCount = m_sparseCorrectiveReport.correctedPointCount;
+        sample.correctiveAveragePenetration = m_sparseCorrectiveReport.averagePenetration;
+        sample.correctiveMaxPenetration = m_sparseCorrectiveReport.maxPenetration;
+        sample.correctiveAverageLengthErrorBefore = m_sparseCorrectiveReport.averageLengthErrorBefore;
+        sample.correctiveAverageLengthErrorAfter = m_sparseCorrectiveReport.averageLengthErrorAfter;
+
+        sample.globalFrameIndex = m_globalFrameIndex;
+        sample.measuredFrameIndex = m_measuredFrameIndex;
+        sample.warmupFrames = m_experimentCase.warmupFrames;
+        sample.measurementFrames = m_experimentCase.measurementFrames;
+        sample.seed = m_experimentCase.seed;
+        sample.certificateFailureCount = 0u;
+        sample.certificateFailureRate = 0.0f;
+        sample.fallbackCount = 0u;
+        sample.modeSkipCount = 0u;
+        sample.modeQSOnlyCount = sample.activeSetSelectedStrandCount;
+        sample.modeDynamicCount = 0u;
+        sample.modeIslandCount = 0u;
+        sample.modeRepairCount = sample.correctiveStrandCount;
+        sample.modeFloatFallbackCount = 0u;
+        sample.islandCount = 0u;
+        sample.islandMemberCount = 0u;
+        sample.islandCommitCount = 0u;
+        sample.islandRejectCount = 0u;
+        sample.repairTaskCount = sample.correctiveStrandCount;
+        sample.repairCommittedCount = sample.correctiveStrandCount;
+        sample.repairRejectedCount = 0u;
+        sample.repairDeferredCount = 0u;
+        sample.repairSuccessRate = sample.repairTaskCount > 0u ? static_cast<float>(sample.repairCommittedCount) / static_cast<float>(sample.repairTaskCount) : 0.0f;
+        sample.cpuReadbackCount = 0u;
+        sample.gpuHairMilliseconds = sample.simulationMilliseconds;
+        sample.vramMegabytes = m_activeSetPlan.summary.estimatedMemoryMegabytes;
+        sample.bandwidthMegabytesPerFrame = 0.0f;
+        sample.meanDecodeErrorMm = 0.0f;
+        sample.maxPenetrationMm = sample.correctiveMaxPenetration * 1000.0f;
+        return sample;
+    }
+
     bool GpuHairViewer::ExportPerformanceCsv(const std::wstring& filePath) const
     {
         std::ofstream out{ std::filesystem::path(filePath) };
@@ -7368,7 +7502,11 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableMicrotype,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm\n";
+        const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
+        const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
+        const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
+        const std::string settingsHash = CsvEscapeUtf8(WideToUtf8(m_experimentCase.settingsHash));
         for (size_t i = 0; i < m_performanceSamples.size(); ++i)
         {
             const PerformanceSample& s = m_performanceSamples[i];
@@ -7399,8 +7537,122 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 << s.correctiveAveragePenetration << ","
                 << s.correctiveMaxPenetration << ","
                 << s.correctiveAverageLengthErrorBefore << ","
-                << s.correctiveAverageLengthErrorAfter << "\n";
+                << s.correctiveAverageLengthErrorAfter << ","
+                << s.globalFrameIndex << ","
+                << s.measuredFrameIndex << ","
+                << s.warmupFrames << ","
+                << s.measurementFrames << ","
+                << caseId << ","
+                << variant << ","
+                << scenario << ","
+                << s.seed << ","
+                << settingsHash << ","
+                << (m_experimentCase.enableMicrotype ? 1 : 0) << ","
+                << (m_experimentCase.enableCBMA ? 1 : 0) << ","
+                << (m_experimentCase.enablePhysicsIslands ? 1 : 0) << ","
+                << (m_experimentCase.enableRodRepair ? 1 : 0) << ","
+                << (m_experimentCase.enableGpuResident ? 1 : 0) << ","
+                << s.certificateFailureCount << ","
+                << s.certificateFailureRate << ","
+                << s.fallbackCount << ","
+                << s.modeSkipCount << ","
+                << s.modeQSOnlyCount << ","
+                << s.modeDynamicCount << ","
+                << s.modeIslandCount << ","
+                << s.modeRepairCount << ","
+                << s.modeFloatFallbackCount << ","
+                << s.islandCount << ","
+                << s.islandMemberCount << ","
+                << s.islandCommitCount << ","
+                << s.islandRejectCount << ","
+                << s.repairTaskCount << ","
+                << s.repairCommittedCount << ","
+                << s.repairRejectedCount << ","
+                << s.repairDeferredCount << ","
+                << s.repairSuccessRate << ","
+                << s.cpuReadbackCount << ","
+                << s.gpuHairMilliseconds << ","
+                << s.vramMegabytes << ","
+                << s.bandwidthMegabytesPerFrame << ","
+                << s.meanDecodeErrorMm << ","
+                << s.maxPenetrationMm << "\n";
         }
+        return true;
+    }
+
+    bool GpuHairViewer::ExportPerformanceJsonl(const std::wstring& filePath) const
+    {
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+        const std::string caseId = JsonEscape(WideToUtf8(m_experimentCase.caseId));
+        const std::string variant = JsonEscape(WideToUtf8(m_experimentCase.variant));
+        const std::string scenario = JsonEscape(WideToUtf8(m_experimentCase.scenario));
+        const std::string settingsHash = JsonEscape(WideToUtf8(m_experimentCase.settingsHash));
+        out << std::fixed << std::setprecision(6);
+        for (const PerformanceSample& s : m_performanceSamples)
+        {
+            out << "{"
+                << "\"case_id\":\"" << caseId << "\"," 
+                << "\"variant\":\"" << variant << "\"," 
+                << "\"scenario\":\"" << scenario << "\"," 
+                << "\"seed\":" << s.seed << ","
+                << "\"settings_hash\":\"" << settingsHash << "\"," 
+                << "\"global_frame_index\":" << s.globalFrameIndex << ","
+                << "\"measured_frame_index\":" << s.measuredFrameIndex << ","
+                << "\"frame_time_ms\":" << s.frameMilliseconds << ","
+                << "\"simulation_time_ms\":" << s.simulationMilliseconds << ","
+                << "\"gpu_hair_time_ms\":" << s.gpuHairMilliseconds << ","
+                << "\"vram_mb\":" << s.vramMegabytes << ","
+                << "\"bandwidth_mb_frame\":" << s.bandwidthMegabytesPerFrame << ","
+                << "\"certificate_failure_count\":" << s.certificateFailureCount << ","
+                << "\"certificate_failure_rate\":" << s.certificateFailureRate << ","
+                << "\"fallback_count\":" << s.fallbackCount << ","
+                << "\"mode_counts\":{" 
+                << "\"skip\":" << s.modeSkipCount << ","
+                << "\"qs_only\":" << s.modeQSOnlyCount << ","
+                << "\"dynamic\":" << s.modeDynamicCount << ","
+                << "\"island\":" << s.modeIslandCount << ","
+                << "\"repair\":" << s.modeRepairCount << ","
+                << "\"float_fallback\":" << s.modeFloatFallbackCount << "},"
+                << "\"island_count\":" << s.islandCount << ","
+                << "\"island_member_count\":" << s.islandMemberCount << ","
+                << "\"repair_task_count\":" << s.repairTaskCount << ","
+                << "\"repair_success_rate\":" << s.repairSuccessRate << ","
+                << "\"cpu_readback_count\":" << s.cpuReadbackCount << ","
+                << "\"max_penetration_mm\":" << s.maxPenetrationMm << ","
+                << "\"mean_decode_error_mm\":" << s.meanDecodeErrorMm
+                << "}\n";
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::ExportExperimentSettingsJson(const std::wstring& filePath) const
+    {
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+        out << std::fixed << std::setprecision(6);
+        out << "{\n";
+        out << "  \"case_id\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
+        out << "  \"variant\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"scenario\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenario)) << "\",\n";
+        out << "  \"seed\": " << m_experimentCase.seed << ",\n";
+        out << "  \"warmup_frames\": " << m_experimentCase.warmupFrames << ",\n";
+        out << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
+        out << "  \"settings_hash\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
+        out << "  \"feature_flags\": {\n";
+        out << "    \"enableMicrotype\": " << (m_experimentCase.enableMicrotype ? "true" : "false") << ",\n";
+        out << "    \"enableCBMA\": " << (m_experimentCase.enableCBMA ? "true" : "false") << ",\n";
+        out << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
+        out << "    \"enableRodRepair\": " << (m_experimentCase.enableRodRepair ? "true" : "false") << ",\n";
+        out << "    \"enableGpuResident\": " << (m_experimentCase.enableGpuResident ? "true" : "false") << "\n";
+        out << "  }\n";
+        out << "}\n";
         return true;
     }
 
@@ -7417,40 +7669,74 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
 
         std::vector<float> frameMs;
         std::vector<float> simMs;
+        std::vector<float> gpuHairMs;
         std::vector<float> selectedClusters;
         std::vector<float> correctivePenetration;
         frameMs.reserve(m_performanceSamples.size());
         simMs.reserve(m_performanceSamples.size());
+        gpuHairMs.reserve(m_performanceSamples.size());
         selectedClusters.reserve(m_performanceSamples.size());
         correctivePenetration.reserve(m_performanceSamples.size());
+
+        uint64_t certificateFailures = 0u;
+        uint64_t fallbackCount = 0u;
+        uint64_t repairTasks = 0u;
+        uint64_t repairCommitted = 0u;
+        uint64_t cpuReadbacks = 0u;
+        float vramMb = 0.0f;
+        float bandwidthMbFrame = 0.0f;
         for (const PerformanceSample& s : m_performanceSamples)
         {
             frameMs.push_back(s.frameMilliseconds);
             simMs.push_back(s.simulationMilliseconds);
+            gpuHairMs.push_back(s.gpuHairMilliseconds);
             selectedClusters.push_back(static_cast<float>(s.activeSetSelectedClusterCount));
             correctivePenetration.push_back(s.correctiveAveragePenetration);
+            certificateFailures += s.certificateFailureCount;
+            fallbackCount += s.fallbackCount;
+            repairTasks += s.repairTaskCount;
+            repairCommitted += s.repairCommittedCount;
+            cpuReadbacks += s.cpuReadbackCount;
+            vramMb = std::max(vramMb, s.vramMegabytes);
+            bandwidthMbFrame = std::max(bandwidthMbFrame, s.bandwidthMegabytesPerFrame);
         }
 
         const std::filesystem::path baseDir = summaryPath.parent_path();
         const std::wstring stem = summaryPath.stem().wstring();
-        const std::filesystem::path perfPath = baseDir / (stem + L"_frames.csv");
-        const std::filesystem::path planPath = baseDir / (stem + L"_activeset_plan.json");
-        const std::filesystem::path settingsPath = baseDir / (stem + L"_viewer_settings.ini");
+        std::wstring runStem = stem;
+        const std::wstring suffix = L"_summary";
+        if (runStem.size() > suffix.size() && runStem.substr(runStem.size() - suffix.size()) == suffix)
+        {
+            runStem.resize(runStem.size() - suffix.size());
+        }
+        const std::filesystem::path perfPath = baseDir / (runStem + L"_frames.csv");
+        const std::filesystem::path frameJsonlPath = baseDir / (runStem + L"_frames.jsonl");
+        const std::filesystem::path experimentSettingsPath = baseDir / (runStem + L"_settings.json");
+        const std::filesystem::path planPath = baseDir / (runStem + L"_activeset_plan.json");
+        const std::filesystem::path viewerSettingsPath = baseDir / (runStem + L"_viewer_settings.ini");
         const bool perfOk = ExportPerformanceCsv(perfPath.wstring());
+        const bool frameJsonlOk = ExportPerformanceJsonl(frameJsonlPath.wstring());
+        const bool experimentSettingsOk = ExportExperimentSettingsJson(experimentSettingsPath.wstring());
         const bool planOk = ExportActiveSetPlanJson(planPath.wstring());
-        const bool settingsOk = SaveSettingsToFile(settingsPath.wstring());
+        const bool settingsOk = SaveSettingsToFile(viewerSettingsPath.wstring());
 
         const float frameMax = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
         const float simMax = simMs.empty() ? 0.0f : *std::max_element(simMs.begin(), simMs.end());
         const float sixtyFpsRatio = frameMs.empty()
             ? 0.0f
             : static_cast<float>(std::count_if(frameMs.begin(), frameMs.end(), [](float v) { return v <= 16.67f; })) / static_cast<float>(frameMs.size());
+        const float certificateFailureRate = m_performanceSamples.empty() ? 0.0f : static_cast<float>(certificateFailures) / static_cast<float>(m_performanceSamples.size());
+        const float fallbackRate = m_performanceSamples.empty() ? 0.0f : static_cast<float>(fallbackCount) / static_cast<float>(m_performanceSamples.size());
+        const float repairSuccessRate = repairTasks > 0u ? static_cast<float>(repairCommitted) / static_cast<float>(repairTasks) : 0.0f;
+
         const std::string assetSourceUtf8 = WideToUtf8(m_lastAssetSource);
         const std::string importStatusUtf8 = WideToUtf8(m_lastImportStatus);
         const std::string editStatusUtf8 = WideToUtf8(m_lastEditStackStatus);
         const std::string perfPathUtf8 = WideToUtf8(perfPath.wstring());
+        const std::string frameJsonlPathUtf8 = WideToUtf8(frameJsonlPath.wstring());
+        const std::string experimentSettingsPathUtf8 = WideToUtf8(experimentSettingsPath.wstring());
         const std::string planPathUtf8 = WideToUtf8(planPath.wstring());
-        const std::string settingsPathUtf8 = WideToUtf8(settingsPath.wstring());
+        const std::string viewerSettingsPathUtf8 = WideToUtf8(viewerSettingsPath.wstring());
         hairgpu::HairEditComparisonReport editMetrics = {};
         if (!m_baseAsset.strands.empty() && m_baseAsset.strands.size() == m_asset.strands.size())
         {
@@ -7460,17 +7746,46 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         std::ostringstream json;
         json << std::fixed << std::setprecision(6);
         json << "{\n";
-        json << "  \"run_name\": \"" << JsonEscape(WideToUtf8(stem)) << "\",\n";
+        json << "  \"run_name\": \"" << JsonEscape(WideToUtf8(runStem)) << "\",\n";
+        json << "  \"case_id\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
+        json << "  \"variant\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        json << "  \"scenario\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenario)) << "\",\n";
+        json << "  \"seed\": " << m_experimentCase.seed << ",\n";
+        json << "  \"warmup_frames\": " << m_experimentCase.warmupFrames << ",\n";
+        json << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
+        json << "  \"settings_hash\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
+        json << "  \"feature_flags\": {\n";
+        json << "    \"enableMicrotype\": " << (m_experimentCase.enableMicrotype ? "true" : "false") << ",\n";
+        json << "    \"enableCBMA\": " << (m_experimentCase.enableCBMA ? "true" : "false") << ",\n";
+        json << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
+        json << "    \"enableRodRepair\": " << (m_experimentCase.enableRodRepair ? "true" : "false") << ",\n";
+        json << "    \"enableGpuResident\": " << (m_experimentCase.enableGpuResident ? "true" : "false") << "\n";
+        json << "  },\n";
         json << "  \"asset_source\": \"" << JsonEscape(assetSourceUtf8) << "\",\n";
         json << "  \"import_status\": \"" << JsonEscape(importStatusUtf8) << "\",\n";
         json << "  \"edit_status\": \"" << JsonEscape(editStatusUtf8) << "\",\n";
         json << "  \"sample_count\": " << m_performanceSamples.size() << ",\n";
         json << "  \"avg_frame_ms\": " << ComputeAverage(frameMs) << ",\n";
-        json << "  \"p95_frame_ms\": " << ComputePercentile95(frameMs) << ",\n";
+        json << "  \"p50_frame_ms\": " << ComputePercentile(frameMs, 50.0f) << ",\n";
+        json << "  \"p95_frame_ms\": " << ComputePercentile(frameMs, 95.0f) << ",\n";
+        json << "  \"p99_frame_ms\": " << ComputePercentile(frameMs, 99.0f) << ",\n";
         json << "  \"worst_frame_ms\": " << frameMax << ",\n";
         json << "  \"avg_simulation_ms\": " << ComputeAverage(simMs) << ",\n";
-        json << "  \"p95_simulation_ms\": " << ComputePercentile95(simMs) << ",\n";
+        json << "  \"p50_simulation_ms\": " << ComputePercentile(simMs, 50.0f) << ",\n";
+        json << "  \"p95_simulation_ms\": " << ComputePercentile(simMs, 95.0f) << ",\n";
+        json << "  \"p99_simulation_ms\": " << ComputePercentile(simMs, 99.0f) << ",\n";
         json << "  \"worst_simulation_ms\": " << simMax << ",\n";
+        json << "  \"avg_gpu_hair_ms\": " << ComputeAverage(gpuHairMs) << ",\n";
+        json << "  \"p95_gpu_hair_ms\": " << ComputePercentile(gpuHairMs, 95.0f) << ",\n";
+        json << "  \"p99_gpu_hair_ms\": " << ComputePercentile(gpuHairMs, 99.0f) << ",\n";
+        json << "  \"vram_mb\": " << vramMb << ",\n";
+        json << "  \"bandwidth_mb_frame\": " << bandwidthMbFrame << ",\n";
+        json << "  \"certificate_failure_rate\": " << certificateFailureRate << ",\n";
+        json << "  \"fallback_rate\": " << fallbackRate << ",\n";
+        json << "  \"repair_success_rate\": " << repairSuccessRate << ",\n";
+        json << "  \"cpu_readback_count\": " << cpuReadbacks << ",\n";
+        json << "  \"frame_jsonl\": \"" << JsonEscape(frameJsonlPathUtf8) << "\",\n";
+        json << "  \"settings_json\": \"" << JsonEscape(experimentSettingsPathUtf8) << "\",\n";
         json << "  \"avg_fps\": " << ((ComputeAverage(frameMs) > 1.0e-6f) ? (1000.0f / ComputeAverage(frameMs)) : 0.0f) << ",\n";
         json << "  \"sixty_fps_ratio\": " << sixtyFpsRatio << ",\n";
         json << "  \"guide_count\": " << m_asset.guideStrandCount << ",\n";
@@ -7491,8 +7806,10 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         json << "  \"peak_ram_mb\": " << m_activeSetPlan.summary.estimatedMemoryMegabytes << ",\n";
         json << "  \"exports\": {\n";
         json << "    \"frame_csv\": { \"ok\": " << (perfOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(perfPathUtf8) << "\" },\n";
+        json << "    \"frame_jsonl\": { \"ok\": " << (frameJsonlOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(frameJsonlPathUtf8) << "\" },\n";
+        json << "    \"experiment_settings\": { \"ok\": " << (experimentSettingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(experimentSettingsPathUtf8) << "\" },\n";
         json << "    \"active_set_json\": { \"ok\": " << (planOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(planPathUtf8) << "\" },\n";
-        json << "    \"viewer_settings\": { \"ok\": " << (settingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(settingsPathUtf8) << "\" }\n";
+        json << "    \"viewer_settings\": { \"ok\": " << (settingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(viewerSettingsPathUtf8) << "\" }\n";
         json << "  }\n";
         json << "}\n";
 
@@ -7517,10 +7834,11 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             out << " totalStrands=" << m_asset.strands.size();
             out << " particles=" << m_asset.restPoints.size() << "\n";
             out << "frame.avgMs=" << ComputeAverage(frameMs);
-            out << " frame.p95Ms=" << ComputePercentile95(frameMs);
+            out << " frame.p95Ms=" << ComputePercentile(frameMs, 95.0f);
+            out << " frame.p99Ms=" << ComputePercentile(frameMs, 99.0f);
             out << " frame.maxMs=" << frameMax << "\n";
             out << "sim.avgMs=" << ComputeAverage(simMs);
-            out << " sim.p95Ms=" << ComputePercentile95(simMs);
+            out << " sim.p95Ms=" << ComputePercentile(simMs, 95.0f);
             out << " sim.maxMs=" << simMax << "\n";
             out << json.str();
         }
