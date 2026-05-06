@@ -58,7 +58,6 @@ C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.3520
               _SizeTy=unsigned __int64
           ]
   
-  LINK : 前回のインクリメンタル リンクで C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe が見つからなかったか、ビルドされませんでした。フル リンクを行います。
   HairSystem.vcxproj -> C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe
           1 個のファイルをコピーしました。
           1 個のファイルをコピーしました。
@@ -88,6 +87,6 @@ C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.3520
           1 個のファイルをコピーしました。
           1 個のファイルをコピーしました。
           1 個のファイルをコピーしました。
-  [HairGPU Step0] Complete policy-safe profile_results created at: C:\Users\kyose\source\repos\HairSystem\profile_results\20260506_140115_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
-  [HairGPU Step0] CreatedAt: 2026-05-06 14:01:15
+  [HairGPU Step0] Complete policy-safe profile_results created at: C:\Users\kyose\source\repos\HairSystem\profile_results\20260506_144853_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
+  [HairGPU Step0] CreatedAt: 2026-05-06 14:48:53
   [HairGPU Step0] Real FPS requires HairSystem.exe to be allowed by Windows policy.

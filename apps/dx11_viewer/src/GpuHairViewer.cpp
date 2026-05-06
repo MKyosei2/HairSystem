@@ -7394,6 +7394,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         m_experimentCase.warmupFrames = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_WARMUP_FRAMES"), 0u);
         m_experimentCase.measurementFrames = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_MEASUREMENT_FRAMES"), 0u);
         m_experimentCase.autoExitAfterCapture = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"));
+        m_experimentCase.enableNoNoveltyBaseline = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_NO_NOVELTY_BASELINE"));
         m_experimentCase.enableMicrotype = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_MICROTYPE"));
         m_experimentCase.enableCBMA = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_CBMA"));
         m_experimentCase.enablePhysicsIslands = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_PHYSICS_ISLANDS"));
@@ -7502,7 +7503,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableMicrotype,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm\n";
         const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
@@ -7547,6 +7548,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 << scenario << ","
                 << s.seed << ","
                 << settingsHash << ","
+                << (m_experimentCase.enableNoNoveltyBaseline ? 1 : 0) << ","
                 << (m_experimentCase.enableMicrotype ? 1 : 0) << ","
                 << (m_experimentCase.enableCBMA ? 1 : 0) << ","
                 << (m_experimentCase.enablePhysicsIslands ? 1 : 0) << ","
@@ -7600,6 +7602,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
                 << "\"scenario\":\"" << scenario << "\"," 
                 << "\"seed\":" << s.seed << ","
                 << "\"settings_hash\":\"" << settingsHash << "\"," 
+                << "\"enable_no_novelty_baseline\":" << (m_experimentCase.enableNoNoveltyBaseline ? "true" : "false") << ","
                 << "\"global_frame_index\":" << s.globalFrameIndex << ","
                 << "\"measured_frame_index\":" << s.measuredFrameIndex << ","
                 << "\"frame_time_ms\":" << s.frameMilliseconds << ","
@@ -7646,6 +7649,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         out << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
         out << "  \"settings_hash\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
         out << "  \"feature_flags\": {\n";
+        out << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
         out << "    \"enableMicrotype\": " << (m_experimentCase.enableMicrotype ? "true" : "false") << ",\n";
         out << "    \"enableCBMA\": " << (m_experimentCase.enableCBMA ? "true" : "false") << ",\n";
         out << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
@@ -7755,6 +7759,7 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
         json << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
         json << "  \"settings_hash\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
         json << "  \"feature_flags\": {\n";
+        json << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
         json << "    \"enableMicrotype\": " << (m_experimentCase.enableMicrotype ? "true" : "false") << ",\n";
         json << "    \"enableCBMA\": " << (m_experimentCase.enableCBMA ? "true" : "false") << ",\n";
         json << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";

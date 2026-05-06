@@ -337,6 +337,7 @@ def import_run(db: FinalStageDatabase, base_dir: Path, run: dict[str, Any], defa
         seed=int(run.get('seed', 0)),
         warmup_frames=int(run.get('warmup_frames', 0)),
         measurement_frames=int(run.get('measurement_frames', 0)),
+        enable_no_novelty_baseline=bool(run.get('enableNoNoveltyBaseline', False)),
         enable_microtype=bool(run.get('enableMicrotype', False)),
         enable_cbma=bool(run.get('enableCBMA', False)),
         enable_physics_islands=bool(run.get('enablePhysicsIslands', False)),

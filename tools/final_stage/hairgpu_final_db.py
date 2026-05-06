@@ -25,6 +25,7 @@ class RuntimeRunMetadata:
     seed: int = 0
     warmup_frames: int = 0
     measurement_frames: int = 0
+    enable_no_novelty_baseline: bool = False
     enable_microtype: bool = False
     enable_cbma: bool = False
     enable_physics_islands: bool = False
@@ -68,6 +69,7 @@ class FinalStageDatabase:
             "settings_hash": "TEXT",
             "warmup_frames": "INTEGER DEFAULT 0",
             "measurement_frames": "INTEGER DEFAULT 0",
+            "enable_no_novelty_baseline": "INTEGER DEFAULT 0",
             "enable_microtype": "INTEGER DEFAULT 0",
             "enable_cbma": "INTEGER DEFAULT 0",
             "enable_physics_islands": "INTEGER DEFAULT 0",
@@ -365,7 +367,7 @@ class FinalStageDatabase:
                 experiment_id, run_name, method_code, scenario_code, asset_name, runtime_source,
                 summary_json_path, frame_csv_path, frame_jsonl_path, settings_json_path, error_json_path,
                 case_id, variant_code, seed, settings_hash, warmup_frames, measurement_frames,
-                enable_microtype, enable_cbma, enable_physics_islands, enable_rod_repair, enable_gpu_resident,
+                enable_no_novelty_baseline, enable_microtype, enable_cbma, enable_physics_islands, enable_rod_repair, enable_gpu_resident,
                 sample_count, avg_frame_ms, p50_frame_ms, p95_frame_ms, p99_frame_ms,
                 worst_frame_ms, avg_simulation_ms, p50_simulation_ms, p95_simulation_ms, p99_simulation_ms,
                 avg_gpu_hair_ms, p95_gpu_hair_ms, p99_gpu_hair_ms, avg_fps, sixty_fps_ratio, guide_count,
@@ -373,7 +375,7 @@ class FinalStageDatabase:
                 avg_clump_preservation, avg_edit_locality, avg_boundary_naturalness,
                 avg_edit_to_run_latency_ms, avg_penetration_per_sec, peak_ram_mb, vram_mb, bandwidth_mb_frame,
                 certificate_failure_rate, fallback_rate, repair_success_rate, cpu_readback_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 experiment_id,
@@ -393,6 +395,7 @@ class FinalStageDatabase:
                 settings_hash,
                 warmup_frames,
                 measurement_frames,
+                1 if flags.get("enableNoNoveltyBaseline", metadata.enable_no_novelty_baseline) else 0,
                 1 if flags.get("enableMicrotype", metadata.enable_microtype) else 0,
                 1 if flags.get("enableCBMA", metadata.enable_cbma) else 0,
                 1 if flags.get("enablePhysicsIslands", metadata.enable_physics_islands) else 0,

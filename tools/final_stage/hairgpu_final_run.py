@@ -68,6 +68,7 @@ def run_viewer(
         env["HAIRGPU_WARMUP_FRAMES"] = str(case.get("warmup_frames", 0))
         env["HAIRGPU_MEASUREMENT_FRAMES"] = str(case.get("measurement_frames", 0))
         env["HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"] = "1"
+        env["HAIRGPU_ENABLE_NO_NOVELTY_BASELINE"] = "1" if case.get("enableNoNoveltyBaseline") else "0"
         env["HAIRGPU_ENABLE_MICROTYPE"] = "1" if case.get("enableMicrotype") else "0"
         env["HAIRGPU_ENABLE_CBMA"] = "1" if case.get("enableCBMA") else "0"
         env["HAIRGPU_ENABLE_PHYSICS_ISLANDS"] = "1" if case.get("enablePhysicsIslands") else "0"

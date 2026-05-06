@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS runtime_runs (
     settings_hash TEXT,
     warmup_frames INTEGER DEFAULT 0,
     measurement_frames INTEGER DEFAULT 0,
+    enable_no_novelty_baseline INTEGER DEFAULT 0,
     enable_microtype INTEGER DEFAULT 0,
     enable_cbma INTEGER DEFAULT 0,
     enable_physics_islands INTEGER DEFAULT 0,

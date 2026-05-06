@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+# Five novelty axes.  The sixth experimental option, "no novelty", is represented
+# explicitly by enableNoNoveltyBaseline and is mutually exclusive with these flags.
 FEATURES = [
     ("enableMicrotype", "microtype"),
     ("enableCBMA", "cbma"),
@@ -13,6 +15,9 @@ FEATURES = [
     ("enableRodRepair", "rod_repair"),
     ("enableGpuResident", "gpu_resident"),
 ]
+NO_NOVELTY_FLAG = "enableNoNoveltyBaseline"
+COMBINATION_SPACE = "novelty5_plus_no_novelty_baseline"
+COMBINATION_POLICY = "enableNoNoveltyBaseline is mutually exclusive with the five novelty feature flags."
 
 
 def bit_string(mask: int) -> str:
@@ -26,9 +31,29 @@ def make_combo_variant(mask: int) -> dict[str, Any]:
         "variant": f"Combo_{bits}",
         "feature_mask": mask,
         "feature_bits": bits,
+        "combination_space": COMBINATION_SPACE,
+        "combination_policy": COMBINATION_POLICY,
+        "combination_bits_6": f"{bits}0",
+        NO_NOVELTY_FLAG: False,
     }
     for bit, (key, _) in enumerate(FEATURES):
         payload[key] = bool(mask & (1 << bit))
+    return payload
+
+
+def make_no_novelty_baseline_variant() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "method": "Baseline_CurrentProject",
+        "variant": "Baseline_CurrentProject",
+        "feature_mask": 0,
+        "feature_bits": "00000",
+        "combination_space": COMBINATION_SPACE,
+        "combination_policy": COMBINATION_POLICY,
+        "combination_bits_6": "000001",
+        NO_NOVELTY_FLAG: True,
+    }
+    for key, _ in FEATURES:
+        payload[key] = False
     return payload
 
 
@@ -47,6 +72,13 @@ def default_scenarios() -> list[dict[str, Any]]:
     ]
 
 
+def validate_variant(variant: dict[str, Any]) -> None:
+    novelty_on = any(bool(variant.get(key, False)) for key, _ in FEATURES)
+    no_novelty = bool(variant.get(NO_NOVELTY_FLAG, False))
+    if novelty_on and no_novelty:
+        raise ValueError(f"Invalid variant {variant.get('variant')}: no-novelty baseline cannot be combined with novelty flags")
+
+
 def settings_hash(case: dict[str, Any]) -> str:
     stable = {
         key: case.get(key)
@@ -57,6 +89,7 @@ def settings_hash(case: dict[str, Any]) -> str:
             "seed",
             "warmup_frames",
             "measurement_frames",
+            NO_NOVELTY_FLAG,
             "enableMicrotype",
             "enableCBMA",
             "enablePhysicsIslands",
@@ -80,6 +113,7 @@ def make_case(
     experiment: str,
     timeout_seconds: int,
 ) -> dict[str, Any]:
+    validate_variant(variant)
     case_id = f"case_{index:04d}"
     method = str(variant["method"])
     scenario_code = str(scenario["scenario"])
@@ -97,6 +131,7 @@ def make_case(
         "seed": seed,
         "warmup_frames": warmup_frames,
         "measurement_frames": measurement_frames,
+        NO_NOVELTY_FLAG: bool(variant.get(NO_NOVELTY_FLAG, False)),
         "enableMicrotype": bool(variant.get("enableMicrotype", False)),
         "enableCBMA": bool(variant.get("enableCBMA", False)),
         "enablePhysicsIslands": bool(variant.get("enablePhysicsIslands", False)),
@@ -104,6 +139,9 @@ def make_case(
         "enableGpuResident": bool(variant.get("enableGpuResident", False)),
         "feature_mask": int(variant.get("feature_mask", 0)),
         "feature_bits": str(variant.get("feature_bits", "00000")),
+        "combination_bits_6": str(variant.get("combination_bits_6", "000000")),
+        "combination_space": str(variant.get("combination_space", COMBINATION_SPACE)),
+        "combination_policy": str(variant.get("combination_policy", COMBINATION_POLICY)),
         "output_subdir": f"cases/{case_id}",
         "telemetry_dir": f"cases/{case_id}",
         "viewer_exe": viewer_exe,
@@ -127,6 +165,10 @@ def generate_cases(
 ) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     index = 1
+
+    # All 2^5 combinations of the five novelty axes.  Combo_00000 is kept as
+    # the proposed runtime with all novelty flags off; it is intentionally not
+    # the same thing as Baseline_CurrentProject.
     for mask in range(32):
         variant = make_combo_variant(mask)
         for scenario in scenarios:
@@ -134,22 +176,34 @@ def generate_cases(
                 cases.append(make_case(index, variant, scenario, seed, warmup_frames, measurement_frames, asset, viewer_exe, experiment, timeout_seconds))
                 index += 1
 
-    baseline_variant = {
-        "method": "Baseline_CurrentProject",
-        "variant": "Baseline_CurrentProject",
-        "feature_mask": 0,
-        "feature_bits": "baseline",
-        "enableMicrotype": False,
-        "enableCBMA": False,
-        "enablePhysicsIslands": False,
-        "enableRodRepair": False,
-        "enableGpuResident": False,
-    }
+    # The sixth option, "no novelty", is the neutral current-project baseline.
+    # To preserve the requested 650-case suite, the baseline is measured once
+    # per scenario using the first seed: 32*10*2 + 1*10 = 650.
+    baseline_variant = make_no_novelty_baseline_variant()
     baseline_seed = seeds[0] if seeds else 0
     for scenario in scenarios:
         cases.append(make_case(index, baseline_variant, scenario, baseline_seed, warmup_frames, measurement_frames, asset, viewer_exe, experiment, timeout_seconds))
         index += 1
     return cases
+
+
+def validate_case_set(cases: list[dict[str, Any]], scenarios: list[dict[str, Any]], seeds: list[int]) -> None:
+    if len(cases) != 650:
+        raise RuntimeError(f"Expected 650 cases, generated {len(cases)}")
+    baseline = [c for c in cases if c.get(NO_NOVELTY_FLAG)]
+    if len(baseline) != len(scenarios):
+        raise RuntimeError(f"Expected {len(scenarios)} no-novelty baseline cases, generated {len(baseline)}")
+    combos = [c for c in cases if not c.get(NO_NOVELTY_FLAG)]
+    expected_combo_count = 32 * len(scenarios) * len(seeds)
+    if len(combos) != expected_combo_count:
+        raise RuntimeError(f"Expected {expected_combo_count} novelty-combination cases, generated {len(combos)}")
+    invalid = [c for c in cases if c.get(NO_NOVELTY_FLAG) and any(c.get(key) for key, _ in FEATURES)]
+    if invalid:
+        raise RuntimeError(f"No-novelty baseline was combined with novelty flags in {len(invalid)} cases")
+    methods = {c["method"] for c in combos}
+    if methods != {f"Combo_{mask:05b}" for mask in range(32)}:
+        missing = sorted({f"Combo_{mask:05b}" for mask in range(32)} - methods)
+        raise RuntimeError(f"Missing novelty combinations: {missing}")
 
 
 def write_jsonl(path: Path, cases: list[dict[str, Any]]) -> None:
@@ -164,6 +218,10 @@ def write_suite_json(path: Path, cases: list[dict[str, Any]], *, db: str, excel:
     suite = {
         "suite_name": "exp_650_runtime_suite",
         "experiment_name": "exp_650",
+        "combination_space": COMBINATION_SPACE,
+        "combination_policy": COMBINATION_POLICY,
+        "novelty_axes": [key for key, _ in FEATURES],
+        "no_novelty_axis": NO_NOVELTY_FLAG,
         "baseline_method": "Baseline_CurrentProject",
         "schema": schema,
         "db": db,
@@ -211,8 +269,7 @@ def main() -> int:
         experiment=args.experiment,
         timeout_seconds=args.timeout_seconds,
     )
-    if len(cases) != 650:
-        raise RuntimeError(f"Expected 650 cases, generated {len(cases)}")
+    validate_case_set(cases, scenarios, seeds)
     write_jsonl(Path(args.out_jsonl), cases)
     write_suite_json(
         Path(args.out_suite),

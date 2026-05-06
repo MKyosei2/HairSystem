@@ -181,6 +181,7 @@ namespace hairgpu::viewer
             uint32_t seed = 0u;
             uint32_t warmupFrames = 0u;
             uint32_t measurementFrames = 0u;
+            bool enableNoNoveltyBaseline = false;
             bool enableMicrotype = false;
             bool enableCBMA = false;
             bool enablePhysicsIslands = false;
