@@ -682,31 +682,7 @@ PagedTelemetry:
 
 ---
 
-## 13. 最終的な位置づけ
-
-この研究は、次の位置づけを持つ。
-
-```txt
-学士卒研:
-  synthetic risk + dummy repair による GPU-resident variable strand task runtime
-
-修士研究:
-  01 certificate data type または 04 edit certificate と接続した real task runtime
-
-博士研究:
-  paged segment runtime、複数workload、GPU scheduling一般化、100万本・2万segment超への拡張
-
-トップ会議候補:
-  certificate付きdata type、physics、editing、rendering、paged runtimeを統合し、既存hair runtimeに対して明確な品質・速度・安定性改善を示す統一システム
-```
-
-05単体の卒研MVPでは、主張をGPU-resident runtimeに限定する。
-
-01/02/03/04との統合は、05の将来拡張として扱う。
-
----
-
-## 14. 最終要約
+## 13. 最終要約
 
 最終的な05は、次のような研究である。
 
