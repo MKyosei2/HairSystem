@@ -1,3 +1,0 @@
-# HairSystem Wiki
-
-TODO.
