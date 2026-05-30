@@ -1,3 +1,5 @@
 # HairSystem
 
-README for project planning.
+## Plan
+
+TBD.
