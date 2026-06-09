@@ -78,7 +78,7 @@
 
 ## 重要な注意
 
-この ZIP は **完全な髪システムそのものではなく、完成形へ進めるための GPU 中心ベース**です。  
+この ZIP は **完全な髪システムそのものではなく、完成形へ進めるための GPU 中心ベース**です。
 ただし現状でも `guide simulation + follower reconstruction + GPU root bind + dense/spatial-hash/adaptive-hash/sorted-grid broadphase self collision + runtime angular XPBD bend + radix-sorted CPU reference + strand-aware pair culling + XPBD-ready compliance path + offline angular XPBD cleanup + hair cache + animated scalp cache + sample scalp skinning` まで揃っており、次は完全 GPU radix / prefix sum 化、本格 runtime skinning、Alembic/USD 連携、production tube 化 に集中できる状態です。
 
 ## v7 additions

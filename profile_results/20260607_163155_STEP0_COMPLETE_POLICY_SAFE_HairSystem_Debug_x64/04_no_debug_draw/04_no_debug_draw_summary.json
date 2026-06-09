@@ -1,7 +1,0 @@
-﻿{
-"preset":"04_no_debug_draw",
-"description":"Disable debug draw and debug overlays.",
-"status":"not_executed_by_policy_safe_build",
-"real_fps_available":"pending",
-"expected_diagnosis":"If this improves frame time, debug rendering/overlay is a bottleneck."
-}

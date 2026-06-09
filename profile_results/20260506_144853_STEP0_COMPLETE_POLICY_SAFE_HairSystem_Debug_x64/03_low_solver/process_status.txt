@@ -1,5 +1,0 @@
-﻿status=not_executed_by_policy_safe_build
-viewer_execution=skipped_by_default
-real_fps_available=no
-expected_diagnosis=If this improves frame time, solver iteration count is a bottleneck.
-target=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe

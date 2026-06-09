@@ -13,7 +13,7 @@ namespace hairgpu
             return v - n * Dot(v, n);
         }
 
-        
+
         Vec3 ComputeCapFlowDirection(const Vec3& rootNormal, const Vec3& rootPosition, const Vec3& scalpCenter, const Vec3& fallbackDirection)
         {
             Vec3 projectedDown = ProjectOntoPlane(Vec3(0.0f, -1.0f, 0.0f), rootNormal);

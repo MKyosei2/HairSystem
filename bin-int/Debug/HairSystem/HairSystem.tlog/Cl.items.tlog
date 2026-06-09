@@ -10,9 +10,12 @@ C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Broadphase.cpp;C:\Users\
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Cards.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\Cards.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Collision.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\Collision.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\DccInterop.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\DccInterop.obj
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\GlobalHairBudget.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\GlobalHairBudget.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\GuideCache.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\GuideCache.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairCache.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\HairCache.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairMath.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\HairMath.obj
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairNoveltyFlags.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\HairNoveltyFlags.obj
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HairNoveltyTelemetry.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\HairNoveltyTelemetry.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\HybridRuntime.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\Lod.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\Lod.obj
 C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\MeshIO.cpp;C:\Users\kyose\source\repos\HairSystem\bin-int\Debug\HairSystem\MeshIO.obj

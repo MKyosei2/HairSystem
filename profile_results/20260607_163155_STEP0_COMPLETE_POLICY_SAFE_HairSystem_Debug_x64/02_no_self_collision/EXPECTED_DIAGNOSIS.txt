@@ -1,1 +1,0 @@
-﻿If this improves frame time, self collision/broadphase/solve is a bottleneck.

@@ -1,8 +1,8 @@
 set(HAIRGPU_DX11_VIEWER_SHADERS
     DebugLine.hlsl
+    HairActiveSet.hlsl
     HairBrickInstanced.hlsl
     HairCpuMesh.hlsl
-    HairActiveSet.hlsl
     HairIndirectArgs.hlsl
     HairLine.hlsl
     HairParticle.hlsl
@@ -11,6 +11,7 @@ set(HAIRGPU_DX11_VIEWER_SHADERS
     HairStrandInstanced.hlsl
     HairTube.hlsl
     HairVoxel.hlsl
+    ScalpCoverage.hlsl
     ScalpMesh.hlsl
     ScalpSim.hlsl
 )

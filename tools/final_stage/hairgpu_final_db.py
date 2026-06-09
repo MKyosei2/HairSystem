@@ -27,6 +27,12 @@ class RuntimeRunMetadata:
     measurement_frames: int = 0
     enable_no_novelty_baseline: bool = False
     enable_microtype: bool = False
+    enable_budgeted_physics: bool = False
+    enable_certificate_render: bool = False
+    enable_per_strand_edit: bool = False
+    top_level_novelty_mask: int = 0
+    phase: str = "phase1_pre_novelty_final_adjustment"
+    novelty_mapping_version: str = "final5_v1"
     enable_cbma: bool = False
     enable_physics_islands: bool = False
     enable_rod_repair: bool = False
@@ -71,6 +77,12 @@ class FinalStageDatabase:
             "measurement_frames": "INTEGER DEFAULT 0",
             "enable_no_novelty_baseline": "INTEGER DEFAULT 0",
             "enable_microtype": "INTEGER DEFAULT 0",
+            "enable_budgeted_physics": "INTEGER DEFAULT 0",
+            "enable_certificate_render": "INTEGER DEFAULT 0",
+            "enable_per_strand_edit": "INTEGER DEFAULT 0",
+            "top_level_novelty_mask": "INTEGER DEFAULT 0",
+            "phase": "TEXT",
+            "novelty_mapping_version": "TEXT",
             "enable_cbma": "INTEGER DEFAULT 0",
             "enable_physics_islands": "INTEGER DEFAULT 0",
             "enable_rod_repair": "INTEGER DEFAULT 0",
@@ -93,6 +105,45 @@ class FinalStageDatabase:
         self._ensure_columns("runtime_frame_metrics", {
             "global_frame_index": "INTEGER",
             "measured_frame_index": "INTEGER",
+            "top_level_novelty_mask": "INTEGER DEFAULT 0",
+            "overflow_count": "INTEGER DEFAULT 0",
+            "budget_drop_count": "INTEGER DEFAULT 0",
+            "defer_count": "INTEGER DEFAULT 0",
+            "microtype_decoded_count": "INTEGER DEFAULT 0",
+            "safe_decode_count": "INTEGER DEFAULT 0",
+            "false_safe_count": "INTEGER DEFAULT 0",
+            "typed_repair_request_count": "INTEGER DEFAULT 0",
+            "float_fallback_request_count": "INTEGER DEFAULT 0",
+            "reject_payload_count": "INTEGER DEFAULT 0",
+            "risky_strand_count": "INTEGER DEFAULT 0",
+            "repair_commit_count": "INTEGER DEFAULT 0",
+            "repair_reject_count": "INTEGER DEFAULT 0",
+            "repair_defer_count": "INTEGER DEFAULT 0",
+            "island_candidate_count": "INTEGER DEFAULT 0",
+            "physics_fallback_count": "INTEGER DEFAULT 0",
+            "render_certificate_count": "INTEGER DEFAULT 0",
+            "render_skip_count": "INTEGER DEFAULT 0",
+            "render_coarse_opacity_count": "INTEGER DEFAULT 0",
+            "render_strand_raster_count": "INTEGER DEFAULT 0",
+            "render_high_quality_shadow_count": "INTEGER DEFAULT 0",
+            "render_high_quality_specular_count": "INTEGER DEFAULT 0",
+            "render_full_quality_count": "INTEGER DEFAULT 0",
+            "render_dropped_full_quality_count": "INTEGER DEFAULT 0",
+            "p95_shadow_error_bound": "REAL DEFAULT 0",
+            "p95_specular_error_bound": "REAL DEFAULT 0",
+            "temporal_flicker_score": "REAL DEFAULT 0",
+            "edit_operation_count": "INTEGER DEFAULT 0",
+            "edit_repair_task_count": "INTEGER DEFAULT 0",
+            "edit_island_escalation_count": "INTEGER DEFAULT 0",
+            "edit_commit_count": "INTEGER DEFAULT 0",
+            "edit_reject_count": "INTEGER DEFAULT 0",
+            "edit_preview_full_quality_count": "INTEGER DEFAULT 0",
+            "edit_latency_ms": "REAL DEFAULT 0",
+            "gpu_resident_task_count": "INTEGER DEFAULT 0",
+            "risky_compaction_count": "INTEGER DEFAULT 0",
+            "dispatch_indirect_count": "INTEGER DEFAULT 0",
+            "draw_indirect_count": "INTEGER DEFAULT 0",
+            "delayed_telemetry_read_count": "INTEGER DEFAULT 0",
             "certificate_failure_count": "INTEGER DEFAULT 0",
             "certificate_failure_rate": "REAL DEFAULT 0",
             "fallback_count": "INTEGER DEFAULT 0",
@@ -356,6 +407,9 @@ class FinalStageDatabase:
         warmup_frames = int(summary.get("warmup_frames", metadata.warmup_frames or 0) or 0)
         measurement_frames = int(summary.get("measurement_frames", metadata.measurement_frames or 0) or 0)
         settings_hash = str(summary.get("settings_hash", ""))
+        phase = str(summary.get("phase", metadata.phase or "phase1_pre_novelty_final_adjustment"))
+        novelty_mapping_version = str(summary.get("novelty_mapping_version", metadata.novelty_mapping_version or "final5_v1"))
+        top_level_novelty_mask = int(summary.get("top_level_novelty_mask", summary.get("topLevelNoveltyMask", metadata.top_level_novelty_mask or 0)) or 0)
         frame_jsonl_final = Path(frame_jsonl_path) if frame_jsonl_path else (Path(summary.get("frame_jsonl")) if summary.get("frame_jsonl") else None)
         settings_json_final = Path(settings_json_path) if settings_json_path else (Path(summary.get("settings_json")) if summary.get("settings_json") else None)
         error_json_final = Path(error_json_path) if error_json_path else None
@@ -438,6 +492,28 @@ class FinalStageDatabase:
         )
         run_id = int(cursor.lastrowid)
 
+        self.connection.execute(
+            """
+            UPDATE runtime_runs
+            SET enable_budgeted_physics = ?,
+                enable_certificate_render = ?,
+                enable_per_strand_edit = ?,
+                top_level_novelty_mask = ?,
+                phase = ?,
+                novelty_mapping_version = ?
+            WHERE run_id = ?
+            """,
+            (
+                1 if flags.get("enableBudgetedPhysics", metadata.enable_budgeted_physics) else 0,
+                1 if flags.get("enableCertificateRender", metadata.enable_certificate_render) else 0,
+                1 if flags.get("enablePerStrandEdit", metadata.enable_per_strand_edit) else 0,
+                top_level_novelty_mask,
+                phase,
+                novelty_mapping_version,
+                run_id,
+            ),
+        )
+
         with Path(frame_csv_path).open("r", encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle)
             rows = [
@@ -495,6 +571,102 @@ class FinalStageDatabase:
             """,
             rows,
         )
+
+        with Path(frame_csv_path).open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            phase1_rows = [
+                (
+                        int(float(self._pick_csv_value(row, "topLevelNoveltyMask", "top_level_novelty_mask", default="0"))),
+                        int(float(self._pick_csv_value(row, "overflowCount", "overflow_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "budgetDropCount", "budget_drop_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "deferCount", "defer_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "microtypeDecodedCount", "microtype_decoded_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "safeDecodeCount", "safe_decode_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "falseSafeCount", "false_safe_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "typedRepairRequestCount", "typed_repair_request_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "floatFallbackRequestCount", "float_fallback_request_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "rejectPayloadCount", "reject_payload_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "riskyStrandCount", "risky_strand_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "repairCommitCount", "repair_commit_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "repairRejectCount", "repair_reject_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "repairDeferCount", "repair_defer_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "islandCandidateCount", "island_candidate_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "physicsFallbackCount", "physics_fallback_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderCertificateCount", "render_certificate_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderSkipCount", "render_skip_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderCoarseOpacityCount", "render_coarse_opacity_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderStrandRasterCount", "render_strand_raster_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderHighQualityShadowCount", "render_high_quality_shadow_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderHighQualitySpecularCount", "render_high_quality_specular_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderFullQualityCount", "render_full_quality_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "renderDroppedFullQualityCount", "render_dropped_full_quality_count", default="0"))),
+                        float(self._pick_csv_value(row, "p95ShadowErrorBound", "p95_shadow_error_bound", default="0")),
+                        float(self._pick_csv_value(row, "p95SpecularErrorBound", "p95_specular_error_bound", default="0")),
+                        float(self._pick_csv_value(row, "temporalFlickerScore", "temporal_flicker_score", default="0")),
+                        int(float(self._pick_csv_value(row, "editOperationCount", "edit_operation_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "editRepairTaskCount", "edit_repair_task_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "editIslandEscalationCount", "edit_island_escalation_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "editCommitCount", "edit_commit_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "editRejectCount", "edit_reject_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "editPreviewFullQualityCount", "edit_preview_full_quality_count", default="0"))),
+                        float(self._pick_csv_value(row, "editLatencyMs", "edit_latency_ms", default="0")),
+                        int(float(self._pick_csv_value(row, "gpuResidentTaskCount", "gpu_resident_task_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "riskyCompactionCount", "risky_compaction_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "dispatchIndirectCount", "dispatch_indirect_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "drawIndirectCount", "draw_indirect_count", default="0"))),
+                        int(float(self._pick_csv_value(row, "delayedTelemetryReadCount", "delayed_telemetry_read_count", default="0"))),
+                        run_id,
+                        int(float(self._pick_csv_value(row, "sampleIndex", "sample_index", default="0"))),
+                )
+                for row in reader
+            ]
+        if phase1_rows:
+            self.connection.executemany(
+                """
+                UPDATE runtime_frame_metrics
+                SET top_level_novelty_mask = ?,
+                overflow_count = ?,
+                budget_drop_count = ?,
+                defer_count = ?,
+                microtype_decoded_count = ?,
+                safe_decode_count = ?,
+                false_safe_count = ?,
+                typed_repair_request_count = ?,
+                float_fallback_request_count = ?,
+                reject_payload_count = ?,
+                risky_strand_count = ?,
+                repair_commit_count = ?,
+                repair_reject_count = ?,
+                repair_defer_count = ?,
+                island_candidate_count = ?,
+                physics_fallback_count = ?,
+                render_certificate_count = ?,
+                render_skip_count = ?,
+                render_coarse_opacity_count = ?,
+                render_strand_raster_count = ?,
+                render_high_quality_shadow_count = ?,
+                render_high_quality_specular_count = ?,
+                render_full_quality_count = ?,
+                render_dropped_full_quality_count = ?,
+                p95_shadow_error_bound = ?,
+                p95_specular_error_bound = ?,
+                temporal_flicker_score = ?,
+                edit_operation_count = ?,
+                edit_repair_task_count = ?,
+                edit_island_escalation_count = ?,
+                edit_commit_count = ?,
+                edit_reject_count = ?,
+                edit_preview_full_quality_count = ?,
+                edit_latency_ms = ?,
+                gpu_resident_task_count = ?,
+                risky_compaction_count = ?,
+                dispatch_indirect_count = ?,
+                draw_indirect_count = ?,
+                delayed_telemetry_read_count = ?
+                WHERE run_id = ? AND sample_index = ?
+                """,
+                phase1_rows,
+            )
         self.connection.commit()
 
         avg_frame_ms = float(self._resolve_summary_value(summary, "avg_frame_ms", "avgFrameMs", default=0.0))
