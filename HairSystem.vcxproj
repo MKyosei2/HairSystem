@@ -60,12 +60,18 @@
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
-if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F"
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F"
-)
+      <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
+
+if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
+
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F"
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F"
+
+)
+
 exit /b 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -92,12 +98,18 @@ exit /b 0</Command>
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
-if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F"
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F"
-)
+      <Command>if not exist "$(OutDir)" mkdir "$(OutDir)"
+
+if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
+
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F"
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F"
+
+)
+
 exit /b 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -114,9 +126,12 @@ exit /b 0</Command>
     <ClCompile Include="src\hairgpu_core\Cards.cpp" />
     <ClCompile Include="src\hairgpu_core\Collision.cpp" />
     <ClCompile Include="src\hairgpu_core\DccInterop.cpp" />
+    <ClCompile Include="src\hairgpu_core\GlobalHairBudget.cpp" />
     <ClCompile Include="src\hairgpu_core\GuideCache.cpp" />
     <ClCompile Include="src\hairgpu_core\HairCache.cpp" />
     <ClCompile Include="src\hairgpu_core\HairMath.cpp" />
+    <ClCompile Include="src\hairgpu_core\HairNoveltyFlags.cpp" />
+    <ClCompile Include="src\hairgpu_core\HairNoveltyTelemetry.cpp" />
     <ClCompile Include="src\hairgpu_core\HybridRuntime.cpp" />
     <ClCompile Include="src\hairgpu_core\Lod.cpp" />
     <ClCompile Include="src\hairgpu_core\MeshIO.cpp" />
@@ -142,8 +157,11 @@ exit /b 0</Command>
     <ClInclude Include="include\hairgpu\Cards.h" />
     <ClInclude Include="include\hairgpu\Collision.h" />
     <ClInclude Include="include\hairgpu\DccInterop.h" />
+    <ClInclude Include="include\hairgpu\GlobalHairBudget.h" />
     <ClInclude Include="include\hairgpu\GuideCache.h" />
     <ClInclude Include="include\hairgpu\HairCache.h" />
+    <ClInclude Include="include\hairgpu\HairNoveltyFlags.h" />
+    <ClInclude Include="include\hairgpu\HairNoveltyTelemetry.h" />
     <ClInclude Include="include\hairgpu\HybridRuntime.h" />
     <ClInclude Include="include\hairgpu\Lod.h" />
     <ClInclude Include="include\hairgpu\Math.h" />
