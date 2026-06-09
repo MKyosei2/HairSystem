@@ -1,4 +1,4 @@
-﻿C:\Users\kyose\source\repos\HairSystem\profile_results\20260506_144853_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
-CreatedAt=2026-05-06 14:48:53
-Timestamp=20260506_144853
+﻿C:\Users\kyose\source\repos\HairSystem\profile_results\20260607_163155_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
+CreatedAt=2026-06-07 16:31:55
+Timestamp=20260607_163155
 Mode=STEP0_COMPLETE_POLICY_SAFE

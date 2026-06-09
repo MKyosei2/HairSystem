@@ -1,0 +1,1 @@
+﻿If this improves frame time, debug rendering/overlay is a bottleneck.

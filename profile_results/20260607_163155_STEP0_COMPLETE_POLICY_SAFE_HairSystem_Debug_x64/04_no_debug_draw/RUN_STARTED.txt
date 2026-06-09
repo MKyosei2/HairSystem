@@ -1,0 +1,6 @@
+﻿preset=04_no_debug_draw
+description=Disable debug draw and debug overlays.
+CreatedAt=2026-06-07 16:31:55
+Timestamp=20260607_163155
+status=created_without_launching_viewer
+reason=policy_safe_step0_complete

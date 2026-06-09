@@ -1,0 +1,16 @@
+﻿CreatedAt=2026-06-07 16:31:55
+Project=HairSystem
+Configuration=Debug
+Platform=x64
+TargetPath=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe
+OutDir=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\
+TargetDir=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\
+MSBuildProjectFullPath=C:\Users\kyose\source\repos\HairSystem\HairSystem.vcxproj
+VisualStudioVersion=17.0
+MSBuildToolsVersion=Current
+TargetFramework=
+RuntimeIdentifier=
+TargetFps=60
+TargetFrameMs=16.67
+WarmupFrames=120
+MeasureFrames=600
