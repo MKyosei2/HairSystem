@@ -1,0 +1,14 @@
+{
+  "name": "HairSystem_Novelty_DELETE_ALL_RESTORE_KIT",
+  "repo": "MKyosei2/HairSystem",
+  "branch": "Novelty",
+  "purpose": "Clone Novelty, apply D3D11 dispatch overflow fix, verify it, and produce a complete fixed ZIP.",
+  "output_zip_generated_locally": "HairSystem_Novelty_FIXED_COMPLETE.zip",
+  "modified_files": [
+    "apps/dx11_viewer/src/GpuHairViewer.h",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl"
+  ],
+  "do_not_delete": [
+    "HairSystem_Novelty_DELETE_ALL_RESTORE_KIT.zip"
+  ]
+}
