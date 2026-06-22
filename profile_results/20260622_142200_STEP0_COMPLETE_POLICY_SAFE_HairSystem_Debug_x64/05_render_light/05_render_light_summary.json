@@ -1,0 +1,7 @@
+﻿{
+"preset":"05_render_light",
+"description":"Use lighter render mode and hide optional visual elements.",
+"status":"not_executed_by_policy_safe_build",
+"real_fps_available":"pending",
+"expected_diagnosis":"If this improves frame time, hair draw/overdraw/render path is a bottleneck."
+}

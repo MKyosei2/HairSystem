@@ -1,0 +1,8 @@
+﻿timestamp,preset,status,viewer_execution,real_fps_available,avg_fps,avg_frame_ms,p95_frame_ms,worst_frame_ms,diagnosis
+2026-06-22 15:55:35,00_current,created_policy_safe,skipped,no,,,,,baseline folder only
+2026-06-22 15:55:35,01_no_readback,created_policy_safe,skipped,no,,,,,compare against current after EXE is allowed
+2026-06-22 15:55:35,02_no_self_collision,created_policy_safe,skipped,no,,,,,compare against current after EXE is allowed
+2026-06-22 15:55:35,03_low_solver,created_policy_safe,skipped,no,,,,,compare against current after EXE is allowed
+2026-06-22 15:55:35,04_no_debug_draw,created_policy_safe,skipped,no,,,,,compare against current after EXE is allowed
+2026-06-22 15:55:35,05_render_light,created_policy_safe,skipped,no,,,,,compare against current after EXE is allowed
+2026-06-22 15:55:35,06_simulation_light,created_policy_safe,skipped,no,,,,,compare against current after EXE is allowed

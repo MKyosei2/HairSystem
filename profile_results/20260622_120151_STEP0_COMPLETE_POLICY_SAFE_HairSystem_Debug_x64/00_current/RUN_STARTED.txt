@@ -1,0 +1,6 @@
+﻿preset=00_current
+description=Current default state. Baseline for the current 15 FPS class behavior.
+CreatedAt=2026-06-22 12:01:51
+Timestamp=20260622_120151
+status=created_without_launching_viewer
+reason=policy_safe_step0_complete

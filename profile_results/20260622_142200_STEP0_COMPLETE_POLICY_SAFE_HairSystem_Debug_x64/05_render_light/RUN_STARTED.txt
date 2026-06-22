@@ -1,0 +1,6 @@
+﻿preset=05_render_light
+description=Use lighter render mode and hide optional visual elements.
+CreatedAt=2026-06-22 14:22:00
+Timestamp=20260622_142200
+status=created_without_launching_viewer
+reason=policy_safe_step0_complete

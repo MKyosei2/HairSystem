@@ -1,0 +1,5 @@
+﻿CreatedAt=2026-06-22 12:01:51
+This folder was created without launching HairSystem.exe.
+This avoids Application Control/AppLocker/WDAC blocking Visual Studio builds.
+Real FPS measurement requires the executable to be allowed by Windows policy.
+If you press F5 or Local Windows Debugger while the policy still blocks the EXE, Windows can show the application control dialog again.

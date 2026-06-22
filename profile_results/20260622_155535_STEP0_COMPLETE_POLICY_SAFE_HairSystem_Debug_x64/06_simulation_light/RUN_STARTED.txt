@@ -1,0 +1,6 @@
+﻿preset=06_simulation_light
+description=Minimal simulation stress: no readback, no self collision, low solver.
+CreatedAt=2026-06-22 15:55:35
+Timestamp=20260622_155535
+status=created_without_launching_viewer
+reason=policy_safe_step0_complete
