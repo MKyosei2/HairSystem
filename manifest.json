@@ -1,14 +1,15 @@
 {
-  "name": "HairSystem_Novelty_DELETE_ALL_RESTORE_KIT",
   "repo": "MKyosei2/HairSystem",
   "branch": "Novelty",
-  "purpose": "Clone Novelty, apply D3D11 dispatch overflow fix, verify it, and produce a complete fixed ZIP.",
-  "output_zip_generated_locally": "HairSystem_Novelty_FIXED_COMPLETE.zip",
+  "assumed_version": "61.21",
+  "package_created": "HairSystem_Novelty_61_21_modified_files_only_fix.zip",
+  "local_generated_output": "HairSystem_Novelty_61_21_modified_files_only_FULL.zip",
   "modified_files": [
-    "apps/dx11_viewer/src/GpuHairViewer.h",
+    "apps/dx11_viewer/shaders/HairSim.hlsl",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl",
     "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl"
   ],
-  "do_not_delete": [
-    "HairSystem_Novelty_DELETE_ALL_RESTORE_KIT.zip"
-  ]
+  "keeps_asset_size": "6000 guides / 16 followers per guide / 128 particles per strand",
+  "fixes": "D3D11 DEVICE_DISPATCH_THREADGROUPCOUNT_OVERFLOW ThreadGroupCountX(204000) by moving IntegrateCS to guide-only dispatch."
 }
