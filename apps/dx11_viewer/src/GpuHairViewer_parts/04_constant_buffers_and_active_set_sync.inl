@@ -354,347 +354,206 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
     return scores;
 }
 
-    void GpuHairViewer::UpdateActiveSetRuntimeFromParticles(const std::vector<GpuParticle>& particles)
+void GpuHairViewer::UpdateActiveSetRuntimeFromParticles(const std::vector<GpuParticle>& particles)
+{
+    if (!m_enableActiveSetRuntime || m_activeSetClusters.empty())
     {
-        if (!m_enableActiveSetRuntime || m_activeSetClusters.empty())
-        {
-            m_activeSetPlan = {};
-            m_activeSetLastStatus = L"Disabled";
-            m_activeSetEvaluationMilliseconds = 0.0f;
-            SyncActiveSetGpuBuffers();
-            if (IsActiveSetRiskOverlayMode())
-            {
-                UpdateScalpOverlayVertexBuffer();
-            }
-            return;
-        }
-
-        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
-        if (guideCount == 0u)
-        {
-            m_activeSetPlan = {};
-            m_activeSetLastStatus = L"No guides";
-            m_activeSetEvaluationMilliseconds = 0.0f;
-            SyncActiveSetGpuBuffers();
-            if (IsActiveSetRiskOverlayMode())
-            {
-                UpdateScalpOverlayVertexBuffer();
-            }
-            return;
-        }
-
-        const std::vector<hairgpu::Vec3> currentGuideRoots = BuildGuideRootPositionsFromParticles(particles);
-        if (m_activeSetPreviousGuideRoots.size() != currentGuideRoots.size())
-        {
-            m_activeSetPreviousGuideRoots = currentGuideRoots;
-        }
-        m_activeSetGuideContactScores = BuildGuideContactScoresFromParticles(particles);
-        m_activeSetGuideUncertainty.assign(guideCount, 0.0f);
-        std::vector<float> guideEditScores = m_runtimeEditState.guideInfluence;
-        if (guideEditScores.size() != guideCount)
-        {
-            guideEditScores.assign(guideCount, 0.0f);
-        }
-        std::vector<float> guidePenetrationScores(guideCount, 0.0f);
-        std::vector<float> guideBoundaryScores(guideCount, 0.0f);
-        std::vector<float> guideTemporalScores(guideCount, 0.0f);
-        std::vector<float> guideLeakageScores(guideCount, 0.0f);
-        std::vector<float> guideModelErrorScores(guideCount, 0.0f);
-        const float safeDt = std::max(m_simConfig.fixedTimeStep, 1.0e-4f);
-        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
-        {
-            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
-            const hairgpu::Vec3& currentRoot = currentGuideRoots[guideIndex];
-            const hairgpu::Vec3& previousRoot = m_activeSetPreviousGuideRoots[guideIndex];
-            const hairgpu::Vec3 restRoot = (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
-                ? m_asset.restPoints[strand.pointOffset]
-                : hairgpu::Vec3(0.0f, 0.0f, 0.0f);
-            const float velocityProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - previousRoot) / safeDt / 0.30f, 0.0f, 1.0f);
-            const float displacementProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - restRoot) / 0.030f, 0.0f, 1.0f);
-            const float contactProxy = (guideIndex < m_activeSetGuideContactScores.size()) ? m_activeSetGuideContactScores[guideIndex] : 0.0f;
-            const float editProxy = hairgpu::Clamp(guideEditScores[guideIndex], 0.0f, 1.0f);
-            const float boundaryProxy = hairgpu::Clamp(4.0f * editProxy * (1.0f - editProxy), 0.0f, 1.0f);
-            const float temporalProxy = hairgpu::Clamp(velocityProxy * 0.65f + contactProxy * 0.20f + boundaryProxy * 0.15f, 0.0f, 1.0f);
-            const float leakageProxy = hairgpu::Clamp((1.0f - editProxy) * displacementProxy, 0.0f, 1.0f);
-            float penetrationProxy = 0.0f;
-            if (strand.pointCount > 0u)
-            {
-                const uint32_t sampleOffsets[3] = { 0u, strand.pointCount / 2u, strand.pointCount - 1u };
-                for (uint32_t sampleOffset : sampleOffsets)
-                {
-                    const uint32_t pointIndex = strand.pointOffset + std::min<uint32_t>(sampleOffset, strand.pointCount - 1u);
-                    if (pointIndex >= particles.size())
-                    {
-                        continue;
-                    }
-                    const hairgpu::Vec3 p(particles[pointIndex].x, particles[pointIndex].y, particles[pointIndex].z);
-                    penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp((m_simConfig.floorY + 0.005f - p.y) / 0.020f, 0.0f, 1.0f));
-                    for (const hairgpu::SphereCollider& sphere : m_colliders.spheres)
-                    {
-                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-DistanceToSphereSurface(p, sphere) / 0.020f, 0.0f, 1.0f));
-                    }
-                    for (const hairgpu::CapsuleCollider& capsule : m_colliders.capsules)
-                    {
-                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-hairgpu::QuerySignedDistanceToCapsule(capsule, p).signedDistance / 0.020f, 0.0f, 1.0f));
-                    }
-                    for (const hairgpu::PlaneCollider& plane : m_colliders.planes)
-                    {
-                        const float signedDistance = hairgpu::Dot(p - plane.point, hairgpu::Normalize(plane.normal));
-                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-signedDistance / 0.020f, 0.0f, 1.0f));
-                    }
-                    for (const hairgpu::AabbCollider& aabb : m_colliders.aabbs)
-                    {
-                        float signedDistance = 0.0f;
-                        const bool inside = p.x >= aabb.minBounds.x && p.x <= aabb.maxBounds.x &&
-                                            p.y >= aabb.minBounds.y && p.y <= aabb.maxBounds.y &&
-                                            p.z >= aabb.minBounds.z && p.z <= aabb.maxBounds.z;
-                        if (inside)
-                        {
-                            const float dx = std::min(p.x - aabb.minBounds.x, aabb.maxBounds.x - p.x);
-                            const float dy = std::min(p.y - aabb.minBounds.y, aabb.maxBounds.y - p.y);
-                            const float dz = std::min(p.z - aabb.minBounds.z, aabb.maxBounds.z - p.z);
-                            signedDistance = -std::min(dx, std::min(dy, dz));
-                        }
-                        else
-                        {
-                            const float qx = std::max(std::max(aabb.minBounds.x - p.x, 0.0f), p.x - aabb.maxBounds.x);
-                            const float qy = std::max(std::max(aabb.minBounds.y - p.y, 0.0f), p.y - aabb.maxBounds.y);
-                            const float qz = std::max(std::max(aabb.minBounds.z - p.z, 0.0f), p.z - aabb.maxBounds.z);
-                            signedDistance = std::sqrt(qx * qx + qy * qy + qz * qz);
-                        }
-                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-signedDistance / 0.020f, 0.0f, 1.0f));
-                    }
-                    for (const hairgpu::SdfGridCollider& grid : m_colliders.sdfGrids)
-                    {
-                        if (grid.values.empty() || grid.resolutionX == 0u || grid.resolutionY == 0u || grid.resolutionZ == 0u)
-                        {
-                            continue;
-                        }
-                        const hairgpu::Vec3 size = grid.boundsMax - grid.boundsMin;
-                        const float nx = hairgpu::Clamp((p.x - grid.boundsMin.x) / std::max(size.x, 1.0e-5f), 0.0f, 1.0f);
-                        const float ny = hairgpu::Clamp((p.y - grid.boundsMin.y) / std::max(size.y, 1.0e-5f), 0.0f, 1.0f);
-                        const float nz = hairgpu::Clamp((p.z - grid.boundsMin.z) / std::max(size.z, 1.0e-5f), 0.0f, 1.0f);
-                        const uint32_t ix = std::min<uint32_t>(static_cast<uint32_t>(nx * static_cast<float>(grid.resolutionX - 1u)), grid.resolutionX - 1u);
-                        const uint32_t iy = std::min<uint32_t>(static_cast<uint32_t>(ny * static_cast<float>(grid.resolutionY - 1u)), grid.resolutionY - 1u);
-                        const uint32_t iz = std::min<uint32_t>(static_cast<uint32_t>(nz * static_cast<float>(grid.resolutionZ - 1u)), grid.resolutionZ - 1u);
-                        const size_t linearIndex = (static_cast<size_t>(iz) * grid.resolutionY + iy) * grid.resolutionX + ix;
-                        if (linearIndex < grid.values.size())
-                        {
-                            penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-grid.values[linearIndex] / 0.020f, 0.0f, 1.0f));
-                        }
-                    }
-                }
-            }
-            const float uncertaintyProxy = hairgpu::Clamp(velocityProxy * 0.34f + displacementProxy * 0.20f + contactProxy * 0.18f + boundaryProxy * 0.12f + leakageProxy * 0.10f + penetrationProxy * 0.06f, 0.0f, 1.0f);
-            const float modelErrorProxy = hairgpu::Clamp(displacementProxy * 0.55f + temporalProxy * 0.25f + leakageProxy * 0.20f, 0.0f, 1.0f);
-            guideBoundaryScores[guideIndex] = boundaryProxy;
-            guideTemporalScores[guideIndex] = temporalProxy;
-            guideLeakageScores[guideIndex] = leakageProxy;
-            guidePenetrationScores[guideIndex] = penetrationProxy;
-            guideModelErrorScores[guideIndex] = modelErrorProxy;
-            m_activeSetGuideUncertainty[guideIndex] = uncertaintyProxy;
-        }
-
-        hairgpu::ActiveSetRuntimeInput runtimeInput = {};
-        runtimeInput.currentGuideRoots = currentGuideRoots;
-        runtimeInput.previousGuideRoots = m_activeSetPreviousGuideRoots;
-        runtimeInput.guideUncertainty = m_activeSetGuideUncertainty;
-        runtimeInput.guideContactScores = m_activeSetGuideContactScores;
-        runtimeInput.guidePenetrationScores = guidePenetrationScores;
-        runtimeInput.guideEditScores = guideEditScores;
-        runtimeInput.guideBoundaryScores = guideBoundaryScores;
-        runtimeInput.guideTemporalScores = guideTemporalScores;
-        runtimeInput.guideLeakageScores = guideLeakageScores;
-        runtimeInput.guideModelErrorScores = guideModelErrorScores;
-        runtimeInput.cameraPosition = m_cameraPosition;
-        runtimeInput.cameraForward = hairgpu::Normalize(m_cameraTarget - m_cameraPosition);
-        runtimeInput.fixedTimeStep = safeDt;
-        m_activeSetBudget.previousFrameMilliseconds = m_lastSimulationStepMilliseconds;
-
-        LARGE_INTEGER begin = {};
-        LARGE_INTEGER end = {};
-        QueryPerformanceCounter(&begin);
-        hairgpu::ActiveSetPlan plan;
-        std::string error;
-        const bool ok = hairgpu::EvaluateActiveSetPlan(m_asset,
-                                                       m_activeSetClusters,
-                                                       runtimeInput,
-                                                       m_activeSetScoringSettings,
-                                                       m_activeSetBudget,
-                                                       plan,
-                                                       error);
-        QueryPerformanceCounter(&end);
-        m_activeSetEvaluationMilliseconds = static_cast<float>(end.QuadPart - begin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
-
-        if (ok)
-        {
-            m_activeSetPlan = std::move(plan);
-            if (m_activeSetPlan.summary.recommendedSolverIterations > 0u)
-            {
-                m_simConfig.solverIterations = std::max<uint32_t>(1u, m_activeSetPlan.summary.recommendedSolverIterations);
-            }
-            std::wstringstream ss;
-            ss << L"OK  clusters=" << m_activeSetPlan.summary.selectedClusterCount
-               << L" guides=" << m_activeSetPlan.summary.selectedGuideCount
-               << L" strands=" << m_activeSetPlan.summary.selectedStrandCount
-               << L"  natGain=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.selectedNaturalnessGain
-               << L"  editCov=" << std::fixed << std::setprecision(2) << (m_activeSetPlan.summary.editCoverageRatio * 100.0f) << L"%"
-               << L"  estFrame=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.estimatedFrameMilliseconds << L"ms"
-               << L"  estMem=" << std::fixed << std::setprecision(0) << m_activeSetPlan.summary.estimatedMemoryMegabytes << L"MB"
-               << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations;
-            m_activeSetLastStatus = ss.str();
-        }
-        else
-        {
-            m_activeSetPlan = std::move(plan);
-            m_activeSetLastStatus = Utf8ToWide(error);
-        }
-
-        m_activeSetPreviousGuideRoots = currentGuideRoots;
+        m_activeSetPlan = {};
+        m_activeSetLastStatus = L"Disabled";
+        m_activeSetEvaluationMilliseconds = 0.0f;
         SyncActiveSetGpuBuffers();
         if (IsActiveSetRiskOverlayMode())
         {
             UpdateScalpOverlayVertexBuffer();
         }
+        return;
     }
 
-    void GpuHairViewer::StepSimulation(float dt)
+    const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+    if (guideCount == 0u)
     {
-        GpuTimingFrame* gpuTimingFrame = (m_activeGpuTimingFrameIndex >= 0 && static_cast<size_t>(m_activeGpuTimingFrameIndex) < m_gpuTimingFrames.size())
-            ? &m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)]
-            : nullptr;
-        if (gpuTimingFrame && gpuTimingFrame->issued)
+        m_activeSetPlan = {};
+        m_activeSetLastStatus = L"No guides";
+        m_activeSetEvaluationMilliseconds = 0.0f;
+        SyncActiveSetGpuBuffers();
+        if (IsActiveSetRiskOverlayMode())
         {
-            m_context->End(gpuTimingFrame->simStart.Get());
+            UpdateScalpOverlayVertexBuffer();
         }
+        return;
+    }
 
-        UpdateAnimatedScalp(m_elapsedSeconds);
-
-        if (m_enableActiveSetRuntime)
+    const std::vector<hairgpu::Vec3> currentGuideRoots = BuildGuideRootPositionsFromParticles(particles);
+    if (m_activeSetPreviousGuideRoots.size() != currentGuideRoots.size())
+    {
+        m_activeSetPreviousGuideRoots = currentGuideRoots;
+    }
+    m_activeSetGuideContactScores = BuildGuideContactScoresFromParticles(particles);
+    m_activeSetGuideUncertainty.assign(guideCount, 0.0f);
+    std::vector<float> guideEditScores = m_runtimeEditState.guideInfluence;
+    if (guideEditScores.size() != guideCount)
+    {
+        guideEditScores.assign(guideCount, 0.0f);
+    }
+    std::vector<float> guidePenetrationScores(guideCount, 0.0f);
+    std::vector<float> guideBoundaryScores(guideCount, 0.0f);
+    std::vector<float> guideTemporalScores(guideCount, 0.0f);
+    std::vector<float> guideLeakageScores(guideCount, 0.0f);
+    std::vector<float> guideModelErrorScores(guideCount, 0.0f);
+    const float safeDt = std::max(m_simConfig.fixedTimeStep, 1.0e-4f);
+    for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+    {
+        const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+        const hairgpu::Vec3& currentRoot = currentGuideRoots[guideIndex];
+        const hairgpu::Vec3& previousRoot = m_activeSetPreviousGuideRoots[guideIndex];
+        const hairgpu::Vec3 restRoot = (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
+            ? m_asset.restPoints[strand.pointOffset]
+            : hairgpu::Vec3(0.0f, 0.0f, 0.0f);
+        const float velocityProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - previousRoot) / safeDt / 0.30f, 0.0f, 1.0f);
+        const float displacementProxy = hairgpu::Clamp(hairgpu::Length(currentRoot - restRoot) / 0.030f, 0.0f, 1.0f);
+        const float contactProxy = (guideIndex < m_activeSetGuideContactScores.size()) ? m_activeSetGuideContactScores[guideIndex] : 0.0f;
+        const float editProxy = hairgpu::Clamp(guideEditScores[guideIndex], 0.0f, 1.0f);
+        const float boundaryProxy = hairgpu::Clamp(4.0f * editProxy * (1.0f - editProxy), 0.0f, 1.0f);
+        const float temporalProxy = hairgpu::Clamp(velocityProxy * 0.65f + contactProxy * 0.20f + boundaryProxy * 0.15f, 0.0f, 1.0f);
+        const float leakageProxy = hairgpu::Clamp((1.0f - editProxy) * displacementProxy, 0.0f, 1.0f);
+        float penetrationProxy = 0.0f;
+        if (strand.pointCount > 0u)
         {
-            std::vector<GpuParticle> activeSetParticles;
-            if (!ReadBackCurrentParticlePositions(activeSetParticles))
+            const uint32_t sampleOffsets[3] = { 0u, strand.pointCount / 2u, strand.pointCount - 1u };
+            for (uint32_t sampleOffset : sampleOffsets)
             {
-                activeSetParticles = m_initialParticles;
+                const uint32_t pointIndex = strand.pointOffset + std::min<uint32_t>(sampleOffset, strand.pointCount - 1u);
+                if (pointIndex >= particles.size())
+                {
+                    continue;
+                }
+                const hairgpu::Vec3 p(particles[pointIndex].x, particles[pointIndex].y, particles[pointIndex].z);
+                penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp((m_simConfig.floorY + 0.005f - p.y) / 0.020f, 0.0f, 1.0f));
+                for (const hairgpu::SphereCollider& sphere : m_colliders.spheres)
+                {
+                    penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-DistanceToSphereSurface(p, sphere) / 0.020f, 0.0f, 1.0f));
+                }
+                for (const hairgpu::CapsuleCollider& capsule : m_colliders.capsules)
+                {
+                    penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-hairgpu::QuerySignedDistanceToCapsule(capsule, p).signedDistance / 0.020f, 0.0f, 1.0f));
+                }
+                for (const hairgpu::PlaneCollider& plane : m_colliders.planes)
+                {
+                    const float signedDistance = hairgpu::Dot(p - plane.point, hairgpu::Normalize(plane.normal));
+                    penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-signedDistance / 0.020f, 0.0f, 1.0f));
+                }
+                for (const hairgpu::AabbCollider& aabb : m_colliders.aabbs)
+                {
+                    float signedDistance = 0.0f;
+                    const bool inside = p.x >= aabb.minBounds.x && p.x <= aabb.maxBounds.x &&
+                        p.y >= aabb.minBounds.y && p.y <= aabb.maxBounds.y &&
+                        p.z >= aabb.minBounds.z && p.z <= aabb.maxBounds.z;
+                    if (inside)
+                    {
+                        const float dx = std::min(p.x - aabb.minBounds.x, aabb.maxBounds.x - p.x);
+                        const float dy = std::min(p.y - aabb.minBounds.y, aabb.maxBounds.y - p.y);
+                        const float dz = std::min(p.z - aabb.minBounds.z, aabb.maxBounds.z - p.z);
+                        signedDistance = -std::min(dx, std::min(dy, dz));
+                    }
+                    else
+                    {
+                        const float qx = std::max(std::max(aabb.minBounds.x - p.x, 0.0f), p.x - aabb.maxBounds.x);
+                        const float qy = std::max(std::max(aabb.minBounds.y - p.y, 0.0f), p.y - aabb.maxBounds.y);
+                        const float qz = std::max(std::max(aabb.minBounds.z - p.z, 0.0f), p.z - aabb.maxBounds.z);
+                        signedDistance = std::sqrt(qx * qx + qy * qy + qz * qz);
+                    }
+                    penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-signedDistance / 0.020f, 0.0f, 1.0f));
+                }
+                for (const hairgpu::SdfGridCollider& grid : m_colliders.sdfGrids)
+                {
+                    if (grid.values.empty() || grid.resolutionX == 0u || grid.resolutionY == 0u || grid.resolutionZ == 0u)
+                    {
+                        continue;
+                    }
+                    const hairgpu::Vec3 size = grid.boundsMax - grid.boundsMin;
+                    const float nx = hairgpu::Clamp((p.x - grid.boundsMin.x) / std::max(size.x, 1.0e-5f), 0.0f, 1.0f);
+                    const float ny = hairgpu::Clamp((p.y - grid.boundsMin.y) / std::max(size.y, 1.0e-5f), 0.0f, 1.0f);
+                    const float nz = hairgpu::Clamp((p.z - grid.boundsMin.z) / std::max(size.z, 1.0e-5f), 0.0f, 1.0f);
+                    const uint32_t ix = std::min<uint32_t>(static_cast<uint32_t>(nx * static_cast<float>(grid.resolutionX - 1u)), grid.resolutionX - 1u);
+                    const uint32_t iy = std::min<uint32_t>(static_cast<uint32_t>(ny * static_cast<float>(grid.resolutionY - 1u)), grid.resolutionY - 1u);
+                    const uint32_t iz = std::min<uint32_t>(static_cast<uint32_t>(nz * static_cast<float>(grid.resolutionZ - 1u)), grid.resolutionZ - 1u);
+                    const size_t linearIndex = (static_cast<size_t>(iz) * grid.resolutionY + iy) * grid.resolutionX + ix;
+                    if (linearIndex < grid.values.size())
+                    {
+                        penetrationProxy = std::max(penetrationProxy, hairgpu::Clamp(-grid.values[linearIndex] / 0.020f, 0.0f, 1.0f));
+                    }
+                }
             }
-            if (!activeSetParticles.empty())
-            {
-                UpdateActiveSetRuntimeFromParticles(activeSetParticles);
-            }
         }
+        const float uncertaintyProxy = hairgpu::Clamp(velocityProxy * 0.34f + displacementProxy * 0.20f + contactProxy * 0.18f + boundaryProxy * 0.12f + leakageProxy * 0.10f + penetrationProxy * 0.06f, 0.0f, 1.0f);
+        const float modelErrorProxy = hairgpu::Clamp(displacementProxy * 0.55f + temporalProxy * 0.25f + leakageProxy * 0.20f, 0.0f, 1.0f);
+        guideBoundaryScores[guideIndex] = boundaryProxy;
+        guideTemporalScores[guideIndex] = temporalProxy;
+        guideLeakageScores[guideIndex] = leakageProxy;
+        guidePenetrationScores[guideIndex] = penetrationProxy;
+        guideModelErrorScores[guideIndex] = modelErrorProxy;
+        m_activeSetGuideUncertainty[guideIndex] = uncertaintyProxy;
+    }
 
-        if (!m_zeroDistanceLambdas.empty())
-        {
-            m_context->UpdateSubresource(m_distanceLambdaBuffer.buffer.Get(), 0, nullptr, m_zeroDistanceLambdas.data(), 0, 0);
-        }
-        if (!m_zeroBendLambdas.empty())
-        {
-            m_context->UpdateSubresource(m_bendLambdaBuffer.buffer.Get(), 0, nullptr, m_zeroBendLambdas.data(), 0, 0);
-        }
+    hairgpu::ActiveSetRuntimeInput runtimeInput = {};
+    runtimeInput.currentGuideRoots = currentGuideRoots;
+    runtimeInput.previousGuideRoots = m_activeSetPreviousGuideRoots;
+    runtimeInput.guideUncertainty = m_activeSetGuideUncertainty;
+    runtimeInput.guideContactScores = m_activeSetGuideContactScores;
+    runtimeInput.guidePenetrationScores = guidePenetrationScores;
+    runtimeInput.guideEditScores = guideEditScores;
+    runtimeInput.guideBoundaryScores = guideBoundaryScores;
+    runtimeInput.guideTemporalScores = guideTemporalScores;
+    runtimeInput.guideLeakageScores = guideLeakageScores;
+    runtimeInput.guideModelErrorScores = guideModelErrorScores;
+    runtimeInput.cameraPosition = m_cameraPosition;
+    runtimeInput.cameraForward = hairgpu::Normalize(m_cameraTarget - m_cameraPosition);
+    runtimeInput.fixedTimeStep = safeDt;
+    m_activeSetBudget.previousFrameMilliseconds = m_lastSimulationStepMilliseconds;
 
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        if (SUCCEEDED(m_context->Map(m_simConstantsHair.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
-        {
-            SimConstantsHair constants = {};
-            FillHairSimConstants(constants, dt);
-            std::memcpy(mapped.pData, &constants, sizeof(constants));
-            m_context->Unmap(m_simConstantsHair.Get(), 0);
-        }
-        if (SUCCEEDED(m_context->Map(m_simConstantsActiveSet.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
-        {
-            SimConstantsActiveSet constants = {};
-            FillActiveSetSimConstants(constants, dt);
-            std::memcpy(mapped.pData, &constants, sizeof(constants));
-            m_context->Unmap(m_simConstantsActiveSet.Get(), 0);
-        }
-        if (SUCCEEDED(m_context->Map(m_simConstantsScalp.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
-        {
-            SimConstantsScalp constants = {};
-            FillScalpSimConstants(constants, dt);
-            std::memcpy(mapped.pData, &constants, sizeof(constants));
-            m_context->Unmap(m_simConstantsScalp.Get(), 0);
-        }
+    LARGE_INTEGER begin = {};
+    LARGE_INTEGER end = {};
+    QueryPerformanceCounter(&begin);
+    hairgpu::ActiveSetPlan plan;
+    std::string error;
+    const bool ok = hairgpu::EvaluateActiveSetPlan(m_asset,
+        m_activeSetClusters,
+        runtimeInput,
+        m_activeSetScoringSettings,
+        m_activeSetBudget,
+        plan,
+        error);
+    QueryPerformanceCounter(&end);
+    m_activeSetEvaluationMilliseconds = static_cast<float>(end.QuadPart - begin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
 
-        ID3D11Buffer* simCb = m_simConstantsHair.Get();
-        const UINT totalParticleCount = static_cast<UINT>(m_asset.restPoints.size());
-        const UINT totalStrandCount = static_cast<UINT>(m_asset.strands.size());
-        const UINT guideStrandCount = m_asset.guideStrandCount;
-        const UINT followerStrandCount = m_asset.followerStrandCount;
-        const UINT guideParticleGroups = DispatchGroups(guideStrandCount * m_asset.particlesPerStrand, 64u);
-        const UINT guideStrandGroups = DispatchGroups(guideStrandCount, 64u);
-        const UINT followerGroups = DispatchGroups(followerStrandCount, 64u);
-        const UINT gridCellCount = std::max<UINT>(m_simConfig.selfCollisionGridDimX * m_simConfig.selfCollisionGridDimY * m_simConfig.selfCollisionGridDimZ, 1u);
-        const UINT gridCellGroups = DispatchGroups(gridCellCount, 64u);
-        const UINT sortedEntryGroups = DispatchGroups(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 64u);
-        const UINT bitonicGroups = DispatchGroups(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 256u);
-
-        ID3D11ShaderResourceView* bindSrvs[] = {
-            m_scalpPositions.srv.Get(),
-            m_scalpTrianglesBuffer.srv.Get(),
-            m_rootBindingsBuffer.srv.Get()
-        };
-        ID3D11UnorderedAccessView* bindUavs[] = {
-            m_positions[m_currentBufferIndex].uav.Get(),
-            m_previousPositions[m_currentBufferIndex].uav.Get()
-        };
-        m_context->CSSetConstantBuffers(0, 1, &simCb);
-        m_context->CSSetShaderResources(4, 3, bindSrvs);
-        m_context->CSSetUnorderedAccessViews(0, 2, bindUavs, nullptr);
-        m_context->CSSetShader(m_rootBindCS.Get(), nullptr, 0);
-        m_context->Dispatch(DispatchGroups(totalStrandCount, 64u), 1, 1);
-
-        ID3D11ShaderResourceView* nullBindSrvs[3] = {};
-        ID3D11UnorderedAccessView* nullBindUavs[2] = {};
-        m_context->CSSetShader(nullptr, nullptr, 0);
-        m_context->CSSetShaderResources(4, 3, nullBindSrvs);
-        m_context->CSSetUnorderedAccessViews(0, 2, nullBindUavs, nullptr);
-
-        const uint32_t nextBufferIndex = 1u - m_currentBufferIndex;
-        ID3D11ShaderResourceView* simSrvs[] = {
-            m_positions[m_currentBufferIndex].srv.Get(),
-            m_previousPositions[m_currentBufferIndex].srv.Get(),
-            m_restPositions.srv.Get(),
-            m_followBuffer.srv.Get(),
-            m_scalpPositions.srv.Get(),
-            m_scalpTrianglesBuffer.srv.Get(),
-            m_rootBindingsBuffer.srv.Get(),
-            m_compactedFollowerIndicesBuffer.srv.Get(),
-            m_followerTierAssignmentsBuffer.srv.Get(),
-            nullptr,
-            nullptr,
-            m_compactedFollowerCounterBuffer.srv.Get(),
-            m_sdfValuesBuffer.srv.Get()
-        };
-        ID3D11UnorderedAccessView* broadphaseUav4 = nullptr;
-        ID3D11UnorderedAccessView* broadphaseUav5 = nullptr;
-        ID3D11UnorderedAccessView* broadphaseUav6 = nullptr;
-        ID3D11UnorderedAccessView* broadphaseUav7 = nullptr;
-        if (m_selfCollisionBroadphaseMode == 0u)
+    if (ok)
+    {
+        m_activeSetPlan = std::move(plan);
+        if (m_activeSetPlan.summary.recommendedSolverIterations > 0u)
         {
-            broadphaseUav4 = m_gridCellCountsBuffer.uav.Get();
-            broadphaseUav5 = m_gridCellIndicesBuffer.uav.Get();
+            m_simConfig.solverIterations = std::max<uint32_t>(1u, m_activeSetPlan.summary.recommendedSolverIterations);
         }
-        else if (m_selfCollisionBroadphaseMode == 3u)
-        {
-            broadphaseUav4 = m_sortedKeysBuffer.uav.Get();
-            broadphaseUav5 = m_sortedParticleIndicesBuffer.uav.Get();
-            broadphaseUav6 = m_sortedCellStartsBuffer.uav.Get();
-            broadphaseUav7 = m_sortedCellEndsBuffer.uav.Get();
-        }
-        else
-        {
-            broadphaseUav6 = m_gridHashHeadsBuffer.uav.Get();
-            broadphaseUav7 = m_gridParticleNextBuffer.uav.Get();
-        }
+        std::wstringstream ss;
+        ss << L"OK  clusters=" << m_activeSetPlan.summary.selectedClusterCount
+            << L" guides=" << m_activeSetPlan.summary.selectedGuideCount
+            << L" strands=" << m_activeSetPlan.summary.selectedStrandCount
+            << L"  natGain=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.selectedNaturalnessGain
+            << L"  editCov=" << std::fixed << std::setprecision(2) << (m_activeSetPlan.summary.editCoverageRatio * 100.0f) << L"%"
+            << L"  estFrame=" << std::fixed << std::setprecision(2) << m_activeSetPlan.summary.estimatedFrameMilliseconds << L"ms"
+            << L"  estMem=" << std::fixed << std::setprecision(0) << m_activeSetPlan.summary.estimatedMemoryMegabytes << L"MB"
+            << L"  solver=" << m_activeSetPlan.summary.recommendedSolverIterations;
+        m_activeSetLastStatus = ss.str();
+    }
+    else
+    {
+        m_activeSetPlan = std::move(plan);
+        m_activeSetLastStatus = Utf8ToWide(error);
+    }
 
-        ID3D11UnorderedAccessView* simUavs[] = {
-            m_positions[nextBufferIndex].uav.Get(),
-            m_previousPositions[nextBufferIndex].uav.Get(),
-            m_distanceLambdaBuffer.uav.Get(),
-            m_bendLambdaBuffer.uav.Get(),
-            broadphaseUav4,
-            broadphaseUav5,
-            broadphaseUav6,
-            broadphaseUav7
-        };
-
+    m_activeSetPreviousGuideRoots = currentGuideRoots;
+    SyncActiveSetGpuBuffers();
+    if (IsActiveSetRiskOverlayMode())
+    {
+        UpdateScalpOverlayVertexBuffer();
+    }
+}
