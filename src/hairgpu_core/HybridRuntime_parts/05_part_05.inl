@@ -1,113 +1,6 @@
 // HybridRuntime.cpp ordered part 05: part_05
 // This file is included by ../HybridRuntime.cpp; do not compile it directly.
 
-std::vector<Vec3> currentHybridGuideRoots;
-BuildGuideRootsFromPoints(teacherSequence.referenceAsset, hybridBeforeCorrection, currentHybridGuideRoots);
-std::vector<Vec3> teacherGuideRoots;
-BuildGuideRootsFromPoints(teacherSequence.referenceAsset, teacherFrame, teacherGuideRoots);
-std::vector<float> guideContactScores = BuildGuideContactScores(teacherSequence.referenceAsset,
-    hybridBeforeCorrection,
-    predictorColliders,
-    -1.05f,
-    outBundle.correctiveSettings.shellDistance);
-std::vector<float> guidePenetrationScores = BuildGuidePenetrationScores(teacherSequence.referenceAsset,
-    hybridBeforeCorrection,
-    predictorColliders,
-    -1.05f,
-    outBundle.correctiveSettings.shellDistance);
-for (float& value : guideContactScores) value = Clamp(value * outBundle.contactGain, 0.0f, 1.0f);
-for (float& value : guidePenetrationScores) value = Clamp(value * outBundle.penetrationGain, 0.0f, 1.0f);
-const uint32_t guideCount = std::min<uint32_t>(teacherSequence.referenceAsset.guideStrandCount, static_cast<uint32_t>(teacherSequence.referenceAsset.strands.size()));
-std::vector<float> guideModelErrorScores(guideCount, 0.0f);
-for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
-{
-    const Vec3 teacherRoot = (guideIndex < teacherGuideRoots.size()) ? teacherGuideRoots[guideIndex] : Vec3(0.0f, 0.0f, 0.0f);
-    const Vec3 hybridRoot = (guideIndex < currentHybridGuideRoots.size()) ? currentHybridGuideRoots[guideIndex] : teacherRoot;
-    const StrandRange& strand = teacherSequence.referenceAsset.strands[guideIndex];
-    const uint32_t pointIndex = strand.pointOffset + strand.pointCount / 2u;
-    const float residualMagnitude = (pointIndex < residualAsset.restPoints.size() && pointIndex < teacherSequence.referenceAsset.restPoints.size())
-        ? Length(residualAsset.restPoints[pointIndex] - teacherSequence.referenceAsset.restPoints[pointIndex])
-        : 0.0f;
-    const float rootError = Clamp(Length(hybridRoot - teacherRoot) / 0.025f, 0.0f, 1.0f);
-    guideModelErrorScores[guideIndex] = Clamp(rootError * 0.70f + residualMagnitude * 18.0f * 0.30f, 0.0f, 1.0f);
-}
-std::vector<float> guideUncertainty = BuildGuideUncertainty(teacherSequence.referenceAsset,
-    currentHybridGuideRoots,
-    trainingPreviousHybridGuideRoots,
-    trainingPreviousGuideUncertainty,
-    guideContactScores,
-    guidePenetrationScores,
-    guideModelErrorScores,
-    1.0f / runtimeFrameRate,
-    outBundle.temporalCoherenceGain,
-    outBundle.uncertaintySmoothingAlpha);
-ActiveSetRuntimeInput runtimeInput = {};
-runtimeInput.currentGuideRoots = currentHybridGuideRoots;
-runtimeInput.previousGuideRoots = trainingPreviousHybridGuideRoots;
-runtimeInput.guideContactScores = guideContactScores;
-runtimeInput.guideUncertainty = guideUncertainty;
-runtimeInput.cameraPosition = Vec3(0.0f, 1.55f, -1.85f);
-runtimeInput.cameraForward = Normalize(Vec3(0.0f, -0.05f, 1.0f));
-runtimeInput.fixedTimeStep = 1.0f / runtimeFrameRate;
-ActiveSetPlan plan;
-if (!EvaluateActiveSetPlan(teacherSequence.referenceAsset,
-    predictorClusters,
-    runtimeInput,
-    outBundle.scoringSettings,
-    outBundle.budget,
-    plan,
-    outError))
-{
-    return false;
-}
-std::vector<float> targets;
-BuildActiveSetPredictorTarget(predictorClusters,
-    plan,
-    guideContactScores,
-    guidePenetrationScores,
-    guideModelErrorScores,
-    targets);
-AppendPredictorTrainingRows(predictorClusters,
-    restGuideRoots,
-    currentHybridGuideRoots,
-    trainingPreviousHybridGuideRoots,
-    guideUncertainty,
-    guideContactScores,
-    guidePenetrationScores,
-    guideModelErrorScores,
-    outBundle.scoringSettings,
-    targets,
-    predictorFeatureRows,
-    predictorTargets);
-trainingPreviousPreviousSmoothedPriorGuidePoints = trainingPreviousSmoothedPriorGuidePoints;
-trainingPreviousSmoothedPriorGuidePoints = trainingSmoothedPriorGuidePoints;
-trainingPreviousPreviousRawPriorGuidePoints = trainingPreviousRawPriorGuidePoints;
-trainingPreviousRawPriorGuidePoints = currentPriorGuidePoints;
-trainingPreviousPreviousResidualGuidePoints = trainingPreviousResidualGuidePoints;
-trainingPreviousResidualGuidePoints = currentResidualGuidePoints;
-trainingPreviousPreviousBaseResidualGuideInput = trainingPreviousBaseResidualGuideInput;
-trainingPreviousBaseResidualGuideInput = baseResidualGuideInput;
-trainingPreviousHybridGuideRoots = currentHybridGuideRoots;
-trainingPreviousGuideUncertainty = guideUncertainty;
-            }
-
-            ActiveSetPredictorSettings predictorSettings = {};
-            predictorSettings.epochs = std::max<uint32_t>(90u, 60u + settings.validationStride * 10u);
-            predictorSettings.learningRate = 1.6e-2f;
-            predictorSettings.weightDecay = std::max(1.0e-5f, settings.regularization * 0.5f);
-            BuildActiveSetPredictorModel(predictorFeatureRows,
-                predictorTargets,
-                predictorSettings,
-                outBundle.activeSetPredictor,
-                &outReport.activeSetPredictorEvaluation);
-            outBundle.activeSetPredictorBlend = Clamp(0.30f + outReport.activeSetPredictorEvaluation.classificationAccuracy * 0.45f +
-                (1.0f - outReport.activeSetPredictorEvaluation.rmsScoreError) * 0.10f,
-                0.25f,
-                0.85f);
-        }
-        return true;
-    }
-
     bool SaveHybridModelBundle(const std::filesystem::path& directoryPath,
         const HybridModelBundle& bundle,
         const HybridModelTrainingReport* report,
@@ -597,7 +490,6 @@ trainingPreviousGuideUncertainty = guideUncertainty;
                     break;
                 }
             }
-
             const uint32_t cacheRefreshInterval = std::max<uint32_t>(1u, bundle.cachedFrameRefreshInterval);
             for (uint32_t strandIndex = 0u; strandIndex < teacherSequence.referenceAsset.strands.size(); ++strandIndex)
             {
@@ -639,6 +531,3 @@ trainingPreviousGuideUncertainty = guideUncertainty;
                     static_cast<float>(plan.summary.selectedGuideCount) * 0.012f +
                     static_cast<float>(correctiveReport.correctedPointCount) * 0.0019f +
                     static_cast<float>(plan.summary.recommendedSolverIterations) * 0.24f);
-
-        }
-    }
