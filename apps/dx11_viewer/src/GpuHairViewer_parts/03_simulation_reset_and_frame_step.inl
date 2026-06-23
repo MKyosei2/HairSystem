@@ -573,7 +573,11 @@
             {
                 if (guideIndex < m_asset.strands.size())
                 {
-                    compactedGuidePointCount += m_asset.strands[guideIndex].pointCount;
+                    const uint32_t pointCount = m_asset.strands[guideIndex].pointCount;
+                    if (pointCount > 1u)
+                    {
+                        compactedGuidePointCount += pointCount - 1u;
+                    }
                 }
             }
         }

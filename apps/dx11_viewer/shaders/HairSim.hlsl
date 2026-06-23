@@ -627,7 +627,8 @@ void DistanceCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BendCS(uint3 id : SV_DispatchThreadID)
 {
-    uint strandIndex = ResolveGuideStrandIndex(id.x);
+    uint dispatchIndex = DispatchBaseIndex + id.x;
+    uint strandIndex = ResolveGuideStrandIndex(dispatchIndex);
     if (strandIndex == 0xFFFFFFFFu || strandIndex >= GuideStrandCount || ParticlesPerStrand < 3)
     {
         return;
@@ -862,7 +863,7 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void ClearGridCS(uint3 id : SV_DispatchThreadID)
 {
-    uint cellIndex = id.x;
+    uint cellIndex = DispatchBaseIndex + id.x;
     uint totalCells = TotalGridCells();
     if (cellIndex >= totalCells)
     {
@@ -881,9 +882,8 @@ void ClearGridCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BuildGridCS(uint3 id : SV_DispatchThreadID)
 {
-    uint dispatchIndex = id.x;
-    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
-    if (dispatchIndex >= guideParticleDispatchCount)
+    uint dispatchIndex = DispatchBaseIndex + id.x;
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();    if (dispatchIndex >= guideParticleDispatchCount)
     {
         return;
     }
@@ -914,7 +914,7 @@ void BuildGridCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
 {
-    uint index = id.x;
+    uint index = DispatchBaseIndex + id.x;
     uint totalGuideParticles = TotalGuideParticles();
     uint activeGuideParticles = GetGuideParticleDispatchCount();
     uint bucketCount = max(BroadphaseHashBucketCount, 1u);
@@ -931,9 +931,8 @@ void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BuildHashGridCS(uint3 id : SV_DispatchThreadID)
 {
-    uint dispatchIndex = id.x;
-    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
-    if (dispatchIndex >= guideParticleDispatchCount)
+    uint dispatchIndex = DispatchBaseIndex + id.x;
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();    if (dispatchIndex >= guideParticleDispatchCount)
     {
         return;
     }
@@ -963,7 +962,7 @@ void BuildHashGridCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void ClearSortedRangesCS(uint3 id : SV_DispatchThreadID)
 {
-    uint cellIndex = id.x;
+    uint cellIndex = DispatchBaseIndex + id.x;
     uint totalCells = TotalGridCells();
     if (cellIndex >= totalCells)
     {
@@ -977,9 +976,9 @@ void ClearSortedRangesCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BuildSortedEntriesCS(uint3 id : SV_DispatchThreadID)
 {
-    uint entryIndex = id.x;
+    uint entryIndex = DispatchBaseIndex + id.x;
     if (entryIndex >= max(SortedPaddedEntryCount, 1u))
-    {
+{
         return;
     }
 
@@ -1036,7 +1035,7 @@ void BitonicSortCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void BuildSortedRangesCS(uint3 id : SV_DispatchThreadID)
 {
-    uint entryIndex = id.x;
+    uint entryIndex = DispatchBaseIndex + id.x;
     uint entryCount = max(SortedPaddedEntryCount, 1u);
     if (entryIndex >= entryCount)
     {
@@ -1193,7 +1192,7 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    uint dispatchIndex = id.x;
+    uint dispatchIndex = DispatchBaseIndex + id.x;
     uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
     if (dispatchIndex >= guideParticleDispatchCount)
     {
@@ -1420,7 +1419,7 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void FollowCS(uint3 id : SV_DispatchThreadID)
 {
-    uint followerDispatchIndex = id.x;
+    uint followerDispatchIndex = DispatchBaseIndex + id.x;
     uint followerIndex = followerDispatchIndex;
     if (UseCompactedFollowerDispatch != 0u)
     {
