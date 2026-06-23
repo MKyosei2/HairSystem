@@ -1,0 +1,6 @@
+﻿preset=03_low_solver
+description=Use low solver iteration count.
+CreatedAt=2026-06-23 09:28:47
+Timestamp=20260623_092847
+status=created_without_launching_viewer
+reason=policy_safe_step0_complete

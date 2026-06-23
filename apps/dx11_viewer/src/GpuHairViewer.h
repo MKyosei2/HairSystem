@@ -308,7 +308,7 @@ namespace hairgpu::viewer
 
             uint32_t sortedPaddedEntryCount = 1u;
             uint32_t enableRuntimeAngularBend = 1u;
-            uint32_t runtimePadding0 = 0u;
+            uint32_t dispatchBaseIndex = 0u;
             uint32_t runtimePadding1 = 0u;
 
             float angularBendRadians = 0.18f;

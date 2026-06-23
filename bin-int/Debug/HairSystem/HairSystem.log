@@ -1,1 +1,95 @@
-﻿
+﻿  AppMain.cpp
+  GpuHairViewer.cpp
+  ActiveSet.cpp
+  Adaptive.cpp
+  AssetIO.cpp
+  Authoring.cpp
+  Binding.cpp
+  BoneAnimation.cpp
+  Broadphase.cpp
+  Cards.cpp
+  Collision.cpp
+  DccInterop.cpp
+  GlobalHairBudget.cpp
+  GuideCache.cpp
+  HairCache.cpp
+  HairMath.cpp
+  HairNoveltyFlags.cpp
+  HairNoveltyTelemetry.cpp
+  HybridRuntime.cpp
+  Lod.cpp
+  MeshIO.cpp
+  Metrics.cpp
+  Pipeline.cpp
+  ReducedModel.cpp
+  RenderData.cpp
+  SampleAsset.cpp
+  TemporalModel.cpp
+  UsdExport.cpp
+  Validation.cpp
+  Wig.cpp
+C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18): warning C4244: '=': 'const wchar_t' から 'char' への変換です。データが失われる可能性があります。
+  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18):
+      テンプレートインスタンス化コンテキスト (最初に最も古いもの) は
+          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\01_window_device_and_ui_setup.inl(571,35):
+          コンパイル対象の関数 テンプレート インスタンス化 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string<std::_String_const_iterator<std::_String_val<std::_Simple_types<_Elem>>>,0>(_Iter,_Iter,const _Alloc &)' のリファレンスを確認してください
+          with
+          [
+              _Elem=wchar_t,
+              _Iter=std::_String_const_iterator<std::_String_val<std::_Simple_types<wchar_t>>>,
+              _Alloc=std::allocator<char>
+          ]
+              C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\01_window_device_and_ui_setup.inl(571,17):
+              'hairgpu::viewer::`anonymous-namespace'::WideToUtf8' の 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string' への最初の参照を参照してください
+          C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xstring(812,17):
+          コンパイル対象の関数 テンプレート インスタンス化 'void std::basic_string<char,std::char_traits<char>,std::allocator<char>>::_Construct_from_iter<const wchar_t*,const wchar_t*,_Size_type>(_Iter,const _Sent,_Size)' のリファレンスを確認してください
+          with
+          [
+              _Size_type=unsigned __int64,
+              _Iter=const wchar_t *,
+              _Sent=const wchar_t *,
+              _Size=unsigned __int64
+          ]
+          C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xstring(968,18):
+          コンパイル対象の関数 テンプレート インスタンス化 '_OutIt *std::_Copy_n_unchecked4<const wchar_t*,_Size,char*>(_InIt,_SizeTy,_OutIt)' のリファレンスを確認してください
+          with
+          [
+              _OutIt=char *,
+              _Size=unsigned __int64,
+              _InIt=const wchar_t *,
+              _SizeTy=unsigned __int64
+          ]
+  
+  HairSystem.vcxproj -> C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+  [HairGPU Step0] Complete policy-safe profile_results created at: C:\Users\kyose\source\repos\HairSystem\profile_results\20260623_093102_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
+  [HairGPU Step0] CreatedAt: 2026-06-23 09:31:02
+  [HairGPU Step0] Real FPS requires HairSystem.exe to be allowed by Windows policy.

@@ -62,7 +62,7 @@ cbuffer SimConstants : register(b0)
 
     uint SortedPaddedEntryCount;
     uint EnableRuntimeAngularBend;
-    uint RuntimePadding0;
+    uint DispatchBaseIndex;
     uint RuntimePadding1;
 
     float AngularBendRadians;
@@ -508,7 +508,7 @@ float3 ApplyLooseGuideConstraints(uint strandIndex, uint localIndex, float3 p)
 [numthreads(64, 1, 1)]
 void RootBindCS(uint3 id : SV_DispatchThreadID)
 {
-    uint strandIndex = id.x;
+    uint strandIndex = DispatchBaseIndex + id.x;
     if (strandIndex >= TotalStrandCount)
     {
         return;
@@ -523,7 +523,7 @@ void RootBindCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void IntegrateCS(uint3 id : SV_DispatchThreadID)
 {
-    uint particleIndex = id.x;
+    uint particleIndex = DispatchBaseIndex + id.x;
     uint totalParticles = TotalStrandCount * ParticlesPerStrand;
     if (particleIndex >= totalParticles)
     {
@@ -580,7 +580,8 @@ void IntegrateCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void DistanceCS(uint3 id : SV_DispatchThreadID)
 {
-    uint strandIndex = ResolveGuideStrandIndex(id.x);
+    uint dispatchIndex = DispatchBaseIndex + id.x;
+    uint strandIndex = ResolveGuideStrandIndex(dispatchIndex);
     if (strandIndex == 0xFFFFFFFFu || strandIndex >= GuideStrandCount)
     {
         return;
@@ -754,7 +755,7 @@ float3 ResolveSdfCollider(float3 p, inout bool touchedSurface)
 [numthreads(64, 1, 1)]
 void CollisionCS(uint3 id : SV_DispatchThreadID)
 {
-    uint dispatchIndex = id.x;
+    uint dispatchIndex = DispatchBaseIndex + id.x;
     uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
     if (dispatchIndex >= guideParticleDispatchCount)
     {

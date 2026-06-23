@@ -1,0 +1,7 @@
+﻿{
+"preset":"03_low_solver",
+"description":"Use low solver iteration count.",
+"status":"not_executed_by_policy_safe_build",
+"real_fps_available":"pending",
+"expected_diagnosis":"If this improves frame time, solver iteration count is a bottleneck."
+}

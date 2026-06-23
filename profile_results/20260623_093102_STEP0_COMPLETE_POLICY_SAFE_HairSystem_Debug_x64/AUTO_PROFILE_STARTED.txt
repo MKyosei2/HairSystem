@@ -1,0 +1,17 @@
+﻿Step0Profile=COMPLETE_POLICY_SAFE
+CreatedAt=2026-06-23 09:31:02
+Timestamp=20260623_093102
+Project=HairSystem
+Configuration=Debug
+Platform=x64
+TargetPath=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\HairSystem.exe
+TargetDir=C:\Users\kyose\source\repos\HairSystem\bin\Debug\HairSystem\
+RunDir=C:\Users\kyose\source\repos\HairSystem\profile_results\20260623_093102_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
+WarmupFrames=120
+MeasureFrames=600
+TargetFps=60
+TargetFrameMs=16.67
+PowerShell=NOT_USED
+BAT=NOT_USED
+LocalExeExecution=NOT_USED_BY_DEFAULT
+MSBuildTasks=MakeDir+WriteLinesToFile
