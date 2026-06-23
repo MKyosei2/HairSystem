@@ -1,41 +1,41 @@
 // HybridRuntime.cpp ordered part 02: hybrid_reduction_and_error_reports
 // This file is included by ../HybridRuntime.cpp; do not compile it directly.
 
-            frameCsv << frameIndex << ","
-                     << timeSeconds << ","
-                     << plan.summary.selectedClusterCount << ","
-                     << plan.summary.selectedGuideCount << ","
-                     << plan.summary.selectedStrandCount << ","
-                     << plan.summary.selectedNaturalnessGain << ","
-                     << plan.summary.averageEfficiencyScore << ","
-                     << plan.summary.editCoverageRatio << ","
-                     << plan.summary.budgetScale << ","
-                     << plan.summary.recommendedSolverIterations << ","
-                     << plan.summary.fullTierCount << ","
-                     << plan.summary.reducedTierCount << ","
-                     << plan.summary.frozenTierCount << ","
-                     << plan.summary.cachedTierCount << ","
-                     << correctiveReport.correctedStrandCount << ","
-                     << correctiveReport.correctedPointCount << ","
-                     << correctiveReport.averagePenetration << ","
-                     << correctiveReport.maxPenetration << ","
-                     << ComputeAverageScalar(guideContactScores) << ","
-                     << ComputeAverageScalar(guidePenetrationScores) << ","
-                     << ComputeAverageScalar(guideUncertainty) << ","
-                     << ComputeMaxScalar(guideUncertainty) << ","
-                     << correctiveReport.averageLengthErrorBefore << ","
-                     << correctiveReport.averageLengthErrorAfter << ","
-                     << estimatedSimulationMilliseconds << ","
-                     << plan.summary.estimatedMemoryMegabytes << "\n";
+frameCsv << frameIndex << ","
+<< timeSeconds << ","
+<< plan.summary.selectedClusterCount << ","
+<< plan.summary.selectedGuideCount << ","
+<< plan.summary.selectedStrandCount << ","
+<< plan.summary.selectedNaturalnessGain << ","
+<< plan.summary.averageEfficiencyScore << ","
+<< plan.summary.editCoverageRatio << ","
+<< plan.summary.budgetScale << ","
+<< plan.summary.recommendedSolverIterations << ","
+<< plan.summary.fullTierCount << ","
+<< plan.summary.reducedTierCount << ","
+<< plan.summary.frozenTierCount << ","
+<< plan.summary.cachedTierCount << ","
+<< correctiveReport.correctedStrandCount << ","
+<< correctiveReport.correctedPointCount << ","
+<< correctiveReport.averagePenetration << ","
+<< correctiveReport.maxPenetration << ","
+<< ComputeAverageScalar(guideContactScores) << ","
+<< ComputeAverageScalar(guidePenetrationScores) << ","
+<< ComputeAverageScalar(guideUncertainty) << ","
+<< ComputeMaxScalar(guideUncertainty) << ","
+<< correctiveReport.averageLengthErrorBefore << ","
+<< correctiveReport.averageLengthErrorAfter << ","
+<< estimatedSimulationMilliseconds << ","
+<< plan.summary.estimatedMemoryMegabytes << "\n";
 
-            selectedClusterSum += static_cast<double>(plan.summary.selectedClusterCount);
-            selectedGuideSum += static_cast<double>(plan.summary.selectedGuideCount);
-            selectedStrandSum += static_cast<double>(plan.summary.selectedStrandCount);
-            penetrationSum += static_cast<double>(correctiveReport.averagePenetration);
-            correctedPointSum += static_cast<double>(correctiveReport.correctedPointCount);
-            maxPenetration = std::max(maxPenetration, correctiveReport.maxPenetration);
-            previousGuideRoots = currentGuideRoots;
-            previousGuideUncertainty = guideUncertainty;
+selectedClusterSum += static_cast<double>(plan.summary.selectedClusterCount);
+selectedGuideSum += static_cast<double>(plan.summary.selectedGuideCount);
+selectedStrandSum += static_cast<double>(plan.summary.selectedStrandCount);
+penetrationSum += static_cast<double>(correctiveReport.averagePenetration);
+correctedPointSum += static_cast<double>(correctiveReport.correctedPointCount);
+maxPenetration = std::max(maxPenetration, correctiveReport.maxPenetration);
+previousGuideRoots = currentGuideRoots;
+previousGuideUncertainty = guideUncertainty;
         }
 
         if (!SaveHairCacheToFile(outputDirectory / "hybrid_teacher.haircache", hairCache, outError) ||
@@ -75,8 +75,8 @@
     }
 
     bool LoadHybridTeacherSequenceFromDirectory(const std::filesystem::path& directoryPath,
-                                                ReducedModelTrainingSequence& outSequence,
-                                                std::string& outError)
+        ReducedModelTrainingSequence& outSequence,
+        std::string& outError)
     {
         outError.clear();
         HairAsset referenceAsset;
@@ -140,8 +140,8 @@
         }
 
         void BuildGuideFramePointsForModel(const ReducedModel& model,
-                                           const std::vector<Vec3>& fullPoints,
-                                           std::vector<Vec3>& outGuideFramePoints)
+            const std::vector<Vec3>& fullPoints,
+            std::vector<Vec3>& outGuideFramePoints)
         {
             outGuideFramePoints.clear();
             const uint32_t particlesPerStrand = model.referenceAsset.particlesPerStrand;
@@ -173,8 +173,8 @@
         }
 
         void BuildGuidePointSequenceForModel(const ReducedModel& model,
-                                            const ReducedModelTrainingSequence& sequence,
-                                            std::vector<Vec3>& outGuideFrames)
+            const ReducedModelTrainingSequence& sequence,
+            std::vector<Vec3>& outGuideFrames)
         {
             outGuideFrames.clear();
             const uint32_t frameCount = sequence.FrameCount();
@@ -191,21 +191,21 @@
         }
 
         void BuildPriorTemporalTrainingSequences(const ReducedModel& model,
-                                                 const ReducedModelTrainingSequence& teacherSequence,
-                                                 const ReducedModelTrainingSequence& priorSequence,
-                                                 std::vector<Vec3>& outInputFrames,
-                                                 std::vector<Vec3>& outTargetFrames)
+            const ReducedModelTrainingSequence& teacherSequence,
+            const ReducedModelTrainingSequence& priorSequence,
+            std::vector<Vec3>& outInputFrames,
+            std::vector<Vec3>& outTargetFrames)
         {
             BuildGuidePointSequenceForModel(model, teacherSequence, outInputFrames);
             BuildGuidePointSequenceForModel(model, priorSequence, outTargetFrames);
         }
 
         void BuildResidualTemporalTrainingSequences(const ReducedModel& model,
-                                                    const ReducedModelTrainingSequence& teacherSequence,
-                                                    const ReducedModelTrainingSequence& priorSequence,
-                                                    float residualGuideGain,
-                                                    std::vector<Vec3>& outInputFrames,
-                                                    std::vector<Vec3>& outTargetFrames)
+            const ReducedModelTrainingSequence& teacherSequence,
+            const ReducedModelTrainingSequence& priorSequence,
+            float residualGuideGain,
+            std::vector<Vec3>& outInputFrames,
+            std::vector<Vec3>& outTargetFrames)
         {
             outInputFrames.clear();
             outTargetFrames.clear();
@@ -294,7 +294,7 @@
             }
             std::sort(values.begin(), values.end());
             const size_t index = std::min(values.size() - 1u,
-                                          static_cast<size_t>(std::floor(static_cast<double>(values.size() - 1u) * 0.95)));
+                static_cast<size_t>(std::floor(static_cast<double>(values.size() - 1u) * 0.95)));
             return values[index];
         }
 
@@ -364,10 +364,10 @@
         }
 
         float ComputeDistanceVisibilityLocal(const Vec3& position,
-                                             const Vec3& cameraPosition,
-                                             const Vec3& cameraForward,
-                                             float nearDistance,
-                                             float farDistance)
+            const Vec3& cameraPosition,
+            const Vec3& cameraForward,
+            float nearDistance,
+            float farDistance)
         {
             const Vec3 toPoint = position - cameraPosition;
             const float distance = Length(toPoint);
@@ -378,18 +378,18 @@
         }
 
         void ExtractActiveSetPredictorFeatures(const std::vector<ActiveSetCluster>& clusters,
-                                               const std::vector<Vec3>& restGuideRoots,
-                                               const std::vector<Vec3>& currentGuideRoots,
-                                               const std::vector<Vec3>& previousGuideRoots,
-                                               const std::vector<float>& guideUncertainty,
-                                               const std::vector<float>& guideContactScores,
-                                               const std::vector<float>& guidePenetrationScores,
-                                               const std::vector<float>& guideModelErrorScores,
-                                               const Vec3& cameraPosition,
-                                               const Vec3& cameraForward,
-                                               const ActiveSetScoringSettings& scoringSettings,
-                                               uint32_t clusterIndex,
-                                               std::array<float, 9u>& outFeatures)
+            const std::vector<Vec3>& restGuideRoots,
+            const std::vector<Vec3>& currentGuideRoots,
+            const std::vector<Vec3>& previousGuideRoots,
+            const std::vector<float>& guideUncertainty,
+            const std::vector<float>& guideContactScores,
+            const std::vector<float>& guidePenetrationScores,
+            const std::vector<float>& guideModelErrorScores,
+            const Vec3& cameraPosition,
+            const Vec3& cameraForward,
+            const ActiveSetScoringSettings& scoringSettings,
+            uint32_t clusterIndex,
+            std::array<float, 9u>& outFeatures)
         {
             outFeatures.fill(0.0f);
             if (clusterIndex >= clusters.size() || restGuideRoots.empty())
@@ -413,26 +413,26 @@
             const Vec3 centroidPrevious = AveragePositionLocal(previousGuideRoots, cluster.guideStrandIndices);
             const Vec3 centroidRest = AveragePositionLocal(restGuideRoots, cluster.guideStrandIndices);
             outFeatures[0] = Clamp(Length(centroidCurrent - centroidPrevious) / safeTimeStep /
-                                   std::max(scoringSettings.velocitySoftRange, 1.0e-4f),
-                                   0.0f,
-                                   1.0f);
+                std::max(scoringSettings.velocitySoftRange, 1.0e-4f),
+                0.0f,
+                1.0f);
             outFeatures[1] = Clamp(Length(centroidCurrent - centroidRest) /
-                                   std::max(scoringSettings.displacementSoftRange, 1.0e-4f),
-                                   0.0f,
-                                   1.0f);
+                std::max(scoringSettings.displacementSoftRange, 1.0e-4f),
+                0.0f,
+                1.0f);
             outFeatures[2] = ComputeDistanceVisibilityLocal(centroidCurrent,
-                                                       cameraPosition,
-                                                       cameraForward,
-                                                       scoringSettings.nearDistance,
-                                                       scoringSettings.farDistance);
+                cameraPosition,
+                cameraForward,
+                scoringSettings.nearDistance,
+                scoringSettings.farDistance);
             outFeatures[3] = Clamp(std::fabs(centroidRest.x - boundsCenter.x) / halfWidth, 0.0f, 1.0f);
             outFeatures[4] = Clamp(AverageScalarAtIndices(guideUncertainty, cluster.guideStrandIndices), 0.0f, 1.0f);
             outFeatures[5] = Clamp(AverageScalarAtIndices(guideContactScores, cluster.guideStrandIndices), 0.0f, 1.0f);
             outFeatures[6] = Clamp(AverageScalarAtIndices(guidePenetrationScores, cluster.guideStrandIndices), 0.0f, 1.0f);
             outFeatures[7] = Clamp(AverageScalarAtIndices(guideModelErrorScores, cluster.guideStrandIndices), 0.0f, 1.0f);
             outFeatures[8] = Clamp(static_cast<float>(cluster.strandIndices.size()) / static_cast<float>(std::max<size_t>(1u, maxClusterStrands)),
-                                   0.0f,
-                                   1.0f);
+                0.0f,
+                1.0f);
         }
 
         float PredictActiveSetRisk(const ActiveSetPredictor& predictor, const std::array<float, 9u>& features)
@@ -482,18 +482,18 @@
         }
 
         void ApplyActiveSetPredictorBoost(const HairAsset& asset,
-                                          const std::vector<ActiveSetCluster>& clusters,
-                                          const std::vector<Vec3>& restGuideRoots,
-                                          const std::vector<Vec3>& currentGuideRoots,
-                                          const std::vector<Vec3>& previousGuideRoots,
-                                          const std::vector<float>& guidePenetrationScores,
-                                          const std::vector<float>& guideModelErrorScores,
-                                          const ActiveSetPredictor& predictor,
-                                          float predictorBlend,
-                                          const ActiveSetScoringSettings& scoringSettings,
-                                          std::vector<float>& inOutGuideUncertainty,
-                                          std::vector<float>& inOutGuideContactScores,
-                                          std::vector<float>* outGuidePredictorRisk)
+            const std::vector<ActiveSetCluster>& clusters,
+            const std::vector<Vec3>& restGuideRoots,
+            const std::vector<Vec3>& currentGuideRoots,
+            const std::vector<Vec3>& previousGuideRoots,
+            const std::vector<float>& guidePenetrationScores,
+            const std::vector<float>& guideModelErrorScores,
+            const ActiveSetPredictor& predictor,
+            float predictorBlend,
+            const ActiveSetScoringSettings& scoringSettings,
+            std::vector<float>& inOutGuideUncertainty,
+            std::vector<float>& inOutGuideContactScores,
+            std::vector<float>* outGuidePredictorRisk)
         {
             const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
             if (!IsActiveSetPredictorReady(predictor) || guideCount == 0u || predictorBlend <= 1.0e-5f)
@@ -521,18 +521,18 @@
             {
                 std::array<float, 9u> features = {};
                 ExtractActiveSetPredictorFeatures(clusters,
-                                                  restGuideRoots,
-                                                  currentGuideRoots,
-                                                  previousGuideRoots,
-                                                  inOutGuideUncertainty,
-                                                  inOutGuideContactScores,
-                                                  guidePenetrationScores,
-                                                  guideModelErrorScores,
-                                                  Vec3(0.0f, 1.55f, -1.85f),
-                                                  Normalize(Vec3(0.0f, -0.05f, 1.0f)),
-                                                  scoringSettings,
-                                                  clusterIndex,
-                                                  features);
+                    restGuideRoots,
+                    currentGuideRoots,
+                    previousGuideRoots,
+                    inOutGuideUncertainty,
+                    inOutGuideContactScores,
+                    guidePenetrationScores,
+                    guideModelErrorScores,
+                    Vec3(0.0f, 1.55f, -1.85f),
+                    Normalize(Vec3(0.0f, -0.05f, 1.0f)),
+                    scoringSettings,
+                    clusterIndex,
+                    features);
                 const float risk = PredictActiveSetRisk(predictor, features);
                 const ActiveSetCluster& cluster = clusters[clusterIndex];
                 for (uint32_t guideIndex : cluster.guideStrandIndices)
@@ -552,9 +552,9 @@
         }
 
         void BuildPurePhysicsProxyPlan(const HairAsset& asset,
-                                       const std::vector<ActiveSetCluster>& clusters,
-                                       const ActiveSetBudget& budget,
-                                       ActiveSetPlan& outPlan)
+            const std::vector<ActiveSetCluster>& clusters,
+            const ActiveSetBudget& budget,
+            ActiveSetPlan& outPlan)
         {
             outPlan = {};
             outPlan.clusters = clusters;
@@ -570,18 +570,18 @@
                 outPlan.scores.push_back(score);
                 outPlan.selectedClusterIndices.push_back(cluster.clusterIndex);
                 outPlan.selectedGuideStrandIndices.insert(outPlan.selectedGuideStrandIndices.end(),
-                                                          cluster.guideStrandIndices.begin(),
-                                                          cluster.guideStrandIndices.end());
+                    cluster.guideStrandIndices.begin(),
+                    cluster.guideStrandIndices.end());
                 outPlan.selectedStrandIndices.insert(outPlan.selectedStrandIndices.end(),
-                                                     cluster.strandIndices.begin(),
-                                                     cluster.strandIndices.end());
+                    cluster.strandIndices.begin(),
+                    cluster.strandIndices.end());
             }
             std::sort(outPlan.selectedGuideStrandIndices.begin(), outPlan.selectedGuideStrandIndices.end());
             outPlan.selectedGuideStrandIndices.erase(std::unique(outPlan.selectedGuideStrandIndices.begin(), outPlan.selectedGuideStrandIndices.end()),
-                                                     outPlan.selectedGuideStrandIndices.end());
+                outPlan.selectedGuideStrandIndices.end());
             std::sort(outPlan.selectedStrandIndices.begin(), outPlan.selectedStrandIndices.end());
             outPlan.selectedStrandIndices.erase(std::unique(outPlan.selectedStrandIndices.begin(), outPlan.selectedStrandIndices.end()),
-                                                outPlan.selectedStrandIndices.end());
+                outPlan.selectedStrandIndices.end());
             outPlan.summary.clusterCount = static_cast<uint32_t>(clusters.size());
             outPlan.summary.selectedClusterCount = static_cast<uint32_t>(clusters.size());
             outPlan.summary.selectedGuideCount = static_cast<uint32_t>(outPlan.selectedGuideStrandIndices.size());
@@ -595,11 +595,11 @@
         }
 
         void BuildActiveSetPredictorTarget(const std::vector<ActiveSetCluster>& clusters,
-                                           const ActiveSetPlan& plan,
-                                           const std::vector<float>& guideContactScores,
-                                           const std::vector<float>& guidePenetrationScores,
-                                           const std::vector<float>& guideModelErrorScores,
-                                           std::vector<float>& outTargets)
+            const ActiveSetPlan& plan,
+            const std::vector<float>& guideContactScores,
+            const std::vector<float>& guidePenetrationScores,
+            const std::vector<float>& guideModelErrorScores,
+            std::vector<float>& outTargets)
         {
             outTargets.assign(clusters.size(), 0.0f);
             for (uint32_t clusterIndex = 0u; clusterIndex < clusters.size(); ++clusterIndex)
@@ -610,44 +610,45 @@
                 const float modelError = AverageScalarAtIndices(guideModelErrorScores, cluster.guideStrandIndices);
                 const bool selected = std::find(plan.selectedClusterIndices.begin(), plan.selectedClusterIndices.end(), clusterIndex) != plan.selectedClusterIndices.end();
                 const float score = std::max(selected ? 1.0f : 0.0f,
-                                             Clamp(contact * 0.55f + penetration * 0.60f + modelError * 0.45f,
-                                                   0.0f,
-                                                   1.0f));
+                    Clamp(contact * 0.55f + penetration * 0.60f + modelError * 0.45f,
+                        0.0f,
+                        1.0f));
                 outTargets[clusterIndex] = score;
             }
         }
 
         void AppendPredictorTrainingRows(const std::vector<ActiveSetCluster>& clusters,
-                                         const std::vector<Vec3>& restGuideRoots,
-                                         const std::vector<Vec3>& currentGuideRoots,
-                                         const std::vector<Vec3>& previousGuideRoots,
-                                         const std::vector<float>& guideUncertainty,
-                                         const std::vector<float>& guideContactScores,
-                                         const std::vector<float>& guidePenetrationScores,
-                                         const std::vector<float>& guideModelErrorScores,
-                                         const ActiveSetScoringSettings& scoringSettings,
-                                         const std::vector<float>& targets,
-                                         std::vector<std::array<float, 9u>>& outFeatures,
-                                         std::vector<float>& outTargets)
+            const std::vector<Vec3>& restGuideRoots,
+            const std::vector<Vec3>& currentGuideRoots,
+            const std::vector<Vec3>& previousGuideRoots,
+            const std::vector<float>& guideUncertainty,
+            const std::vector<float>& guideContactScores,
+            const std::vector<float>& guidePenetrationScores,
+            const std::vector<float>& guideModelErrorScores,
+            const ActiveSetScoringSettings& scoringSettings,
+            const std::vector<float>& targets,
+            std::vector<std::array<float, 9u>>& outFeatures,
+            std::vector<float>& outTargets)
         {
             for (uint32_t clusterIndex = 0u; clusterIndex < clusters.size() && clusterIndex < targets.size(); ++clusterIndex)
             {
                 std::array<float, 9u> features = {};
                 ExtractActiveSetPredictorFeatures(clusters,
-                                                  restGuideRoots,
-                                                  currentGuideRoots,
-                                                  previousGuideRoots,
-                                                  guideUncertainty,
-                                                  guideContactScores,
-                                                  guidePenetrationScores,
-                                                  guideModelErrorScores,
-                                                  Vec3(0.0f, 1.55f, -1.85f),
-                                                  Normalize(Vec3(0.0f, -0.05f, 1.0f)),
-                                                  scoringSettings,
-                                                  clusterIndex,
-                                                  features);
+                    restGuideRoots,
+                    currentGuideRoots,
+                    previousGuideRoots,
+                    guideUncertainty,
+                    guideContactScores,
+                    guidePenetrationScores,
+                    guideModelErrorScores,
+                    Vec3(0.0f, 1.55f, -1.85f),
+                    Normalize(Vec3(0.0f, -0.05f, 1.0f)),
+                    scoringSettings,
+                    clusterIndex,
+                    features);
                 outFeatures.push_back(features);
                 outTargets.push_back(targets[clusterIndex]);
             }
         }
-
+    }
+}

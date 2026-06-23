@@ -30,9 +30,9 @@ namespace hairgpu
         }
 
         float EstimateRuntimeRamMegabytes(const HairAsset& asset,
-                                          const HybridModelBundle& bundle,
-                                          uint32_t clusterCount,
-                                          uint32_t cachedFramePointCount)
+            const HybridModelBundle& bundle,
+            uint32_t clusterCount,
+            uint32_t cachedFramePointCount)
         {
             uint64_t bytes = 0u;
             const uint64_t pointCount = static_cast<uint64_t>(asset.restPoints.size());
@@ -51,18 +51,18 @@ namespace hairgpu
             bytes += static_cast<uint64_t>(bundle.priorModel.pointBiases.size()) * static_cast<uint64_t>(sizeof(Vec3));
             bytes += static_cast<uint64_t>(bundle.residualModel.pointBiases.size()) * static_cast<uint64_t>(sizeof(Vec3));
             bytes += static_cast<uint64_t>(bundle.activeSetPredictor.featureMean.size() + bundle.activeSetPredictor.featureStd.size() +
-                                           bundle.activeSetPredictor.weights.size() + bundle.activeSetPredictor.hiddenWeights.size() +
-                                           bundle.activeSetPredictor.hiddenBias.size() + bundle.activeSetPredictor.outputWeights.size()) * static_cast<uint64_t>(sizeof(float));
+                bundle.activeSetPredictor.weights.size() + bundle.activeSetPredictor.hiddenWeights.size() +
+                bundle.activeSetPredictor.hiddenBias.size() + bundle.activeSetPredictor.outputWeights.size()) * static_cast<uint64_t>(sizeof(float));
             bytes += static_cast<uint64_t>(bundle.priorTemporalNetwork.inputMean.size() + bundle.priorTemporalNetwork.inputStd.size() +
-                                           bundle.priorTemporalNetwork.targetMean.size() + bundle.priorTemporalNetwork.targetStd.size() +
-                                           bundle.priorTemporalNetwork.hiddenWeights.size() + bundle.priorTemporalNetwork.hiddenBias.size() +
-                                           bundle.priorTemporalNetwork.hiddenWeights2.size() + bundle.priorTemporalNetwork.hiddenBias2.size() +
-                                           bundle.priorTemporalNetwork.outputWeights.size() + bundle.priorTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
+                bundle.priorTemporalNetwork.targetMean.size() + bundle.priorTemporalNetwork.targetStd.size() +
+                bundle.priorTemporalNetwork.hiddenWeights.size() + bundle.priorTemporalNetwork.hiddenBias.size() +
+                bundle.priorTemporalNetwork.hiddenWeights2.size() + bundle.priorTemporalNetwork.hiddenBias2.size() +
+                bundle.priorTemporalNetwork.outputWeights.size() + bundle.priorTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
             bytes += static_cast<uint64_t>(bundle.residualTemporalNetwork.inputMean.size() + bundle.residualTemporalNetwork.inputStd.size() +
-                                           bundle.residualTemporalNetwork.targetMean.size() + bundle.residualTemporalNetwork.targetStd.size() +
-                                           bundle.residualTemporalNetwork.hiddenWeights.size() + bundle.residualTemporalNetwork.hiddenBias.size() +
-                                           bundle.residualTemporalNetwork.hiddenWeights2.size() + bundle.residualTemporalNetwork.hiddenBias2.size() +
-                                           bundle.residualTemporalNetwork.outputWeights.size() + bundle.residualTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
+                bundle.residualTemporalNetwork.targetMean.size() + bundle.residualTemporalNetwork.targetStd.size() +
+                bundle.residualTemporalNetwork.hiddenWeights.size() + bundle.residualTemporalNetwork.hiddenBias.size() +
+                bundle.residualTemporalNetwork.hiddenWeights2.size() + bundle.residualTemporalNetwork.hiddenBias2.size() +
+                bundle.residualTemporalNetwork.outputWeights.size() + bundle.residualTemporalNetwork.outputBias.size()) * static_cast<uint64_t>(sizeof(float));
             bytes += static_cast<uint64_t>(cachedFramePointCount) * static_cast<uint64_t>(sizeof(Vec3)) * 2u;
             return static_cast<float>(static_cast<double>(bytes) / (1024.0 * 1024.0));
         }
@@ -135,16 +135,16 @@ namespace hairgpu
         bool HasAnyCollider(const ColliderSet& colliders)
         {
             return !colliders.spheres.empty() ||
-                   !colliders.capsules.empty() ||
-                   !colliders.planes.empty() ||
-                   !colliders.aabbs.empty() ||
-                   !colliders.sdfGrids.empty();
+                !colliders.capsules.empty() ||
+                !colliders.planes.empty() ||
+                !colliders.aabbs.empty() ||
+                !colliders.sdfGrids.empty();
         }
 
         void CopyStrandPoints(const HairAsset& asset,
-                              const std::vector<Vec3>& sourcePoints,
-                              uint32_t strandIndex,
-                              std::vector<Vec3>& outPoints)
+            const std::vector<Vec3>& sourcePoints,
+            uint32_t strandIndex,
+            std::vector<Vec3>& outPoints)
         {
             outPoints.clear();
             if (strandIndex >= asset.strands.size())
@@ -161,9 +161,9 @@ namespace hairgpu
         }
 
         void WriteStrandPoints(const HairAsset& asset,
-                               uint32_t strandIndex,
-                               const std::vector<Vec3>& strandPoints,
-                               std::vector<Vec3>& inOutPoints)
+            uint32_t strandIndex,
+            const std::vector<Vec3>& strandPoints,
+            std::vector<Vec3>& inOutPoints)
         {
             if (strandIndex >= asset.strands.size())
             {
@@ -181,12 +181,12 @@ namespace hairgpu
         }
 
         void BuildRootAnchoredTierPose(const HairAsset& asset,
-                                       uint32_t strandIndex,
-                                       const std::vector<Vec3>& currentPoints,
-                                       const std::vector<Vec3>& anchorPoints,
-                                       float rootFollow,
-                                       float anchorBlend,
-                                       std::vector<Vec3>& outStrandPoints)
+            uint32_t strandIndex,
+            const std::vector<Vec3>& currentPoints,
+            const std::vector<Vec3>& anchorPoints,
+            float rootFollow,
+            float anchorBlend,
+            std::vector<Vec3>& outStrandPoints)
         {
             outStrandPoints.clear();
             if (strandIndex >= asset.strands.size())
@@ -225,8 +225,8 @@ namespace hairgpu
 
 
         void SmoothGuidePoints(std::vector<Vec3>& smoothed,
-                               const std::vector<Vec3>& current,
-                               float alpha)
+            const std::vector<Vec3>& current,
+            float alpha)
         {
             const float a = Clamp(alpha, 0.01f, 1.0f);
             const size_t count = std::min(smoothed.size(), current.size());
@@ -237,10 +237,10 @@ namespace hairgpu
         }
 
         std::vector<Vec3> PredictSecondOrderGuidePoints(const std::vector<Vec3>& current,
-                                                        const std::vector<Vec3>& previous,
-                                                        const std::vector<Vec3>& previousPrevious,
-                                                        float velocityGain,
-                                                        float accelerationGain)
+            const std::vector<Vec3>& previous,
+            const std::vector<Vec3>& previousPrevious,
+            float velocityGain,
+            float accelerationGain)
         {
             std::vector<Vec3> predicted = current;
             const size_t count = std::min(predicted.size(), previous.size());
@@ -258,8 +258,8 @@ namespace hairgpu
         }
 
         void BlendGuidePoints(std::vector<Vec3>& base,
-                              const std::vector<Vec3>& target,
-                              float blend)
+            const std::vector<Vec3>& target,
+            float blend)
         {
             const float t = Clamp(blend, 0.0f, 1.0f);
             const size_t count = std::min(base.size(), target.size());
@@ -270,11 +270,11 @@ namespace hairgpu
         }
 
         float EstimateSecondOrderPredictionGain(const std::vector<Vec3>& previousPreviousPoints,
-                                                const std::vector<Vec3>& previousPoints,
-                                                const std::vector<Vec3>& currentPoints,
-                                                float velocityGain,
-                                                float fallbackGain,
-                                                float maxGain)
+            const std::vector<Vec3>& previousPoints,
+            const std::vector<Vec3>& currentPoints,
+            float velocityGain,
+            float fallbackGain,
+            float maxGain)
         {
             const size_t pointCount = std::min(previousPreviousPoints.size(), std::min(previousPoints.size(), currentPoints.size()));
             if (pointCount == 0u)
@@ -467,10 +467,10 @@ namespace hairgpu
         }
 
         PenetrationResult ResolveAgainstColliderSet(const Vec3& point,
-                                                    const ColliderSet& colliders,
-                                                    float shellDistance,
-                                                    bool affectFloor,
-                                                    float floorY)
+            const ColliderSet& colliders,
+            float shellDistance,
+            bool affectFloor,
+            float floorY)
         {
             PenetrationResult best = {};
             best.correctedPoint = point;
@@ -574,11 +574,11 @@ namespace hairgpu
         }
 
         void BuildProxyFramePoints(const HairAsset& asset,
-                                   float timeSeconds,
-                                   float swayAmplitude,
-                                   float tipNoiseAmplitude,
-                                   float windCyclesPerSecond,
-                                   std::vector<Vec3>& outPoints)
+            float timeSeconds,
+            float swayAmplitude,
+            float tipNoiseAmplitude,
+            float windCyclesPerSecond,
+            std::vector<Vec3>& outPoints)
         {
             outPoints = asset.restPoints;
             const float basePhase = timeSeconds * 2.0f * kPi * windCyclesPerSecond;
@@ -626,8 +626,8 @@ namespace hairgpu
         }
 
         void BuildGuideRootsFromPoints(const HairAsset& asset,
-                                       const std::vector<Vec3>& points,
-                                       std::vector<Vec3>& outRoots)
+            const std::vector<Vec3>& points,
+            std::vector<Vec3>& outRoots)
         {
             const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
             outRoots.assign(guideCount, Vec3(0.0f, 0.0f, 0.0f));
@@ -640,4 +640,5 @@ namespace hairgpu
                 }
             }
         }
-
+    }
+}

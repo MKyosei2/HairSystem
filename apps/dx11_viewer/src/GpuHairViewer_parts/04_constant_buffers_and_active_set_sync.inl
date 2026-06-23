@@ -1,263 +1,263 @@
 // GpuHairViewer.cpp ordered part 04: constant_buffers_and_active_set_sync
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
 
-    void GpuHairViewer::FillScalpSimConstants(SimConstantsScalp& constants, float dt) const
+void GpuHairViewer::FillScalpSimConstants(SimConstantsScalp& constants, float dt) const
+{
+    constants = SimConstantsScalp{};
+    constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+    constants.guideStrandCount = m_asset.guideStrandCount;
+    constants.followerStrandCount = m_asset.followerStrandCount;
+    constants.particlesPerStrand = m_asset.particlesPerStrand;
+    constants.solverIterations = m_simConfig.solverIterations;
+    constants.sphereColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.spheres.size(), 4u));
+    constants.capsuleColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.capsules.size(), 4u));
+    constants.enableSelfCollision = m_enableSelfCollision ? 1u : 0u;
+    FillSharedColliderConstants(constants, m_colliders);
+    constants.deltaTime = dt;
+    constants.gravity = m_simConfig.gravity;
+    constants.damping = m_simConfig.globalDamping;
+    constants.segmentLength = m_simConfig.segmentLength;
+    constants.bendStiffness = m_simConfig.bendStiffness;
+    constants.followStiffness = m_simConfig.followStiffness;
+    constants.windStrength = m_simConfig.windStrength;
+    constants.floorY = m_simConfig.floorY;
+    constants.elapsedTime = m_elapsedSeconds;
+    constants.selfCollisionRadius = m_selfCollisionRadius;
+    constants.selfCollisionStiffness = m_selfCollisionStiffness;
+    constants.scalpMotionBlend = m_enableScalpMotion ? 1.0f : 0.0f;
+    constants.scalpCenter[0] = m_scalpCenter.x;
+    constants.scalpCenter[1] = m_scalpCenter.y;
+    constants.scalpCenter[2] = m_scalpCenter.z;
+    constants.scalpCenter[3] = 0.0f;
+    constants.neckPivot[0] = m_neckPivot.x;
+    constants.neckPivot[1] = m_neckPivot.y;
+    constants.neckPivot[2] = m_neckPivot.z;
+    constants.neckPivot[3] = 0.0f;
+    constants.stretchCompliance = m_simConfig.stretchCompliance;
+    constants.bendCompliance = m_simConfig.bendCompliance;
+    constants.rootStiffness = m_simConfig.rootStiffness;
+    constants.velocityShockPropagation = m_simConfig.velocityShockPropagation;
+    constants.windDirection[0] = m_simConfig.windDirection.x;
+    constants.windDirection[1] = m_simConfig.windDirection.y;
+    constants.windDirection[2] = m_simConfig.windDirection.z;
+    constants.gridCellSize = m_simConfig.selfCollisionCellSize;
+    constants.gridDimX = m_simConfig.selfCollisionGridDimX;
+    constants.gridDimY = m_simConfig.selfCollisionGridDimY;
+    constants.gridDimZ = m_simConfig.selfCollisionGridDimZ;
+    constants.gridCellCapacity = m_simConfig.selfCollisionCellCapacity;
+    constants.gridOrigin[0] = m_simConfig.selfCollisionGridOrigin.x;
+    constants.gridOrigin[1] = m_simConfig.selfCollisionGridOrigin.y;
+    constants.gridOrigin[2] = m_simConfig.selfCollisionGridOrigin.z;
+    constants.enableGridSelfCollision = m_enableGridSelfCollision ? 1u : 0u;
+    constants.looseConstraintStiffness = m_simConfig.looseConstraintStiffness;
+    constants.looseConstraintMaxDistance = m_simConfig.looseConstraintMaxDistance;
+    constants.supportCollisionRadius = m_simConfig.supportCollisionRadius;
+    constants.supportCollisionStiffness = m_simConfig.supportCollisionStiffness;
+    constants.tangentialFriction = m_simConfig.tangentialFriction;
+    constants.lateralFriction = m_simConfig.lateralFriction;
+    constants.freezeBackThreshold = m_simConfig.freezeBackThreshold;
+    constants.freezeBlend = m_simConfig.freezeBlend;
+    constants.broadphaseMode = m_selfCollisionBroadphaseMode;
+    constants.broadphaseHashBucketCount = std::max<uint32_t>(m_simConfig.selfCollisionHashBucketCount, 1u);
+    constants.sortedPaddedEntryCount = std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
+    constants.enableRuntimeAngularBend = m_enableRuntimeAngularBend ? 1u : 0u;
+    constants.angularBendRadians = m_runtimeAngularBendRadians;
+    constants.angularBendCompliance = m_runtimeAngularBendCompliance;
+    constants.angularBendStiffness = m_runtimeAngularBendStiffness;
+    constants.angularBendDamping = m_runtimeAngularBendDamping;
+    for (size_t i = 0; i < static_cast<size_t>(constants.sphereColliderCount); ++i)
     {
-        constants = SimConstantsScalp{};
-        constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
-        constants.guideStrandCount = m_asset.guideStrandCount;
-        constants.followerStrandCount = m_asset.followerStrandCount;
-        constants.particlesPerStrand = m_asset.particlesPerStrand;
-        constants.solverIterations = m_simConfig.solverIterations;
-        constants.sphereColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.spheres.size(), 4u));
-        constants.capsuleColliderCount = static_cast<uint32_t>(std::min<size_t>(m_colliders.capsules.size(), 4u));
-        constants.enableSelfCollision = m_enableSelfCollision ? 1u : 0u;
-        FillSharedColliderConstants(constants, m_colliders);
-        constants.deltaTime = dt;
-        constants.gravity = m_simConfig.gravity;
-        constants.damping = m_simConfig.globalDamping;
-        constants.segmentLength = m_simConfig.segmentLength;
-        constants.bendStiffness = m_simConfig.bendStiffness;
-        constants.followStiffness = m_simConfig.followStiffness;
-        constants.windStrength = m_simConfig.windStrength;
-        constants.floorY = m_simConfig.floorY;
-        constants.elapsedTime = m_elapsedSeconds;
-        constants.selfCollisionRadius = m_selfCollisionRadius;
-        constants.selfCollisionStiffness = m_selfCollisionStiffness;
-        constants.scalpMotionBlend = m_enableScalpMotion ? 1.0f : 0.0f;
-        constants.scalpCenter[0] = m_scalpCenter.x;
-        constants.scalpCenter[1] = m_scalpCenter.y;
-        constants.scalpCenter[2] = m_scalpCenter.z;
-        constants.scalpCenter[3] = 0.0f;
-        constants.neckPivot[0] = m_neckPivot.x;
-        constants.neckPivot[1] = m_neckPivot.y;
-        constants.neckPivot[2] = m_neckPivot.z;
-        constants.neckPivot[3] = 0.0f;
-        constants.stretchCompliance = m_simConfig.stretchCompliance;
-        constants.bendCompliance = m_simConfig.bendCompliance;
-        constants.rootStiffness = m_simConfig.rootStiffness;
-        constants.velocityShockPropagation = m_simConfig.velocityShockPropagation;
-        constants.windDirection[0] = m_simConfig.windDirection.x;
-        constants.windDirection[1] = m_simConfig.windDirection.y;
-        constants.windDirection[2] = m_simConfig.windDirection.z;
-        constants.gridCellSize = m_simConfig.selfCollisionCellSize;
-        constants.gridDimX = m_simConfig.selfCollisionGridDimX;
-        constants.gridDimY = m_simConfig.selfCollisionGridDimY;
-        constants.gridDimZ = m_simConfig.selfCollisionGridDimZ;
-        constants.gridCellCapacity = m_simConfig.selfCollisionCellCapacity;
-        constants.gridOrigin[0] = m_simConfig.selfCollisionGridOrigin.x;
-        constants.gridOrigin[1] = m_simConfig.selfCollisionGridOrigin.y;
-        constants.gridOrigin[2] = m_simConfig.selfCollisionGridOrigin.z;
-        constants.enableGridSelfCollision = m_enableGridSelfCollision ? 1u : 0u;
-        constants.looseConstraintStiffness = m_simConfig.looseConstraintStiffness;
-        constants.looseConstraintMaxDistance = m_simConfig.looseConstraintMaxDistance;
-        constants.supportCollisionRadius = m_simConfig.supportCollisionRadius;
-        constants.supportCollisionStiffness = m_simConfig.supportCollisionStiffness;
-        constants.tangentialFriction = m_simConfig.tangentialFriction;
-        constants.lateralFriction = m_simConfig.lateralFriction;
-        constants.freezeBackThreshold = m_simConfig.freezeBackThreshold;
-        constants.freezeBlend = m_simConfig.freezeBlend;
-        constants.broadphaseMode = m_selfCollisionBroadphaseMode;
-        constants.broadphaseHashBucketCount = std::max<uint32_t>(m_simConfig.selfCollisionHashBucketCount, 1u);
-        constants.sortedPaddedEntryCount = std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
-        constants.enableRuntimeAngularBend = m_enableRuntimeAngularBend ? 1u : 0u;
-        constants.angularBendRadians = m_runtimeAngularBendRadians;
-        constants.angularBendCompliance = m_runtimeAngularBendCompliance;
-        constants.angularBendStiffness = m_runtimeAngularBendStiffness;
-        constants.angularBendDamping = m_runtimeAngularBendDamping;
-        for (size_t i = 0; i < static_cast<size_t>(constants.sphereColliderCount); ++i)
+        const SphereCollider& s = m_colliders.spheres[i];
+        constants.sphereData[i] = { s.center.x, s.center.y, s.center.z, s.radius };
+    }
+    for (size_t i = 0; i < static_cast<size_t>(constants.capsuleColliderCount); ++i)
+    {
+        const CapsuleCollider& c = m_colliders.capsules[i];
+        constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
+        constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
+    }
+}
+
+void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& viewProjection) const
+{
+    constants = RenderConstants{};
+    for (int i = 0; i < 16; ++i)
+    {
+        constants.viewProjection[i] = viewProjection.m[i];
+    }
+    constants.cameraPosition[0] = m_cameraPosition.x;
+    constants.cameraPosition[1] = m_cameraPosition.y;
+    constants.cameraPosition[2] = m_cameraPosition.z;
+    constants.cameraPosition[3] = 1.0f;
+    constants.lightDirection[0] = -0.4f;
+    constants.lightDirection[1] = 0.9f;
+    constants.lightDirection[2] = 0.2f;
+    constants.lightDirection[3] = 0.0f;
+    constants.widthScale = m_widthScale;
+    const bool editVisualization = (m_interactionMode == InteractionMode::Edit);
+    const DebugColorMode effectiveDebugColorMode = editVisualization ? DebugColorMode::Editability : m_debugColorMode;
+    constants.debugColorMode = static_cast<uint32_t>(effectiveDebugColorMode);
+    constants.guideStrandCount = m_asset.guideStrandCount;
+    constants.particlesPerStrand = m_asset.particlesPerStrand;
+    constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+    constants.tubeRingSides = m_strandTubeRingSides;
+    const bool fastEditPreview = m_fastGroomViewport && IsGroomWorkspace();
+    const bool heavyInteraction = m_brushStrokeActive || m_gizmoDragging;
+    constants.renderFollowerStride = fastEditPreview ? (heavyInteraction ? 4u : 2u) : 1u;
+    constants.renderGuideOnlyAboveTier = fastEditPreview ? (heavyInteraction ? 2u : 3u) : (editVisualization ? 6u : 4u);
+    constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.95f : 1.02f) : (editVisualization ? 1.15f : 0.82f);
+    constants.renderHiddenWidthThreshold = 0.0f;
+    constants.renderStrandAlpha = fastEditPreview ? (heavyInteraction ? 0.82f : 0.90f) : (editVisualization ? 0.96f : 1.0f);
+    constants.renderPadding0 = 0.0f;
+}
+
+void GpuHairViewer::SyncActiveSetGpuBuffers()
+{
+    const UINT totalStrands = static_cast<UINT>(std::max<size_t>(m_asset.strands.size(), 1u));
+    const UINT guideCount = std::max<UINT>(m_asset.guideStrandCount, 1u);
+    const UINT followerCount = std::max<UINT>(m_asset.followerStrandCount, 1u);
+    std::vector<uint32_t> renderTiers(totalStrands, static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+    std::vector<uint32_t> guideTiers(guideCount, static_cast<uint32_t>(hairgpu::SimTier::Full));
+    std::vector<uint32_t> followerTiers(followerCount, static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+
+    for (uint32_t strandIndex = 0u; strandIndex < totalStrands; ++strandIndex)
+    {
+        const bool isGuide = strandIndex < m_asset.guideStrandCount;
+        uint32_t tier = isGuide ? static_cast<uint32_t>(hairgpu::SimTier::Full)
+            : static_cast<uint32_t>(hairgpu::SimTier::Reduced);
+        if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
         {
-            const SphereCollider& s = m_colliders.spheres[i];
-            constants.sphereData[i] = { s.center.x, s.center.y, s.center.z, s.radius };
+            tier = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
         }
-        for (size_t i = 0; i < static_cast<size_t>(constants.capsuleColliderCount); ++i)
+        renderTiers[strandIndex] = tier;
+        if (isGuide)
         {
-            const CapsuleCollider& c = m_colliders.capsules[i];
-            constants.capsuleData[i * 2 + 0] = { c.pointA.x, c.pointA.y, c.pointA.z, c.radiusA };
-            constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
+            guideTiers[strandIndex] = tier;
+        }
+        else if ((strandIndex - m_asset.guideStrandCount) < followerTiers.size())
+        {
+            followerTiers[strandIndex - m_asset.guideStrandCount] = tier;
         }
     }
 
-    void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& viewProjection) const
+    if (!m_asset.strands.empty() && m_interactionMode == InteractionMode::Edit)
     {
-        constants = RenderConstants{};
-        for (int i = 0; i < 16; ++i)
-        {
-            constants.viewProjection[i] = viewProjection.m[i];
-        }
-        constants.cameraPosition[0] = m_cameraPosition.x;
-        constants.cameraPosition[1] = m_cameraPosition.y;
-        constants.cameraPosition[2] = m_cameraPosition.z;
-        constants.cameraPosition[3] = 1.0f;
-        constants.lightDirection[0] = -0.4f;
-        constants.lightDirection[1] = 0.9f;
-        constants.lightDirection[2] = 0.2f;
-        constants.lightDirection[3] = 0.0f;
-        constants.widthScale = m_widthScale;
-        const bool editVisualization = (m_interactionMode == InteractionMode::Edit);
-        const DebugColorMode effectiveDebugColorMode = editVisualization ? DebugColorMode::Editability : m_debugColorMode;
-        constants.debugColorMode = static_cast<uint32_t>(effectiveDebugColorMode);
-        constants.guideStrandCount = m_asset.guideStrandCount;
-        constants.particlesPerStrand = m_asset.particlesPerStrand;
-        constants.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
-        constants.tubeRingSides = m_strandTubeRingSides;
-        const bool fastEditPreview = m_fastGroomViewport && IsGroomWorkspace();
-        const bool heavyInteraction = m_brushStrokeActive || m_gizmoDragging;
-        constants.renderFollowerStride = fastEditPreview ? (heavyInteraction ? 4u : 2u) : 1u;
-        constants.renderGuideOnlyAboveTier = fastEditPreview ? (heavyInteraction ? 2u : 3u) : (editVisualization ? 6u : 4u);
-        constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.95f : 1.02f) : (editVisualization ? 1.15f : 0.82f);
-        constants.renderHiddenWidthThreshold = 0.0f;
-        constants.renderStrandAlpha = fastEditPreview ? (heavyInteraction ? 0.82f : 0.90f) : (editVisualization ? 0.96f : 1.0f);
-        constants.renderPadding0 = 0.0f;
+        BuildEditVisualizationCategories(renderTiers);
+        m_editVisualizationCategories = renderTiers;
+    }
+    else
+    {
+        m_editVisualizationCategories.clear();
     }
 
-    void GpuHairViewer::SyncActiveSetGpuBuffers()
+    std::vector<uint32_t> compactedGuideIndices(guideCount, 0u);
+    std::vector<uint32_t> compactedFollowerIndices(followerCount, 0u);
+    uint32_t compactedGuideCount = 0u;
+    uint32_t compactedFollowerCount = 0u;
+    const uint32_t runtimeStride = std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u));
+    const uint32_t runtimePhase = (runtimeStride > 1u) ? (m_runtimeFollowerUpdatePhase % runtimeStride) : 0u;
+
+    for (uint32_t guideIndex = 0u; guideIndex < m_asset.guideStrandCount; ++guideIndex)
     {
-        const UINT totalStrands = static_cast<UINT>(std::max<size_t>(m_asset.strands.size(), 1u));
-        const UINT guideCount = std::max<UINT>(m_asset.guideStrandCount, 1u);
-        const UINT followerCount = std::max<UINT>(m_asset.followerStrandCount, 1u);
-        std::vector<uint32_t> renderTiers(totalStrands, static_cast<uint32_t>(hairgpu::SimTier::Reduced));
-        std::vector<uint32_t> guideTiers(guideCount, static_cast<uint32_t>(hairgpu::SimTier::Full));
-        std::vector<uint32_t> followerTiers(followerCount, static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+        if (guideTiers[guideIndex] == static_cast<uint32_t>(hairgpu::SimTier::Full))
+        {
+            compactedGuideIndices[compactedGuideCount++] = guideIndex;
+        }
+    }
+    for (uint32_t followerIndex = 0u; followerIndex < m_asset.followerStrandCount; ++followerIndex)
+    {
+        const uint32_t tier = followerTiers[followerIndex];
+        bool active = (tier == static_cast<uint32_t>(hairgpu::SimTier::Full));
+        if (!active && tier == static_cast<uint32_t>(hairgpu::SimTier::Reduced))
+        {
+            active = ((followerIndex + runtimePhase) % std::max<uint32_t>(runtimeStride, 2u)) == 0u;
+        }
+        if (!active && tier == static_cast<uint32_t>(hairgpu::SimTier::Cached))
+        {
+            active = ((followerIndex + runtimePhase) % std::max<uint32_t>(runtimeStride, 4u)) == 0u;
+        }
+        if (active)
+        {
+            compactedFollowerIndices[compactedFollowerCount++] = followerIndex;
+        }
+    }
+    std::array<uint32_t, 4> guideCounters = { compactedGuideCount, 0u, 0u, 0u };
+    std::array<uint32_t, 4> followerCounters = { compactedFollowerCount, 0u, 0u, 0u };
 
-        for (uint32_t strandIndex = 0u; strandIndex < totalStrands; ++strandIndex)
-        {
-            const bool isGuide = strandIndex < m_asset.guideStrandCount;
-            uint32_t tier = isGuide ? static_cast<uint32_t>(hairgpu::SimTier::Full)
-                                    : static_cast<uint32_t>(hairgpu::SimTier::Reduced);
-            if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
-            {
-                tier = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
-            }
-            renderTiers[strandIndex] = tier;
-            if (isGuide)
-            {
-                guideTiers[strandIndex] = tier;
-            }
-            else if ((strandIndex - m_asset.guideStrandCount) < followerTiers.size())
-            {
-                followerTiers[strandIndex - m_asset.guideStrandCount] = tier;
-            }
-        }
+    if (m_renderStrandTiersBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_renderStrandTiersBuffer.buffer.Get(), 0, nullptr, renderTiers.data(), 0, 0);
+    }
+    if (m_guideTierAssignmentsBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_guideTierAssignmentsBuffer.buffer.Get(), 0, nullptr, guideTiers.data(), 0, 0);
+    }
+    if (m_followerTierAssignmentsBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_followerTierAssignmentsBuffer.buffer.Get(), 0, nullptr, followerTiers.data(), 0, 0);
+    }
+    if (m_compactedGuideIndicesBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_compactedGuideIndicesBuffer.buffer.Get(), 0, nullptr, compactedGuideIndices.data(), 0, 0);
+    }
+    if (m_compactedGuideCounterBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_compactedGuideCounterBuffer.buffer.Get(), 0, nullptr, guideCounters.data(), 0, 0);
+    }
+    if (m_compactedFollowerIndicesBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_compactedFollowerIndicesBuffer.buffer.Get(), 0, nullptr, compactedFollowerIndices.data(), 0, 0);
+    }
+    if (m_compactedFollowerCounterBuffer.buffer)
+    {
+        m_context->UpdateSubresource(m_compactedFollowerCounterBuffer.buffer.Get(), 0, nullptr, followerCounters.data(), 0, 0);
+    }
+}
 
-        if (!m_asset.strands.empty() && m_interactionMode == InteractionMode::Edit)
-        {
-            BuildEditVisualizationCategories(renderTiers);
-            m_editVisualizationCategories = renderTiers;
-        }
-        else
-        {
-            m_editVisualizationCategories.clear();
-        }
+void GpuHairViewer::RebuildActiveSetFoundation()
+{
+    m_activeSetClusters = hairgpu::BuildActiveSetClusters(m_asset, m_activeSetClusterSettings);
+    m_activeSetPlan = {};
+    m_activeSetGuideContactScores.clear();
+    m_activeSetGuideUncertainty.clear();
+    m_activeSetEvaluationMilliseconds = 0.0f;
+    m_sparseCorrectiveReport = {};
 
-        std::vector<uint32_t> compactedGuideIndices(guideCount, 0u);
-        std::vector<uint32_t> compactedFollowerIndices(followerCount, 0u);
-        uint32_t compactedGuideCount = 0u;
-        uint32_t compactedFollowerCount = 0u;
-        const uint32_t runtimeStride = std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u));
-        const uint32_t runtimePhase = (runtimeStride > 1u) ? (m_runtimeFollowerUpdatePhase % runtimeStride) : 0u;
-
-        for (uint32_t guideIndex = 0u; guideIndex < m_asset.guideStrandCount; ++guideIndex)
+    const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+    m_activeSetPreviousGuideRoots.assign(guideCount, hairgpu::Vec3(0.0f, 0.0f, 0.0f));
+    for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+    {
+        const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+        if (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
         {
-            if (guideTiers[guideIndex] == static_cast<uint32_t>(hairgpu::SimTier::Full))
-            {
-                compactedGuideIndices[compactedGuideCount++] = guideIndex;
-            }
-        }
-        for (uint32_t followerIndex = 0u; followerIndex < m_asset.followerStrandCount; ++followerIndex)
-        {
-            const uint32_t tier = followerTiers[followerIndex];
-            bool active = (tier == static_cast<uint32_t>(hairgpu::SimTier::Full));
-            if (!active && tier == static_cast<uint32_t>(hairgpu::SimTier::Reduced))
-            {
-                active = ((followerIndex + runtimePhase) % std::max<uint32_t>(runtimeStride, 2u)) == 0u;
-            }
-            if (!active && tier == static_cast<uint32_t>(hairgpu::SimTier::Cached))
-            {
-                active = ((followerIndex + runtimePhase) % std::max<uint32_t>(runtimeStride, 4u)) == 0u;
-            }
-            if (active)
-            {
-                compactedFollowerIndices[compactedFollowerCount++] = followerIndex;
-            }
-        }
-        std::array<uint32_t, 4> guideCounters = { compactedGuideCount, 0u, 0u, 0u };
-        std::array<uint32_t, 4> followerCounters = { compactedFollowerCount, 0u, 0u, 0u };
-
-        if (m_renderStrandTiersBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_renderStrandTiersBuffer.buffer.Get(), 0, nullptr, renderTiers.data(), 0, 0);
-        }
-        if (m_guideTierAssignmentsBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_guideTierAssignmentsBuffer.buffer.Get(), 0, nullptr, guideTiers.data(), 0, 0);
-        }
-        if (m_followerTierAssignmentsBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_followerTierAssignmentsBuffer.buffer.Get(), 0, nullptr, followerTiers.data(), 0, 0);
-        }
-        if (m_compactedGuideIndicesBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_compactedGuideIndicesBuffer.buffer.Get(), 0, nullptr, compactedGuideIndices.data(), 0, 0);
-        }
-        if (m_compactedGuideCounterBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_compactedGuideCounterBuffer.buffer.Get(), 0, nullptr, guideCounters.data(), 0, 0);
-        }
-        if (m_compactedFollowerIndicesBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_compactedFollowerIndicesBuffer.buffer.Get(), 0, nullptr, compactedFollowerIndices.data(), 0, 0);
-        }
-        if (m_compactedFollowerCounterBuffer.buffer)
-        {
-            m_context->UpdateSubresource(m_compactedFollowerCounterBuffer.buffer.Get(), 0, nullptr, followerCounters.data(), 0, 0);
+            m_activeSetPreviousGuideRoots[guideIndex] = m_asset.restPoints[strand.pointOffset];
         }
     }
 
-    void GpuHairViewer::RebuildActiveSetFoundation()
+    std::wstringstream ss;
+    ss << L"Ready (clusters=" << m_activeSetClusters.size() << L")";
+    m_activeSetLastStatus = ss.str();
+}
+
+std::vector<hairgpu::Vec3> GpuHairViewer::BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const
+{
+    const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+    std::vector<hairgpu::Vec3> roots(guideCount, hairgpu::Vec3(0.0f, 0.0f, 0.0f));
+    for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
     {
-        m_activeSetClusters = hairgpu::BuildActiveSetClusters(m_asset, m_activeSetClusterSettings);
-        m_activeSetPlan = {};
-        m_activeSetGuideContactScores.clear();
-        m_activeSetGuideUncertainty.clear();
-        m_activeSetEvaluationMilliseconds = 0.0f;
-        m_sparseCorrectiveReport = {};
-
-        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
-        m_activeSetPreviousGuideRoots.assign(guideCount, hairgpu::Vec3(0.0f, 0.0f, 0.0f));
-        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
+        if (strand.pointCount > 0u && strand.pointOffset < particles.size())
         {
-            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
-            if (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
-            {
-                m_activeSetPreviousGuideRoots[guideIndex] = m_asset.restPoints[strand.pointOffset];
-            }
+            const GpuParticle& rootParticle = particles[strand.pointOffset];
+            roots[guideIndex] = hairgpu::Vec3(rootParticle.x, rootParticle.y, rootParticle.z);
         }
-
-        std::wstringstream ss;
-        ss << L"Ready (clusters=" << m_activeSetClusters.size() << L")";
-        m_activeSetLastStatus = ss.str();
-    }
-
-    std::vector<hairgpu::Vec3> GpuHairViewer::BuildGuideRootPositionsFromParticles(const std::vector<GpuParticle>& particles) const
-    {
-        const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
-        std::vector<hairgpu::Vec3> roots(guideCount, hairgpu::Vec3(0.0f, 0.0f, 0.0f));
-        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+        else if (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
         {
-            const hairgpu::StrandRange& strand = m_asset.strands[guideIndex];
-            if (strand.pointCount > 0u && strand.pointOffset < particles.size())
-            {
-                const GpuParticle& rootParticle = particles[strand.pointOffset];
-                roots[guideIndex] = hairgpu::Vec3(rootParticle.x, rootParticle.y, rootParticle.z);
-            }
-            else if (strand.pointCount > 0u && strand.pointOffset < m_asset.restPoints.size())
-            {
-                roots[guideIndex] = m_asset.restPoints[strand.pointOffset];
-            }
+            roots[guideIndex] = m_asset.restPoints[strand.pointOffset];
         }
-        return roots;
     }
+    return roots;
+}
 
 
 std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std::vector<GpuParticle>& particles) const
@@ -306,8 +306,8 @@ std::vector<float> GpuHairViewer::BuildGuideContactScoresFromParticles(const std
             for (const hairgpu::AabbCollider& aabb : m_colliders.aabbs)
             {
                 const bool inside = p.x >= aabb.minBounds.x && p.x <= aabb.maxBounds.x &&
-                                    p.y >= aabb.minBounds.y && p.y <= aabb.maxBounds.y &&
-                                    p.z >= aabb.minBounds.z && p.z <= aabb.maxBounds.z;
+                    p.y >= aabb.minBounds.y && p.y <= aabb.maxBounds.y &&
+                    p.z >= aabb.minBounds.z && p.z <= aabb.maxBounds.z;
                 float distance = 0.0f;
                 if (inside)
                 {
