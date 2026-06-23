@@ -199,6 +199,329 @@
         return true;
     }
 
+    void GpuHairViewer::StepSimulation(float dt)
+    {
+        if (!m_context || !m_simConstantsHair || m_asset.strands.empty() || m_asset.particlesPerStrand == 0u)
+        {
+            return;
+        }
+
+        const uint32_t totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+        const uint32_t guideStrandCount = m_asset.guideStrandCount;
+        const uint32_t followerStrandCount = m_asset.followerStrandCount;
+        const uint32_t particlesPerStrand = m_asset.particlesPerStrand;
+        const uint32_t totalParticleCount = static_cast<uint32_t>(std::min<size_t>(
+            m_asset.restPoints.size(),
+            static_cast<size_t>(totalStrandCount) * static_cast<size_t>(particlesPerStrand)));
+
+        if (totalParticleCount == 0u)
+        {
+            return;
+        }
+
+        if (m_enableActiveSetRuntime)
+        {
+            SyncActiveSetGpuBuffers();
+        }
+
+        UpdateAnimatedScalp(m_elapsedSeconds);
+
+        const uint32_t previousBufferIndex = m_currentBufferIndex;
+        const uint32_t outputBufferIndex = 1u - m_currentBufferIndex;
+
+        const uint32_t gridCellCount = std::max<uint32_t>(
+            m_simConfig.selfCollisionGridDimX *
+            m_simConfig.selfCollisionGridDimY *
+            m_simConfig.selfCollisionGridDimZ,
+            1u);
+
+        const uint32_t totalGuideParticleCount =
+            guideStrandCount * particlesPerStrand;
+
+        const bool useActiveDispatch =
+            m_enableActiveSetRuntime &&
+            m_activeSetPlan.summary.selectedGuideCount > 0u;
+
+        uint32_t compactedGuidePointCount = 0u;
+        if (useActiveDispatch)
+        {
+            for (uint32_t guideIndex : m_activeSetPlan.selectedGuideStrandIndices)
+            {
+                if (guideIndex < m_asset.strands.size())
+                {
+                    const uint32_t pointCount = m_asset.strands[guideIndex].pointCount;
+                    if (pointCount > 1u)
+                    {
+                        compactedGuidePointCount += pointCount - 1u;
+                    }
+                }
+            }
+        }
+
+        const uint32_t guideDispatchCount = useActiveDispatch
+            ? static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size())
+            : guideStrandCount;
+
+        const uint32_t guideParticleDispatchCount = useActiveDispatch
+            ? compactedGuidePointCount
+            : totalGuideParticleCount;
+
+        const uint32_t compactedFollowerCount = useActiveDispatch
+            ? (std::max<uint32_t>(
+                m_activeSetPlan.summary.selectedStrandCount,
+                guideDispatchCount) - guideDispatchCount)
+            : followerStrandCount;
+
+        const uint32_t followerDispatchCount = useActiveDispatch
+            ? compactedFollowerCount
+            : followerStrandCount;
+
+        const uint32_t sortedEntryCount =
+            std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
+
+        constexpr uint32_t kMaxD3D11DispatchGroupsX = 65535u;
+        constexpr uint32_t kHairThreadsPerGroup = 64u;
+        constexpr uint32_t kBitonicThreadsPerGroup = 256u;
+        constexpr uint32_t kMaxBitonicItems = kMaxD3D11DispatchGroupsX * kBitonicThreadsPerGroup;
+
+        uint32_t effectiveBroadphaseMode = m_selfCollisionBroadphaseMode;
+        uint32_t effectiveSortedEntryCount = sortedEntryCount;
+
+        // BitonicSortCS cannot be tiled by DispatchBaseIndex because partner = index ^ BitonicJ
+        // depends on the global sort domain. If sorted broadphase is too large for one D3D11
+        // dispatch, fall back to hash broadphase for this frame.
+        if (effectiveBroadphaseMode == 3u && sortedEntryCount > kMaxBitonicItems)
+        {
+            effectiveBroadphaseMode = 1u;
+            effectiveSortedEntryCount = 1u;
+            m_noveltyTelemetry.overflowCount += 1u;
+            m_noveltyTelemetry.fallbackCount += 1u;
+        }
+
+        auto updateHairConstants = [&](uint32_t dispatchBaseIndex)
+            {
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                if (SUCCEEDED(m_context->Map(m_simConstantsHair.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+                {
+                    SimConstantsHair constants = {};
+                    FillHairSimConstants(constants, dt);
+                    constants.dispatchBaseIndex = dispatchBaseIndex;
+                    constants.broadphaseMode = effectiveBroadphaseMode;
+                    constants.sortedPaddedEntryCount = std::max<uint32_t>(effectiveSortedEntryCount, 1u);
+                    std::memcpy(mapped.pData, &constants, sizeof(constants));
+                    m_context->Unmap(m_simConstantsHair.Get(), 0);
+                }
+
+                ID3D11Buffer* constantBuffers[] = {
+                    m_simConstantsHair.Get()
+                };
+                m_context->CSSetConstantBuffers(0, 1, constantBuffers);
+            };
+
+        auto bindCommonSrvs = [&]()
+            {
+                ID3D11ShaderResourceView* srvs[] = {
+                    m_positions[previousBufferIndex].srv.Get(),             // t0 InputPositions
+                    m_previousPositions[previousBufferIndex].srv.Get(),     // t1 InputPreviousPositions
+                    m_restPositions.srv.Get(),                             // t2 RestPositions
+                    m_followBuffer.srv.Get(),                              // t3 FollowStrands
+                    m_scalpPositions.srv.Get(),                            // t4 ScalpPositions
+                    m_scalpTrianglesBuffer.srv.Get(),                      // t5 ScalpTriangles
+                    m_rootBindingsBuffer.srv.Get(),                        // t6 RootBindings
+                    m_compactedFollowerIndicesBuffer.srv.Get(),            // t7 CompactedFollowerIndices
+                    m_followerTierAssignmentsBuffer.srv.Get(),             // t8 FollowerTierAssignments
+                    m_compactedGuideIndicesBuffer.srv.Get(),               // t9 CompactedGuideIndices
+                    m_compactedGuideCounterBuffer.srv.Get(),               // t10 GuideCompactionCountersInSim
+                    m_compactedFollowerCounterBuffer.srv.Get(),            // t11 FollowerCompactionCountersInSim
+                    m_sdfValuesBuffer.srv.Get()                            // t12 SdfValues
+                };
+                m_context->CSSetShaderResources(0, static_cast<UINT>(std::size(srvs)), srvs);
+            };
+
+        auto bindPrimaryUavs = [&]()
+            {
+                ID3D11UnorderedAccessView* uavs[] = {
+                    m_positions[outputBufferIndex].uav.Get(),              // u0 OutputPositions
+                    m_previousPositions[outputBufferIndex].uav.Get(),      // u1 OutputPreviousPositions
+                    m_distanceLambdaBuffer.uav.Get(),                      // u2 DistanceLambdas
+                    m_bendLambdaBuffer.uav.Get(),                          // u3 BendLambdas
+                    m_gridCellCountsBuffer.uav.Get(),                      // u4 GridCellCounts
+                    m_gridCellIndicesBuffer.uav.Get(),                     // u5 GridCellIndices
+                    m_gridHashHeadsBuffer.uav.Get(),                       // u6 GridHashHeads
+                    m_gridParticleNextBuffer.uav.Get()                     // u7 GridParticleNext
+                };
+                m_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(uavs)), uavs, nullptr);
+            };
+
+        auto bindSortedBroadphaseUavs = [&]()
+            {
+                ID3D11UnorderedAccessView* uavs[] = {
+                    m_positions[outputBufferIndex].uav.Get(),              // u0 OutputPositions
+                    m_previousPositions[outputBufferIndex].uav.Get(),      // u1 OutputPreviousPositions
+                    m_distanceLambdaBuffer.uav.Get(),                      // u2 DistanceLambdas
+                    m_bendLambdaBuffer.uav.Get(),                          // u3 BendLambdas
+                    m_sortedKeysBuffer.uav.Get(),                          // u4 GridCellCounts as sorted keys
+                    m_sortedParticleIndicesBuffer.uav.Get(),               // u5 GridCellIndices as sorted particle indices
+                    m_sortedCellStartsBuffer.uav.Get(),                    // u6 GridHashHeads as sorted cell starts
+                    m_sortedCellEndsBuffer.uav.Get()                       // u7 GridParticleNext as sorted cell ends
+                };
+                m_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(uavs)), uavs, nullptr);
+            };
+
+        auto dispatchTiled = [&](ID3D11ComputeShader* shader, uint32_t itemCount, uint32_t threadsPerGroup)
+            {
+                if (!shader || itemCount == 0u || threadsPerGroup == 0u)
+                {
+                    return;
+                }
+
+                const uint32_t maxItemsPerDispatch = kMaxD3D11DispatchGroupsX * threadsPerGroup;
+                m_context->CSSetShader(shader, nullptr, 0);
+
+                for (uint32_t baseIndex = 0u; baseIndex < itemCount; baseIndex += maxItemsPerDispatch)
+                {
+                    const uint32_t remaining = itemCount - baseIndex;
+                    const uint32_t tileItemCount = std::min<uint32_t>(remaining, maxItemsPerDispatch);
+                    const uint32_t groupCount = DispatchGroups(tileItemCount, threadsPerGroup);
+
+                    updateHairConstants(baseIndex);
+                    m_context->Dispatch(groupCount, 1u, 1u);
+                }
+
+                updateHairConstants(0u);
+            };
+
+        auto dispatchUntiledChecked = [&](ID3D11ComputeShader* shader, uint32_t itemCount, uint32_t threadsPerGroup)
+            {
+                if (!shader || itemCount == 0u || threadsPerGroup == 0u)
+                {
+                    return;
+                }
+
+                const uint32_t groupCount = DispatchGroups(itemCount, threadsPerGroup);
+                if (groupCount > kMaxD3D11DispatchGroupsX)
+                {
+                    m_noveltyTelemetry.overflowCount += 1u;
+                    return;
+                }
+
+                updateHairConstants(0u);
+                m_context->CSSetShader(shader, nullptr, 0);
+                m_context->Dispatch(groupCount, 1u, 1u);
+            };
+
+        auto unbindComputeState = [&]()
+            {
+                ID3D11ShaderResourceView* nullSrvs[13] = {};
+                ID3D11UnorderedAccessView* nullUavs[8] = {};
+                ID3D11Buffer* nullConstantBuffers[2] = {};
+
+                m_context->CSSetShader(nullptr, nullptr, 0);
+                m_context->CSSetShaderResources(0, 13, nullSrvs);
+                m_context->CSSetUnorderedAccessViews(0, 8, nullUavs, nullptr);
+                m_context->CSSetConstantBuffers(0, 2, nullConstantBuffers);
+            };
+
+        if (m_activeGpuTimingFrameIndex >= 0)
+        {
+            GpuTimingFrame& timingFrame = m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
+            if (timingFrame.simStart)
+            {
+                m_context->End(timingFrame.simStart.Get());
+            }
+        }
+
+        bindCommonSrvs();
+        bindPrimaryUavs();
+        updateHairConstants(0u);
+
+        dispatchTiled(m_rootBindCS.Get(), totalStrandCount, kHairThreadsPerGroup);
+        dispatchTiled(m_integrateCS.Get(), totalParticleCount, kHairThreadsPerGroup);
+
+        const uint32_t solverIterationCount = std::max<uint32_t>(m_simConfig.solverIterations, 1u);
+
+        for (uint32_t iteration = 0u; iteration < solverIterationCount; ++iteration)
+        {
+            bindPrimaryUavs();
+
+            dispatchTiled(m_distanceCS.Get(), guideDispatchCount, kHairThreadsPerGroup);
+            dispatchTiled(m_bendCS.Get(), guideDispatchCount, kHairThreadsPerGroup);
+            dispatchTiled(m_collisionCS.Get(), guideParticleDispatchCount, kHairThreadsPerGroup);
+
+            if (m_enableSelfCollision && guideParticleDispatchCount > 0u)
+            {
+                if (m_enableGridSelfCollision)
+                {
+                    if (effectiveBroadphaseMode == 0u)
+                    {
+                        bindPrimaryUavs();
+                        dispatchTiled(m_clearGridCS.Get(), gridCellCount, kHairThreadsPerGroup);
+                        dispatchTiled(m_buildGridCS.Get(), guideParticleDispatchCount, kHairThreadsPerGroup);
+                    }
+                    else if (effectiveBroadphaseMode == 3u)
+                    {
+                        bindSortedBroadphaseUavs();
+
+                        dispatchTiled(m_clearSortedRangesCS.Get(), gridCellCount, kHairThreadsPerGroup);
+                        dispatchTiled(m_buildSortedEntriesCS.Get(), effectiveSortedEntryCount, kHairThreadsPerGroup);
+
+                        if (m_bitonicConstants && effectiveSortedEntryCount <= kMaxBitonicItems)
+                        {
+                            ID3D11Buffer* bitonicConstantBuffers[] = {
+                                m_bitonicConstants.Get()
+                            };
+                            m_context->CSSetConstantBuffers(1, 1, bitonicConstantBuffers);
+
+                            for (uint32_t k = 2u; k <= effectiveSortedEntryCount && k != 0u; k <<= 1u)
+                            {
+                                for (uint32_t j = k >> 1u; j > 0u; j >>= 1u)
+                                {
+                                    BitonicConstants bitonicConstants = {};
+                                    bitonicConstants.j = j;
+                                    bitonicConstants.k = k;
+                                    bitonicConstants.entryCount = effectiveSortedEntryCount;
+                                    bitonicConstants._padding = 0u;
+                                    m_context->UpdateSubresource(m_bitonicConstants.Get(), 0, nullptr, &bitonicConstants, 0, 0);
+
+                                    dispatchUntiledChecked(m_bitonicSortCS.Get(), effectiveSortedEntryCount, kBitonicThreadsPerGroup);
+                                }
+                            }
+                        }
+
+                        dispatchTiled(m_buildSortedRangesCS.Get(), effectiveSortedEntryCount, kHairThreadsPerGroup);
+                    }
+                    else
+                    {
+                        bindPrimaryUavs();
+                        const uint32_t hashClearCount = std::max<uint32_t>(
+                            std::max<uint32_t>(m_simConfig.selfCollisionHashBucketCount, 1u),
+                            totalGuideParticleCount);
+                        dispatchTiled(m_clearHashGridCS.Get(), hashClearCount, kHairThreadsPerGroup);
+                        dispatchTiled(m_buildHashGridCS.Get(), guideParticleDispatchCount, kHairThreadsPerGroup);
+                    }
+                }
+
+                bindPrimaryUavs();
+                dispatchTiled(m_selfCollisionCS.Get(), guideParticleDispatchCount, kHairThreadsPerGroup);
+            }
+
+            dispatchTiled(m_followCS.Get(), followerDispatchCount, kHairThreadsPerGroup);
+        }
+
+        unbindComputeState();
+
+        m_currentBufferIndex = outputBufferIndex;
+        m_runtimeFollowerUpdatePhase += 1u;
+
+        if (m_activeGpuTimingFrameIndex >= 0)
+        {
+            GpuTimingFrame& timingFrame = m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
+            if (timingFrame.simEnd)
+            {
+                m_context->End(timingFrame.simEnd.Get());
+            }
+        }
+    }
     void GpuHairViewer::ResetSimulation()
     {
         m_currentBufferIndex = 0;
