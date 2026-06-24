@@ -1,620 +1,182 @@
-﻿  AppMain.cpp
-  GpuHairViewer.cpp
-  ActiveSet.cpp
-  Adaptive.cpp
-  AssetIO.cpp
-  Authoring.cpp
-  Binding.cpp
-  BoneAnimation.cpp
-  Broadphase.cpp
-  Cards.cpp
-  Collision.cpp
-  DccInterop.cpp
-  GlobalHairBudget.cpp
-  GuideCache.cpp
-  HairCache.cpp
-  HairMath.cpp
-  HairNoveltyFlags.cpp
-  HairNoveltyTelemetry.cpp
-  HybridRuntime.cpp
-  Lod.cpp
-  MeshIO.cpp
-  Metrics.cpp
-  Pipeline.cpp
-  ReducedModel.cpp
-  RenderData.cpp
-  SampleAsset.cpp
-  TemporalModel.cpp
-  UsdExport.cpp
-  Validation.cpp
-  Wig.cpp
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(4,44): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+﻿  HybridRuntime.cpp
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(22,39): error C2065: 'points': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(4,59): error C2143: 構文エラー: ',' が '&' の前にありません。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(27,53): error C2065: 'points': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(10,52): error C2065: 'asset': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(10,98): error C2065: 'asset': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(10,20): error C2737: 'guideCount': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(14,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(14,26): error C2143: 構文エラー: ';' が '&' の前にありません。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(14,28): error C2065: 'strand': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(14,37): error C2065: 'asset': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(16,53): error C2065: 'strand': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(18,41): error C2065: 'strand': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(18,28): error C2737: 'pointIndex': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(19,31): error C2065: 'points': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(24,45): error C2065: 'points': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(24,65): error C2065: 'colliders': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(24,76): error C2065: 'floorY': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(24,84): error C2065: 'shellDistance': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(24,17): error C3861: 'ComputeColliderContactScore': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30): error C2672: 'std::max': 一致するオーバーロードされた関数が見つかりませんでした。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(26,38): error C2672: 'std::max': 一致するオーバーロードされた関数が見つかりませんでした。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(85,26):
       '_Ty std::max(std::initializer_list<_Elem>)' の可能性があります
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-          '_Ty std::max(std::initializer_list<_Elem>)': 1 引数が必要です - 2 が指定されました
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
-      または '_Ty std::max(std::initializer_list<_Elem>,_Pr)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-          '_Ty std::max(std::initializer_list<_Elem>,_Pr)': 'std::initializer_list<_Elem>' の テンプレート 引数を 'float' から推測できませんでした
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
-      または 'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': テンプレート パラメーター '_Ty' があいまいです
-              C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-              '<error type>' の可能性があります。
-              C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-              または 'float'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': 'const _Ty &' の テンプレート 引数を '<error type>' から推測できませんでした
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
-      または 'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(23,30):
-          'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 2 が指定されました
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(26,30): error C3861: 'Clamp': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(31,48): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(31,63): error C2143: 構文エラー: ',' が '&' の前にありません。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(37,52): error C2065: 'asset': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(37,98): error C2065: 'asset': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(37,20): error C2737: 'guideCount': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(39,42): error C2065: 'shellDistance': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(39,38): error C2672: 'std::max': 一致するオーバーロードされた関数が見つかりませんでした。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(85,26):
-      '_Ty std::max(std::initializer_list<_Elem>)' の可能性があります
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(39,38):
-          '_Ty std::max(std::initializer_list<_Elem>)': 1 引数が必要です - 2 が指定されました
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
-      または '_Ty std::max(std::initializer_list<_Elem>,_Pr)'
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
-      または 'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
-      または 'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(39,38):
-          'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 2 が指定されました
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(39,17): error C2737: 'normalization': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(42,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(42,26): error C2143: 構文エラー: ';' が '&' の前にありません。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(42,28): error C2065: 'strand': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(42,37): error C2065: 'asset': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(44,53): error C2065: 'strand': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(46,41): error C2065: 'strand': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(46,28): error C2737: 'pointIndex': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(47,31): error C2065: 'points': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,13): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,37): error C2146: 構文エラー: ';' が、識別子 'result' の前に必要です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,37): error C2065: 'result': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,72): error C2065: 'points': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,92): error C2065: 'colliders': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,103): error C2065: 'shellDistance': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,124): error C2065: 'floorY': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(51,46): error C3861: 'ResolveAgainstColliderSet': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(52,57): error C2065: 'result': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(52,36): error C2672: 'std::max': 一致するオーバーロードされた関数が見つかりませんでした。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(85,26):
-      '_Ty std::max(std::initializer_list<_Elem>)' の可能性があります
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(52,36):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(26,38):
           '_Ty std::max(std::initializer_list<_Elem>)': 'std::initializer_list<_Elem>' の テンプレート 引数を 'float' から推測できませんでした
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
       または '_Ty std::max(std::initializer_list<_Elem>,_Pr)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(52,36):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(26,38):
           '_Ty std::max(std::initializer_list<_Elem>,_Pr)': 2 引数が必要です - 1 が指定されました
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
       または 'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(52,36):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(26,38):
           'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': 2 引数が必要です - 1 が指定されました
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
       または 'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(52,36):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(26,38):
           'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 1 が指定されました
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(54,30): error C3861: 'Clamp': 識別子が見つかりませんでした
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(576,63): error C2660: 'hairgpu::`anonymous-namespace'::BuildGuideContactScores': 関数に 5 個の引数を指定できません。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(9,28):
+      'hairgpu::`anonymous-namespace'::BuildGuideContactScores' の宣言を確認してください
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(576,63):
+      引数リスト '(const hairgpu::HairAsset, std::vector<hairgpu::Vec3,std::allocator<hairgpu::Vec3>>, const hairgpu::ColliderSet, float, const float)' を一致させようとしているとき
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(59,42): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(623,22): error C2668: 'hairgpu::`anonymous-namespace'::ApplySparseCorrectivePhysics': オーバーロード関数の呼び出しを解決することができません。(新機能 ; ヘルプを参照)
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(295,14):
+      'bool hairgpu::`anonymous-namespace'::ApplySparseCorrectivePhysics(const hairgpu::HairAsset &,const hairgpu::ActiveSetPlan &,const hairgpu::ColliderSet &,std::vector<hairgpu::Vec3,std::allocator<hairgpu::Vec3>> &,const hairgpu::SparseCorrectiveSettings &,hairgpu::SparseCorrectiveReport *,std::string &)' の可能性があります
+      C:\Users\kyose\source\repos\HairSystem\include\hairgpu\HybridRuntime.h(45,10):
+      または 'bool hairgpu::ApplySparseCorrectivePhysics(const hairgpu::HairAsset &,const hairgpu::ActiveSetPlan &,const hairgpu::ColliderSet &,std::vector<hairgpu::Vec3,std::allocator<hairgpu::Vec3>> &,const hairgpu::SparseCorrectiveSettings &,hairgpu::SparseCorrectiveReport *,std::string &)' [引数依存の照合を使用して検出] の可能性があります
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(623,22):
+      引数リスト '(const hairgpu::HairAsset, hairgpu::ActiveSetPlan, const hairgpu::ColliderSet, std::vector<hairgpu::Vec3,std::allocator<hairgpu::Vec3>>, const hairgpu::SparseCorrectiveSettings, hairgpu::SparseCorrectiveReport *, std::string)' を一致させようとしているとき
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(59,57): error C2143: 構文エラー: ',' が '&' の前にありません。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(4,13): error C2065: 'frameIndex': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(70,52): error C2065: 'asset': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(5,4): error C2065: 'timeSeconds': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(70,98): error C2065: 'asset': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(6,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(70,20): error C2737: 'guideCount': const オブジェクトを初期化する必要があります
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(7,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(72,35): error C2065: 'fixedTimeStep': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(8,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(72,17): error C2737: 'safeDt': const オブジェクトを初期化する必要があります
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(9,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(73,31): error C2065: 'smoothingAlpha': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(10,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(73,25): error C3861: 'Clamp': 識別子が見つかりませんでした
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(11,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(74,41): error C2065: 'temporalCoherenceGain': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(12,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(74,17): error C2737: 'temporalGain': const オブジェクトを初期化する必要があります
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(13,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(77,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(14,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(77,26): error C2143: 構文エラー: ';' が '&' の前にありません。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(15,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(77,28): error C2065: 'strand': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(16,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(77,37): error C2065: 'asset': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(17,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(18,4): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,20): error C2146: 構文エラー: ';' が、識別子 'restRoot' の前に必要です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(19,4): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,20): error C2065: 'restRoot': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(20,4): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,32): error C2065: 'strand': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(21,4): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,58): error C2065: 'strand': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(22,25): error C2065: 'guideContactScores': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,79): error C2065: 'asset': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(23,25): error C2065: 'guidePenetrationScores': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(79,15): error C2065: 'asset': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(24,25): error C2065: 'guideUncertainty': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(79,32): error C2065: 'strand': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(25,21): error C2065: 'guideUncertainty': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(79,50): error C7732: ']' の前に式が必要です
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(26,4): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(80,15): error C2064: 3 引数を取り込む関数には評価されません。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(27,4): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(29,4): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,15): error C2086: 'const int Vec3': 再定義されました。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(31,43): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,15):
-      'Vec3' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,20): error C2146: 構文エラー: ';' が、識別子 'current' の前に必要です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(32,41): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,20): error C2065: 'current': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(33,42): error C2065: 'plan': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,44): error C2065: 'currentRoots': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(34,39): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,67): error C2065: 'currentRoots': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(35,42): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(81,94): error C2065: 'restRoot': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(36,43): error C2065: 'correctiveReport': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(36,23): error C2672: 'std::max': 一致するオーバーロードされた関数が見つかりませんでした。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(85,26):
+      '_Ty std::max(std::initializer_list<_Elem>)' の可能性があります
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(36,23):
+          '_Ty std::max(std::initializer_list<_Elem>)': 'std::initializer_list<_Elem>' の テンプレート 引数を 'float' から推測できませんでした
+      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
+      または '_Ty std::max(std::initializer_list<_Elem>,_Pr)'
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(36,23):
+          '_Ty std::max(std::initializer_list<_Elem>,_Pr)': 2 引数が必要です - 1 が指定されました
+      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
+      または 'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(36,23):
+          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': 2 引数が必要です - 1 が指定されました
+      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
+      または 'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(36,23):
+          'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 1 が指定されました
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,15): error C2086: 'const int Vec3': 再定義されました。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(37,22): error C2065: 'currentGuideRoots': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(78,15):
-      'Vec3' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,20): error C2146: 構文エラー: ';' が、識別子 'previous' の前に必要です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(38,28): error C2065: 'guideUncertainty': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,20): error C2065: 'previous': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(41,9): error C2059: 構文エラー: 'if'
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,45): error C2065: 'previousRoots': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(44,9): error C2143: 構文エラー: ';' が '{' の前にありません。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,69): error C2065: 'previousRoots': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(44,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(82,97): error C2065: 'current': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,77): error C2065: 'settings': 定義されていない識別子です。
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(83,43): error C2065: 'current': 定義されていない識別子です。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59): error C2664: '_Ty std::max<uint32_t>(std::initializer_list<_Ty>)': 引数 1 を 'unsigned int' から 'std::initializer_list<_Ty>' へ変換できません。
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59): error C2664:         with
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59): error C2664:         [
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59): error C2664:             _Ty=uint32_t
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59): error C2664:         ]
   (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(83,53): error C2065: 'previous': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(83,36): error C3861: 'Length': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(83,30): error C3861: 'Clamp': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(84,49): error C2065: 'current': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(84,59): error C2065: 'restRoot': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(84,42): error C3861: 'Length': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(84,36): error C3861: 'Clamp': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(85,45): error C2065: 'contactScores': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(85,69): error C2065: 'contactScores': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(85,21): error C2737: 'contact': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(86,49): error C2065: 'penetrationScores': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(86,77): error C2065: 'penetrationScores': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(86,21): error C2737: 'penetration': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(87,48): error C2065: 'modelErrorScores': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(87,75): error C2065: 'modelErrorScores': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(87,21): error C2737: 'modelError': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(88,51): error C2065: 'previousUncertainty': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(88,81): error C2065: 'previousUncertainty': 定義されていない識別子です。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(88,21): error C2737: 'previousValue': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(89,40): error C3861: 'Clamp': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(89,21): error C2737: 'temporalResidual': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(92,37): error C3861: 'Clamp': 識別子が見つかりませんでした
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\01_guide_lod_and_cache_runtime.inl(92,37): error C1003: プログラム内のエラーが 100 個を超えました。コンパイルは中断されます。
-  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,20): error C2146: 構文エラー: ';' が、識別子 'CSSetConstantBuffers' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(5,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(5,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(5,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(5,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(5,20): error C2146: 構文エラー: ';' が、識別子 'CSSetShaderResources' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(6,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(6,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(6,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(6,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(6,20): error C2146: 構文エラー: ';' が、識別子 'CSSetUnorderedAccessViews' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(8,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(8,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(8,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(8,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(8,20): error C2146: 構文エラー: ';' が、識別子 'CSSetShader' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(9,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(9,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(9,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(9,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(9,20): error C2146: 構文エラー: ';' が、識別子 'Dispatch' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(11,37): error C2065: 'm_enableActiveSetRuntime': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(11,66): error C2065: 'm_activeSetPlan': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(11,20): error C2737: 'hairgpu::viewer::activeSetReady': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(12,9): error C2059: 構文エラー: 'if'
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(13,9): error C2143: 構文エラー: ';' が '{' の前にありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(13,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(46,9): error C2059: 構文エラー: 'if'
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(47,9): error C2143: 構文エラー: ';' が '{' の前にありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(47,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(203,9): error C2059: 構文エラー: 'if'
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(204,9): error C2143: 構文エラー: ';' が '{' の前にありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(204,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(221,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(221,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(221,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(221,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(221,20): error C2146: 構文エラー: ';' が、識別子 'CSSetShader' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(222,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(222,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(222,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(222,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(222,20): error C2146: 構文エラー: ';' が、識別子 'CSSetShaderResources' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(223,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(223,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(223,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(223,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(223,20): error C2146: 構文エラー: ';' が、識別子 'CSSetUnorderedAccessViews' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(224,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(224,20): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(224,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(224,9): error C2086: 'int hairgpu::viewer::m_context': 再定義されました。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(4,9):
-      'hairgpu::viewer::m_context' の宣言を確認してください
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(224,20): error C2146: 構文エラー: ';' が、識別子 'CSSetConstantBuffers' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(226,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(226,32): error C2065: 'nextBufferIndex': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,64): error C2065: 'm_activeSetPlan': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,119): error C2065: 'm_activeSetPlan': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-  
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45): error C2664: '_Ty std::max<uint32_t>(std::initializer_list<_Ty>)': 引数 1 を 'unsigned int' から 'std::initializer_list<_Ty>' へ変換できません。
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45): error C2664:         with
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45): error C2664:         [
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45): error C2664:             _Ty=uint32_t
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45): error C2664:         ]
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
       'std::initializer_list<_Ty>::initializer_list': オーバーロードされた関数ですべての引数の型を変換できませんでした
           with
           [
@@ -626,19 +188,19 @@ C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\
           [
               _Ty=uint32_t
           ]
-              C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+              C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
               'std::initializer_list<_Ty>::initializer_list(std::initializer_list<_Ty> &&)': 引数 1 を 'unsigned int' から 'std::initializer_list<_Ty> &&' へ変換できません。
           with
           [
               _Ty=uint32_t
           ]
-                  C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+                  C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
                   理由: 'unsigned int' から 'std::initializer_list<_Ty>' へは変換できません。
           with
           [
               _Ty=uint32_t
           ]
-                  C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+                  C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
                   変換には 2 番目のユーザー定義変換演算子またはコンストラクターが必要です。
           C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\initializer_list(51,1):
           または 'std::initializer_list<_Ty>::initializer_list(const std::initializer_list<_Ty> &)'
@@ -646,196 +208,255 @@ C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\
           [
               _Ty=uint32_t
           ]
-              C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+              C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
               'std::initializer_list<_Ty>::initializer_list(const std::initializer_list<_Ty> &)': 引数 1 を 'unsigned int' から 'const std::initializer_list<_Ty> &' へ変換できません。
           with
           [
               _Ty=uint32_t
           ]
-                  C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+                  C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
                   理由: 'unsigned int' から 'const std::initializer_list<_Ty>' へは変換できません。
           with
           [
               _Ty=uint32_t
           ]
-                  C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+                  C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
                   変換には 2 番目のユーザー定義変換演算子またはコンストラクターが必要です。
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,59):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,73):
           引数リスト '(unsigned int)' を一致させようとしているとき
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(7132,26):
       'std::max' の宣言を確認してください
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
       '_Ty std::max(std::initializer_list<_Elem>,_Pr)' の可能性があります
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59):
           '_Ty std::max(std::initializer_list<_Elem>,_Pr)': 2 引数が必要です - 1 が指定されました
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
       または 'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59):
           'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': 2 引数が必要です - 1 が指定されました
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
       または 'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45):
+          C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59):
           'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 1 が指定されました
-      C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(227,45):
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(48,59):
       引数リスト '(unsigned int)' を一致させようとしているとき
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(228,9): error C2059: 構文エラー: 'if'
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(229,9): error C2143: 構文エラー: ';' が '{' の前にありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(229,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(232,9): error C2059: 構文エラー: 'else'
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(233,9): error C2143: 構文エラー: ';' が '{' の前にありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,19): error C2146: 構文エラー: ';' が、識別子 'frameCount' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(233,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(50,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(236,9): error C2059: 構文エラー: 'if'
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(50,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(237,9): error C2143: 構文エラー: ';' が '{' の前にありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(50,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(237,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(50,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(242,10): error C2653: 'GpuHairViewer': 識別子がクラス名でも名前空間名でもありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(50,9): error C2086: 'int hairgpu::`anonymous-namespace'::outReport': 再定義されました。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9):
+      'hairgpu::`anonymous-namespace'::outReport' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(244,41): error C2065: 'm_cameraPitch': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(50,19): error C2146: 構文エラー: ';' が、識別子 'averageSelectedClusterCount' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(244,21): error C2737: 'cosPitch': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(51,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(245,41): error C2065: 'm_cameraPitch': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(51,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(245,21): error C2737: 'sinPitch': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(51,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(246,39): error C2065: 'm_cameraYaw': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(51,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(246,21): error C2737: 'cosYaw': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(51,9): error C2086: 'int hairgpu::`anonymous-namespace'::outReport': 再定義されました。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9):
+      'hairgpu::`anonymous-namespace'::outReport' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(247,39): error C2065: 'm_cameraYaw': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(51,19): error C2146: 構文エラー: ';' が、識別子 'averageSelectedGuideCount' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(247,21): error C2737: 'sinYaw': const オブジェクトを初期化する必要があります
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(52,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(249,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(52,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(249,20): error C2146: 構文エラー: ';' が、識別子 'offset' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(52,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(250,33): error C2065: 'm_cameraDistance': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(52,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(251,24): error C2065: 'm_cameraDistance': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(52,9): error C2086: 'int hairgpu::`anonymous-namespace'::outReport': 再定義されました。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9):
+      'hairgpu::`anonymous-namespace'::outReport' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(252,33): error C2065: 'm_cameraDistance': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(52,19): error C2146: 構文エラー: ';' が、識別子 'averageSelectedStrandCount' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(249,20): error C3861: 'offset': 識別子が見つかりませんでした
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(53,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(254,9): error C2065: 'm_cameraPosition': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(53,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(254,28): error C2065: 'm_cameraTarget': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(53,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(254,45): error C2065: 'offset': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(53,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(257,10): error C2653: 'GpuHairViewer': 識別子がクラス名でも名前空間名でもありません。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(53,9): error C2086: 'int hairgpu::`anonymous-namespace'::outReport': 再定義されました。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9):
+      'hairgpu::`anonymous-namespace'::outReport' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(260,9): error C2065: 'Vec3': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(53,19): error C2146: 構文エラー: ';' が、識別子 'averagePenetration' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(260,14): error C2146: 構文エラー: ';' が、識別子 'minP' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(54,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(260,14): error C3861: 'minP': 識別子が見つかりませんでした
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(54,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(261,9): error C2065: 'Vec3': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(54,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(261,14): error C2146: 構文エラー: ';' が、識別子 'maxP' の前に必要です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(54,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(261,14): error C3861: 'maxP': 識別子が見つかりませんでした
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(54,9): error C2086: 'int hairgpu::`anonymous-namespace'::outReport': 再定義されました。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9):
+      'hairgpu::`anonymous-namespace'::outReport' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(271,17): error C2065: 'minP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(54,19): error C2146: 構文エラー: ';' が、識別子 'maxPenetration' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(272,17): error C2065: 'maxP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(55,9): error C3927: '->': 後続の戻り値の型は、関数以外の宣言子の後に許可されていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(276,13): error C2065: 'minP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(55,18): error C3484: 構文エラー: 戻り値の型の前に '->' が必要です
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(276,31): error C2065: 'minP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(55,19): error C3613: '->' の後に戻り型が指定されていません ('int' と見なされます)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(276,27): error C2672: 'std::min': 一致するオーバーロードされた関数が見つかりませんでした。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(109,26):
-      '_Ty std::min(std::initializer_list<_Elem>)' の可能性があります
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(106,26):
-      または '_Ty std::min(std::initializer_list<_Elem>,_Pr)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(276,27):
-          '_Ty std::min(std::initializer_list<_Elem>,_Pr)': 2 引数が必要です - 1 が指定されました
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(98,6):
-      または 'const _Ty &std::min(const _Ty &,const _Ty &) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(276,27):
-          'const _Ty &std::min(const _Ty &,const _Ty &) noexcept(<expr>)': 2 引数が必要です - 1 が指定されました
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(88,33):
-      または 'const _Ty &std::min(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(276,27):
-          'const _Ty &std::min(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 1 が指定されました
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(55,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(277,13): error C2065: 'minP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(55,9): error C2086: 'int hairgpu::`anonymous-namespace'::outReport': 再定義されました。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(49,9):
+      'hairgpu::`anonymous-namespace'::outReport' の宣言を確認してください
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(277,31): error C2065: 'minP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(55,19): error C2146: 構文エラー: ';' が、識別子 'averageCorrectedPointCount' の前に必要です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(277,27): error C2672: 'std::min': 一致するオーバーロードされた関数が見つかりませんでした。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(109,26):
-      '_Ty std::min(std::initializer_list<_Elem>)' の可能性があります
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(106,26):
-      または '_Ty std::min(std::initializer_list<_Elem>,_Pr)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(277,27):
-          '_Ty std::min(std::initializer_list<_Elem>,_Pr)': 2 引数が必要です - 1 が指定されました
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(98,6):
-      または 'const _Ty &std::min(const _Ty &,const _Ty &) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(277,27):
-          'const _Ty &std::min(const _Ty &,const _Ty &) noexcept(<expr>)': 2 引数が必要です - 1 が指定されました
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\utility(88,33):
-      または 'const _Ty &std::min(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
-          C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(277,27):
-          'const _Ty &std::min(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': 3 引数が必要です - 1 が指定されました
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,35): error C2065: 'outputDirectory': 定義されていない識別子です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(278,13): error C2065: 'minP': 定義されていない識別子です。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(58,9): error C2059: 構文エラー: 'if'
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
-C:\Users\kyose\source\repos\HairSystem\apps\dx11_viewer\src\GpuHairViewer_parts\05_active_set_scoring_and_runtime_update.inl(278,13): error C1003: プログラム内のエラーが 100 個を超えました。コンパイルは中断されます。
-  (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(59,9): error C2143: 構文エラー: ';' が '{' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(59,9): error C2447: '{': 対応する関数ヘッダーがありません (旧形式の仮引数リスト?)
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(63,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(63,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(63,9): error C2371: 'hairgpu::`anonymous-namespace'::summaryJson': 再定義されています。異なる基本型です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,23):
+      'hairgpu::`anonymous-namespace'::summaryJson' の宣言を確認してください
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(64,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(64,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(64,9): error C2371: 'hairgpu::`anonymous-namespace'::summaryJson': 再定義されています。異なる基本型です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,23):
+      'hairgpu::`anonymous-namespace'::summaryJson' の宣言を確認してください
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(65,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(65,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(65,9): error C2371: 'hairgpu::`anonymous-namespace'::summaryJson': 再定義されています。異なる基本型です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,23):
+      'hairgpu::`anonymous-namespace'::summaryJson' の宣言を確認してください
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(66,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(66,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(66,9): error C2371: 'hairgpu::`anonymous-namespace'::summaryJson': 再定義されています。異なる基本型です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,23):
+      'hairgpu::`anonymous-namespace'::summaryJson' の宣言を確認してください
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(67,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(67,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(67,9): error C2371: 'hairgpu::`anonymous-namespace'::summaryJson': 再定義されています。異なる基本型です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,23):
+      'hairgpu::`anonymous-namespace'::summaryJson' の宣言を確認してください
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(68,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(68,9): error C4430: 型指定子がありません - int と仮定しました。メモ: C++ は int を既定値としてサポートしていません
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(68,9): error C2371: 'hairgpu::`anonymous-namespace'::summaryJson': 再定義されています。異なる基本型です。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+      C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(57,23):
+      'hairgpu::`anonymous-namespace'::summaryJson' の宣言を確認してください
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(69,21): error C2143: 構文エラー: ';' が '<<' の前にありません。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
+  
+C:\Users\kyose\source\repos\HairSystem\src\hairgpu_core\HybridRuntime_parts\02_hybrid_reduction_and_error_reports.inl(69,21): error C1003: プログラム内のエラーが 100 個を超えました。コンパイルは中断されます。
+  (ソース ファイル 'src/hairgpu_core/HybridRuntime.cpp' をコンパイルしています)
   
