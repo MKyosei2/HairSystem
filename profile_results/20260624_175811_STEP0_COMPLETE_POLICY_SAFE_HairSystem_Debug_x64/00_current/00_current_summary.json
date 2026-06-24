@@ -1,0 +1,7 @@
+﻿{
+"preset":"00_current",
+"description":"Current default state. Baseline for the current 15 FPS class behavior.",
+"status":"not_executed_by_policy_safe_build",
+"real_fps_available":"pending",
+"expected_diagnosis":"Records the current frame time and does not disable any suspected bottleneck."
+}
