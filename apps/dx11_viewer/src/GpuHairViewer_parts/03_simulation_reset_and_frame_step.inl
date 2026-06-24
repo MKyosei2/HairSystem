@@ -1,8 +1,8 @@
 // GpuHairViewer.cpp ordered part 03: simulation_reset_and_frame_step
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
 
-        UpdateScalpOverlayVertexBuffer();
-        return true;
+UpdateScalpOverlayVertexBuffer();
+return true;
     }
 
     bool GpuHairViewer::LoadShaders()
@@ -422,15 +422,6 @@
                 m_context->CSSetConstantBuffers(0, 2, nullConstantBuffers);
             };
 
-        if (m_activeGpuTimingFrameIndex >= 0)
-        {
-            GpuTimingFrame& timingFrame = m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
-            if (timingFrame.simStart)
-            {
-                m_context->End(timingFrame.simStart.Get());
-            }
-        }
-
         bindCommonSrvs();
         bindPrimaryUavs();
         updateHairConstants(0u);
@@ -512,15 +503,6 @@
 
         m_currentBufferIndex = outputBufferIndex;
         m_runtimeFollowerUpdatePhase += 1u;
-
-        if (m_activeGpuTimingFrameIndex >= 0)
-        {
-            GpuTimingFrame& timingFrame = m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
-            if (timingFrame.simEnd)
-            {
-                m_context->End(timingFrame.simEnd.Get());
-            }
-        }
     }
     void GpuHairViewer::ResetSimulation()
     {
@@ -987,4 +969,3 @@
         constants.useCompactedFollowerDispatch = useActiveDispatch ? 1u : 0u;
         constants.compactedFollowerCount = useActiveDispatch ? std::max<uint32_t>(m_activeSetPlan.summary.selectedStrandCount, static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size())) - static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size()) : 0u;
     }
-

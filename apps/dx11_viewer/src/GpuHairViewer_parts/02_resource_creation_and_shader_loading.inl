@@ -75,20 +75,29 @@
 
             GpuTimingFrame& gpuFrame = m_gpuTimingFrames[m_gpuTimingWriteIndex];
             m_activeGpuTimingFrameIndex = -1;
-            if (gpuFrame.disjoint)
+
+            const bool canIssueGpuTiming =
+                gpuFrame.disjoint &&
+                !gpuFrame.issued;
+
+            if (canIssueGpuTiming)
             {
                 m_context->Begin(gpuFrame.disjoint.Get());
                 m_context->End(gpuFrame.frameStart.Get());
+                m_context->End(gpuFrame.simStart.Get());
+
                 gpuFrame.issued = true;
                 m_activeGpuTimingFrameIndex = static_cast<int32_t>(m_gpuTimingWriteIndex);
             }
 
             m_lastSimulationStepMilliseconds = 0.0f;
+
+            LARGE_INTEGER simBegin = {};
+            LARGE_INTEGER simEnd = {};
+            QueryPerformanceCounter(&simBegin);
+
             if (!m_paused)
             {
-                LARGE_INTEGER simBegin = {};
-                LARGE_INTEGER simEnd = {};
-                QueryPerformanceCounter(&simBegin);
                 m_accumulator += std::min(dt, 0.1f);
                 while (m_accumulator >= m_simConfig.fixedTimeStep)
                 {
@@ -96,13 +105,23 @@
                     m_accumulator -= m_simConfig.fixedTimeStep;
                     m_elapsedSeconds += m_simConfig.fixedTimeStep;
                 }
-                QueryPerformanceCounter(&simEnd);
-                m_lastSimulationStepMilliseconds = static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
             }
-            else if (gpuFrame.issued)
+
+            QueryPerformanceCounter(&simEnd);
+            m_lastSimulationStepMilliseconds =
+                static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) *
+                1000.0f /
+                static_cast<float>(m_qpcFrequency.QuadPart);
+
+            if (m_activeGpuTimingFrameIndex >= 0)
             {
-                m_context->End(gpuFrame.simStart.Get());
-                m_context->End(gpuFrame.simEnd.Get());
+                GpuTimingFrame& activeFrame =
+                    m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
+
+                if (activeFrame.simEnd)
+                {
+                    m_context->End(activeFrame.simEnd.Get());
+                }
             }
 
             PerformanceSample sample = BuildPerformanceSample(dt, instantFps);
@@ -216,7 +235,7 @@
         swapDesc.OutputWindow = m_hwnd;
         swapDesc.SampleDesc.Count = 1;
         swapDesc.Windowed = TRUE;
-        swapDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        swapDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
         UINT debugFlags = 0;
     #if defined(_DEBUG)
