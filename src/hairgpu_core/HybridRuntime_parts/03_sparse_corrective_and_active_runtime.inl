@@ -18,11 +18,16 @@ void BuildActiveSetPredictorModel(const std::vector<std::array<float, 9u>>& feat
     outPredictor.hiddenBias.assign(outPredictor.hiddenWidth, 0.0f);
     outPredictor.outputWeights.assign(outPredictor.hiddenWidth, 0.0f);
     outPredictor.outputBias = 0.0f;
+
+    if (outEvaluation)
+    {
+        *outEvaluation = {};
+    }
     if (featureRows.empty() || targets.empty())
     {
-        if (outEvaluation) *outEvaluation = {};
         return;
     }
+
     const uint32_t sampleCount = static_cast<uint32_t>(std::min(featureRows.size(), targets.size()));
     for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
     {
@@ -32,10 +37,11 @@ void BuildActiveSetPredictorModel(const std::vector<std::array<float, 9u>>& feat
             sum += static_cast<double>(featureRows[sampleIndex][featureIndex]);
         }
         outPredictor.featureMean[featureIndex] = static_cast<float>(sum / static_cast<double>(sampleCount));
+
         double variance = 0.0;
         for (uint32_t sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
         {
-            const double d = static_cast<double>(featureRows[sampleIndex][featureIndex]) - outPredictor.featureMean[featureIndex];
+            const double d = static_cast<double>(featureRows[sampleIndex][featureIndex]) - static_cast<double>(outPredictor.featureMean[featureIndex]);
             variance += d * d;
         }
         outPredictor.featureStd[featureIndex] = static_cast<float>(std::sqrt(std::max(variance / static_cast<double>(sampleCount), 1.0e-8)));
@@ -43,10 +49,17 @@ void BuildActiveSetPredictorModel(const std::vector<std::array<float, 9u>>& feat
 
     std::mt19937 rng(4242u);
     std::uniform_real_distribution<float> init(-0.08f, 0.08f);
-    for (float& value : outPredictor.hiddenWeights) value = init(rng);
-    for (float& value : outPredictor.outputWeights) value = init(rng);
+    for (float& value : outPredictor.hiddenWeights)
+    {
+        value = init(rng);
+    }
+    for (float& value : outPredictor.outputWeights)
+    {
+        value = init(rng);
+    }
 
-    const float wd = std::max(settings.weightDecay, 0.0f);
+    const float weightDecay = std::max(settings.weightDecay, 0.0f);
+    const float gradientClip = std::max(settings.gradientClip, 1.0e-4f);
     std::array<float, 9u> normalized = {};
     std::vector<float> hidden(outPredictor.hiddenWidth, 0.0f);
     std::vector<float> gradHidden(outPredictor.hiddenWidth, 0.0f);
@@ -69,45 +82,47 @@ void BuildActiveSetPredictorModel(const std::vector<std::array<float, 9u>>& feat
         trainingOrder = validationOrder;
         validationOrder.clear();
     }
-    auto evaluatePredictor = [&](const std::vector<uint32_t>& evalOrder, ActiveSetPredictorEvaluation& outEval)
-        {
-            outEval = {};
-            outEval.sampleCount = static_cast<uint32_t>(evalOrder.size());
-            if (evalOrder.empty())
-            {
-                return;
-            }
-            double sq = 0.0;
-            uint32_t correct = 0u;
-            uint32_t positives = 0u;
-            for (uint32_t sampleIndex : evalOrder)
-            {
-                const float prediction = PredictActiveSetRisk(outPredictor, featureRows[sampleIndex]);
-                const float target = Clamp(targets[sampleIndex], 0.0f, 1.0f);
-                const float d = prediction - target;
-                sq += static_cast<double>(d * d);
-                if ((prediction >= 0.5f) == (target >= 0.5f))
-                {
-                    ++correct;
-                }
-                if (target >= 0.5f)
-                {
-                    ++positives;
-                }
-            }
-            outEval.rmsScoreError = static_cast<float>(std::sqrt(sq / static_cast<double>(std::max<size_t>(1u, evalOrder.size()))));
-            outEval.classificationAccuracy = static_cast<float>(correct) / static_cast<float>(std::max<size_t>(1u, evalOrder.size()));
-            outEval.positiveRate = static_cast<float>(positives) / static_cast<float>(std::max<size_t>(1u, evalOrder.size()));
-        };
 
-    float lr = std::max(settings.learningRate, settings.minLearningRate);
+    auto evaluatePredictor = [&](const std::vector<uint32_t>& evalOrder, ActiveSetPredictorEvaluation& outEval)
+    {
+        outEval = {};
+        outEval.sampleCount = static_cast<uint32_t>(evalOrder.size());
+        if (evalOrder.empty())
+        {
+            return;
+        }
+        double sq = 0.0;
+        uint32_t correct = 0u;
+        uint32_t positives = 0u;
+        for (uint32_t sampleIndex : evalOrder)
+        {
+            const float prediction = PredictActiveSetRisk(outPredictor, featureRows[sampleIndex]);
+            const float target = Clamp(targets[sampleIndex], 0.0f, 1.0f);
+            const float d = prediction - target;
+            sq += static_cast<double>(d * d);
+            if ((prediction >= 0.5f) == (target >= 0.5f))
+            {
+                ++correct;
+            }
+            if (target >= 0.5f)
+            {
+                ++positives;
+            }
+        }
+        const double denom = static_cast<double>(std::max<size_t>(1u, evalOrder.size()));
+        outEval.rmsScoreError = static_cast<float>(std::sqrt(sq / denom));
+        outEval.classificationAccuracy = static_cast<float>(correct) / static_cast<float>(denom);
+        outEval.positiveRate = static_cast<float>(positives) / static_cast<float>(denom);
+    };
+
+    float learningRate = std::max(settings.learningRate, settings.minLearningRate);
     float bestValidationRms = std::numeric_limits<float>::max();
     uint32_t epochsWithoutImprovement = 0u;
     ActiveSetPredictor bestPredictor = outPredictor;
     for (uint32_t epoch = 0u; epoch < std::max<uint32_t>(1u, settings.epochs); ++epoch)
     {
         std::shuffle(trainingOrder.begin(), trainingOrder.end(), rng);
-        lr = std::max(settings.minLearningRate, lr * ((epoch == 0u) ? 1.0f : settings.learningRateDecay));
+        learningRate = std::max(settings.minLearningRate, learningRate * ((epoch == 0u) ? 1.0f : settings.learningRateDecay));
         for (uint32_t sampleIndex : trainingOrder)
         {
             for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
@@ -133,27 +148,25 @@ void BuildActiveSetPredictorModel(const std::vector<std::array<float, 9u>>& feat
             const float prediction = SafeSigmoid(logit);
             const float target = Clamp(targets[sampleIndex], 0.0f, 1.0f);
             const float classWeight = (target >= 0.5f) ? std::max(settings.positiveClassWeight, 1.0f) : 1.0f;
-            const float error = Clamp((prediction - target) * classWeight,
-                -settings.gradientClip,
-                settings.gradientClip);
-            outPredictor.outputBias -= lr * error;
+            const float error = Clamp((prediction - target) * classWeight, -gradientClip, gradientClip);
+            outPredictor.outputBias -= learningRate * error;
             for (uint32_t h = 0u; h < outPredictor.hiddenWidth; ++h)
             {
-                gradHidden[h] = Clamp(error * outPredictor.outputWeights[h] * (1.0f - hidden[h] * hidden[h]),
-                    -settings.gradientClip,
-                    settings.gradientClip);
-                outPredictor.outputWeights[h] -= lr * (error * hidden[h] + wd * outPredictor.outputWeights[h]);
+                gradHidden[h] = Clamp(error * outPredictor.outputWeights[h] * (1.0f - hidden[h] * hidden[h]), -gradientClip, gradientClip);
+                outPredictor.outputWeights[h] -= learningRate * (error * hidden[h] + weightDecay * outPredictor.outputWeights[h]);
             }
             for (uint32_t h = 0u; h < outPredictor.hiddenWidth; ++h)
             {
                 const size_t rowOffset = static_cast<size_t>(h) * outPredictor.featureCount;
-                outPredictor.hiddenBias[h] -= lr * gradHidden[h];
+                outPredictor.hiddenBias[h] -= learningRate * gradHidden[h];
                 for (uint32_t featureIndex = 0u; featureIndex < outPredictor.featureCount; ++featureIndex)
                 {
-                    outPredictor.hiddenWeights[rowOffset + featureIndex] -= lr * (gradHidden[h] * normalized[featureIndex] + wd * outPredictor.hiddenWeights[rowOffset + featureIndex]);
+                    outPredictor.hiddenWeights[rowOffset + featureIndex] -= learningRate *
+                        (gradHidden[h] * normalized[featureIndex] + weightDecay * outPredictor.hiddenWeights[rowOffset + featureIndex]);
                 }
             }
         }
+
         ActiveSetPredictorEvaluation validationEval = {};
         evaluatePredictor(validationOrder.empty() ? trainingOrder : validationOrder, validationEval);
         if (validationEval.sampleCount > 0u && validationEval.rmsScoreError < bestValidationRms - 1.0e-6f)
@@ -171,8 +184,8 @@ void BuildActiveSetPredictorModel(const std::vector<std::array<float, 9u>>& feat
             break;
         }
     }
-    outPredictor = bestPredictor;
 
+    outPredictor = bestPredictor;
     if (outEvaluation)
     {
         evaluatePredictor(validationOrder.empty() ? trainingOrder : validationOrder, *outEvaluation);
@@ -201,6 +214,10 @@ void BuildSmoothedPriorSequence(const ReducedModelTrainingSequence& teacherSeque
     {
         std::vector<Vec3> current;
         CopySequenceFrame(teacherSequence, frameIndex, current);
+        if (current.size() != smoothed.size())
+        {
+            continue;
+        }
         for (uint32_t i = 0u; i < pointCount; ++i)
         {
             smoothed[i] = Lerp(smoothed[i], current[i], alpha);
@@ -442,17 +459,9 @@ bool WriteHybridSummaryJson(const std::filesystem::path& filePath,
     out << "  \"residualBlend\": " << bundle.trainingSettings.residualBlend << ",\n";
     out << "  \"uncertaintyGain\": " << bundle.uncertaintyGain << ",\n";
     out << "  \"contactGain\": " << bundle.contactGain << ",\n";
-    out << "  \"priorVelocityPredictionGain\": " << bundle.priorVelocityPredictionGain << ",\n";
-    out << "  \"residualVelocityPredictionGain\": " << bundle.residualVelocityPredictionGain << ",\n";
-    out << "  \"priorAccelerationPredictionGain\": " << bundle.priorAccelerationPredictionGain << ",\n";
-    out << "  \"residualAccelerationPredictionGain\": " << bundle.residualAccelerationPredictionGain << ",\n";
-    out << "  \"priorTemporalBlend\": " << bundle.priorTemporalBlend << ",\n";
-    out << "  \"residualTemporalBlend\": " << bundle.residualTemporalBlend << ",\n";
+    out << "  \"penetrationGain\": " << bundle.penetrationGain << ",\n";
+    out << "  \"temporalCoherenceGain\": " << bundle.temporalCoherenceGain << ",\n";
     out << "  \"activeSetPredictorBlend\": " << bundle.activeSetPredictorBlend << ",\n";
-    out << "  \"frozenStrandBlend\": " << bundle.frozenStrandBlend << ",\n";
-    out << "  \"frozenRootFollow\": " << bundle.frozenRootFollow << ",\n";
-    out << "  \"cachedStrandBlend\": " << bundle.cachedStrandBlend << ",\n";
-    out << "  \"cachedRootFollow\": " << bundle.cachedRootFollow << ",\n";
     out << "  \"cachedFrameRefreshInterval\": " << bundle.cachedFrameRefreshInterval;
     if (trainingReport)
     {
@@ -488,155 +497,153 @@ bool WriteHybridSummaryJson(const std::filesystem::path& filePath,
     outError.clear();
     return true;
 }
-    }
 
-    [[nodiscard]] bool IsActiveSetPredictorReady(const ActiveSetPredictor& predictor)
+[[nodiscard]] bool IsActiveSetPredictorReady(const ActiveSetPredictor& predictor)
+{
+    if (predictor.featureCount == 0u ||
+        predictor.featureMean.size() < predictor.featureCount ||
+        predictor.featureStd.size() < predictor.featureCount)
     {
-        if (predictor.featureCount == 0u ||
-            predictor.featureMean.size() < predictor.featureCount ||
-            predictor.featureStd.size() < predictor.featureCount)
-        {
-            return false;
-        }
-        if (predictor.hiddenWidth > 0u)
-        {
-            return predictor.hiddenWeights.size() == static_cast<size_t>(predictor.hiddenWidth) * predictor.featureCount &&
-                predictor.hiddenBias.size() == predictor.hiddenWidth &&
-                predictor.outputWeights.size() == predictor.hiddenWidth;
-        }
-        return predictor.weights.size() >= predictor.featureCount;
+        return false;
     }
+    if (predictor.hiddenWidth > 0u)
+    {
+        return predictor.hiddenWeights.size() == static_cast<size_t>(predictor.hiddenWidth) * predictor.featureCount &&
+            predictor.hiddenBias.size() == predictor.hiddenWidth &&
+            predictor.outputWeights.size() == predictor.hiddenWidth;
+    }
+    return predictor.weights.size() >= predictor.featureCount;
+}
 
-    bool SaveActiveSetPredictorToFile(const std::filesystem::path& filePath,
-        const ActiveSetPredictor& predictor,
-        std::string& outError)
+bool SaveActiveSetPredictorToFile(const std::filesystem::path& filePath,
+    const ActiveSetPredictor& predictor,
+    std::string& outError)
+{
+    std::ofstream out(filePath, std::ios::binary);
+    if (!out)
     {
-        std::ofstream out(filePath, std::ios::binary);
-        if (!out)
-        {
-            outError = "Failed to open active-set predictor file for writing.";
-            return false;
-        }
-        const uint32_t magic = 0x31505341u; // ASP1
-        const uint32_t version = 3u;
-        out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
-        out.write(reinterpret_cast<const char*>(&version), sizeof(version));
-        out.write(reinterpret_cast<const char*>(&predictor.featureCount), sizeof(predictor.featureCount));
-        out.write(reinterpret_cast<const char*>(&predictor.hiddenWidth), sizeof(predictor.hiddenWidth));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.hiddenWidth), sizeof(predictor.settings.hiddenWidth));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.epochs), sizeof(predictor.settings.epochs));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.validationStride), sizeof(predictor.settings.validationStride));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.earlyStoppingPatience), sizeof(predictor.settings.earlyStoppingPatience));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.learningRate), sizeof(predictor.settings.learningRate));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.learningRateDecay), sizeof(predictor.settings.learningRateDecay));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.minLearningRate), sizeof(predictor.settings.minLearningRate));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.weightDecay), sizeof(predictor.settings.weightDecay));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.gradientClip), sizeof(predictor.settings.gradientClip));
-        out.write(reinterpret_cast<const char*>(&predictor.settings.positiveClassWeight), sizeof(predictor.settings.positiveClassWeight));
-        auto writeVector = [&](const std::vector<float>& values)
-            {
-                const uint32_t count = static_cast<uint32_t>(values.size());
-                out.write(reinterpret_cast<const char*>(&count), sizeof(count));
-                if (count > 0u)
-                {
-                    out.write(reinterpret_cast<const char*>(values.data()), sizeof(float) * count);
-                }
-            };
-        writeVector(predictor.featureMean);
-        writeVector(predictor.featureStd);
-        writeVector(predictor.weights);
-        out.write(reinterpret_cast<const char*>(&predictor.bias), sizeof(predictor.bias));
-        writeVector(predictor.hiddenWeights);
-        writeVector(predictor.hiddenBias);
-        writeVector(predictor.outputWeights);
-        out.write(reinterpret_cast<const char*>(&predictor.outputBias), sizeof(predictor.outputBias));
-        if (!out)
-        {
-            outError = "Failed to serialize active-set predictor.";
-            return false;
-        }
-        outError.clear();
-        return true;
+        outError = "Failed to open active-set predictor file for writing.";
+        return false;
     }
+    const uint32_t magic = 0x31505341u; // ASP1
+    const uint32_t version = 3u;
+    out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    out.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    out.write(reinterpret_cast<const char*>(&predictor.featureCount), sizeof(predictor.featureCount));
+    out.write(reinterpret_cast<const char*>(&predictor.hiddenWidth), sizeof(predictor.hiddenWidth));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.hiddenWidth), sizeof(predictor.settings.hiddenWidth));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.epochs), sizeof(predictor.settings.epochs));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.validationStride), sizeof(predictor.settings.validationStride));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.earlyStoppingPatience), sizeof(predictor.settings.earlyStoppingPatience));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.learningRate), sizeof(predictor.settings.learningRate));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.learningRateDecay), sizeof(predictor.settings.learningRateDecay));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.minLearningRate), sizeof(predictor.settings.minLearningRate));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.weightDecay), sizeof(predictor.settings.weightDecay));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.gradientClip), sizeof(predictor.settings.gradientClip));
+    out.write(reinterpret_cast<const char*>(&predictor.settings.positiveClassWeight), sizeof(predictor.settings.positiveClassWeight));
+    auto writeVector = [&](const std::vector<float>& values)
+    {
+        const uint32_t count = static_cast<uint32_t>(values.size());
+        out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        if (count > 0u)
+        {
+            out.write(reinterpret_cast<const char*>(values.data()), sizeof(float) * count);
+        }
+    };
+    writeVector(predictor.featureMean);
+    writeVector(predictor.featureStd);
+    writeVector(predictor.weights);
+    out.write(reinterpret_cast<const char*>(&predictor.bias), sizeof(predictor.bias));
+    writeVector(predictor.hiddenWeights);
+    writeVector(predictor.hiddenBias);
+    writeVector(predictor.outputWeights);
+    out.write(reinterpret_cast<const char*>(&predictor.outputBias), sizeof(predictor.outputBias));
+    if (!out)
+    {
+        outError = "Failed to serialize active-set predictor.";
+        return false;
+    }
+    outError.clear();
+    return true;
+}
 
-    bool LoadActiveSetPredictorFromFile(const std::filesystem::path& filePath,
-        ActiveSetPredictor& outPredictor,
-        std::string& outError)
+bool LoadActiveSetPredictorFromFile(const std::filesystem::path& filePath,
+    ActiveSetPredictor& outPredictor,
+    std::string& outError)
+{
+    outPredictor = {};
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in)
     {
-        outPredictor = {};
-        std::ifstream in(filePath, std::ios::binary);
-        if (!in)
-        {
-            outError = "Failed to open active-set predictor file.";
-            return false;
-        }
-        uint32_t magic = 0u;
-        uint32_t version = 0u;
-        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-        in.read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (magic != 0x31505341u || (version != 1u && version != 2u && version != 3u))
-        {
-            outError = "Active-set predictor file has an unsupported version.";
-            return false;
-        }
-        in.read(reinterpret_cast<char*>(&outPredictor.featureCount), sizeof(outPredictor.featureCount));
-        if (version >= 2u)
-        {
-            in.read(reinterpret_cast<char*>(&outPredictor.hiddenWidth), sizeof(outPredictor.hiddenWidth));
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.hiddenWidth), sizeof(outPredictor.settings.hiddenWidth));
-        }
-        in.read(reinterpret_cast<char*>(&outPredictor.settings.epochs), sizeof(outPredictor.settings.epochs));
-        if (version >= 3u)
-        {
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.validationStride), sizeof(outPredictor.settings.validationStride));
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.earlyStoppingPatience), sizeof(outPredictor.settings.earlyStoppingPatience));
-        }
-        in.read(reinterpret_cast<char*>(&outPredictor.settings.learningRate), sizeof(outPredictor.settings.learningRate));
-        if (version >= 3u)
-        {
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.learningRateDecay), sizeof(outPredictor.settings.learningRateDecay));
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.minLearningRate), sizeof(outPredictor.settings.minLearningRate));
-        }
-        in.read(reinterpret_cast<char*>(&outPredictor.settings.weightDecay), sizeof(outPredictor.settings.weightDecay));
-        if (version >= 2u)
-        {
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.gradientClip), sizeof(outPredictor.settings.gradientClip));
-        }
-        if (version >= 3u)
-        {
-            in.read(reinterpret_cast<char*>(&outPredictor.settings.positiveClassWeight), sizeof(outPredictor.settings.positiveClassWeight));
-        }
-        auto readVector = [&](std::vector<float>& values)
-            {
-                uint32_t count = 0u;
-                in.read(reinterpret_cast<char*>(&count), sizeof(count));
-                values.resize(count);
-                if (count > 0u)
-                {
-                    in.read(reinterpret_cast<char*>(values.data()), sizeof(float) * count);
-                }
-            };
-        readVector(outPredictor.featureMean);
-        readVector(outPredictor.featureStd);
-        readVector(outPredictor.weights);
-        in.read(reinterpret_cast<char*>(&outPredictor.bias), sizeof(outPredictor.bias));
-        if (version >= 2u)
-        {
-            readVector(outPredictor.hiddenWeights);
-            readVector(outPredictor.hiddenBias);
-            readVector(outPredictor.outputWeights);
-            in.read(reinterpret_cast<char*>(&outPredictor.outputBias), sizeof(outPredictor.outputBias));
-        }
-        if (!in)
-        {
-            outError = "Failed to deserialize active-set predictor.";
-            return false;
-        }
-        if (outPredictor.hiddenWidth == 0u)
-        {
-            outPredictor.hiddenWidth = outPredictor.settings.hiddenWidth;
-        }
-        outError.clear();
-        return true;
+        outError = "Failed to open active-set predictor file.";
+        return false;
     }
+    uint32_t magic = 0u;
+    uint32_t version = 0u;
+    in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    in.read(reinterpret_cast<char*>(&version), sizeof(version));
+    if (magic != 0x31505341u || (version != 1u && version != 2u && version != 3u))
+    {
+        outError = "Active-set predictor file has an unsupported version.";
+        return false;
+    }
+    in.read(reinterpret_cast<char*>(&outPredictor.featureCount), sizeof(outPredictor.featureCount));
+    if (version >= 2u)
+    {
+        in.read(reinterpret_cast<char*>(&outPredictor.hiddenWidth), sizeof(outPredictor.hiddenWidth));
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.hiddenWidth), sizeof(outPredictor.settings.hiddenWidth));
+    }
+    in.read(reinterpret_cast<char*>(&outPredictor.settings.epochs), sizeof(outPredictor.settings.epochs));
+    if (version >= 3u)
+    {
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.validationStride), sizeof(outPredictor.settings.validationStride));
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.earlyStoppingPatience), sizeof(outPredictor.settings.earlyStoppingPatience));
+    }
+    in.read(reinterpret_cast<char*>(&outPredictor.settings.learningRate), sizeof(outPredictor.settings.learningRate));
+    if (version >= 3u)
+    {
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.learningRateDecay), sizeof(outPredictor.settings.learningRateDecay));
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.minLearningRate), sizeof(outPredictor.settings.minLearningRate));
+    }
+    in.read(reinterpret_cast<char*>(&outPredictor.settings.weightDecay), sizeof(outPredictor.settings.weightDecay));
+    if (version >= 2u)
+    {
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.gradientClip), sizeof(outPredictor.settings.gradientClip));
+    }
+    if (version >= 3u)
+    {
+        in.read(reinterpret_cast<char*>(&outPredictor.settings.positiveClassWeight), sizeof(outPredictor.settings.positiveClassWeight));
+    }
+    auto readVector = [&](std::vector<float>& values)
+    {
+        uint32_t count = 0u;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+        values.resize(count);
+        if (count > 0u)
+        {
+            in.read(reinterpret_cast<char*>(values.data()), sizeof(float) * count);
+        }
+    };
+    readVector(outPredictor.featureMean);
+    readVector(outPredictor.featureStd);
+    readVector(outPredictor.weights);
+    in.read(reinterpret_cast<char*>(&outPredictor.bias), sizeof(outPredictor.bias));
+    if (version >= 2u)
+    {
+        readVector(outPredictor.hiddenWeights);
+        readVector(outPredictor.hiddenBias);
+        readVector(outPredictor.outputWeights);
+        in.read(reinterpret_cast<char*>(&outPredictor.outputBias), sizeof(outPredictor.outputBias));
+    }
+    if (!in)
+    {
+        outError = "Failed to deserialize active-set predictor.";
+        return false;
+    }
+    if (outPredictor.hiddenWidth == 0u)
+    {
+        outPredictor.hiddenWidth = outPredictor.settings.hiddenWidth;
+    }
+    outError.clear();
+    return true;
 }
