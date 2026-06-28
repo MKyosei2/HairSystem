@@ -69,6 +69,71 @@
       "name": "recommendedSolverIterations",
       "formula": "budget-adapted iteration recommendation derived from the current budget scale",
       "interpretation": "Higher means the runtime can afford more local corrective iterations this frame."
+    },
+    {
+      "name": "falseStaticRate",
+      "formula": "falseStaticCount / max(staticCachedGroupCount + staticTransformedGroupCount, 1)",
+      "interpretation": "Lower is better; measures how often a group was kept static even though dynamic solve or repair was actually needed."
+    },
+    {
+      "name": "groupStaticReuseRate",
+      "formula": "(staticCachedGroupCount + staticTransformedGroupCount) / max(segmentGroupCount, 1)",
+      "interpretation": "Higher means more segment groups avoided full recalculation through static cache reuse."
+    },
+    {
+      "name": "groupDynamicRate",
+      "formula": "dynamicGroupCount / max(segmentGroupCount, 1)",
+      "interpretation": "Lower is better when quality is stable; reports how much of the hairstyle required full group-level dynamic solving."
+    },
+    {
+      "name": "deferredCorrectionRate",
+      "formula": "deferredCorrectionGroupCount / max(segmentGroupCount, 1)",
+      "interpretation": "Tracks the emergency/intermediate correction path used before full solve or repair is scheduled."
+    },
+    {
+      "name": "deferredCorrectionSuccessRate",
+      "formula": "successful deferred corrections / max(deferredCorrectionGroupCount, 1)",
+      "interpretation": "Higher means temporary correction preserved visual continuity until the full calculation could run."
+    },
+    {
+      "name": "staticDynamicBoundaryError",
+      "formula": "average position/length/bend discontinuity at Static-Dynamic group boundaries",
+      "interpretation": "Lower is better; directly evaluates whether mixed Static/Dynamic groups introduce visible or physical discontinuities."
+    },
+    {
+      "name": "watchdogRepairCount",
+      "formula": "number of Static Watchdog checks that escalated a group to repair or dynamic solve",
+      "interpretation": "Shows whether the safety net detected frozen/static-cache artifacts during stillness or emergency recovery."
+    },
+    {
+      "name": "directionCacheMemorySavingRate",
+      "formula": "1 - directionCacheBytes / fullPositionBufferBytes",
+      "interpretation": "Higher means the root + direction-vector cache is more memory efficient than storing full per-point world positions."
+    },
+    {
+      "name": "falseStaticRate",
+      "formula": "falseStaticCount / max(totalSegmentGroupCount, 1)",
+      "interpretation": "Lower is better; measures how often a group was incorrectly reused as Static when Dynamic solve or Repair was actually required."
+    },
+    {
+      "name": "groupStaticReuseRate",
+      "formula": "(staticCachedGroupCount + staticTransformedGroupCount) / max(totalSegmentGroupCount, 1)",
+      "interpretation": "Higher is better when quality constraints are satisfied; measures how much segment-group computation was avoided by cache reuse."
+    },
+    {
+      "name": "deferredCorrectionRate",
+      "formula": "deferredCorrectionGroupCount / max(totalSegmentGroupCount, 1)",
+      "interpretation": "Reports how often temporary correction was used before full solve or repair."
+    },
+    {
+      "name": "staticDynamicBoundaryErrorMm",
+      "formula": "mean or max discontinuity error at boundaries between Static and Dynamic segment groups",
+      "interpretation": "Lower is better; measures whether Static/Dynamic mixing creates visible or physical discontinuities."
+    },
+    {
+      "name": "directionCacheMemorySavingRate",
+      "formula": "1 - directionCacheMemoryMb / max(fullPositionMemoryMb, eps)",
+      "interpretation": "Higher is better; estimates memory saved by storing root position plus direction vectors instead of full point positions."
     }
   ]
 }

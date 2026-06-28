@@ -8,6 +8,25 @@
         sample.microtypeDecodedCount = m_noveltyTelemetry.microtypeDecodedCount;
         sample.safeDecodeCount = m_noveltyTelemetry.safeDecodeCount;
         sample.falseSafeCount = m_noveltyTelemetry.falseSafeCount;
+        sample.totalSegmentGroupCount = m_noveltyTelemetry.totalSegmentGroupCount;
+        sample.staticCachedGroupCount = m_noveltyTelemetry.staticCachedGroupCount;
+        sample.staticTransformedGroupCount = m_noveltyTelemetry.staticTransformedGroupCount;
+        sample.dynamicGroupCount = m_noveltyTelemetry.dynamicGroupCount;
+        sample.deferredCorrectionGroupCount = m_noveltyTelemetry.deferredCorrectionGroupCount;
+        sample.repairRequiredGroupCount = m_noveltyTelemetry.repairRequiredGroupCount;
+        sample.fallbackGroupCount = m_noveltyTelemetry.fallbackGroupCount;
+        sample.falseStaticCount = m_noveltyTelemetry.falseStaticCount;
+        sample.falseStaticRate = m_noveltyTelemetry.falseStaticRate;
+        sample.cacheHitCount = m_noveltyTelemetry.cacheHitCount;
+        sample.cacheMissCount = m_noveltyTelemetry.cacheMissCount;
+        sample.cacheInvalidationCount = m_noveltyTelemetry.cacheInvalidationCount;
+        sample.watchdogCheckCount = m_noveltyTelemetry.watchdogCheckCount;
+        sample.watchdogRepairCount = m_noveltyTelemetry.watchdogRepairCount;
+        sample.staticDynamicBoundaryMeanErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMeanErrorMm;
+        sample.staticDynamicBoundaryMaxErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMaxErrorMm;
+        sample.directionCacheMemoryMb = m_noveltyTelemetry.directionCacheMemoryMb;
+        sample.fullPositionMemoryMb = m_noveltyTelemetry.fullPositionMemoryMb;
+        sample.directionCacheMemorySavingRate = m_noveltyTelemetry.directionCacheMemorySavingRate;
         sample.typedRepairRequestCount = m_noveltyTelemetry.typedRepairRequestCount;
         sample.floatFallbackRequestCount = m_noveltyTelemetry.floatFallbackRequestCount;
         sample.rejectPayloadCount = m_noveltyTelemetry.rejectPayloadCount;
@@ -51,7 +70,7 @@
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount\n";
         const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
@@ -138,6 +157,25 @@
                 << "," << s.microtypeDecodedCount
                 << "," << s.safeDecodeCount
                 << "," << s.falseSafeCount
+                << "," << s.totalSegmentGroupCount
+                << "," << s.staticCachedGroupCount
+                << "," << s.staticTransformedGroupCount
+                << "," << s.dynamicGroupCount
+                << "," << s.deferredCorrectionGroupCount
+                << "," << s.repairRequiredGroupCount
+                << "," << s.fallbackGroupCount
+                << "," << s.falseStaticCount
+                << "," << s.falseStaticRate
+                << "," << s.cacheHitCount
+                << "," << s.cacheMissCount
+                << "," << s.cacheInvalidationCount
+                << "," << s.watchdogCheckCount
+                << "," << s.watchdogRepairCount
+                << "," << s.staticDynamicBoundaryMeanErrorMm
+                << "," << s.staticDynamicBoundaryMaxErrorMm
+                << "," << s.directionCacheMemoryMb
+                << "," << s.fullPositionMemoryMb
+                << "," << s.directionCacheMemorySavingRate
                 << "," << s.typedRepairRequestCount
                 << "," << s.floatFallbackRequestCount
                 << "," << s.rejectPayloadCount
@@ -233,6 +271,25 @@
                 << "\"microtype_decoded_count\":" << s.microtypeDecodedCount << ","
                 << "\"safe_decode_count\":" << s.safeDecodeCount << ","
                 << "\"false_safe_count\":" << s.falseSafeCount << ","
+                << "\"total_segment_group_count\":" << s.totalSegmentGroupCount << ","
+                << "\"static_cached_group_count\":" << s.staticCachedGroupCount << ","
+                << "\"static_transformed_group_count\":" << s.staticTransformedGroupCount << ","
+                << "\"dynamic_group_count\":" << s.dynamicGroupCount << ","
+                << "\"deferred_correction_group_count\":" << s.deferredCorrectionGroupCount << ","
+                << "\"repair_required_group_count\":" << s.repairRequiredGroupCount << ","
+                << "\"fallback_group_count\":" << s.fallbackGroupCount << ","
+                << "\"false_static_count\":" << s.falseStaticCount << ","
+                << "\"false_static_rate\":" << s.falseStaticRate << ","
+                << "\"cache_hit_count\":" << s.cacheHitCount << ","
+                << "\"cache_miss_count\":" << s.cacheMissCount << ","
+                << "\"cache_invalidation_count\":" << s.cacheInvalidationCount << ","
+                << "\"watchdog_check_count\":" << s.watchdogCheckCount << ","
+                << "\"watchdog_repair_count\":" << s.watchdogRepairCount << ","
+                << "\"static_dynamic_boundary_mean_error_mm\":" << s.staticDynamicBoundaryMeanErrorMm << ","
+                << "\"static_dynamic_boundary_max_error_mm\":" << s.staticDynamicBoundaryMaxErrorMm << ","
+                << "\"direction_cache_memory_mb\":" << s.directionCacheMemoryMb << ","
+                << "\"full_position_memory_mb\":" << s.fullPositionMemoryMb << ","
+                << "\"direction_cache_memory_saving_rate\":" << s.directionCacheMemorySavingRate << ","
                 << "\"typed_repair_request_count\":" << s.typedRepairRequestCount << ","
                 << "\"float_fallback_request_count\":" << s.floatFallbackRequestCount << ","
                 << "\"reject_payload_count\":" << s.rejectPayloadCount << ","
