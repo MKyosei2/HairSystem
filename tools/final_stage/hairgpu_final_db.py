@@ -462,8 +462,14 @@ class FinalStageDatabase:
                 follower_count, total_strand_count, total_particle_count, avg_silhouette_error,
                 avg_clump_preservation, avg_edit_locality, avg_boundary_naturalness,
                 avg_edit_to_run_latency_ms, avg_penetration_per_sec, peak_ram_mb, vram_mb, bandwidth_mb_frame,
-                certificate_failure_rate, fallback_rate, repair_success_rate, cpu_readback_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                certificate_failure_rate, fallback_rate, repair_success_rate, cpu_readback_count,
+                false_static_count, false_static_rate, group_static_reuse_rate, group_dynamic_rate,
+                deferred_correction_rate, avg_static_dynamic_boundary_error_mm,
+                max_static_dynamic_boundary_error_mm, cache_hit_count, cache_miss_count,
+                cache_invalidation_count, watchdog_check_count, watchdog_repair_count,
+                direction_cache_memory_mb, full_position_memory_mb,
+                direction_cache_memory_saving_rate, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 experiment_id,
@@ -521,6 +527,21 @@ class FinalStageDatabase:
                 float(self._resolve_summary_value(summary, "fallback_rate", "fallbackRate", default=0.0)),
                 float(self._resolve_summary_value(summary, "repair_success_rate", "repairSuccessRate", default=0.0)),
                 int(self._resolve_summary_value(summary, "cpu_readback_count", "cpuReadbackCount", default=0)),
+                int(self._resolve_summary_value(summary, "false_static_count", "falseStaticCount", default=0)),
+                float(self._resolve_summary_value(summary, "false_static_rate", "falseStaticRate", default=0.0)),
+                float(self._resolve_summary_value(summary, "group_static_reuse_rate", "groupStaticReuseRate", default=0.0)),
+                float(self._resolve_summary_value(summary, "group_dynamic_rate", "groupDynamicRate", default=0.0)),
+                float(self._resolve_summary_value(summary, "deferred_correction_rate", "deferredCorrectionRate", default=0.0)),
+                float(self._resolve_summary_value(summary, "avg_static_dynamic_boundary_error_mm", "avgStaticDynamicBoundaryErrorMm", default=0.0)),
+                float(self._resolve_summary_value(summary, "max_static_dynamic_boundary_error_mm", "maxStaticDynamicBoundaryErrorMm", default=0.0)),
+                int(self._resolve_summary_value(summary, "cache_hit_count", "cacheHitCount", default=0)),
+                int(self._resolve_summary_value(summary, "cache_miss_count", "cacheMissCount", default=0)),
+                int(self._resolve_summary_value(summary, "cache_invalidation_count", "cacheInvalidationCount", default=0)),
+                int(self._resolve_summary_value(summary, "watchdog_check_count", "watchdogCheckCount", default=0)),
+                int(self._resolve_summary_value(summary, "watchdog_repair_count", "watchdogRepairCount", default=0)),
+                float(self._resolve_summary_value(summary, "direction_cache_memory_mb", "directionCacheMemoryMb", default=0.0)),
+                float(self._resolve_summary_value(summary, "full_position_memory_mb", "fullPositionMemoryMb", default=0.0)),
+                float(self._resolve_summary_value(summary, "direction_cache_memory_saving_rate", "directionCacheMemorySavingRate", default=0.0)),
                 datetime.utcnow().isoformat(timespec="seconds"),
             ),
         )

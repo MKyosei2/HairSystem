@@ -388,6 +388,24 @@
         uint64_t cpuReadbacks = 0u;
         float vramMb = 0.0f;
         float bandwidthMbFrame = 0.0f;
+        uint64_t totalSegmentGroups = 0u;
+        uint64_t staticCachedGroups = 0u;
+        uint64_t staticTransformedGroups = 0u;
+        uint64_t dynamicGroups = 0u;
+        uint64_t deferredGroups = 0u;
+        uint64_t repairRequiredGroups = 0u;
+        uint64_t fallbackGroups = 0u;
+        uint64_t falseStaticCount = 0u;
+        uint64_t cacheHits = 0u;
+        uint64_t cacheMisses = 0u;
+        uint64_t cacheInvalidations = 0u;
+        uint64_t watchdogChecks = 0u;
+        uint64_t watchdogRepairs = 0u;
+        std::vector<float> staticDynamicBoundaryMeanErrors;
+        std::vector<float> staticDynamicBoundaryMaxErrors;
+        float directionCacheMemoryMb = 0.0f;
+        float fullPositionMemoryMb = 0.0f;
+        float directionCacheMemorySavingRate = 0.0f;
         for (const PerformanceSample& s : m_performanceSamples)
         {
             frameMs.push_back(s.frameMilliseconds);
@@ -402,6 +420,24 @@
             cpuReadbacks += s.cpuReadbackCount;
             vramMb = std::max(vramMb, s.vramMegabytes);
             bandwidthMbFrame = std::max(bandwidthMbFrame, s.bandwidthMegabytesPerFrame);
+            totalSegmentGroups += s.totalSegmentGroupCount;
+            staticCachedGroups += s.staticCachedGroupCount;
+            staticTransformedGroups += s.staticTransformedGroupCount;
+            dynamicGroups += s.dynamicGroupCount;
+            deferredGroups += s.deferredCorrectionGroupCount;
+            repairRequiredGroups += s.repairRequiredGroupCount;
+            fallbackGroups += s.fallbackGroupCount;
+            falseStaticCount += s.falseStaticCount;
+            cacheHits += s.cacheHitCount;
+            cacheMisses += s.cacheMissCount;
+            cacheInvalidations += s.cacheInvalidationCount;
+            watchdogChecks += s.watchdogCheckCount;
+            watchdogRepairs += s.watchdogRepairCount;
+            staticDynamicBoundaryMeanErrors.push_back(s.staticDynamicBoundaryMeanErrorMm);
+            staticDynamicBoundaryMaxErrors.push_back(s.staticDynamicBoundaryMaxErrorMm);
+            directionCacheMemoryMb = std::max(directionCacheMemoryMb, s.directionCacheMemoryMb);
+            fullPositionMemoryMb = std::max(fullPositionMemoryMb, s.fullPositionMemoryMb);
+            directionCacheMemorySavingRate = std::max(directionCacheMemorySavingRate, s.directionCacheMemorySavingRate);
         }
 
         const std::filesystem::path baseDir = summaryPath.parent_path();
@@ -431,7 +467,23 @@
         const float certificateFailureRate = m_performanceSamples.empty() ? 0.0f : static_cast<float>(certificateFailures) / static_cast<float>(m_performanceSamples.size());
         const float fallbackRate = m_performanceSamples.empty() ? 0.0f : static_cast<float>(fallbackCount) / static_cast<float>(m_performanceSamples.size());
         const float repairSuccessRate = repairTasks > 0u ? static_cast<float>(repairCommitted) / static_cast<float>(repairTasks) : 0.0f;
-
+        const uint64_t staticLikeGroups = staticCachedGroups + staticTransformedGroups;
+        const float falseStaticRate =
+            staticLikeGroups > 0u
+            ? static_cast<float>(falseStaticCount) / static_cast<float>(staticLikeGroups)
+            : 0.0f;
+        const float groupStaticReuseRate =
+            totalSegmentGroups > 0u
+            ? static_cast<float>(staticLikeGroups) / static_cast<float>(totalSegmentGroups)
+            : 0.0f;
+        const float groupDynamicRate =
+            totalSegmentGroups > 0u
+            ? static_cast<float>(dynamicGroups) / static_cast<float>(totalSegmentGroups)
+            : 0.0f;
+        const float deferredCorrectionRate =
+            totalSegmentGroups > 0u
+            ? static_cast<float>(deferredGroups) / static_cast<float>(totalSegmentGroups)
+            : 0.0f;
         const std::string assetSourceUtf8 = WideToUtf8(m_lastAssetSource);
         const std::string importStatusUtf8 = WideToUtf8(m_lastImportStatus);
         const std::string editStatusUtf8 = WideToUtf8(m_lastEditStackStatus);
@@ -521,6 +573,33 @@
         json << "    \"experiment_settings\": { \"ok\": " << (experimentSettingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(experimentSettingsPathUtf8) << "\" },\n";
         json << "    \"active_set_json\": { \"ok\": " << (planOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(planPathUtf8) << "\" },\n";
         json << "    \"viewer_settings\": { \"ok\": " << (settingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(viewerSettingsPathUtf8) << "\" }\n";
+        json << "  \"false_static_count\": " << falseStaticCount << ",\n";
+        json << "  \"false_static_rate\": " << falseStaticRate << ",\n";
+        json << "  \"group_static_reuse_rate\": " << groupStaticReuseRate << ",\n";
+        json << "  \"group_dynamic_rate\": " << groupDynamicRate << ",\n";
+        json << "  \"deferred_correction_rate\": " << deferredCorrectionRate << ",\n";
+
+        json << "  \"total_segment_group_count\": " << totalSegmentGroups << ",\n";
+        json << "  \"static_cached_group_count\": " << staticCachedGroups << ",\n";
+        json << "  \"static_transformed_group_count\": " << staticTransformedGroups << ",\n";
+        json << "  \"dynamic_group_count\": " << dynamicGroups << ",\n";
+        json << "  \"deferred_correction_group_count\": " << deferredGroups << ",\n";
+        json << "  \"repair_required_group_count\": " << repairRequiredGroups << ",\n";
+        json << "  \"fallback_group_count\": " << fallbackGroups << ",\n";
+
+        json << "  \"cache_hit_count\": " << cacheHits << ",\n";
+        json << "  \"cache_miss_count\": " << cacheMisses << ",\n";
+        json << "  \"cache_invalidation_count\": " << cacheInvalidations << ",\n";
+
+        json << "  \"watchdog_check_count\": " << watchdogChecks << ",\n";
+        json << "  \"watchdog_repair_count\": " << watchdogRepairs << ",\n";
+
+        json << "  \"avg_static_dynamic_boundary_error_mm\": " << ComputeAverage(staticDynamicBoundaryMeanErrors) << ",\n";
+        json << "  \"max_static_dynamic_boundary_error_mm\": " << ComputePercentile(staticDynamicBoundaryMaxErrors, 100.0f) << ",\n";
+
+        json << "  \"direction_cache_memory_mb\": " << directionCacheMemoryMb << ",\n";
+        json << "  \"full_position_memory_mb\": " << fullPositionMemoryMb << ",\n";
+        json << "  \"direction_cache_memory_saving_rate\": " << directionCacheMemorySavingRate << ",\n";
         json << "  }\n";
         json << "}\n";
 
