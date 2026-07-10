@@ -1,6 +1,4 @@
-# 固定60FPS制約下における
-
-# 静的・動的セグメントグループ型髪システム
+# 固定60FPS制約下における静的・動的セグメントグループ型髪システム
 
 ## 点線点グループ型データ構造による部分再計算・局所編集・実時間髪再現
 
@@ -8,36 +6,63 @@
 
 ---
 
-## 0. この設計書について
+## 0. 対象リポジトリ・ブランチ・バージョン
 
-この設計書は、論文にそのまま載せる文章ではない。
-この設計書の目的は、これを読んだ人が「何を作ればよいのか」「どのようなコードを書けばよいのか」「どのように評価すればよいのか」を理解し、すぐに実装に入れるようにすることである。
+本設計書は、以下のリポジトリ・ブランチを対象とする。
 
-そのため、専門的な研究説明よりも、実装に必要な考え方、データ構造、処理の流れ、クラス構成、評価方法を中心に説明する。
+```text
+Repository : MKyosei2/HairSystem
+Branch     : Novelty
+Version    : 61.42
+Commit     : 07d4ca8dc3ad9cf16fdb71d02b0619c5bed11a0b
+対象ファイル : 設計書/01_TopNovelty_NewStrandDataType.md
+```
 
-本研究の中心は、髪の毛を毎フレームすべて計算するのではなく、髪を小さなまとまりに分け、そのまとまりごとに「動かすか」「前回の結果をそのまま使うか」を切り替えることである。
+本設計書の目的は、卒業研究における主要新規性である **静的・動的セグメントグループ型髪データ構造** を、実装可能なレベルまで具体化することである。
 
-ここで使う小さなまとまりを、本設計では **セグメントグループ** と呼ぶ。
+本研究は、単に髪を軽く計算する研究ではない。
+また、単にActiveSet、LOD、GPU処理、Guide/Follower、PBD、XPBD、cache reuseを組み合わせる研究でもない。
+
+本研究の中心は、髪の内部表現そのものを変えることである。
 
 ---
 
-## 1. 何を作るのか
+## 1. 研究テーマ
 
-本研究で作るものは、ゲームなどで使えるリアルタイム髪システムである。
+本研究のテーマは、次のように定義する。
 
-ただし、単に髪を揺らすだけのシステムではない。
-本研究で作るものは、髪の内部データの持ち方を変えるシステムである。
+```text
+固定60FPS制約下における
+静的・動的セグメントグループ型髪データ構造の研究
+```
 
-普通の髪システムでは、髪の毛一本をたくさんの点の列として持つ。
+より具体的には、髪の毛一本を単なる点列として扱うのではなく、`点 - 線 - 点` の小さなグループに分割し、各グループごとに「再計算するか」「前回結果を再利用するか」「根元移動だけを反映するか」「境界だけ補正するか」を判断できるデータ型を設計・実装する。
+
+このデータ型を用いることで、髪全体を毎フレーム完全に物理計算するのではなく、本当に動かす必要がある部分だけを動的に計算し、動かない部分は最後に確定した結果を再利用する。
+
+---
+
+## 2. 本研究で作るもの
+
+本研究で作るものは、ゲームやリアルタイム編集環境で使用できる髪システムである。
+
+ただし、中心となる成果物は単なる髪シミュレーション機能ではない。
+本研究で作る中心成果物は、以下の新しい髪データ型である。
+
+```text
+静的・動的セグメントグループ型髪データ構造
+```
+
+通常の髪データは、次のような点列として表現される。
 
 ```text
 p0 - p1 - p2 - p3 - p4 - ...
 ```
 
-この場合、髪が動くたびに多くの点を更新する必要がある。
-髪の本数が増えるほど、計算量も増える。
+この方式では、髪が動くたびに多くの点を更新する必要がある。
+髪の本数が増えるほど、点数も線分数も増え、物理計算、衝突判定、描画準備の負荷が大きくなる。
 
-本研究では、この点列をそのまま扱うのではなく、次のように `点-線-点` のまとまりに分ける。
+本研究では、この点列をそのまま毎フレーム処理するのではなく、次のような `点 - 線 - 点` のまとまりに分ける。
 
 ```text
 [p0 - p1]
@@ -47,221 +72,133 @@ p0 - p1 - p2 - p3 - p4 - ...
 ...
 ```
 
-この `[p0 - p1]` のようなまとまりを、**セグメントグループ** と呼ぶ。
+この `[p0 - p1]` のようなまとまりを、本研究では **セグメントグループ** と呼ぶ。
 
-そして、各セグメントグループごとに、
+各セグメントグループは、単なる幾何情報ではなく、実行時に以下のような状態を持つ。
 
 ```text
-このグループは動かす必要がある
-このグループは前回の結果を使えばよい
-このグループは根元の移動だけ反映すればよい
-このグループは隣とのつなぎ目だけ直せばよい
+StaticCached       : 前回の結果をそのまま使う
+StaticTransformed  : 形は変えず、根元移動だけ反映する
+DynamicSolve       : 今フレームで計算する
+BoundaryRepair     : 静的部分と動的部分の境界を補正する
+Invalid            : キャッシュが危険なので再計算へ送る
 ```
 
-という判断を行う。
-
-これにより、髪全体を毎フレーム全部計算するのではなく、本当に必要な部分だけを計算できる。
+これにより、髪全体を一律に処理するのではなく、髪一本の内部で静的な部分と動的な部分を混在させることができる。
 
 ---
 
-## 2. 本研究の一番大事な考え方
+## 3. 本研究のメインコア
 
-本研究の一番大事な考え方は、次の一文で表せる。
+本研究のメインコアは、次の一文で表せる。
 
-> 髪の毛を点列ではなく、点線点セグメントグループ列として持ち、各グループを静的・動的に切り替えることで、動かない部分は再計算せず、必要な部分だけを再計算する。
+```text
+髪の毛を点列ではなく、点線点セグメントグループ列として保持し、
+各グループを静的・動的に切り替えることで、
+動かない部分は再計算せず、必要な部分だけを再計算する。
+```
 
-ここでいう **静的** とは、「今フレームでは新しく計算しなくてよい」という意味である。
-完全に止まっているという意味ではない。
+ここで重要なのは、髪を線分に分けること自体ではない。
+重要なのは、`点 - 線 - 点` の各グループが、以下の情報を持つことである。
 
-たとえば、キャラクターの頭が少し動いた場合でも、髪の形そのものが変わらないなら、前回保存した髪の方向や長さを使って、新しい位置だけを軽く復元できる。
-このような場合も、本研究では静的に近い扱いにする。
+```text
+現在位置
+前回確定位置
+方向ベクトル
+長さ
+半径
+静的・動的状態
+編集影響度
+接触危険度
+貫通危険度
+境界誤差
+キャッシュ有効性
+衝突安全証明情報
+```
 
-反対に、手に当たった、肩にめり込んだ、髪を編集した、急に動いた、つなぎ目が不自然になった、という場合は、その部分だけ動的に計算する。
+つまり、本研究のセグメントグループは、単なる線分ではなく、**自分が今フレームにどう処理されるべきかを判断するための情報を持つ髪データ単位**である。
 
 ---
 
-## 3. なぜこの方式が必要なのか
+## 4. なぜこのデータ型が必要なのか
 
-髪はとても重い表現である。
-一本一本が細く、本数が多く、さらに曲がったり、揺れたり、体や服に当たったりする。
+髪は、ゲームやリアルタイムCGにおいて非常に重い表現である。
+
+髪は本数が多い。
+一本一本が複数の点を持つ。
+さらに、風、重力、頭の動き、体や服との接触、他の髪との干渉、編集操作など、多くの要因で形が変化する。
 
 髪全体を毎フレーム高精度に計算すれば、見た目は良くなる。
-しかし、それをゲーム内で毎フレーム行うと重すぎる。
+しかし、少し古いPCやNintendo Switch級の環境では、髪だけに多くの処理時間を使うことはできない。
 
-特に、Nintendo Switch級や少し古いPCのような環境では、髪だけに多くの時間を使うことはできない。
-ゲームには髪以外にも、キャラクター、背景、エフェクト、UI、サウンド、ゲーム処理がある。
-
-そのため、本研究では次の方針を取る。
-
-```text
-全部を正確に計算するのではなく、
-見た目に影響が大きい部分だけを計算する。
-
-動いていない部分は、
-最後に動いたときの結果を再利用する。
-
-遠くにある髪や見えない髪は、
-できるだけ更新しない。
-```
-
-これにより、ゲーム全体として60FPSを維持することを目指す。
-
----
-
-## 4. 目標
-
-本システムの目標は、次の通りである。
-
-### 4.1 機能面の目標
-
-本システムでは、以下を実現する。
-
-```text
-髪を点線点セグメントグループとして管理する
-各グループを静的または動的に切り替える
-静的グループは前回の結果を再利用する
-根元だけ動いた場合は、保存済み方向と長さで復元する
-編集された部分だけを優先的に更新する
-接触や貫通が起きそうな部分だけを補正する
-静的部分と動的部分の境界を自然につなぐ
-guideを中心に計算し、followerはguideから再構成する
-既存の評価システムにそのまま接続する
-```
-
-### 4.2 性能面の目標
-
-ゲーム全体は60FPSで動かす。
 60FPSでは、1フレームに使える時間は約16.67msである。
+しかし、その16.67msは髪だけの時間ではない。
+ゲームには、キャラクター、背景、アニメーション、エフェクト、UI、サウンド、入力処理、ゲームロジックなどが存在する。
 
-ただし、髪だけが16.67msを使ってはいけない。
-ゲーム全体の中で髪に使える時間は、かなり小さく見積もる必要がある。
-
-本設計では、低性能環境向けに次を目標にする。
+そのため、本研究では以下の考え方を取る。
 
 ```text
-ゲーム全体                    : 16.67ms以内
-髪ランタイム全体              : 2.0〜3.5ms以内
-CPU側の髪処理                 : 0.3〜0.7ms以内
-GPU側の髪更新・描画準備       : 1.5〜2.8ms以内
-動的に計算するグループ率       : 全体の5〜15%以内
-静的に再利用するグループ率     : 85%以上
-followerへの物理計算          : 原則禁止
-全髪への自己衝突判定           : 禁止
-遠距離の髪                    : cardsまたは静的表示
-不可視の髪                    : freeze
+すべてを毎フレーム正確に計算しない。
+見た目や安全性に影響する部分だけを計算する。
+動いていない部分は、最後に動いたときの結果を再利用する。
+根元移動だけなら、保存済み方向と長さで復元する。
+編集・接触・貫通がある部分だけを動的に計算する。
 ```
+
+これにより、ゲーム全体として固定60FPSを維持しながら、髪の見た目、編集性、接触補正を両立させることを目指す。
 
 ---
 
-## 5. 用語説明
+## 5. 既存技術との関係
 
-この設計書で使う言葉を先に整理する。
+本研究は、既存の髪シミュレーション研究やリアルタイム物理技術を否定するものではない。
+むしろ、それらを前提として、その上に新しいデータ型を提案する。
 
-### 5.1 点
-
-髪の毛を形作る位置である。
-3D空間上の `x, y, z` 座標を持つ。
+既存技術として、以下のものがある。
 
 ```text
-p0, p1, p2, ...
+髪を点列・線分・ロッドとして扱う手法
+PBD / XPBD による制約解法
+Guide/Follower型の髪表現
+LODによる計算量削減
+GPUによる並列処理
+sleeping / cache reuse / partial update
+粒子・布・流体・剛体における部分更新
 ```
 
-### 5.2 線
+これらはすべて重要な既存技術である。
 
-点と点の間をつなぐ部分である。
-実際には、始点と終点、方向、長さを持つ。
+しかし、本研究の主役はそれらではない。
 
-### 5.3 セグメントグループ
+本研究の主役は、髪一本の内部にある `点 - 線 - 点` グループを、実行時の処理経路選択単位として扱う新しいデータ型である。
 
-`点-線-点` のまとまりである。
+従来のLODやGuide/Followerでは、髪一本、髪束、guide、cluster、距離、画面上の重要度といった単位で処理量を変えることが多い。
+一方、本研究では、髪一本の内部にある各セグメントグループごとに状態を持たせる。
+
+たとえば、同じ髪一本の中でも、以下のような状態が同時に存在できる。
 
 ```text
-[p0 - p1]
+根元付近     : StaticTransformed
+中間部       : StaticCached
+接触付近     : DynamicSolve
+境界付近     : BoundaryRepair
+毛先         : DynamicSolve
 ```
 
-本研究では、このセグメントグループを髪の最小更新単位にする。
-つまり、点一個ずつではなく、点と線を含む小さなグループ単位で「動かす」「再利用する」を判断する。
-
-### 5.4 静的グループ
-
-今フレームでは新しく計算しなくてよいグループである。
-前回の結果をそのまま使うか、根元の移動だけ反映して軽く復元する。
-
-### 5.5 動的グループ
-
-今フレームで計算が必要なグループである。
-編集、接触、貫通、急な動きなどがある場合に動的になる。
-
-### 5.6 境界補正
-
-静的グループと動的グループのつなぎ目を自然につなぐ処理である。
-静的な部分と動的な部分が混ざると、境目に段差が出る可能性がある。
-それを軽く直す処理を境界補正と呼ぶ。
-
-### 5.7 guide
-
-計算の中心になる髪である。
-すべての髪を直接計算すると重いため、代表となる髪だけを計算する。
-
-### 5.8 follower
-
-guideについてくる表示用の髪である。
-followerは見た目の密度を増やすために使う。
-原則として、followerには重い物理計算をしない。
+このように、髪一本の内部で静的部分と動的部分を混在させることが、本研究の特徴である。
 
 ---
 
-## 6. システム全体の流れ
+## 6. データ型の基本構造
 
-毎フレーム、システムは次の順番で動く。
-
-```text
-1. キャラクターや頭の位置を更新する
-2. 髪の根元位置を更新する
-3. ユーザ編集やアニメーションの影響を反映する
-4. 各セグメントグループの危険度を計算する
-5. 各グループを静的・動的・境界補正に分類する
-6. 処理時間の予算内で、動的に計算するグループ数を決める
-7. 静的グループは前回結果を再利用する
-8. 根元移動だけのグループは保存済み方向と長さで復元する
-9. 動的グループだけを計算する
-10. 静的と動的の境界を補正する
-11. guideの結果からfollowerを再構成する
-12. 距離や見え方に応じて描画方法を選ぶ
-13. 既存の評価システムへログを出す
-```
-
-この流れの中心は、4〜10である。
-つまり、各セグメントグループをどう分類し、どこだけ計算するかが重要になる。
-
----
-
-## 7. セグメントグループ型データ構造
-
-### 7.1 基本構造
-
-各セグメントグループは、次の情報を持つ。
+本研究で扱う基本単位は、`点 - 線 - 点` のセグメントグループである。
 
 ```text
-どの髪に属するか
-その髪の中で何番目のグループか
-始点
-終点
-方向
-長さ
-太さ
-現在の始点と終点
-前回確定した始点と終点
-今の状態
-編集の影響度
-接触の危険度
-貫通の危険度
-境界の誤差
-キャッシュが使えるか
-前回の非衝突判定がまだ有効か
+SegmentGroup = start point + line segment + end point
 ```
 
-### 7.2 C++でのデータ構造イメージ
+ただし、実装上は点と線を単に持つだけでは不十分である。
+各グループは、以下の情報を持つ。
 
 ```cpp
 enum class SegmentGroupState : uint8_t
@@ -305,46 +242,121 @@ struct SegmentGroup
 };
 ```
 
-この構造体が、本研究の中心になる。
+この構造体が、本研究の中心である。
+
+`currentStart` と `currentEnd` は現在フレームの位置である。
+`cachedStart` と `cachedEnd` は最後に確定した安全な位置である。
+`direction` と `length` は、線分の方向と長さである。
+`state` は、今フレームにこのグループをどう処理するかを表す。
+`editWeight`、`contactRisk`、`penetrationRisk`、`boundaryError` などは、動的に計算すべきかどうかを判断するための値である。
 
 ---
 
-## 8. 状態の種類
+## 7. 点・線・点の共有点の扱い
 
-各セグメントグループは、毎フレーム次のどれかの状態になる。
+髪は連続した構造であるため、隣接するセグメントグループは点を共有する。
 
-### 8.1 StaticCached
+```text
+Group 0 : [p0 - p1]
+Group 1 : [p1 - p2]
+Group 2 : [p2 - p3]
+```
 
-前回の結果をそのまま使う状態である。
+ここで、`p1` はGroup 0の終点であり、Group 1の始点でもある。
 
-使う条件は次の通り。
+本研究では、この共有点を単純な一点として雑に扱わない。
+共有点は、前後のグループの境界として扱う。
+
+```text
+前グループの終点
+次グループの始点固定位置
+```
+
+次のグループを計算するときは、前のグループの最終位置を始点として使う。
+
+```cpp
+group[i + 1].currentStart = group[i].currentEnd;
+```
+
+これにより、髪の根元から毛先に向かって、順番に位置を復元できる。
+
+共有点付近では、前の線分方向と次の線分方向が異なる場合がある。
+そのため、本研究では共有点を境界として、前後の方向領域を分けて扱う。
+考え方としては、共有点を中心に、前方向と後方向の半球領域を分ける。
+
+```text
+[p0 - p1] の終点側半球
+[p1 - p2] の始点側半球
+```
+
+これにより、同じ共有点であっても、前グループの終点としての役割と、次グループの始点としての役割を分けることができる。
+
+この考え方は、静的グループと動的グループが隣り合う場合に重要である。
+境界点をどちらのグループがどのように扱うかを明確にすることで、静的部分と動的部分のつなぎ目の破綻を減らす。
+
+---
+
+## 8. グループ長の扱い
+
+本研究では、髪一本の中では各セグメントグループの長さを基本的に同じにする。
+
+```text
+strand A:
+[p0 - p1] = L
+[p1 - p2] = L
+[p2 - p3] = L
+
+strand B:
+[q0 - q1] = M
+[q1 - q2] = M
+[q2 - q3] = M
+```
+
+ただし、髪ごとに長さが違うことは許可する。
+つまり、strand Aのグループ長とstrand Bのグループ長が違ってもよい。
+
+この設計により、一本の髪の中では処理単位が均一になり、GPU上での並列処理やバッファ管理がしやすくなる。
+また、方向ベクトルと長さを保存しておけば、根元から順番に復元しやすくなる。
+
+---
+
+## 9. StaticCached
+
+`StaticCached` は、前回確定した結果をそのまま使う状態である。
+
+使う条件は以下の通りである。
 
 ```text
 編集されていない
 接触しそうにない
 貫通していない
-周囲の髪とのつながりが自然
-根元も大きく動いていない
-前回のキャッシュが有効
+境界が自然である
+根元が大きく動いていない
+前回キャッシュが有効である
 ```
 
 処理内容は単純である。
 
 ```cpp
-currentStart = cachedStart;
-currentEnd   = cachedEnd;
+group.currentStart = group.cachedStart;
+group.currentEnd   = group.cachedEnd;
 ```
 
-この状態では、物理計算をしない。
-描画用のデータも再利用できるなら、そのまま使う。
+この状態では、物理計算を行わない。
+描画用データも再利用できる場合は、そのまま再利用する。
 
-### 8.2 StaticTransformed
+`StaticCached` を多く使えるほど、髪処理は軽くなる。
+本研究では、静的再利用率を高く保つことが60FPS維持の重要な条件となる。
 
-形は変えずに、根元や頭の移動だけ反映する状態である。
+---
 
-たとえば、キャラクターが少し動いたが、髪の形自体は変わっていない場合に使う。
+## 10. StaticTransformed
 
-保存済みの方向と長さを使い、始点から終点を復元する。
+`StaticTransformed` は、髪の形は変えずに、根元や頭の移動だけを反映する状態である。
+
+たとえば、キャラクターの頭が少し動いたが、髪の形そのものは大きく変わらない場合に使う。
+
+この場合、保存済みの方向と長さを使って、始点から終点を復元する。
 
 ```text
 次の点 = 今の点 + 保存済み方向 × 長さ
@@ -353,16 +365,41 @@ currentEnd   = cachedEnd;
 コードでは次のようになる。
 
 ```cpp
-currentEnd = currentStart + direction * length;
+group.currentEnd = group.currentStart + group.direction * group.length;
 ```
 
-これにより、重い物理計算をせずに髪の位置を更新できる。
+髪一本全体を復元する場合は、根元から毛先に向かって順番に処理する。
 
-### 8.3 DynamicSolve
+```cpp
+void ReconstructStrandFromRoot(
+    const SegmentGroupStrand& strand,
+    SegmentGroupBuffer& buffer)
+{
+    Vec3 current = strand.rootPosition;
 
-今フレームで計算が必要な状態である。
+    for (uint32_t i = 0; i < strand.groupCount; ++i)
+    {
+        SegmentGroup& group =
+            buffer.groups[strand.firstGroupIndex + i];
 
-次のような場合に使う。
+        group.currentStart = current;
+        group.currentEnd =
+            current + group.direction * group.length;
+
+        current = group.currentEnd;
+    }
+}
+```
+
+この処理により、髪全体を物理計算しなくても、根元移動に追従した位置を軽く復元できる。
+
+---
+
+## 11. DynamicSolve
+
+`DynamicSolve` は、今フレームで実際に計算が必要な状態である。
+
+以下のような場合に使う。
 
 ```text
 髪が編集された
@@ -374,104 +411,131 @@ currentEnd = currentStart + direction * length;
 近距離で画面上目立つ
 ```
 
-この状態では、長さ保持、曲げ補正、接触補正、貫通解消などを行う。
-
-ただし、全髪ではなく、この状態になったグループだけを計算する。
-
-### 8.4 BoundaryRepair
-
-静的グループと動的グループの境界を直す状態である。
-
-たとえば、前のグループはStaticCachedで、次のグループはDynamicSolveだった場合、境目が少しずれる可能性がある。
-
-そのとき、接続点や方向を軽く補正して、自然につなぐ。
-
-これは高品質な物理計算ではなく、軽い補正でよい。
-
-### 8.5 Invalid
-
-静的キャッシュが使えない状態である。
-
-たとえば、前回は安全だったが、今回は近くに衝突体が来た場合、キャッシュを信じると危険である。
-その場合はInvalidにして、DynamicSolveへ送る。
-
----
-
-## 9. 共有点の扱い
-
-髪のグループは、隣同士で点を共有する。
+`DynamicSolve` では、以下の処理を行う。
 
 ```text
-Group 0: [p0 - p1]
-Group 1: [p1 - p2]
+長さを保つ
+根元側を固定する
+曲がりすぎを抑える
+接触していたら押し戻す
+貫通していたら外へ出す
+計算後の方向と長さを保存する
 ```
 
-ここで `p1` は、Group 0の終点であり、Group 1の始点でもある。
-
-本研究では、この共有点をただの一つの点として雑に扱わない。
-次のように役割を分ける。
-
-```text
-前グループの終点
-次グループの始点固定位置
-```
-
-つまり、次のグループを計算するときは、前のグループの終点を始点として使う。
+コードイメージは以下である。
 
 ```cpp
-group[i + 1].currentStart = group[i].currentEnd;
-```
-
-これにより、根元から毛先に向かって、順番に髪の位置を復元できる。
-
----
-
-## 10. 髪一本を復元する処理
-
-髪一本が全体的に動く場合、根元から順番に計算する。
-
-```cpp
-void ReconstructStrandFromRoot(
-    const SegmentGroupStrand& strand,
-    SegmentGroupBuffer& buffer)
+void SolveDynamicGroup(
+    SegmentGroup& group,
+    const ColliderSet& colliders,
+    const DynamicSolveSettings& settings)
 {
-    Vec3 current = strand.rootPosition;
+    SolveLengthConstraint(group);
 
-    for (uint32_t i = 0; i < strand.groupCount; ++i)
+    if (group.contactRisk > settings.contactThreshold ||
+        group.penetrationRisk > settings.penetrationThreshold)
     {
-        SegmentGroup& group = buffer.groups[strand.firstGroupIndex + i];
-
-        group.currentStart = current;
-        group.currentEnd = current + group.direction * group.length;
-
-        current = group.currentEnd;
+        SolveCollisionForGroup(group, colliders, settings);
     }
+
+    SolveBendApproximation(group, settings);
+
+    Vec3 delta = group.currentEnd - group.currentStart;
+    group.length = Length(delta);
+    group.direction = Normalize(delta);
+
+    group.cachedStart = group.currentStart;
+    group.cachedEnd   = group.currentEnd;
+    group.cacheValid  = 1;
 }
 ```
 
-この処理は、本研究で非常に重要である。
-
-なぜなら、髪全体を物理計算しなくても、保存済みの方向と長さがあれば、根元から順番に位置を復元できるからである。
+重要なのは、全髪をDynamicSolveにしないことである。
+DynamicSolveは高コストなので、必要なグループだけに限定する。
 
 ---
 
-## 11. 状態分類の考え方
+## 12. BoundaryRepair
 
-毎フレーム、すべてのセグメントグループに対して、どの状態にするかを決める。
+`BoundaryRepair` は、静的グループと動的グループの境界を自然につなぐための状態である。
 
-わかりやすく言うと、次の順番で考える。
+たとえば、以下のような状態を考える。
 
 ```text
-キャッシュが壊れているか？
-編集されたか？
-接触しそうか？
-貫通しているか？
-境界が不自然か？
-根元だけ動いたか？
+Group 0 : StaticCached
+Group 1 : DynamicSolve
+```
+
+この場合、Group 0は前回結果を使い、Group 1は今フレームで新しく計算される。
+そのため、共有点や方向がずれ、境界に不自然な折れや段差が出る可能性がある。
+
+そこで、境界付近だけを軽く補正する。
+
+```cpp
+void ApplyBoundaryRepair(
+    SegmentGroup& prev,
+    SegmentGroup& current)
+{
+    Vec3 joint =
+        0.5f * (prev.currentEnd + current.currentStart);
+
+    prev.currentEnd = joint;
+    current.currentStart = joint;
+
+    Vec3 blendedDir =
+        Normalize(prev.direction + current.direction);
+
+    current.currentEnd =
+        current.currentStart + blendedDir * current.length;
+
+    current.boundaryError =
+        Length(prev.currentEnd - current.currentStart);
+}
+```
+
+`BoundaryRepair` は高品質な物理計算ではない。
+目的は、静的部分と動的部分の境界破綻を軽く直すことである。
+
+---
+
+## 13. Invalid
+
+`Invalid` は、静的キャッシュを信じると危険な状態である。
+
+たとえば、前回は安全だったが、今回フレームで衝突体が近づいた場合、前回のキャッシュをそのまま使うと髪が体や手を貫通する可能性がある。
+
+以下のような場合にInvalidになる。
+
+```text
+キャッシュが古い
+衝突体が近くに移動した
+編集範囲に入った
+隣接グループが大きく動いた
+境界誤差が大きい
+NaN / Infなど異常値がある
+```
+
+Invalidになったグループは、DynamicSolveまたはFallback処理へ送る。
+
+---
+
+## 14. 状態分類
+
+毎フレーム、各セグメントグループに対して状態分類を行う。
+
+判断順序は以下である。
+
+```text
+キャッシュが壊れているか
+編集されたか
+接触しそうか
+貫通しているか
+境界が不自然か
+根元だけ動いたか
 何もなければ前回結果を使う
 ```
 
-コードのイメージは次の通り。
+コードイメージは以下である。
 
 ```cpp
 SegmentGroupState ClassifySegmentGroup(
@@ -516,16 +580,14 @@ SegmentGroupState ClassifySegmentGroup(
 
 ---
 
-## 12. 危険度スコア
+## 15. 危険度スコア
 
-DynamicSolveが必要そうなグループが多い場合でも、すべてを計算してはいけない。
+DynamicSolve候補が多い場合でも、すべてを計算してはいけない。
 処理時間を超えてしまうからである。
 
-そこで、各グループに危険度スコアをつける。
+そこで、各グループに危険度スコアを付ける。
 
-危険度スコアとは、簡単に言うと「どれくらい今すぐ直すべきか」を表す数字である。
-
-危険度は、次の要素から決める。
+危険度スコアは、以下の要素から計算する。
 
 ```text
 編集されたか
@@ -536,19 +598,7 @@ DynamicSolveが必要そうなグループが多い場合でも、すべてを�
 画面上で目立つか
 ```
 
-式のイメージは次の通り。
-
-```text
-危険度 =
-  編集の影響
-+ 接触の危険
-+ 貫通の危険
-+ 境界の不自然さ
-+ 動きの大きさ
-+ 画面上の目立ちやすさ
-```
-
-コードでは次のように書ける。
+コードイメージは以下である。
 
 ```cpp
 float ComputeSegmentGroupRisk(const SegmentGroup& group)
@@ -563,31 +613,35 @@ float ComputeSegmentGroupRisk(const SegmentGroup& group)
 }
 ```
 
-危険度が高いものから順に、時間予算内でDynamicSolveする。
+危険度が高いグループから順に、時間予算内でDynamicSolveする。
 
 ---
 
-## 13. 時間予算の考え方
+## 16. 時間予算
 
-ゲームでは、処理時間を守ることが非常に重要である。
 60FPSでは、1フレームは約16.67msである。
 
 しかし、髪だけで16.67msを使うことはできない。
-そのため、髪には2.0〜3.5ms程度の予算を設定する。
-
-髪処理の時間を、次のように考える。
+本研究では、少し古いPCやSwitch級の環境を想定し、髪処理全体の目標を以下のようにする。
 
 ```text
-髪処理時間 = 固定処理時間 + 動的グループ1個あたりの時間 × 動的グループ数
+ゲーム全体                    : 16.67ms以内
+髪ランタイム全体              : 2.0〜3.5ms以内
+CPU側の髪処理                 : 0.3〜0.7ms以内
+GPU側の髪更新・描画準備       : 1.5〜2.8ms以内
+動的に計算するグループ率       : 全体の5〜15%以内
+静的に再利用するグループ率     : 85%以上
+followerへの物理計算          : 原則禁止
+全髪への自己衝突判定           : 禁止
+遠距離の髪                    : cardsまたは静的表示
+不可視の髪                    : freeze
 ```
 
-記号で書くと、
+髪処理時間は、次のように考える。
 
 ```text
 T = C + dK
 ```
-
-である。
 
 ```text
 T : 髪処理全体の時間
@@ -612,15 +666,15 @@ K <= (B - C) / d
 
 である。
 
-この式を使えば、今フレームで何個までDynamicSolveしてよいかを決められる。
+この式を使い、今フレームでDynamicSolveしてよいグループ数を決める。
 
 ---
 
-## 14. 予算を超えそうなときのルール
+## 17. 予算超過時の品質低下ルール
 
 髪処理が重くなりそうな場合は、品質を少し落としてでも60FPSを守る。
 
-落とす順番は次の通り。
+品質を落とす順番は以下とする。
 
 ```text
 1. 見えていない髪を完全に止める
@@ -635,13 +689,22 @@ K <= (B - C) / d
 10. ribbon描画をcards描画に落とす
 ```
 
-ただし、近距離で大きく見える貫通や、ユーザが編集中の部分は優先して処理する。
+ただし、以下は優先して処理する。
+
+```text
+近距離で大きく見える貫通
+ユーザが編集中の部分
+顔周りの髪
+シルエットに大きく影響する髪
+```
+
+本研究では、遠くの髪の品質よりも、60FPS維持と近距離の破綻防止を優先する。
 
 ---
 
-## 15. 毎フレームの処理全体
+## 18. 毎フレームの処理全体
 
-実装では、最終的に次のような更新関数を作る。
+最終的な毎フレーム更新処理は、以下のようになる。
 
 ```cpp
 void UpdateSegmentGroupHairRuntime(
@@ -690,236 +753,68 @@ void UpdateSegmentGroupHairRuntime(
 }
 ```
 
-この関数が、システム全体の中心になる。
+この関数が、実装上の中心になる。
 
 ---
 
-## 16. 必要なコードファイル
+## 19. Guide / Followerとの関係
 
-実装では、次のようなファイル構成にするとよい。
+本研究では、すべての髪を直接物理計算しない。
+計算する髪と、見た目を増やす髪を分ける。
 
 ```text
-include/hairgpu/SegmentGroupHair.h
-src/hairgpu_core/SegmentGroupHair.cpp
-
-include/hairgpu/SegmentGroupRuntime.h
-src/hairgpu_core/SegmentGroupRuntime.cpp
-
-include/hairgpu/SegmentGroupClassifier.h
-src/hairgpu_core/SegmentGroupClassifier.cpp
-
-include/hairgpu/SegmentGroupSolver.h
-src/hairgpu_core/SegmentGroupSolver.cpp
-
-include/hairgpu/SegmentGroupBoundaryRepair.h
-src/hairgpu_core/SegmentGroupBoundaryRepair.cpp
-
-include/hairgpu/SegmentGroupCollisionCertificate.h
-src/hairgpu_core/SegmentGroupCollisionCertificate.cpp
-
-include/hairgpu/SegmentGroupFollowerReconstruction.h
-src/hairgpu_core/SegmentGroupFollowerReconstruction.cpp
-
-include/hairgpu/SegmentGroupTelemetry.h
-src/hairgpu_core/SegmentGroupTelemetry.cpp
+guide    : 計算する代表髪
+follower : guideについてくる表示用髪
 ```
+
+本設計では、原則としてguideだけをDynamicSolve対象にする。
+followerには重い物理計算を行わない。
+
+followerは、guideの位置、方向、束方向、太さ、カール情報などを使って再構成する。
+
+```text
+guideのSegmentGroup結果
++ followerの相対オフセット
++ clump情報
++ curl情報
++ width情報
+= followerの描画位置
+```
+
+これにより、見た目の髪密度を保ちながら、物理計算対象を抑える。
 
 ---
 
-## 17. 各コードの役割
+## 20. LODと表示方針
 
-### 17.1 SegmentGroupHair
+距離や見え方に応じて、髪の更新と描画を切り替える。
 
-髪を点列からセグメントグループ列へ変換する。
+| 状態     | 更新                  | 描画                |
+| ------ | ------------------- | ----------------- |
+| Near   | DynamicSolveを許可     | ribbon / 少数tube   |
+| Mid    | StaticTransformed中心 | simplified ribbon |
+| Far    | StaticCached中心      | hair cards        |
+| Hidden | freeze              | 描画なし、またはcards     |
 
-主な役割は次の通り。
+全髪をtubeで描画するのは重い。
+少し古いPCやSwitch級では避ける。
 
-```text
-髪一本を複数のSegmentGroupに分ける
-各グループの始点と終点を決める
-方向と長さを計算する
-guideかfollowerかを記録する
-初期状態をStaticCachedにする
-```
-
-### 17.2 SegmentGroupRuntime
-
-毎フレームの処理全体を管理する。
-
-主な役割は次の通り。
-
-```text
-根元位置を更新する
-編集情報を反映する
-危険度を計算する
-状態を分類する
-予算内でDynamicSolve対象を決める
-静的グループを再利用する
-動的グループだけ解く
-境界補正を行う
-followerを再構成する
-評価用ログを出す
-```
-
-### 17.3 SegmentGroupClassifier
-
-各グループの状態を決める。
-
-```text
-StaticCachedにするか
-StaticTransformedにするか
-DynamicSolveにするか
-BoundaryRepairにするか
-Invalidにするか
-```
-
-を判断する。
-
-### 17.4 SegmentGroupSolver
-
-DynamicSolveになったグループだけを計算する。
-
-行う処理は次の通り。
-
-```text
-長さを保つ
-根元側を固定する
-曲がりすぎを抑える
-衝突を直す
-貫通を直す
-計算後の方向と長さを保存する
-```
-
-### 17.5 SegmentGroupBoundaryRepair
-
-静的グループと動的グループの境目を自然につなぐ。
-
-行う処理は次の通り。
-
-```text
-接続点を合わせる
-方向をなだらかにする
-曲率の急変を抑える
-境界誤差を記録する
-```
-
-### 17.6 SegmentGroupCollisionCertificate
-
-静的グループを再利用してよいかを判断するための情報を管理する。
-
-「前回は衝突していなかった」という情報が、今回も信じられるかを確認する。
-
-### 17.7 SegmentGroupFollowerReconstruction
-
-guideからfollowerを再構成する。
-
-followerは見た目の密度を増やすための髪である。
-物理計算は行わず、guideの位置や方向をもとに生成する。
-
-### 17.8 SegmentGroupTelemetry
-
-既存の評価システムへ値を出す。
-
-新しい評価システムを作り直すのではなく、既存のCSV、JSON、SQLite DB、runtime suiteにそのまま値を流す。
+近距離ではribbonを基本とし、必要な部分だけtube表現を使う。
+中距離では簡略化ribbonを使う。
+遠距離ではhair cardsを使う。
+不可視の場合は更新しない。
 
 ---
 
-## 18. DynamicSolveの中身
+## 21. 衝突判定と安全確認
 
-DynamicSolveでは、重すぎる物理計算は避ける。
-Switch級の環境でも動かすため、最低限の補正に絞る。
+静的グループは便利だが、誤って再利用すると破綻する。
 
-行う処理は次の通り。
+たとえば、本当は手に当たっているのに、前回の結果を使い続けると、髪が手を突き抜ける可能性がある。
 
-```text
-長さを保つ
-根元とのつながりを保つ
-曲がりすぎを少し直す
-接触していたら押し戻す
-貫通していたら外へ出す
-計算後の結果をキャッシュする
-```
+そのため、静的グループには安全確認を入れる。
 
-コードのイメージは次の通り。
-
-```cpp
-void SolveDynamicGroup(
-    SegmentGroup& group,
-    const ColliderSet& colliders,
-    const DynamicSolveSettings& settings)
-{
-    SolveLengthConstraint(group);
-
-    if (group.contactRisk > settings.contactThreshold ||
-        group.penetrationRisk > settings.penetrationThreshold)
-    {
-        SolveCollisionForGroup(group, colliders, settings);
-    }
-
-    SolveBendApproximation(group, settings);
-
-    group.direction = Normalize(group.currentEnd - group.currentStart);
-    group.length = Length(group.currentEnd - group.currentStart);
-
-    group.cachedStart = group.currentStart;
-    group.cachedEnd = group.currentEnd;
-    group.cacheValid = 1;
-}
-```
-
----
-
-## 19. 境界補正の中身
-
-静的な部分と動的な部分が隣り合うと、境目にズレが出ることがある。
-
-たとえば、
-
-```text
-静的グループ: 前回の形を使っている
-動的グループ: 今回新しく計算された
-```
-
-となると、接続点がずれる可能性がある。
-
-そのため、境界補正では次を行う。
-
-```text
-二つのグループの接続点を合わせる
-方向をなだらかにつなぐ
-曲がり方が急に変わらないようにする
-```
-
-コードのイメージは次の通り。
-
-```cpp
-void ApplyBoundaryRepair(
-    SegmentGroup& prev,
-    SegmentGroup& current)
-{
-    Vec3 joint = 0.5f * (prev.currentEnd + current.currentStart);
-
-    prev.currentEnd = joint;
-    current.currentStart = joint;
-
-    Vec3 blendedDir = Normalize(prev.direction + current.direction);
-    current.currentEnd = current.currentStart + blendedDir * current.length;
-
-    current.boundaryError = Length(prev.currentEnd - current.currentStart);
-}
-```
-
----
-
-## 20. 静的キャッシュの安全確認
-
-静的グループは便利だが、間違って使うと見た目が破綻する。
-
-たとえば、本当は手に当たっているのに、前回の結果をそのまま使うと、髪が手を突き抜ける可能性がある。
-
-そこで、静的グループには安全確認を入れる。
-
-確認する内容は次の通り。
+確認する内容は以下である。
 
 ```text
 前回の非衝突情報はまだ有効か
@@ -933,11 +828,11 @@ void ApplyBoundaryRepair(
 
 ---
 
-## 21. Static Watchdog
+## 22. Static Watchdog
 
 Static Watchdogは、静的グループを監視する安全装置である。
 
-役割は次の通り。
+役割は以下である。
 
 ```text
 静的のまま使ってよいか確認する
@@ -948,129 +843,30 @@ false staticを数える
 
 false staticとは、静的として扱ったが、本当は動的に計算すべきだった状態である。
 
-これは非常に重要な評価項目である。
-false staticが多いと、髪が破綻している可能性が高い。
+本研究では、false staticを重要な評価項目にする。
+false staticが多い場合、静的再利用によって見た目や物理挙動が破綻している可能性が高い。
 
 ---
 
-## 22. guide / followerの扱い
+## 23. 評価項目
 
-髪をすべて直接計算すると重い。
-そこで、計算する髪と、見た目を増やす髪を分ける。
+本研究では、単にFPSだけを評価しない。
+以下の観点で評価する。
+
+### 23.1 実時間性
 
 ```text
-guide    : 計算する代表の髪
-follower : guideについてくる表示用の髪
-```
-
-本設計では、原則としてguideだけを計算する。
-followerには重い物理計算をしない。
-
-followerは、guideの位置、方向、束方向、太さ、カール情報を使って再構成する。
-
-これにより、少ない計算で髪の見た目密度を増やせる。
-
----
-
-## 23. 編集とのつなぎ方
-
-ユーザが髪を編集した場合、いきなり全髪を再計算しない。
-
-編集の影響を受けたguideやSegmentGroupに、編集重みを付ける。
-
-```text
-編集された部分       : editWeightを高くする
-編集領域の境界付近   : editWeightを少しだけ付ける
-編集されていない部分 : editWeightを0に近くする
-```
-
-editWeightが高いグループはDynamicSolve候補になる。
-境界付近のグループはBoundaryRepair候補になる。
-編集されていない部分はStaticCachedまたはStaticTransformedのまま維持する。
-
-この仕組みにより、編集した部分だけを更新し、触っていない部分はできるだけ保つ。
-
----
-
-## 24. LODの考え方
-
-LODとは、距離や見え方に応じて処理の重さを変える仕組みである。
-
-近くで大きく見える髪は、ある程度きれいに計算する。
-遠くの髪や見えない髪は、軽くする。
-
-本設計では、次の4段階に分ける。
-
-| 距離・状態  | 更新                  | 描画                |
-| ------ | ------------------- | ----------------- |
-| Near   | DynamicSolveを許可     | ribbon / 少数tube   |
-| Mid    | StaticTransformed中心 | simplified ribbon |
-| Far    | StaticCached中心      | hair cards        |
-| Hidden | freeze              | 描画なし、またはcards     |
-
-Switch級の環境では、LODは必須である。
-LODなしで高密度の髪を毎フレーム処理することは避ける。
-
----
-
-## 25. 描画の方針
-
-描画も重くなりすぎないようにする。
-
-距離ごとの方針は次の通り。
-
-```text
-近距離   : ribbon、必要なら少数tube
-中距離   : simplified ribbon
-遠距離   : hair cards
-不可視   : 描画しない
-```
-
-全髪をtubeで描画するのは重い。
-Switch級では避ける。
-
-StaticCachedのグループは、描画用データもキャッシュしてよい。
-StaticTransformedの場合は、保存済み方向と長さを使って軽く描画位置を復元する。
-
----
-
-## 26. 既存評価システムをそのまま使う
-
-本設計では、新しい評価システムを作り直さない。
-既存コードにある評価システムをそのまま使う。
-
-比較方式も既存のものを使う。
-
-```text
-prediction_only
-active_set_runtime
-proposal_hybrid
-full_physics
-```
-
-本研究のSegmentGroup型データ構造は、主に `proposal_hybrid` または `active_set_runtime` の内部で使う。
-
----
-
-## 27. 既存評価項目との対応
-
-既存評価システムには、すでに本研究に必要な項目がある。
-実装では、それらに値を入れる。
-
-### 27.1 実時間性を見る項目
-
-```text
+fps
 frame_ms
 simulation_ms
-fps
 gpu_hair_ms
 vram_mb
 bandwidth_mb_frame
 ```
 
-これらは、システムが60FPSを維持できているかを見るために使う。
+60FPSを維持できているか、髪処理が2.0〜3.5ms以内に収まっているかを見る。
 
-### 27.2 SegmentGroup型データ構造を見る項目
+### 23.2 セグメントグループ状態
 
 ```text
 total_segment_group_count
@@ -1082,9 +878,9 @@ repair_required_group_count
 fallback_group_count
 ```
 
-これらは、各フレームでどのくらいのグループが静的で、どのくらいが動的だったかを見るために使う。
+各フレームで、どの程度のグループが静的再利用され、どの程度が動的計算されたかを見る。
 
-### 27.3 静的キャッシュの安全性を見る項目
+### 23.3 静的再利用の安全性
 
 ```text
 false_static_count
@@ -1096,9 +892,9 @@ watchdog_check_count
 watchdog_repair_count
 ```
 
-これらは、静的キャッシュが安全に使えているかを見るために使う。
+静的キャッシュが安全に使えているかを見る。
 
-### 27.4 境界の自然さを見る項目
+### 23.4 境界の自然さ
 
 ```text
 static_dynamic_boundary_mean_error_mm
@@ -1106,9 +902,9 @@ static_dynamic_boundary_max_error_mm
 boundaryNaturalnessScore
 ```
 
-これらは、静的部分と動的部分の境目が不自然になっていないかを見るために使う。
+静的グループと動的グループの境界が不自然になっていないかを見る。
 
-### 27.5 メモリ削減を見る項目
+### 23.5 メモリ効率
 
 ```text
 direction_cache_memory_mb
@@ -1116,9 +912,9 @@ full_position_memory_mb
 direction_cache_memory_saving_rate
 ```
 
-これらは、方向ベクトルと長さを使うことで、全点位置を毎回持つよりどれくらいメモリを節約できたかを見るために使う。
+全点位置を毎回保持する場合と比較し、方向ベクトルと長さによる保持でどの程度メモリを削減できたかを見る。
 
-### 27.6 編集の良さを見る項目
+### 23.6 編集品質
 
 ```text
 rmsPositionError
@@ -1126,20 +922,19 @@ silhouetteError
 clumpPreservationScore
 rootLocalityScore
 editLocalityScore
-boundaryNaturalnessScore
 editedStrandRatio
 editToRunLatencyMilliseconds
 ```
 
-これらは、編集結果が自然か、編集していない部分が保たれているか、編集後すぐに反映できているかを見るために使う。
+編集した部分だけが自然に変化し、編集していない部分が保たれているかを見る。
 
 ---
 
-## 28. Telemetryの出し方
+## 24. Telemetry出力
 
-毎フレーム、SegmentGroupの状態を数えて、既存のTelemetryに渡す。
+毎フレーム、SegmentGroupの状態を集計し、既存のCSV、JSON、SQLite DB、runtime suiteへ出力する。
 
-コードイメージは次の通り。
+コードイメージは以下である。
 
 ```cpp
 void FillSegmentGroupTelemetry(
@@ -1190,159 +985,45 @@ void FillSegmentGroupTelemetry(
 }
 ```
 
-このTelemetryを、既存のCSV、JSON、SQLite DBへ流す。
+新しい評価システムを一から作るのではなく、既存の評価基盤へ接続する。
 
 ---
 
-## 29. 評価時の見方
+## 25. 必要なコードファイル
 
-評価では、単にFPSだけを見ない。
-次のように見る。
-
-### 29.1 60FPSを守れているか
-
-見る項目は次の通り。
+実装では、以下のファイル構成にする。
 
 ```text
-fps
-frame_ms
-gpu_hair_ms
-simulation_ms
-```
+include/hairgpu/SegmentGroupHair.h
+src/hairgpu_core/SegmentGroupHair.cpp
 
-目標は、ゲーム全体で60FPSを維持することである。
-髪単体では、2.0〜3.5ms以内を目標にする。
+include/hairgpu/SegmentGroupRuntime.h
+src/hairgpu_core/SegmentGroupRuntime.cpp
 
-### 29.2 静的再利用が効いているか
+include/hairgpu/SegmentGroupClassifier.h
+src/hairgpu_core/SegmentGroupClassifier.cpp
 
-見る項目は次の通り。
+include/hairgpu/SegmentGroupSolver.h
+src/hairgpu_core/SegmentGroupSolver.cpp
 
-```text
-groupStaticReuseRate
-static_cached_group_count
-static_transformed_group_count
-dynamic_group_count
-```
+include/hairgpu/SegmentGroupBoundaryRepair.h
+src/hairgpu_core/SegmentGroupBoundaryRepair.cpp
 
-StaticCachedとStaticTransformedが多く、DynamicSolveが少なければ、狙い通りに動いている。
+include/hairgpu/SegmentGroupCollisionCertificate.h
+src/hairgpu_core/SegmentGroupCollisionCertificate.cpp
 
-### 29.3 静的判定が間違っていないか
+include/hairgpu/SegmentGroupFollowerReconstruction.h
+src/hairgpu_core/SegmentGroupFollowerReconstruction.cpp
 
-見る項目は次の通り。
-
-```text
-falseStaticRate
-false_static_count
-watchdog_repair_count
-cache_invalidation_count
-```
-
-falseStaticRateが高い場合、静的にしてはいけない部分まで止めている可能性がある。
-
-### 29.4 境界が自然か
-
-見る項目は次の通り。
-
-```text
-staticDynamicBoundaryError
-static_dynamic_boundary_mean_error_mm
-static_dynamic_boundary_max_error_mm
-boundaryNaturalnessScore
-```
-
-これらが悪い場合、静的部分と動的部分の境目が不自然になっている。
-
-### 29.5 編集がうまくいっているか
-
-見る項目は次の通り。
-
-```text
-editLocalityScore
-editedStrandRatio
-editToRunLatencyMilliseconds
-clumpPreservationScore
-silhouetteError
-```
-
-編集した部分だけが変わり、編集していない部分が保たれていれば成功である。
-
----
-
-## 30. Switch級で守るべきルール
-
-Switch級の低性能環境で60FPSを狙う場合、以下を必ず守る。
-
-```text
-followerに物理計算をしない
-全髪self-collisionをしない
-全髪tube描画をしない
-毎フレーム全SegmentGroupをDynamicSolveにしない
-遠距離髪はStaticCachedまたはcardsにする
-不可視髪はfreezeする
-接触判定はDynamic候補周辺だけにする
-GPU readback前提の処理を避ける
-髪予算を超えそうなら品質を落とす
-```
-
-優先順位は次の通り。
-
-```text
-1. 60FPS維持
-2. 近距離の見た目
-3. 編集部分の自然さ
-4. 接触破綻の抑制
-5. 遠距離品質
-```
-
-つまり、遠くの髪の品質より、ゲーム全体の安定性を優先する。
-
----
-
-## 31. 失敗条件
-
-次の状態になった場合、設計または実装を見直す。
-
-```text
-DynamicSolve率が常に30%以上になる
-StaticCached/StaticTransformed率が70%未満になる
-falseStaticRateが高い
-staticDynamicBoundaryErrorMmが大きい
-髪処理が3.5msを超える
-follower再構成が重い
-遠距離髪がDynamicSolveされ続ける
-不可視髪が更新され続ける
-collision判定が全髪対象になっている
-全髪self-collisionが走っている
-```
-
-特に、Switch級で60FPSを狙う場合、全髪を毎フレーム再計算する設計になった時点で失敗である。
-
----
-
-## 32. 実装時に守るルール
-
-実装者は、次のルールを守る。
-
-```text
-01の中心はSegmentGroup型データ構造である
-ActiveSetはSegmentGroupを選ぶための補助である
-StaticCachedを積極的に使う
-根元移動のみならStaticTransformedで済ませる
-編集・接触・貫通・境界誤差がある部分だけDynamicSolveにする
-DynamicSolve候補が多い場合は危険度順に処理する
-予算を超えた候補はDeferredCorrectionまたはBoundaryRepairへ回す
-StaticとDynamicの境界にはBoundaryRepairを入れる
-followerには物理計算をしない
-LODとfreezeを前提にする
-評価は既存のruntime suiteとmetric definitionsをそのまま使う
-新しい評価システムを勝手に作らない
+include/hairgpu/SegmentGroupTelemetry.h
+src/hairgpu_core/SegmentGroupTelemetry.cpp
 ```
 
 ---
 
-## 33. 最終的なクラス構成
+## 26. 最終的な中心クラス
 
-完成形では、次のようなクラスを中心にする。
+完成形では、以下のクラスを中心にする。
 
 ```cpp
 class SegmentGroupHairRuntime
@@ -1390,11 +1071,104 @@ private:
 
 ---
 
-## 34. この研究で最終的に示したいこと
+## 27. GPU実装方針
 
-本研究で示したいことは、次の通りである。
+GPU実装では、以下のようなpass構成を想定する。
 
-髪全体を毎フレーム高精度に物理計算するのではなく、髪を `点-線-点` のセグメントグループ列として扱い、各グループを静的・動的に切り替えることで、必要な部分だけを計算できる。
+```text
+SegmentGroupBuildCS
+SegmentGroupCertificateQueryCS
+SegmentGroupStateClassifyCS
+StaticCacheReuseCS
+StaticTransformCS
+DynamicGroupSolveCS
+BoundaryRepairCS
+ApplyGroupResultCS
+FollowerReconstructionCS
+RenderBufferBuildCS
+TelemetryReductionCS
+```
+
+ただし、GPU multi-pass自体が研究の主役ではない。
+GPUは、本研究の新しいデータ型を60FPSで動かすための実装基盤である。
+
+重要なのは、CPU側とGPU側でSegmentGroupの状態判断が一致することである。
+
+```text
+CPU判定結果 == GPU判定結果
+```
+
+これが一致しないと、評価結果や再現実験の信頼性が下がる。
+
+---
+
+## 28. 実装時に守るルール
+
+実装時には、以下を必ず守る。
+
+```text
+01の中心はSegmentGroup型データ構造である
+ActiveSetはSegmentGroupを選ぶための補助である
+StaticCachedを積極的に使う
+根元移動のみならStaticTransformedで済ませる
+編集・接触・貫通・境界誤差がある部分だけDynamicSolveにする
+DynamicSolve候補が多い場合は危険度順に処理する
+予算を超えた候補はDeferredCorrectionまたはBoundaryRepairへ回す
+StaticとDynamicの境界にはBoundaryRepairを入れる
+followerには物理計算をしない
+LODとfreezeを前提にする
+評価は既存のruntime suiteとmetric definitionsをそのまま使う
+新しい評価システムを勝手に作らない
+```
+
+---
+
+## 29. 失敗条件
+
+以下の状態になった場合、設計または実装を見直す。
+
+```text
+DynamicSolve率が常に30%以上になる
+StaticCached / StaticTransformed率が70%未満になる
+falseStaticRateが高い
+staticDynamicBoundaryErrorMmが大きい
+髪処理が3.5msを超える
+follower再構成が重い
+遠距離髪がDynamicSolveされ続ける
+不可視髪が更新され続ける
+collision判定が全髪対象になっている
+全髪self-collisionが走っている
+全髪tube描画をしている
+```
+
+特に、少し古いPCやSwitch級で60FPSを狙う場合、全髪を毎フレーム再計算する設計になった時点で失敗である。
+
+---
+
+## 30. 成功条件
+
+本研究が成功したと言える条件は以下である。
+
+```text
+髪処理が2.0〜3.5ms以内に収まる
+ゲーム全体で60FPSを維持できる
+DynamicSolve率が5〜15%程度に収まる
+StaticCached / StaticTransformed率が85%以上になる
+falseStaticRateが低い
+静的・動的境界の破綻が目立たない
+編集した部分だけが自然に変化する
+編集していない部分が保たれる
+followerを使って見た目密度を維持できる
+遠距離や不可視髪を軽量化できる
+```
+
+---
+
+## 31. 本研究で最終的に示したいこと
+
+本研究で最終的に示したいことは、次の通りである。
+
+髪全体を毎フレーム高精度に物理計算しなくても、髪を `点 - 線 - 点` のセグメントグループ列として扱い、各グループを静的・動的に切り替えることで、必要な部分だけを計算できる。
 
 静的グループは、最後に確定した結果を再利用する。
 根元が動いた場合は、保存済み方向と長さで軽く復元する。
@@ -1405,12 +1179,12 @@ private:
 
 ---
 
-## 35. まとめ
+## 32. まとめ
 
-本設計の肝は、ActiveSet補正そのものではない。
-本設計の肝は、ActiveSet補正や部分再計算を可能にするための **静的・動的セグメントグループ型髪データ構造** である。
+本研究の肝は、ActiveSet補正そのものではない。
+本研究の肝は、ActiveSet補正や部分再計算を可能にするための **静的・動的セグメントグループ型髪データ構造** である。
 
-このデータ構造では、髪一本を点列ではなく、`点-線-点` のグループ列として扱う。
+このデータ構造では、髪一本を点列ではなく、`点 - 線 - 点` のグループ列として扱う。
 各グループは、StaticCached、StaticTransformed、DynamicSolve、BoundaryRepair、Invalidの状態を持つ。
 
 動かない部分は再計算しない。
@@ -1418,8 +1192,17 @@ private:
 編集、接触、貫通、急な動きがある部分だけを計算する。
 境界だけが不自然な場合は軽く補正する。
 
-評価は、既存コードの評価システムをそのまま使う。
-特に、`falseStaticRate`、`groupStaticReuseRate`、`groupDynamicRate`、`staticDynamicBoundaryErrorMm`、`directionCacheMemorySavingRate`、`gpu_hair_ms` を重視する。
+評価では、特に以下を重視する。
+
+```text
+falseStaticRate
+groupStaticReuseRate
+groupDynamicRate
+staticDynamicBoundaryErrorMm
+directionCacheMemorySavingRate
+gpu_hair_ms
+fps
+```
 
 この方式により、髪全体を毎フレーム重く計算するのではなく、必要な部分だけを更新する髪システムを作る。
 その結果として、固定60FPS、低性能環境、部分編集、接触補正、ゲーム内利用を同時に成立させることを目指す。
