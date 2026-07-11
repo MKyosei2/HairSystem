@@ -1,52 +1,183 @@
 # 固定60FPS・32GB制約下における
 
-# 静的・動的セグメントグループ型髪データ構造を用いた編集可能ハイブリッド髪システムの研究
+# Segment Group Runtime Data Typeを用いた編集可能ハイブリッド髪システムの研究
 
-— `点-線-点` セグメントグループの静的キャッシュ・動的更新・半球境界補正による自由な髪型生成と実時間再現 —
-
----
-
-# 0. 対象リポジトリ・対象ブランチ
-
-本設計書兼企画書は、以下の実装環境を対象とする。
-
-* Repository: `MKyosei2/HairSystem`
-* Branch: `Novelty`
-* 対象コードベース: HairSystem
-* 主な実装対象:
-
-  * `include/hairgpu/`
-  * `src/hairgpu_core/`
-  * `apps/dx11_viewer/src/`
-  * `apps/hairgpu_cli/src/`
-  * `tools/final_stage/`
-  * `docs/sample_assets/`
-
-本研究では、既存の guide / follower 型髪表現、Active-Set Runtime、DX11 Viewer、評価用CLI、テレメトリ出力系を土台とし、その上に **静的・動的セグメントグループ型髪データ構造** を追加する。
+— 髪ストランド内部の `点-線-点` グループを実行時処理経路選択単位として扱うデータ構造の設計と評価 —
 
 ---
 
-# 1. 研究背景
+# 0. 対象リポジトリ・対象ブランチ・対象バージョン
 
-髪シミュレーションでは、髪一本を多数の点列として扱うことが多い。たとえば、一本の髪は次のように表現できる。
+本企画書兼設計書は、以下の実装環境を対象とする。
+
+```text
+Repository : MKyosei2/HairSystem
+Branch     : Novelty
+Version    : 61.44
+Commit     : 724c7a16fc96cafc74f50a1c3e77bd8875d23a56
+対象ファイル : 設計書/01_TopNovelty_NewStrandDataType.md
+```
+
+主な実装対象は以下である。
+
+```text
+include/hairgpu/
+src/hairgpu_core/
+apps/dx11_viewer/src/
+apps/dx11_viewer/src/GpuHairViewer_parts/
+apps/hairgpu_cli/src/main_parts/
+tools/final_stage/
+docs/sample_assets/
+```
+
+本設計書は、既存のHairSystemに存在する以下の機能を前提とする。
+
+```text
+Guide / Follower hair representation
+ActiveSet Runtime
+HybridRuntime
+DX11 Viewer
+CLI evaluation tools
+Runtime telemetry
+CSV / JSONL / SQLite / Markdown report pipeline
+```
+
+---
+
+# 1. 研究テーマ
+
+本研究のテーマは、以下のように定義する。
+
+```text
+固定60FPS・32GB制約下における
+Segment Group Runtime Data Typeを用いた
+編集可能ハイブリッド髪システムの研究
+```
+
+本研究では、髪ストランドを単なる点列として扱うのではなく、髪一本の内部を `点-線-点` の小さなグループに分割し、それぞれのグループが実行時に次のいずれの処理経路へ進むべきかを判断できるデータ構造を設計・実装する。
+
+```text
+Static Reuse
+Static Transform
+Dynamic Solve
+Deferred Correction
+Boundary Repair
+Fallback
+Frozen LOD
+Rejected
+```
+
+この小さな単位を、本研究では **Segment Group** と呼ぶ。
+
+---
+
+# 2. 安全な新規性の主張
+
+## 2.1 本研究で新規性として主張すること
+
+本研究の新規性は、以下の点に限定して主張する。
+
+```text
+髪ストランド内部の Segment Group を、
+単なる幾何表現や物理制約単位ではなく、
+実行時の処理経路を選択する Runtime Decision Unit として扱う点。
+```
+
+つまり、本研究は「髪を点列やsegmentで表すこと」自体を新規性とはしない。
+
+また、「静的なものを再計算しないこと」や「GPUで計算すること」自体も新規性とはしない。
+
+本研究の中心は、以下である。
+
+```text
+各 Segment Group が、
+自身の状態、cache validity、certificate、境界誤差、接触リスク、
+編集影響、前回更新時刻、false-static判定結果を持ち、
+Static / Dynamic / Repair / Fallback を実行時に選べる髪専用データ型を作ること。
+```
+
+## 2.2 本研究で新規性として主張しないこと
+
+以下は既存研究・既存技術に含まれるため、本研究の新規性としては主張しない。
+
+```text
+髪を点列として扱うこと
+髪をsegmentとして扱うこと
+髪をrodとして扱うこと
+Guide / Follower型
+LOD
+Active Set
+GPU multi-pass simulation
+PBD / XPBD
+制約残差
+cache reuse
+sleeping
+partial update
+fallback
+```
+
+これらは本研究の前提技術である。
+
+## 2.3 本研究の安全な主張
+
+本研究の安全な主張は、次の一文にまとめられる。
+
+```text
+本研究は、髪ストランド内部を Segment Group 単位に分解し、
+各グループに certificate と cache validity を持たせることで、
+Static reuse、Dynamic solve、Deferred correction、Repair、Fallback を
+同一データ構造内で切り替える runtime decision data type を提案する。
+さらに、false-static率、Static/Dynamic境界誤差、cache reuse率を
+telemetryとして記録することで、再利用の安全性を評価可能にする。
+```
+
+---
+
+# 3. 研究背景
+
+髪シミュレーションでは、髪一本を複数の点からなる点列として扱うことが多い。
 
 ```text
 P0 - P1 - P2 - P3 - P4 - ... - Pn
 ```
 
-髪全体を毎フレーム高精度に解く方式は、接触や形状保持に強い一方で、計算負荷が大きい。特に固定60FPS、すなわち1フレーム16.67ms以内という条件では、髪全体を毎フレーム一律に再計算する構成は不利である。
+髪全体を毎フレーム高精度に計算すると、接触や形状保持の品質は高くなるが、計算負荷が大きくなる。
 
-一方、軽量な予測やキャッシュを使う方式は高速だが、髪の一部だけが動く場合、静的部分と動的部分の境界で折れや段差が発生しやすい。また、手、肩、椅子、アクセサリ、外部オブジェクトとの接触時には、局所的な貫通や形状破綻が起こりやすい。
+固定60FPSでは、1フレームあたりの処理時間は約16.67ms以内に収める必要がある。
 
-そこで本研究では、髪一本全体を一つの更新単位として扱うのではなく、髪一本の内部を `点-線-点` のセグメントグループに分割し、各グループを静的キャッシュ状態、動的更新状態、境界補正状態として管理する新しい髪データ構造を提案する。
+```text
+60 FPS = 16.67 ms / frame
+```
+
+そのため、すべての髪を毎フレーム同じ精度で処理する方式は、髪本数や点数が増えるほど不利になる。
+
+一方で、単純に動かない部分を再計算しないだけでは、以下の問題が発生する。
+
+```text
+静的と判断した部分が実際には動くべきだった
+静的部分と動的部分の境界が折れる
+接触や貫通を見逃す
+編集した部分だけが不自然に変形する
+cacheが古くなり、形状が破綻する
+```
+
+本研究では、この問題に対して、髪一本の内部をより細かいSegment Group単位に分け、各グループごとに処理経路を判断する。
 
 ---
 
-# 2. 研究目的
+# 4. 本研究で作るもの
 
-本研究の目的は、固定60FPS・RAM32GB以下という制約下で、髪の自由な編集と実時間再現を両立するために、髪ストランド専用の **静的・動的セグメントグループ型データ構造** を設計・実装・評価することである。
+本研究で作る中心成果物は、以下のデータ型である。
 
-本研究では、髪一本を以下のように分割する。
+```text
+Segment Group Runtime Data Type
+```
+
+これは、髪の各 `点-線-点` グループが、単なる形状情報だけではなく、実行時の判断情報を持つデータ型である。
+
+## 4.1 基本表現
+
+髪一本を以下のように分割する。
 
 ```text
 G0 = P0 - line0 - P1
@@ -56,171 +187,408 @@ G3 = P3 - line3 - P4
 ...
 ```
 
-各 `G` を **Segment Group** と呼ぶ。
+各 `G` が Segment Group である。
+
+## 4.2 共有点の扱い
+
+隣接するSegment Groupは点を共有する。
+
+```text
+G0 = P0 - line0 - P1
+G1 = P1 - line1 - P2
+```
+
+このとき、`P1` は `G0` の終点であり、`G1` の始点でもある。
+
+本研究では、この共有点を単なる一点として扱うのではなく、前後の線分方向に応じた **半球境界** として扱う。
+
+これにより、片側がStatic、もう片側がDynamicになった場合でも、境界で折れや段差が出ることを抑える。
+
+---
+
+# 5. Segment Groupの状態
 
 各Segment Groupは、以下の状態を持つ。
 
-* 静的キャッシュ状態
-* 動的更新状態
-* 境界補正状態
-* 遠距離・不可視用の凍結状態
-* キャッシュ無効状態
-
-静的グループは、前回の有効結果をそのまま使うだけでなく、始点、方向、長さ、局所座標系を用いて軽量に再構成する。動的グループは、編集、接触、曲率変化、境界誤差、時間変化に応じて再計算する。
-
-さらに、隣接するSegment Groupが共有する点を単純な一点として扱うのではなく、前後の線分方向に応じた **半球境界** として扱う。これにより、静的グループと動的グループが隣接しても、境界の折れや段差を抑える。
-
----
-
-# 3. 本研究の中核新規性
-
-本研究の新規性は、単に「動かない部分を再計算しない」ことではない。
-
-本研究の中核新規性は、以下の5点を統合した **髪専用の実行時データ型** を提案する点にある。
-
-## 3.1 `点-線-点` セグメントグループ
-
-髪ストランドを点列のまま扱うのではなく、`点-線-点` を最小管理単位とする。
-
-## 3.2 静的・動的状態遷移
-
-各Segment Groupが、毎フレーム以下の状態を切り替える。
-
-```text
-StaticCached
-DynamicSolved
-BoundaryRepair
-FrozenLOD
-Invalidated
+```cpp
+enum class SegmentGroupState : uint32_t
+{
+    StaticCached = 0,
+    StaticTransformed = 1,
+    DynamicSolved = 2,
+    DeferredCorrection = 3,
+    BoundaryRepair = 4,
+    Fallback = 5,
+    FrozenLod = 6,
+    Rejected = 7,
+    Invalidated = 8
+};
 ```
 
-## 3.3 方向付き静的キャッシュ
+## 5.1 StaticCached
 
-静的グループは、点位置を全て保存・再計算するのではなく、始点、方向、長さ、局所座標系、最後に有効だった終点を保持する。
+前回の有効な結果をそのまま再利用する状態。
 
-## 3.4 半球境界
+使用条件は以下。
 
-隣接Segment Groupの共有点を、前後の方向に応じた半球境界として扱う。
+```text
+接触リスクが低い
+編集影響が低い
+境界誤差が小さい
+cacheが古すぎない
+前フレームとの差分が小さい
+```
 
-## 3.5 境界誤差監視
+## 5.2 StaticTransformed
 
-静的グループと動的グループの境界で、位置差、方向差、曲率差を監視し、誤差が大きい場合は境界補正または動的更新へ切り替える。
+形状は再計算せず、始点の移動だけを反映して終点を再構成する状態。
 
----
+```text
+end = start + cachedDirection * cachedLength
+```
 
-# 4. 現行コードとの対応
+髪全体が頭部移動やroot移動に追従する場合に使用する。
 
-現行のHairSystemには、以下の既存要素がある。
+## 5.3 DynamicSolved
 
-## 4.1 `HairAsset`
+そのフレームで実際に局所補正を行う状態。
 
-既存の `HairAsset` は、髪のストランド情報、点列、幅、マテリアル、root binding、follow data、guide数、follower数、particles per strandを持つ。
+使用条件は以下。
 
-本研究では、`HairAsset::strands` と `HairAsset::restPoints` をもとにSegment Groupを生成する。
+```text
+編集された
+接触している可能性がある
+貫通がある
+曲率誤差が大きい
+ActiveSetで補正対象になった
+```
 
-## 4.2 `ActiveSetPlan`
+## 5.4 DeferredCorrection
 
-既存の `ActiveSetPlan` は、選択されたcluster、guide、strand、corrective mask、simulation tierを持つ。
+今フレームでは完全な動的更新を行わず、軽量な補正だけを行う状態。
 
-本研究では、`ActiveSetPlan` を上位レイヤーとして使い、どのstrandが詳細更新対象かを決める。その後、strand内部でSegment Group単位の静的・動的判定を行う。
+使用条件は以下。
 
-## 4.3 `HybridRuntime`
+```text
+動的更新したいがフレーム予算が足りない
+境界誤差はあるが致命的ではない
+次フレーム以降にDynamicSolveへ送ってもよい
+```
 
-既存の `HybridRuntime` には、Sparse Corrective Physics用の設定とレポートがある。
+## 5.5 BoundaryRepair
 
-ただし現状では、補正関数が `activeSetPlan` と `colliders` を十分に使っていない。したがって、本研究ではここを修正し、Segment Group Runtimeと接続する。
+Static部分とDynamic部分の境界を補正する状態。
 
----
+使用条件は以下。
 
-# 5. 追加・修正するファイル一覧
+```text
+共有点の位置差が大きい
+方向差が大きい
+曲率の連続性が崩れている
+```
 
-## 5.1 新規追加ファイル
+## 5.6 Fallback
 
-### 1. `include/hairgpu/SegmentGroup.h`
+軽量処理では危険なため、安全側の処理へ戻す状態。
 
-Segment Group用の構造体、設定、レポート、関数宣言を定義する。
+使用条件は以下。
 
-### 2. `src/hairgpu_core/SegmentGroup.cpp`
+```text
+NaN / Inf が発生した
+大きな貫通が発生した
+cacheが破損した
+境界修復に失敗した
+false-staticが連続発生した
+```
 
-Segment Groupの生成、状態遷移、静的キャッシュ再構成、動的更新、境界補正、レポート生成を実装する。
+## 5.7 FrozenLod
 
-### 3. `docs/SEGMENT_GROUP_RUNTIME.md`
+遠距離または不可視のため、更新を停止する状態。
 
-研究説明用の技術仕様書を追加する。
+## 5.8 Rejected
 
-### 4. `docs/sample_assets/segment_group_runtime_preset.json`
+今フレームの更新予算に入らなかった状態。
 
-評価実験用のSegment Group設定プリセットを追加する。
-
-### 5. `docs/sample_assets/segment_group_metric_definitions.json`
-
-Segment Group評価指標の説明ファイルを追加する。
-
----
-
-## 5.2 修正する既存ファイル
-
-### 1. `HairSystem.vcxproj`
-
-新規追加する `SegmentGroup.h` と `SegmentGroup.cpp` をVisual Studioビルド対象に追加する。
-
-### 2. `HairSystem.vcxproj.filters`
-
-Visual Studio上で `SegmentGroup.h` と `SegmentGroup.cpp` が正しいフィルタに表示されるように追加する。
-
-### 3. `include/hairgpu/HybridRuntime.h`
-
-Segment Group Runtimeの設定とレポートをHybrid Runtimeから呼べるようにする。
-
-### 4. `src/hairgpu_core/HybridRuntime.cpp`
-
-`ApplySparseCorrectivePhysics` 内で `ActiveSetPlan` と `SegmentGroupRuntime` を使うように修正する。
-
-### 5. `include/hairgpu/HairNoveltyTelemetry.h`
-
-Segment Group用のテレメトリ項目を追加または整理する。
-
-### 6. `src/hairgpu_core/HairNoveltyTelemetry.cpp`
-
-新規テレメトリ項目の初期化・集計・JSON出力を追加する。
-
-### 7. `apps/dx11_viewer/src/GpuHairViewer.h`
-
-PerformanceSampleにSegment Group評価値を保持する項目を追加する。
-
-### 8. `apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl`
-
-毎フレームのシミュレーションステップでSegment Group Runtimeを呼び出す。
-
-### 9. `apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl`
-
-Segment Group評価値をsummary JSON / JSONLへ出力する。
-
-### 10. `apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl`
-
-Segment Group評価値をCSVへ出力する。
-
-### 11. `apps/hairgpu_cli/src/main_parts/01_runtime_suite_and_evaluation_commands.inl`
-
-CLIからSegment Group Runtimeを有効化し、評価CSVを出せるようにする。
-
-### 12. `tools/final_stage/schema.sql`
-
-SQLiteの評価DBにSegment Group用カラムを追加する。
-
-### 13. `tools/final_stage/hairgpu_final_db.py`
-
-CSVからSegment Group評価値を読み込み、DBへ保存する。
-
-### 14. `tools/final_stage/hairgpu_runtime_suite.py`
-
-最終評価レポートにSegment Group項目を追加する。
+ただし、Rejectedが長く続くと破綻するため、最大保留フレーム数を超えたらFallbackまたはDynamicSolvedへ送る。
 
 ---
 
-# 6. 新規ファイル: `include/hairgpu/SegmentGroup.h`
+# 6. Segment Groupが持つ情報
 
-このファイルには、Segment Groupの核となる型を定義する。
+各Segment Groupは、以下の情報を持つ。
+
+```cpp
+struct SegmentGroupRecord
+{
+    uint32_t groupIndex = 0;
+    uint32_t strandIndex = 0;
+    uint32_t localSegmentIndex = 0;
+
+    uint32_t startPointIndex = 0;
+    uint32_t endPointIndex = 0;
+
+    Vec3 anchorPoint = {};
+    Vec3 direction = {0.0f, -1.0f, 0.0f};
+    float length = 0.0f;
+
+    Vec3 localXAxis = {1.0f, 0.0f, 0.0f};
+    Vec3 localYAxis = {0.0f, 1.0f, 0.0f};
+    Vec3 localZAxis = {0.0f, 0.0f, 1.0f};
+
+    Vec3 lastValidStartPoint = {};
+    Vec3 lastValidEndPoint = {};
+
+    SegmentGroupState state = SegmentGroupState::StaticCached;
+
+    uint32_t invalidationMask = 0;
+
+    float editRisk = 0.0f;
+    float contactRisk = 0.0f;
+    float penetrationRisk = 0.0f;
+    float visibilityRisk = 0.0f;
+
+    float lengthResidual = 0.0f;
+    float bendResidual = 0.0f;
+    float curvatureResidual = 0.0f;
+    float penetrationResidual = 0.0f;
+
+    float boundaryPositionError = 0.0f;
+    float boundaryDirectionError = 0.0f;
+    float boundaryCurvatureError = 0.0f;
+
+    float certificateValue = 1.0f;
+    float cacheValidity = 1.0f;
+    float cacheConfidence = 1.0f;
+
+    uint32_t cacheAge = 0;
+    uint32_t lastUpdatedFrame = 0;
+    uint32_t rejectedFrameCount = 0;
+
+    bool falseStaticDetected = false;
+};
+```
+
+---
+
+# 7. Certificateの定義
+
+本研究では、certificateという言葉を使う。
+
+ただし、ここでのcertificateは数学的な完全証明ではない。
+
+本研究におけるcertificateは、以下をまとめた **runtime validity descriptor** である。
+
+```text
+このSegment GroupをStaticとして再利用しても安全かどうかを表す実行時評価値
+```
+
+## 7.1 certificateに含める要素
+
+```text
+lengthResidual
+bendResidual
+curvatureResidual
+penetrationResidual
+boundaryPositionError
+boundaryDirectionError
+editRisk
+contactRisk
+cacheAge
+visibilityRisk
+previousFrameMotion
+```
+
+## 7.2 certificateValueの例
+
+```cpp
+certificateValue =
+    1.0f
+    - wLength      * lengthResidual
+    - wBend        * bendResidual
+    - wCurvature   * curvatureResidual
+    - wPenetration * penetrationResidual
+    - wBoundary    * boundaryPositionError
+    - wEdit        * editRisk
+    - wContact     * contactRisk
+    - wCacheAge    * normalizedCacheAge;
+```
+
+値は `0.0f` から `1.0f` にclampする。
+
+```text
+1.0 に近いほどStatic reuseが安全
+0.0 に近いほどDynamic / Repair / Fallbackが必要
+```
+
+---
+
+# 8. Static / Dynamic 判定
+
+Segment Groupの状態は、以下の優先順位で決める。
+
+```text
+1. 致命的エラーがある → Fallback
+2. ActiveSetで補正対象 → DynamicSolved
+3. 編集影響が大きい → DynamicSolved
+4. 接触・貫通リスクが大きい → DynamicSolved
+5. 境界誤差が大きい → BoundaryRepair
+6. フレーム予算不足だが軽量補正可能 → DeferredCorrection
+7. 遠距離・不可視 → FrozenLod
+8. certificateが高い → StaticCached / StaticTransformed
+9. それ以外 → DynamicSolved
+```
+
+疑似コードは以下。
+
+```cpp
+SegmentGroupState DecideSegmentGroupState(
+    const SegmentGroupRecord& group,
+    const SegmentGroupSettings& settings,
+    const FrameBudgetState& budget)
+{
+    if (HasFatalError(group))
+    {
+        return SegmentGroupState::Fallback;
+    }
+
+    if (group.editRisk >= settings.editRiskThreshold)
+    {
+        return SegmentGroupState::DynamicSolved;
+    }
+
+    if (group.contactRisk >= settings.contactRiskThreshold ||
+        group.penetrationRisk >= settings.penetrationRiskThreshold)
+    {
+        return SegmentGroupState::DynamicSolved;
+    }
+
+    if (group.boundaryPositionError >= settings.boundaryPositionErrorThreshold ||
+        group.boundaryDirectionError >= settings.boundaryDirectionErrorThreshold)
+    {
+        return SegmentGroupState::BoundaryRepair;
+    }
+
+    if (!budget.CanAcceptDynamicGroup())
+    {
+        if (group.certificateValue >= settings.deferredCertificateThreshold)
+        {
+            return SegmentGroupState::DeferredCorrection;
+        }
+
+        return SegmentGroupState::Rejected;
+    }
+
+    if (group.certificateValue >= settings.staticCertificateThreshold)
+    {
+        return SegmentGroupState::StaticTransformed;
+    }
+
+    return SegmentGroupState::DynamicSolved;
+}
+```
+
+---
+
+# 9. 60FPS制約との関係
+
+本研究のデータ構造は、60FPSを自動的に保証するものではない。
+
+本研究の目的は、60FPSを守るために、毎フレーム動的更新するSegment Group数を制御できるようにすることである。
+
+フレーム時間は、以下で近似する。
+
+```text
+T = C + dG + rR
+```
+
+ここで、
+
+```text
+T : 総フレーム時間
+C : 固定処理時間
+d : DynamicSolved 1 groupあたりの平均時間
+G : DynamicSolved group数
+r : Repair 1 groupあたりの平均時間
+R : Repair group数
+```
+
+60FPSを満たすには、
+
+```text
+T <= 16.67 ms
+```
+
+である必要がある。
+
+したがって、
+
+```text
+C + dG + rR <= 16.67
+```
+
+となるように、動的更新数を制限する。
+
+## 9.1 古いPC向けの安全設定
+
+古いPCでは、以下の初期値を推奨する。
+
+```cpp
+settings.maxDynamicGroupRatio = 0.12f;
+settings.maxRepairGroupRatio = 0.08f;
+settings.maxRejectedFrameCount = 3;
+settings.maxCacheAgeFrames = 6;
+settings.staticCertificateThreshold = 0.82f;
+settings.dynamicCertificateThreshold = 0.55f;
+settings.fallbackCertificateThreshold = 0.25f;
+```
+
+つまり、初期実装では全Segment Groupのうち、毎フレームDynamicに送るのは最大12%程度に制限する。
+
+---
+
+# 10. 実装ファイル一覧
+
+## 10.1 新規追加ファイル
+
+```text
+include/hairgpu/SegmentGroup.h
+src/hairgpu_core/SegmentGroup.cpp
+docs/SEGMENT_GROUP_RUNTIME.md
+docs/sample_assets/segment_group_runtime_preset.json
+docs/sample_assets/segment_group_metric_definitions.json
+```
+
+## 10.2 修正する既存ファイル
+
+```text
+HairSystem.vcxproj
+HairSystem.vcxproj.filters
+
+include/hairgpu/HybridRuntime.h
+src/hairgpu_core/HybridRuntime.cpp
+
+include/hairgpu/HairNoveltyTelemetry.h
+src/hairgpu_core/HairNoveltyTelemetry.cpp
+
+apps/dx11_viewer/src/GpuHairViewer.h
+apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
+apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+
+apps/hairgpu_cli/src/main_parts/01_runtime_suite_and_evaluation_commands.inl
+
+tools/final_stage/schema.sql
+tools/final_stage/hairgpu_final_db.py
+tools/final_stage/hairgpu_runtime_suite.py
+
+docs/sample_assets/metric_definitions.json
+```
+
+---
+
+# 11. 新規ファイル: include/hairgpu/SegmentGroup.h
+
+このファイルには、Segment Group Runtimeの型、設定、入力、出力、cache、関数宣言を定義する。
 
 ```cpp
 #pragma once
@@ -238,10 +606,14 @@ namespace hairgpu
     enum class SegmentGroupState : uint32_t
     {
         StaticCached = 0,
-        DynamicSolved = 1,
-        BoundaryRepair = 2,
-        FrozenLod = 3,
-        Invalidated = 4
+        StaticTransformed = 1,
+        DynamicSolved = 2,
+        DeferredCorrection = 3,
+        BoundaryRepair = 4,
+        Fallback = 5,
+        FrozenLod = 6,
+        Rejected = 7,
+        Invalidated = 8
     };
 
     enum class SegmentGroupInvalidationReason : uint32_t
@@ -255,23 +627,31 @@ namespace hairgpu
         TemporalError = 1 << 5,
         CacheAge = 1 << 6,
         ParentMotion = 1 << 7,
-        Visibility = 1 << 8
+        Visibility = 1 << 8,
+        Fatal = 1 << 9
     };
 
     struct SegmentGroupSettings
     {
         uint32_t segmentsPerGroup = 1u;
+
         uint32_t maxCacheAgeFrames = 6u;
+        uint32_t maxRejectedFrameCount = 3u;
 
         float staticVelocityThreshold = 0.012f;
         float staticDisplacementThreshold = 0.010f;
-        float contactRiskThreshold = 0.35f;
+
         float editRiskThreshold = 0.20f;
+        float contactRiskThreshold = 0.35f;
         float penetrationRiskThreshold = 0.20f;
 
         float boundaryPositionErrorThreshold = 0.006f;
         float boundaryDirectionErrorThreshold = 0.18f;
         float curvatureErrorThreshold = 0.22f;
+
+        float staticCertificateThreshold = 0.82f;
+        float deferredCertificateThreshold = 0.68f;
+        float fallbackCertificateThreshold = 0.25f;
 
         float staticCacheBlend = 0.92f;
         float boundaryRepairBlend = 0.55f;
@@ -280,46 +660,62 @@ namespace hairgpu
         float hemisphereRadiusScale = 0.50f;
         float minSegmentLength = 1.0e-5f;
 
+        float maxDynamicGroupRatio = 0.12f;
+        float maxRepairGroupRatio = 0.08f;
+
         bool enableHemisphereBoundary = true;
         bool enableWatchdogRepair = true;
         bool enableDirectionCache = true;
         bool enableFrozenLod = true;
+        bool enableHardBudget = true;
     };
 
     struct SegmentGroupRecord
     {
-        uint32_t segmentGroupIndex = 0u;
+        uint32_t groupIndex = 0u;
         uint32_t strandIndex = 0u;
         uint32_t localSegmentIndex = 0u;
 
         uint32_t startPointIndex = 0u;
         uint32_t endPointIndex = 0u;
 
-        Vec3 anchorPoint = { 0.0f, 0.0f, 0.0f };
-        Vec3 direction = { 0.0f, -1.0f, 0.0f };
+        Vec3 anchorPoint = {0.0f, 0.0f, 0.0f};
+        Vec3 direction = {0.0f, -1.0f, 0.0f};
         float length = 0.0f;
 
-        Vec3 localXAxis = { 1.0f, 0.0f, 0.0f };
-        Vec3 localYAxis = { 0.0f, 1.0f, 0.0f };
-        Vec3 localZAxis = { 0.0f, 0.0f, 1.0f };
+        Vec3 localXAxis = {1.0f, 0.0f, 0.0f};
+        Vec3 localYAxis = {0.0f, 1.0f, 0.0f};
+        Vec3 localZAxis = {0.0f, 0.0f, 1.0f};
 
-        Vec3 lastValidStartPoint = { 0.0f, 0.0f, 0.0f };
-        Vec3 lastValidEndPoint = { 0.0f, 0.0f, 0.0f };
+        Vec3 lastValidStartPoint = {0.0f, 0.0f, 0.0f};
+        Vec3 lastValidEndPoint = {0.0f, 0.0f, 0.0f};
 
         SegmentGroupState state = SegmentGroupState::StaticCached;
         uint32_t invalidationMask = 0u;
 
-        float contactRisk = 0.0f;
         float editRisk = 0.0f;
+        float contactRisk = 0.0f;
         float penetrationRisk = 0.0f;
+        float visibilityRisk = 0.0f;
+
+        float lengthResidual = 0.0f;
+        float bendResidual = 0.0f;
+        float curvatureResidual = 0.0f;
+        float penetrationResidual = 0.0f;
+
         float boundaryPositionError = 0.0f;
         float boundaryDirectionError = 0.0f;
-        float curvatureError = 0.0f;
-        float temporalError = 0.0f;
+        float boundaryCurvatureError = 0.0f;
+
+        float certificateValue = 1.0f;
+        float cacheValidity = 1.0f;
         float cacheConfidence = 1.0f;
 
-        uint32_t lastUpdatedFrame = 0u;
         uint32_t cacheAge = 0u;
+        uint32_t lastUpdatedFrame = 0u;
+        uint32_t rejectedFrameCount = 0u;
+
+        bool falseStaticDetected = false;
     };
 
     struct SegmentGroupRuntimeInput
@@ -336,21 +732,28 @@ namespace hairgpu
         std::vector<float> strandPenetrationScores;
         std::vector<float> strandVisibilityScores;
 
-        Vec3 cameraPosition = { 0.0f, 1.6f, -1.8f };
-        Vec3 cameraForward = { 0.0f, 0.0f, 1.0f };
+        Vec3 cameraPosition = {0.0f, 1.6f, -1.8f};
+        Vec3 cameraForward = {0.0f, 0.0f, 1.0f};
 
         float fixedTimeStep = 1.0f / 60.0f;
+        float frameBudgetMilliseconds = 16.67f;
+        float estimatedFixedCostMilliseconds = 6.0f;
+
         uint32_t frameIndex = 0u;
     };
 
     struct SegmentGroupRuntimeReport
     {
         uint32_t totalSegmentGroupCount = 0u;
+
         uint32_t staticCachedGroupCount = 0u;
         uint32_t staticTransformedGroupCount = 0u;
         uint32_t dynamicGroupCount = 0u;
+        uint32_t deferredCorrectionGroupCount = 0u;
         uint32_t boundaryRepairGroupCount = 0u;
+        uint32_t fallbackGroupCount = 0u;
         uint32_t frozenGroupCount = 0u;
+        uint32_t rejectedGroupCount = 0u;
         uint32_t invalidatedGroupCount = 0u;
 
         uint32_t cacheHitCount = 0u;
@@ -362,6 +765,9 @@ namespace hairgpu
         uint32_t falseStaticCount = 0u;
 
         float falseStaticRate = 0.0f;
+        float staticReuseRate = 0.0f;
+        float dynamicGroupRate = 0.0f;
+
         float staticDynamicBoundaryMeanErrorMm = 0.0f;
         float staticDynamicBoundaryMaxErrorMm = 0.0f;
 
@@ -379,59 +785,66 @@ namespace hairgpu
         uint32_t lastBuiltPointCount = 0u;
     };
 
-    bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
-                                     const SegmentGroupSettings& settings,
-                                     SegmentGroupRuntimeCache& outCache,
-                                     std::string& outError);
+    bool BuildSegmentGroupsFromAsset(
+        const HairAsset& asset,
+        const SegmentGroupSettings& settings,
+        SegmentGroupRuntimeCache& outCache,
+        std::string& outError);
 
-    bool UpdateSegmentGroupRuntime(const SegmentGroupRuntimeInput& input,
-                                   const SegmentGroupSettings& settings,
-                                   SegmentGroupRuntimeCache& cache,
-                                   SegmentGroupRuntimeReport& outReport,
-                                   std::string& outError);
+    bool UpdateSegmentGroupRuntime(
+        const SegmentGroupRuntimeInput& input,
+        const SegmentGroupSettings& settings,
+        SegmentGroupRuntimeCache& cache,
+        SegmentGroupRuntimeReport& outReport,
+        std::string& outError);
 
-    bool WriteSegmentGroupRuntimeCsv(const std::filesystem::path& outputPath,
-                                     const SegmentGroupRuntimeCache& cache,
-                                     const SegmentGroupRuntimeReport& report,
-                                     std::string& outError);
+    bool WriteSegmentGroupRuntimeCsv(
+        const std::filesystem::path& outputPath,
+        const SegmentGroupRuntimeCache& cache,
+        const SegmentGroupRuntimeReport& report,
+        std::string& outError);
 
-    std::string BuildSegmentGroupRuntimeSummary(const SegmentGroupRuntimeReport& report);
+    std::string BuildSegmentGroupRuntimeSummary(
+        const SegmentGroupRuntimeReport& report);
 }
 ```
 
 ---
 
-# 7. 新規ファイル: `src/hairgpu_core/SegmentGroup.cpp`
+# 12. 新規ファイル: src/hairgpu_core/SegmentGroup.cpp
 
-このファイルに、Segment Groupの実処理を書く。
+このファイルには、以下の関数を実装する。
 
-## 7.1 実装する関数一覧
-
-```cpp
+```text
 BuildSegmentGroupsFromAsset
 UpdateSegmentGroupRuntime
 EvaluateSegmentGroupRisk
-UpdateSegmentGroupState
+ComputeSegmentGroupCertificate
+DecideSegmentGroupState
 ApplyStaticCache
+ApplyStaticTransform
 ApplyDynamicSegmentSolve
+ApplyDeferredCorrection
 RepairStaticDynamicBoundary
-ComputeHemisphereBoundaryError
-ComputeDirectionCacheMemory
+ApplyFallback
+DetectFalseStatic
+FinalizeSegmentGroupReport
 WriteSegmentGroupRuntimeCsv
 BuildSegmentGroupRuntimeSummary
 ```
 
 ---
 
-## 7.2 `BuildSegmentGroupsFromAsset`
+# 13. BuildSegmentGroupsFromAsset
 
-目的は、`HairAsset::strands` と `HairAsset::restPoints` から `点-線-点` グループを作ることである。
+`HairAsset::strands` と `HairAsset::restPoints` からSegment Groupを構築する。
 
 ```cpp
-bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
-                                 const SegmentGroupSettings& settings,
-                                 SegmentGroupRuntimeCache& outCache,
-                                 std::string& outError)
+bool BuildSegmentGroupsFromAsset(
+    const HairAsset& asset,
+    const SegmentGroupSettings& settings,
+    SegmentGroupRuntimeCache& outCache,
+    std::string& outError)
 {
     outError.clear();
     outCache.groups.clear();
@@ -442,6 +855,7 @@ bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
         return false;
     }
 
+    const uint32_t groupStep = std::max(1u, settings.segmentsPerGroup);
     uint32_t globalGroupIndex = 0u;
 
     for (uint32_t strandIndex = 0u; strandIndex < asset.strands.size(); ++strandIndex)
@@ -453,10 +867,11 @@ bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
             continue;
         }
 
-        for (uint32_t local = 0u; local + 1u < strand.pointCount; local += settings.segmentsPerGroup)
+        for (uint32_t local = 0u; local + 1u < strand.pointCount; local += groupStep)
         {
             const uint32_t startIndex = strand.pointOffset + local;
-            const uint32_t endIndex = strand.pointOffset + std::min(local + settings.segmentsPerGroup, strand.pointCount - 1u);
+            const uint32_t endLocal = std::min(local + groupStep, strand.pointCount - 1u);
+            const uint32_t endIndex = strand.pointOffset + endLocal;
 
             if (startIndex >= asset.restPoints.size() || endIndex >= asset.restPoints.size())
             {
@@ -469,9 +884,10 @@ bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
             const float length = std::max(Length(delta), settings.minSegmentLength);
 
             SegmentGroupRecord record = {};
-            record.segmentGroupIndex = globalGroupIndex++;
+            record.groupIndex = globalGroupIndex++;
             record.strandIndex = strandIndex;
             record.localSegmentIndex = local;
+
             record.startPointIndex = startIndex;
             record.endPointIndex = endIndex;
 
@@ -483,7 +899,9 @@ bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
             record.lastValidEndPoint = end;
 
             record.state = SegmentGroupState::StaticCached;
+            record.cacheValidity = 1.0f;
             record.cacheConfidence = 1.0f;
+            record.certificateValue = 1.0f;
 
             outCache.groups.push_back(record);
         }
@@ -498,32 +916,30 @@ bool BuildSegmentGroupsFromAsset(const HairAsset& asset,
 
 ---
 
-## 7.3 `UpdateSegmentGroupRuntime`
+# 14. UpdateSegmentGroupRuntime
 
-この関数が毎フレーム呼ばれる中心処理である。
+毎フレーム呼び出す中心関数。
 
 処理順は以下。
 
 ```text
 1. 入力チェック
-2. SegmentGroupが未構築ならBuildする
-3. 各SegmentGroupのリスクを計算
-4. Static / Dynamic / BoundaryRepair / FrozenLOD / Invalidated を判定
-5. StaticCachedなら方向キャッシュで再構成
-6. DynamicSolvedなら局所更新
-7. BoundaryRepairなら半球境界補正
-8. Watchdogで誤静的判定を検出
-9. Reportを集計
+2. Segment Group cacheが未構築ならBuildする
+3. 各Groupのriskを計算
+4. certificateを計算
+5. フレーム予算に基づいて状態を決める
+6. 状態ごとの処理を行う
+7. false-staticを検出
+8. reportを集計
 ```
 
-疑似コードは以下。
-
 ```cpp
-bool UpdateSegmentGroupRuntime(const SegmentGroupRuntimeInput& input,
-                               const SegmentGroupSettings& settings,
-                               SegmentGroupRuntimeCache& cache,
-                               SegmentGroupRuntimeReport& outReport,
-                               std::string& outError)
+bool UpdateSegmentGroupRuntime(
+    const SegmentGroupRuntimeInput& input,
+    const SegmentGroupSettings& settings,
+    SegmentGroupRuntimeCache& cache,
+    SegmentGroupRuntimeReport& outReport,
+    std::string& outError)
 {
     outError.clear();
     outReport = {};
@@ -553,10 +969,30 @@ bool UpdateSegmentGroupRuntime(const SegmentGroupRuntimeInput& input,
         }
     }
 
+    outReport.totalSegmentGroupCount = static_cast<uint32_t>(cache.groups.size());
+
+    const uint32_t maxDynamicGroups =
+        static_cast<uint32_t>(cache.groups.size() * settings.maxDynamicGroupRatio);
+
+    const uint32_t maxRepairGroups =
+        static_cast<uint32_t>(cache.groups.size() * settings.maxRepairGroupRatio);
+
+    uint32_t usedDynamicGroups = 0u;
+    uint32_t usedRepairGroups = 0u;
+
     for (SegmentGroupRecord& group : cache.groups)
     {
         EvaluateSegmentGroupRisk(input, settings, group);
-        UpdateSegmentGroupState(input, settings, group);
+        ComputeSegmentGroupCertificate(input, settings, group);
+
+        const bool dynamicBudgetAvailable = usedDynamicGroups < maxDynamicGroups;
+        const bool repairBudgetAvailable = usedRepairGroups < maxRepairGroups;
+
+        group.state = DecideSegmentGroupState(
+            group,
+            settings,
+            dynamicBudgetAvailable,
+            repairBudgetAvailable);
 
         switch (group.state)
         {
@@ -564,12 +1000,27 @@ bool UpdateSegmentGroupRuntime(const SegmentGroupRuntimeInput& input,
             ApplyStaticCache(settings, group, points, outReport);
             break;
 
+        case SegmentGroupState::StaticTransformed:
+            ApplyStaticTransform(settings, group, points, outReport);
+            break;
+
         case SegmentGroupState::DynamicSolved:
             ApplyDynamicSegmentSolve(input, settings, group, points, outReport);
+            ++usedDynamicGroups;
+            break;
+
+        case SegmentGroupState::DeferredCorrection:
+            ApplyDeferredCorrection(input, settings, group, points, outReport);
             break;
 
         case SegmentGroupState::BoundaryRepair:
             RepairStaticDynamicBoundary(input, settings, group, points, outReport);
+            ++usedRepairGroups;
+            break;
+
+        case SegmentGroupState::Fallback:
+            ApplyFallback(input, settings, group, points, outReport);
+            ++usedDynamicGroups;
             break;
 
         case SegmentGroupState::FrozenLod:
@@ -577,12 +1028,23 @@ bool UpdateSegmentGroupRuntime(const SegmentGroupRuntimeInput& input,
             ++outReport.frozenGroupCount;
             break;
 
+        case SegmentGroupState::Rejected:
+            ++group.rejectedFrameCount;
+            ++outReport.rejectedGroupCount;
+            break;
+
         case SegmentGroupState::Invalidated:
             ApplyDynamicSegmentSolve(input, settings, group, points, outReport);
+            ++usedDynamicGroups;
             break;
         }
 
-        group.cacheAge = (group.state == SegmentGroupState::StaticCached)
+        DetectFalseStatic(input, settings, group, points, outReport);
+
+        group.cacheAge =
+            (group.state == SegmentGroupState::StaticCached ||
+             group.state == SegmentGroupState::StaticTransformed ||
+             group.state == SegmentGroupState::FrozenLod)
             ? group.cacheAge + 1u
             : 0u;
 
@@ -596,143 +1058,16 @@ bool UpdateSegmentGroupRuntime(const SegmentGroupRuntimeInput& input,
 
 ---
 
-# 8. `EvaluateSegmentGroupRisk`
+# 15. ApplyStaticTransform
 
-この関数では、各Segment Groupが静的のままでよいか、動的更新すべきかを判定するためのリスクを計算する。
-
-使う入力は以下。
-
-* `ActiveSetPlan::strandCorrectiveMask`
-* `ActiveSetPlan::recommendedSimulationTiers`
-* strand単位のedit score
-* strand単位のcontact score
-* strand単位のpenetration score
-* 前フレーム点位置
-* 現在点位置
-* カメラ距離
-* 境界誤差
-* キャッシュ年齢
+静的グループでは、全点を再計算せず、始点・方向・長さから終点を復元する。
 
 ```cpp
-void EvaluateSegmentGroupRisk(const SegmentGroupRuntimeInput& input,
-                              const SegmentGroupSettings& settings,
-                              SegmentGroupRecord& group)
-{
-    group.invalidationMask = 0u;
-
-    const uint32_t strandIndex = group.strandIndex;
-
-    group.editRisk = ReadScore(input.strandEditScores, strandIndex, 0.0f);
-    group.contactRisk = ReadScore(input.strandContactScores, strandIndex, 0.0f);
-    group.penetrationRisk = ReadScore(input.strandPenetrationScores, strandIndex, 0.0f);
-
-    if (input.activeSetPlan &&
-        strandIndex < input.activeSetPlan->strandCorrectiveMask.size() &&
-        input.activeSetPlan->strandCorrectiveMask[strandIndex] != 0u)
-    {
-        group.contactRisk = std::max(group.contactRisk, 0.65f);
-    }
-
-    if (group.editRisk >= settings.editRiskThreshold)
-    {
-        group.invalidationMask |= static_cast<uint32_t>(SegmentGroupInvalidationReason::Edit);
-    }
-
-    if (group.contactRisk >= settings.contactRiskThreshold)
-    {
-        group.invalidationMask |= static_cast<uint32_t>(SegmentGroupInvalidationReason::Contact);
-    }
-
-    if (group.penetrationRisk >= settings.penetrationRiskThreshold)
-    {
-        group.invalidationMask |= static_cast<uint32_t>(SegmentGroupInvalidationReason::Penetration);
-    }
-
-    if (group.boundaryPositionError >= settings.boundaryPositionErrorThreshold ||
-        group.boundaryDirectionError >= settings.boundaryDirectionErrorThreshold)
-    {
-        group.invalidationMask |= static_cast<uint32_t>(SegmentGroupInvalidationReason::BoundaryError);
-    }
-
-    if (group.cacheAge >= settings.maxCacheAgeFrames)
-    {
-        group.invalidationMask |= static_cast<uint32_t>(SegmentGroupInvalidationReason::CacheAge);
-    }
-}
-```
-
----
-
-# 9. `UpdateSegmentGroupState`
-
-この関数で、静的・動的・境界補正の状態遷移を行う。
-
-```cpp
-void UpdateSegmentGroupState(const SegmentGroupRuntimeInput& input,
-                             const SegmentGroupSettings& settings,
-                             SegmentGroupRecord& group)
-{
-    const bool hasEdit =
-        (group.invalidationMask & static_cast<uint32_t>(SegmentGroupInvalidationReason::Edit)) != 0u;
-
-    const bool hasContact =
-        (group.invalidationMask & static_cast<uint32_t>(SegmentGroupInvalidationReason::Contact)) != 0u;
-
-    const bool hasPenetration =
-        (group.invalidationMask & static_cast<uint32_t>(SegmentGroupInvalidationReason::Penetration)) != 0u;
-
-    const bool hasBoundaryError =
-        (group.invalidationMask & static_cast<uint32_t>(SegmentGroupInvalidationReason::BoundaryError)) != 0u;
-
-    const bool cacheExpired =
-        (group.invalidationMask & static_cast<uint32_t>(SegmentGroupInvalidationReason::CacheAge)) != 0u;
-
-    if (hasEdit || hasContact || hasPenetration)
-    {
-        group.state = SegmentGroupState::DynamicSolved;
-        return;
-    }
-
-    if (hasBoundaryError)
-    {
-        group.state = SegmentGroupState::BoundaryRepair;
-        return;
-    }
-
-    if (cacheExpired)
-    {
-        group.state = SegmentGroupState::Invalidated;
-        return;
-    }
-
-    if (settings.enableFrozenLod && input.activeSetPlan)
-    {
-        if (group.strandIndex < input.activeSetPlan->recommendedSimulationTiers.size())
-        {
-            const SimTier tier = input.activeSetPlan->recommendedSimulationTiers[group.strandIndex];
-            if (tier == SimTier::Frozen)
-            {
-                group.state = SegmentGroupState::FrozenLod;
-                return;
-            }
-        }
-    }
-
-    group.state = SegmentGroupState::StaticCached;
-}
-```
-
----
-
-# 10. `ApplyStaticCache`
-
-静的グループでは、点列を完全再計算せず、始点・方向・長さから終点を復元する。
-
-```cpp
-void ApplyStaticCache(const SegmentGroupSettings& settings,
-                      SegmentGroupRecord& group,
-                      std::vector<Vec3>& points,
-                      SegmentGroupRuntimeReport& report)
+void ApplyStaticTransform(
+    const SegmentGroupSettings& settings,
+    SegmentGroupRecord& group,
+    std::vector<Vec3>& points,
+    SegmentGroupRuntimeReport& report)
 {
     if (group.startPointIndex >= points.size() || group.endPointIndex >= points.size())
     {
@@ -748,32 +1083,24 @@ void ApplyStaticCache(const SegmentGroupSettings& settings,
     group.lastValidStartPoint = points[group.startPointIndex];
     group.lastValidEndPoint = points[group.endPointIndex];
 
-    ++report.staticCachedGroupCount;
+    ++report.staticTransformedGroupCount;
     ++report.cacheHitCount;
 }
 ```
 
 ---
 
-# 11. `ApplyDynamicSegmentSolve`
+# 16. ApplyDynamicSegmentSolve
 
-動的グループでは、軽量な局所補正を行う。
-
-最低限、以下を実装する。
-
-* 長さ保持
-* 接触補正
-* floor補正
-* capsule / sphere collider補正
-* 曲率補正
-* root側固定
+動的グループでは、長さ保持、接触補正、floor補正、collider補正、曲率補正を行う。
 
 ```cpp
-void ApplyDynamicSegmentSolve(const SegmentGroupRuntimeInput& input,
-                              const SegmentGroupSettings& settings,
-                              SegmentGroupRecord& group,
-                              std::vector<Vec3>& points,
-                              SegmentGroupRuntimeReport& report)
+void ApplyDynamicSegmentSolve(
+    const SegmentGroupRuntimeInput& input,
+    const SegmentGroupSettings& settings,
+    SegmentGroupRecord& group,
+    std::vector<Vec3>& points,
+    SegmentGroupRuntimeReport& report)
 {
     if (group.startPointIndex >= points.size() || group.endPointIndex >= points.size())
     {
@@ -810,16 +1137,17 @@ void ApplyDynamicSegmentSolve(const SegmentGroupRuntimeInput& input,
 
 ---
 
-# 12. `RepairStaticDynamicBoundary`
+# 17. Boundary Repair
 
-静的グループと動的グループの境界を補正する。
+Static部分とDynamic部分の境界を補正する。
 
 ```cpp
-void RepairStaticDynamicBoundary(const SegmentGroupRuntimeInput& input,
-                                 const SegmentGroupSettings& settings,
-                                 SegmentGroupRecord& group,
-                                 std::vector<Vec3>& points,
-                                 SegmentGroupRuntimeReport& report)
+void RepairStaticDynamicBoundary(
+    const SegmentGroupRuntimeInput& input,
+    const SegmentGroupSettings& settings,
+    SegmentGroupRecord& group,
+    std::vector<Vec3>& points,
+    SegmentGroupRuntimeReport& report)
 {
     if (group.startPointIndex >= points.size() || group.endPointIndex >= points.size())
     {
@@ -850,98 +1178,53 @@ void RepairStaticDynamicBoundary(const SegmentGroupRuntimeInput& input,
 
 ---
 
-# 13. `ComputeHemisphereBoundaryError`
+# 18. HybridRuntimeとの接続
 
-半球境界の誤差を計算する。
+現状の `ApplySparseCorrectivePhysics` は、`ActiveSetPlan` と `ColliderSet` を十分に使えていないため、Segment Group Runtimeをここに接続する。
 
-```cpp
-float ComputeHemisphereBoundaryError(const SegmentGroupRecord& previousGroup,
-                                     const SegmentGroupRecord& currentGroup,
-                                     const std::vector<Vec3>& points)
-{
-    if (previousGroup.endPointIndex >= points.size() ||
-        currentGroup.startPointIndex >= points.size())
-    {
-        return 0.0f;
-    }
+## 18.1 修正対象
 
-    const Vec3 sharedA = points[previousGroup.endPointIndex];
-    const Vec3 sharedB = points[currentGroup.startPointIndex];
-
-    const float positionError = Length(sharedA - sharedB);
-
-    const float directionDot = Clamp(Dot(previousGroup.direction, currentGroup.direction), -1.0f, 1.0f);
-    const float directionError = std::acos(directionDot);
-
-    return positionError + directionError;
-}
+```text
+src/hairgpu_core/HybridRuntime.cpp
+include/hairgpu/HybridRuntime.h
 ```
 
----
+## 18.2 修正方針
 
-# 14. `src/hairgpu_core/HybridRuntime.cpp` の修正
-
-## 14.1 修正目的
-
-現状の `ApplySparseCorrectivePhysics` は、`activeSetPlan` と `colliders` を十分に利用していない。
-
-そのため、この関数を以下のように修正する。
-
-* `ActiveSetPlan::strandCorrectiveMask` を見る。
-* corrective対象strandだけを動的補正する。
-* Segment Group Runtimeを呼ぶ。
-* `colliders` による補正を行う。
-* reportにSegment Group結果を反映する。
-
-## 14.2 修正方針
-
-`HybridRuntime.cpp` の先頭に以下を追加する。
+`HybridRuntime.cpp` に以下を追加する。
 
 ```cpp
 #include "hairgpu/SegmentGroup.h"
 ```
 
-`ApplySparseCorrectivePhysics` 内に、以下のような処理を追加する。
+`ApplySparseCorrectivePhysics` では、以下を行う。
 
-```cpp
-SegmentGroupRuntimeCache segmentCache;
-SegmentGroupSettings segmentSettings = {};
-
-SegmentGroupRuntimeInput segmentInput = {};
-segmentInput.asset = &asset;
-segmentInput.activeSetPlan = &activeSetPlan;
-segmentInput.colliders = &colliders;
-segmentInput.points = &inOutPoints;
-segmentInput.fixedTimeStep = 1.0f / 60.0f;
-
-SegmentGroupRuntimeReport segmentReport = {};
-if (!UpdateSegmentGroupRuntime(segmentInput,
-                               segmentSettings,
-                               segmentCache,
-                               segmentReport,
-                               outError))
-{
-    return false;
-}
+```text
+1. ActiveSetPlan::strandCorrectiveMask を見る
+2. corrective対象strandのriskを上げる
+3. SegmentGroupRuntimeInputを作る
+4. UpdateSegmentGroupRuntimeを呼ぶ
+5. SparseCorrectiveReportにSegmentGroup結果を反映する
 ```
 
-ただし、毎フレームcacheを保持するには、ローカル変数ではなく、ViewerまたはRuntime側で `SegmentGroupRuntimeCache` をメンバとして持つ必要がある。
+重要点として、`SegmentGroupRuntimeCache` はローカル変数にしない。
 
-そのため、最終的には `GpuHairViewer` 側にcacheを持たせる。
+毎フレームcacheを維持する必要があるため、最終的にはViewerまたはRuntime側のメンバとして保持する。
 
 ---
 
-# 15. `apps/dx11_viewer/src/GpuHairViewer.h` の修正
+# 19. GpuHairViewerとの接続
 
-## 15.1 include追加
+## 19.1 修正対象
 
-```cpp
-#include "hairgpu/SegmentGroup.h"
+```text
+apps/dx11_viewer/src/GpuHairViewer.h
+apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
 ```
 
-## 15.2 メンバ追加
+## 19.2 追加メンバ
 
-`GpuHairViewer` クラスに以下を追加する。
+`GpuHairViewer` に以下を追加する。
 
 ```cpp
 hairgpu::SegmentGroupSettings m_segmentGroupSettings = {};
@@ -950,33 +1233,9 @@ hairgpu::SegmentGroupRuntimeReport m_lastSegmentGroupReport = {};
 bool m_enableSegmentGroupRuntime = true;
 ```
 
-## 15.3 PerformanceSampleへの追加
+## 19.3 毎フレーム呼び出し
 
-既に近い項目がある場合は重複させず、足りないものを追加する。
-
-```cpp
-uint32_t segmentGroupTotalCount = 0u;
-uint32_t segmentGroupStaticCachedCount = 0u;
-uint32_t segmentGroupDynamicCount = 0u;
-uint32_t segmentGroupBoundaryRepairCount = 0u;
-uint32_t segmentGroupFrozenCount = 0u;
-uint32_t segmentGroupInvalidatedCount = 0u;
-
-uint32_t segmentGroupCacheHitCount = 0u;
-uint32_t segmentGroupCacheMissCount = 0u;
-uint32_t segmentGroupWatchdogRepairCount = 0u;
-
-float segmentGroupFalseStaticRate = 0.0f;
-float segmentGroupBoundaryMeanErrorMm = 0.0f;
-float segmentGroupBoundaryMaxErrorMm = 0.0f;
-float segmentGroupDirectionCacheMemorySavingRate = 0.0f;
-```
-
----
-
-# 16. `apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl` の修正
-
-このファイルの毎フレームシミュレーション処理後、描画前にSegment Group Runtimeを呼ぶ。
+シミュレーション更新後、描画前に以下を呼ぶ。
 
 ```cpp
 if (m_enableSegmentGroupRuntime)
@@ -990,129 +1249,64 @@ if (m_enableSegmentGroupRuntime)
     input.cameraPosition = m_cameraPosition;
     input.cameraForward = m_cameraForward;
     input.fixedTimeStep = m_simulationConfig.fixedTimeStep;
+    input.frameBudgetMilliseconds = 16.67f;
     input.frameIndex = m_globalFrameIndex;
 
     std::string segmentError;
-    if (hairgpu::UpdateSegmentGroupRuntime(input,
-                                           m_segmentGroupSettings,
-                                           m_segmentGroupCache,
-                                           m_lastSegmentGroupReport,
-                                           segmentError))
+    if (hairgpu::UpdateSegmentGroupRuntime(
+            input,
+            m_segmentGroupSettings,
+            m_segmentGroupCache,
+            m_lastSegmentGroupReport,
+            segmentError))
     {
-        m_noveltyTelemetry.totalSegmentGroupCount =
-            m_lastSegmentGroupReport.totalSegmentGroupCount;
-        m_noveltyTelemetry.staticCachedGroupCount =
-            m_lastSegmentGroupReport.staticCachedGroupCount;
-        m_noveltyTelemetry.staticTransformedGroupCount =
-            m_lastSegmentGroupReport.staticTransformedGroupCount;
-        m_noveltyTelemetry.dynamicGroupCount =
-            m_lastSegmentGroupReport.dynamicGroupCount;
-        m_noveltyTelemetry.deferredCorrectionGroupCount =
-            m_lastSegmentGroupReport.boundaryRepairGroupCount;
-        m_noveltyTelemetry.falseStaticCount =
-            m_lastSegmentGroupReport.falseStaticCount;
-        m_noveltyTelemetry.falseStaticRate =
-            m_lastSegmentGroupReport.falseStaticRate;
-        m_noveltyTelemetry.cacheHitCount =
-            m_lastSegmentGroupReport.cacheHitCount;
-        m_noveltyTelemetry.cacheMissCount =
-            m_lastSegmentGroupReport.cacheMissCount;
-        m_noveltyTelemetry.watchdogRepairCount =
-            m_lastSegmentGroupReport.watchdogRepairCount;
-        m_noveltyTelemetry.staticDynamicBoundaryMeanErrorMm =
-            m_lastSegmentGroupReport.staticDynamicBoundaryMeanErrorMm;
-        m_noveltyTelemetry.staticDynamicBoundaryMaxErrorMm =
-            m_lastSegmentGroupReport.staticDynamicBoundaryMaxErrorMm;
-        m_noveltyTelemetry.directionCacheMemoryMb =
-            m_lastSegmentGroupReport.directionCacheMemoryMb;
-        m_noveltyTelemetry.fullPositionMemoryMb =
-            m_lastSegmentGroupReport.fullPositionMemoryMb;
-        m_noveltyTelemetry.directionCacheMemorySavingRate =
-            m_lastSegmentGroupReport.directionCacheMemorySavingRate;
+        CopySegmentGroupReportToTelemetry(m_lastSegmentGroupReport, m_noveltyTelemetry);
     }
 }
 ```
 
 ---
 
-# 17. `include/hairgpu/HairNoveltyTelemetry.h` の修正
+# 20. Telemetry項目
 
-既に以下のような項目が存在する場合は、そのまま活用する。
-
-```cpp
-uint32_t totalSegmentGroupCount;
-uint32_t staticCachedGroupCount;
-uint32_t staticTransformedGroupCount;
-uint32_t dynamicGroupCount;
-uint32_t deferredCorrectionGroupCount;
-uint32_t repairRequiredGroupCount;
-uint32_t fallbackGroupCount;
-
-uint32_t falseStaticCount;
-float falseStaticRate;
-
-uint32_t cacheHitCount;
-uint32_t cacheMissCount;
-uint32_t cacheInvalidationCount;
-
-uint32_t watchdogCheckCount;
-uint32_t watchdogRepairCount;
-
-float staticDynamicBoundaryMeanErrorMm;
-float staticDynamicBoundaryMaxErrorMm;
-
-float directionCacheMemoryMb;
-float fullPositionMemoryMb;
-float directionCacheMemorySavingRate;
-```
-
-不足している場合は、以下を追加する。
+以下を `HairNoveltyTelemetry` に含める。
 
 ```cpp
+uint32_t totalSegmentGroupCount = 0u;
+uint32_t staticCachedGroupCount = 0u;
+uint32_t staticTransformedGroupCount = 0u;
+uint32_t dynamicGroupCount = 0u;
+uint32_t deferredCorrectionGroupCount = 0u;
 uint32_t boundaryRepairGroupCount = 0u;
-uint32_t frozenSegmentGroupCount = 0u;
-uint32_t invalidatedSegmentGroupCount = 0u;
+uint32_t fallbackGroupCount = 0u;
+uint32_t frozenGroupCount = 0u;
+uint32_t rejectedGroupCount = 0u;
+
+uint32_t falseStaticCount = 0u;
+float falseStaticRate = 0.0f;
+
+uint32_t cacheHitCount = 0u;
+uint32_t cacheMissCount = 0u;
+uint32_t cacheInvalidationCount = 0u;
+
+uint32_t watchdogCheckCount = 0u;
+uint32_t watchdogRepairCount = 0u;
+
+float staticDynamicBoundaryMeanErrorMm = 0.0f;
+float staticDynamicBoundaryMaxErrorMm = 0.0f;
+
+float directionCacheMemoryMb = 0.0f;
+float fullPositionMemoryMb = 0.0f;
+float directionCacheMemorySavingRate = 0.0f;
+
 float segmentGroupRuntimeMilliseconds = 0.0f;
 ```
 
 ---
 
-# 18. `src/hairgpu_core/HairNoveltyTelemetry.cpp` の修正
+# 21. CSV / JSONL / SQLiteへの出力
 
-Telemetry初期化関数で、Segment Group関連項目を0に戻す。
-
-```cpp
-telemetry.totalSegmentGroupCount = 0u;
-telemetry.staticCachedGroupCount = 0u;
-telemetry.staticTransformedGroupCount = 0u;
-telemetry.dynamicGroupCount = 0u;
-telemetry.deferredCorrectionGroupCount = 0u;
-telemetry.repairRequiredGroupCount = 0u;
-telemetry.fallbackGroupCount = 0u;
-
-telemetry.falseStaticCount = 0u;
-telemetry.falseStaticRate = 0.0f;
-
-telemetry.cacheHitCount = 0u;
-telemetry.cacheMissCount = 0u;
-telemetry.cacheInvalidationCount = 0u;
-
-telemetry.watchdogCheckCount = 0u;
-telemetry.watchdogRepairCount = 0u;
-
-telemetry.staticDynamicBoundaryMeanErrorMm = 0.0f;
-telemetry.staticDynamicBoundaryMaxErrorMm = 0.0f;
-
-telemetry.directionCacheMemoryMb = 0.0f;
-telemetry.fullPositionMemoryMb = 0.0f;
-telemetry.directionCacheMemorySavingRate = 0.0f;
-```
-
----
-
-# 19. `apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl` の修正
-
-既存のCSV出力に以下の列を必ず含める。
+## 21.1 CSV列
 
 ```text
 totalSegmentGroupCount
@@ -1120,8 +1314,10 @@ staticCachedGroupCount
 staticTransformedGroupCount
 dynamicGroupCount
 deferredCorrectionGroupCount
-repairRequiredGroupCount
+boundaryRepairGroupCount
 fallbackGroupCount
+frozenGroupCount
+rejectedGroupCount
 falseStaticCount
 falseStaticRate
 cacheHitCount
@@ -1134,107 +1330,23 @@ staticDynamicBoundaryMaxErrorMm
 directionCacheMemoryMb
 fullPositionMemoryMb
 directionCacheMemorySavingRate
+segmentGroupRuntimeMilliseconds
 ```
 
-既に出力されている項目は重複させず、足りない項目だけ追加する。
+## 21.2 SQLiteカラム
 
-PerformanceSample生成時には、以下のように代入する。
-
-```cpp
-sample.totalSegmentGroupCount = m_noveltyTelemetry.totalSegmentGroupCount;
-sample.staticCachedGroupCount = m_noveltyTelemetry.staticCachedGroupCount;
-sample.staticTransformedGroupCount = m_noveltyTelemetry.staticTransformedGroupCount;
-sample.dynamicGroupCount = m_noveltyTelemetry.dynamicGroupCount;
-sample.deferredCorrectionGroupCount = m_noveltyTelemetry.deferredCorrectionGroupCount;
-sample.repairRequiredGroupCount = m_noveltyTelemetry.repairRequiredGroupCount;
-sample.fallbackGroupCount = m_noveltyTelemetry.fallbackGroupCount;
-sample.falseStaticCount = m_noveltyTelemetry.falseStaticCount;
-sample.falseStaticRate = m_noveltyTelemetry.falseStaticRate;
-sample.cacheHitCount = m_noveltyTelemetry.cacheHitCount;
-sample.cacheMissCount = m_noveltyTelemetry.cacheMissCount;
-sample.cacheInvalidationCount = m_noveltyTelemetry.cacheInvalidationCount;
-sample.watchdogCheckCount = m_noveltyTelemetry.watchdogCheckCount;
-sample.watchdogRepairCount = m_noveltyTelemetry.watchdogRepairCount;
-sample.staticDynamicBoundaryMeanErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMeanErrorMm;
-sample.staticDynamicBoundaryMaxErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMaxErrorMm;
-sample.directionCacheMemoryMb = m_noveltyTelemetry.directionCacheMemoryMb;
-sample.fullPositionMemoryMb = m_noveltyTelemetry.fullPositionMemoryMb;
-sample.directionCacheMemorySavingRate = m_noveltyTelemetry.directionCacheMemorySavingRate;
-```
-
----
-
-# 20. `HairSystem.vcxproj` の修正
-
-`<ItemGroup>` の `ClCompile` に以下を追加する。
-
-```xml
-<ClCompile Include="src\hairgpu_core\SegmentGroup.cpp" />
-```
-
-`<ItemGroup>` の `ClInclude` に以下を追加する。
-
-```xml
-<ClInclude Include="include\hairgpu\SegmentGroup.h" />
-```
-
----
-
-# 21. `HairSystem.vcxproj.filters` の修正
-
-以下を追加する。
-
-```xml
-<ClCompile Include="src\hairgpu_core\SegmentGroup.cpp">
-  <Filter>Source Files\hairgpu_core</Filter>
-</ClCompile>
-
-<ClInclude Include="include\hairgpu\SegmentGroup.h">
-  <Filter>Header Files\hairgpu</Filter>
-</ClInclude>
-```
-
----
-
-# 22. `apps/hairgpu_cli/src/main_parts/01_runtime_suite_and_evaluation_commands.inl` の修正
-
-CLIからSegment Group Runtimeを使えるように、以下のオプションを追加する。
-
-```text
---enable-segment-groups
---disable-segment-groups
---segment-cache-age N
---segment-boundary-threshold VALUE
---segment-contact-threshold VALUE
---segment-edit-threshold VALUE
---export-segment-group-csv PATH
-```
-
-CLI実行例:
-
-```text
-HairSystem.exe --runtime-suite final_runtime_suite_template.json ^
-  --enable-segment-groups ^
-  --segment-cache-age 6 ^
-  --segment-boundary-threshold 0.006 ^
-  --export-segment-group-csv results/segment_groups.csv
-```
-
----
-
-# 23. `tools/final_stage/schema.sql` の修正
-
-`runtime_frame_metrics` に以下のカラムを追加する。
+`tools/final_stage/schema.sql` の `runtime_frame_metrics` に以下を追加する。
 
 ```sql
 total_segment_group_count INTEGER DEFAULT 0,
 static_cached_group_count INTEGER DEFAULT 0,
 static_transformed_group_count INTEGER DEFAULT 0,
 dynamic_group_count INTEGER DEFAULT 0,
-boundary_repair_group_count INTEGER DEFAULT 0,
 deferred_correction_group_count INTEGER DEFAULT 0,
-repair_required_group_count INTEGER DEFAULT 0,
+boundary_repair_group_count INTEGER DEFAULT 0,
 fallback_group_count INTEGER DEFAULT 0,
+frozen_group_count INTEGER DEFAULT 0,
+rejected_group_count INTEGER DEFAULT 0,
 false_static_count INTEGER DEFAULT 0,
 false_static_rate REAL DEFAULT 0.0,
 cache_hit_count INTEGER DEFAULT 0,
@@ -1246,334 +1358,341 @@ static_dynamic_boundary_mean_error_mm REAL DEFAULT 0.0,
 static_dynamic_boundary_max_error_mm REAL DEFAULT 0.0,
 direction_cache_memory_mb REAL DEFAULT 0.0,
 full_position_memory_mb REAL DEFAULT 0.0,
-direction_cache_memory_saving_rate REAL DEFAULT 0.0
+direction_cache_memory_saving_rate REAL DEFAULT 0.0,
+segment_group_runtime_milliseconds REAL DEFAULT 0.0
 ```
 
 ---
 
-# 24. `tools/final_stage/hairgpu_final_db.py` の修正
+# 22. 評価実験
 
-CSVから以下の列を読み込む。
-
-```python
-totalSegmentGroupCount
-staticCachedGroupCount
-staticTransformedGroupCount
-dynamicGroupCount
-deferredCorrectionGroupCount
-repairRequiredGroupCount
-fallbackGroupCount
-falseStaticCount
-falseStaticRate
-cacheHitCount
-cacheMissCount
-cacheInvalidationCount
-watchdogCheckCount
-watchdogRepairCount
-staticDynamicBoundaryMeanErrorMm
-staticDynamicBoundaryMaxErrorMm
-directionCacheMemoryMb
-fullPositionMemoryMb
-directionCacheMemorySavingRate
-```
-
-DB保存時には、snake_caseへ変換して保存する。
-
-```python
-"total_segment_group_count": read_int(row, "totalSegmentGroupCount"),
-"static_cached_group_count": read_int(row, "staticCachedGroupCount"),
-"static_transformed_group_count": read_int(row, "staticTransformedGroupCount"),
-"dynamic_group_count": read_int(row, "dynamicGroupCount"),
-"deferred_correction_group_count": read_int(row, "deferredCorrectionGroupCount"),
-"repair_required_group_count": read_int(row, "repairRequiredGroupCount"),
-"fallback_group_count": read_int(row, "fallbackGroupCount"),
-"false_static_count": read_int(row, "falseStaticCount"),
-"false_static_rate": read_float(row, "falseStaticRate"),
-"cache_hit_count": read_int(row, "cacheHitCount"),
-"cache_miss_count": read_int(row, "cacheMissCount"),
-"cache_invalidation_count": read_int(row, "cacheInvalidationCount"),
-"watchdog_check_count": read_int(row, "watchdogCheckCount"),
-"watchdog_repair_count": read_int(row, "watchdogRepairCount"),
-"static_dynamic_boundary_mean_error_mm": read_float(row, "staticDynamicBoundaryMeanErrorMm"),
-"static_dynamic_boundary_max_error_mm": read_float(row, "staticDynamicBoundaryMaxErrorMm"),
-"direction_cache_memory_mb": read_float(row, "directionCacheMemoryMb"),
-"full_position_memory_mb": read_float(row, "fullPositionMemoryMb"),
-"direction_cache_memory_saving_rate": read_float(row, "directionCacheMemorySavingRate"),
-```
-
----
-
-# 25. `tools/final_stage/hairgpu_runtime_suite.py` の修正
-
-Markdownレポートに以下の表を追加する。
-
-```markdown
-## Segment Group Runtime Metrics
-
-| Metric | Meaning |
-|---|---|
-| totalSegmentGroupCount | 全セグメントグループ数 |
-| staticCachedGroupCount | 静的キャッシュとして再利用されたグループ数 |
-| dynamicGroupCount | 動的更新されたグループ数 |
-| falseStaticRate | 静的と判定したが誤りだった割合 |
-| watchdogRepairCount | watchdogにより修復された回数 |
-| staticDynamicBoundaryMeanErrorMm | 静的/動的境界の平均誤差 |
-| directionCacheMemorySavingRate | 方向キャッシュによるメモリ削減率 |
-```
-
-さらに、比較表に以下を追加する。
-
-```text
-avg_static_cached_group_count
-avg_dynamic_group_count
-avg_false_static_rate
-avg_boundary_error_mm
-avg_direction_cache_memory_saving_rate
-```
-
----
-
-# 26. 評価実験
-
-## 26.1 比較対象
+## 22.1 比較対象
 
 以下の4方式を比較する。
 
 ### A. Full Dynamic
 
-全ての髪を毎フレーム更新する。
+全Segment Groupを毎フレーム動的更新する。
 
 ### B. ActiveSet Only
 
-guide cluster単位で補正対象を選ぶが、髪一本内部のセグメントグループ分割は行わない。
+ActiveSetで補正対象strandを選ぶが、strand内部のSegment Group分割は行わない。
 
 ### C. Segment Cache Only
 
-Segment Groupの静的キャッシュは使うが、半球境界補正とwatchdogを使わない。
+Segment GroupのStatic reuseは行うが、certificate、false-static検出、Boundary Repairを使わない。
 
 ### D. Proposed
 
-Segment Group、静的/動的状態遷移、半球境界、watchdog、ActiveSet連動を全て使う。
+Segment Group、certificate、cache validity、Static/Dynamic状態遷移、Boundary Repair、Fallback、false-static telemetryをすべて使う。
 
 ---
 
-## 26.2 評価指標
+# 23. 評価指標
 
-### 実時間性
+## 23.1 実時間性
 
-* 60FPS達成率
-* 平均フレーム時間
-* 95パーセンタイルフレーム時間
-* 最悪フレーム時間
-* 予算超過回数
+```text
+60FPS達成率
+平均フレーム時間
+95パーセンタイルフレーム時間
+最大フレーム時間
+予算超過回数
+segmentGroupRuntimeMilliseconds
+```
 
-### Segment Group評価
+## 23.2 再利用性能
 
-* totalSegmentGroupCount
-* staticCachedGroupCount
-* dynamicGroupCount
-* staticCachedRate
-* dynamicRate
-* cacheHitRate
-* falseStaticRate
-* watchdogRepairCount
+```text
+staticCachedGroupCount
+staticTransformedGroupCount
+dynamicGroupCount
+staticReuseRate
+dynamicGroupRate
+cacheHitCount
+cacheMissCount
+cacheHitRate
+```
 
-### 境界品質
+## 23.3 再利用の安全性
 
-* staticDynamicBoundaryMeanErrorMm
-* staticDynamicBoundaryMaxErrorMm
-* curvature discontinuity
-* boundary repair success rate
+```text
+falseStaticCount
+falseStaticRate
+watchdogRepairCount
+fallbackGroupCount
+rejectedGroupCount
+```
 
-### 見た目品質
+## 23.4 境界品質
 
-* silhouette error
-* clump preservation score
-* edit locality preservation
-* boundary naturalness score
+```text
+staticDynamicBoundaryMeanErrorMm
+staticDynamicBoundaryMaxErrorMm
+boundaryRepairGroupCount
+boundaryRepairSuccessRate
+```
 
-### 接触品質
+## 23.5 接触品質
 
-* penetration count per second
-* max penetration depth
-* average penetration depth
+```text
+penetration count
+max penetration depth
+average penetration depth
+contact repair count
+```
 
-### メモリ
+## 23.6 メモリ
 
-* peak RAM usage
-* directionCacheMemoryMb
-* fullPositionMemoryMb
-* directionCacheMemorySavingRate
+```text
+peak RAM usage
+directionCacheMemoryMb
+fullPositionMemoryMb
+directionCacheMemorySavingRate
+```
 
 ---
 
-# 27. 実装順序
+# 24. 実装順序
 
 ## Phase 1: CPU版Segment Group Runtime
 
 対象ファイル:
 
-* `include/hairgpu/SegmentGroup.h`
-* `src/hairgpu_core/SegmentGroup.cpp`
-* `HairSystem.vcxproj`
-* `HairSystem.vcxproj.filters`
+```text
+include/hairgpu/SegmentGroup.h
+src/hairgpu_core/SegmentGroup.cpp
+HairSystem.vcxproj
+HairSystem.vcxproj.filters
+```
 
 実装内容:
 
-* SegmentGroup構造体
-* SegmentGroup生成
-* 静的/動的状態遷移
-* 静的キャッシュ再構成
-* 動的更新
-* 基本レポート
+```text
+SegmentGroup構造体
+SegmentGroup生成
+Static / Dynamic判定
+StaticTransform
+DynamicSolve
+BoundaryRepair
+Fallback
+Report集計
+```
 
-## Phase 2: ActiveSetとの接続
+## Phase 2: ActiveSet接続
 
 対象ファイル:
 
-* `include/hairgpu/SegmentGroup.h`
-* `src/hairgpu_core/SegmentGroup.cpp`
-* `src/hairgpu_core/ActiveSet.cpp`
-* `include/hairgpu/ActiveSet.h`
+```text
+include/hairgpu/SegmentGroup.h
+src/hairgpu_core/SegmentGroup.cpp
+include/hairgpu/ActiveSet.h
+src/hairgpu_core/ActiveSet.cpp
+```
 
 実装内容:
 
-* `ActiveSetPlan::strandCorrectiveMask` をSegment Groupへ反映
-* `recommendedSimulationTiers` をSegment GroupのFrozenLOD判定へ反映
-* active strand内のsegmentを優先的にdynamic化
+```text
+ActiveSetPlan::strandCorrectiveMask をSegment Groupへ反映
+recommendedSimulationTiers をFrozenLOD判定へ反映
+Active strand内のSegment Groupを優先的にDynamic化
+```
 
-## Phase 3: HybridRuntime修正
+## Phase 3: HybridRuntime接続
 
 対象ファイル:
 
-* `include/hairgpu/HybridRuntime.h`
-* `src/hairgpu_core/HybridRuntime.cpp`
+```text
+include/hairgpu/HybridRuntime.h
+src/hairgpu_core/HybridRuntime.cpp
+```
 
 実装内容:
 
-* `ApplySparseCorrectivePhysics` で `activeSetPlan` を使う
-* `colliders` を使った補正を実装
-* Segment Group Runtimeを補正前後に接続
-* reportにcorrectedGroup数を追加
+```text
+ApplySparseCorrectivePhysics内でSegmentGroupRuntimeを呼ぶ
+collider補正をSegment Groupに接続
+SparseCorrectiveReportにSegmentGroup結果を反映
+```
 
 ## Phase 4: Viewer接続
 
 対象ファイル:
 
-* `apps/dx11_viewer/src/GpuHairViewer.h`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl`
+```text
+apps/dx11_viewer/src/GpuHairViewer.h
+apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
+apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+```
 
 実装内容:
 
-* ViewerがSegment Group Cacheを保持
-* 毎フレームSegment Group Runtimeを実行
-* PerformanceSampleへ出力
-* CSV / JSONL / summaryへ出力
+```text
+ViewerがSegmentGroupCacheを保持
+毎フレームSegmentGroupRuntimeを実行
+PerformanceSampleへ出力
+CSV / JSONL / summaryへ出力
+```
 
-## Phase 5: CLI・評価DB接続
+## Phase 5: CLI / DB / Report接続
 
 対象ファイル:
 
-* `apps/hairgpu_cli/src/main_parts/01_runtime_suite_and_evaluation_commands.inl`
-* `tools/final_stage/schema.sql`
-* `tools/final_stage/hairgpu_final_db.py`
-* `tools/final_stage/hairgpu_runtime_suite.py`
+```text
+apps/hairgpu_cli/src/main_parts/01_runtime_suite_and_evaluation_commands.inl
+tools/final_stage/schema.sql
+tools/final_stage/hairgpu_final_db.py
+tools/final_stage/hairgpu_runtime_suite.py
+```
 
 実装内容:
 
-* CLIオプション追加
-* CSV列追加
-* DB保存
-* Markdownレポート出力
+```text
+CLIオプション追加
+CSV列追加
+DB保存
+Markdownレポート出力
+```
 
-## Phase 6: 論文・設計書用ドキュメント
+## Phase 6: GPU化
 
 対象ファイル:
 
-* `docs/SEGMENT_GROUP_RUNTIME.md`
-* `docs/sample_assets/segment_group_runtime_preset.json`
-* `docs/sample_assets/segment_group_metric_definitions.json`
+```text
+apps/dx11_viewer/shaders/SegmentGroupCertificateQueryCS.hlsl
+apps/dx11_viewer/shaders/SegmentGroupStateDecisionCS.hlsl
+apps/dx11_viewer/shaders/SegmentGroupApplyResultCS.hlsl
+```
 
 実装内容:
 
-* 方式説明
-* 評価指標説明
-* 実験プリセット
-* 既存研究との差分整理
+```text
+GPU上でcertificateを計算
+GPU上で状態判定
+Group result bufferへ書き込み
+Apply passでpoint bufferへ反映
+CPU decisionとGPU decisionの一致率を評価
+```
 
 ---
 
-# 28. 60FPSとの関係
+# 25. 実装上の重要注意点
 
-本研究のデータ構造は、60FPSを魔法のように保証するものではない。
+## 25.1 最初からGPU実装にしない
 
-正確には、60FPSを守るために、毎フレームどのSegment Groupを再計算し、どのSegment Groupを静的キャッシュとして再利用するかを制御するための実行時データ構造である。
+最初はCPU版で正しさを確認する。
 
-フレーム時間は以下の式で近似できる。
-
-```text
-T = C + dG
-```
-
-ここで、
-
-* `T`: 総フレーム時間
-* `C`: 固定処理時間
-* `d`: 1グループあたりの平均更新時間
-* `G`: 動的更新するSegment Group数
-
-60FPSを満たすには、
+理由は以下。
 
 ```text
-T <= 16.67
+状態遷移のデバッグがしやすい
+false-static検出を確認しやすい
+CSV出力と比較しやすい
+GPU版との一致検証に使える
 ```
 
-である必要がある。
+## 25.2 cacheはローカル変数にしない
 
-したがって、
+`SegmentGroupRuntimeCache` は毎フレーム維持する必要がある。
+
+したがって、以下は避ける。
+
+```cpp
+SegmentGroupRuntimeCache cache; // 毎フレーム関数内で作るのはNG
+```
+
+正しくは、ViewerやRuntimeのメンバとして保持する。
+
+```cpp
+hairgpu::SegmentGroupRuntimeCache m_segmentGroupCache;
+```
+
+## 25.3 Static判定は安全側に倒す
+
+Static reuseを増やしすぎると、60FPSは出やすくなるが品質が壊れる。
+
+そのため、初期値ではStatic判定を厳しめにする。
 
 ```text
-G <= (16.67 - C) / d
+staticCertificateThreshold = 0.82
+maxCacheAgeFrames = 6
+falseStaticRate が高い場合は threshold を上げる
 ```
 
-を満たすように、動的更新グループ数を制御する。
+## 25.4 Rejectedを放置しない
 
-本研究の価値は、品質を落とさず常に全てを計算することではなく、時間予算内で最も重要なSegment Groupから順に動的更新し、重要度の低いSegment Groupを安全に静的キャッシュへ逃がす点にある。
+フレーム予算に入らなかったGroupをRejectedにするだけでは危険である。
+
+```text
+Rejectedが3フレーム以上続いたらDynamicSolvedまたはFallbackへ送る
+```
 
 ---
 
-# 29. 最終的な研究主張
+# 26. 予想される60FPS達成確率
 
-本研究は、髪ストランドを単なる点列や一本単位で扱うのではなく、`点-線-点` のSegment Group列として扱う新しい髪データ構造を提案する。
+少し古いPCを想定した場合、実装段階ごとの60FPS安定見込みは以下である。
 
-各Segment Groupは、静的キャッシュ、動的更新、境界補正、FrozenLOD、Invalidatedの状態を持ち、編集、接触、貫通、曲率変化、境界誤差、可視性、時間予算に応じて状態遷移する。
+```text
+CPU版Segment Groupのみ:
+35〜50%
 
-静的グループは、始点、方向、長さ、局所座標系を用いて軽量に再構成し、再計算を省略する。一方、動的グループは、必要に応じて局所補正物理を適用する。
+CPU版 + ActiveSet接続 + hard budget:
+55〜65%
 
-さらに、静的グループと動的グループの共有点を半球境界として扱い、境界誤差を監視・修復することで、髪の連続性を保つ。
+GPU版 + hard budget + fallback + telemetry:
+65〜75%
 
-これにより、髪全体を毎フレーム一様に再計算する方式に比べて、固定60FPS制約下で再計算対象を局所化し、自由な髪編集、接触補正、自然な実時間再現の両立を目指す。
+高密度髪 + self collision + 複数collider + 編集あり:
+30〜45%
+```
+
+本研究では、60FPSを絶対保証するのではなく、60FPSを維持するために、動的更新対象を制御できるデータ構造を提案する。
 
 ---
 
-# 30. まとめ
+# 27. 研究としての最終主張
 
-本研究の中心は、ActiveSetだけではない。
-ActiveSetは「どの髪領域を重点的に見るか」を決める上位機構である。
+本研究の最終主張は以下である。
 
-本研究の本当のコアは、髪一本の内部を `点-線-点` Segment Groupへ分割し、各グループを静的キャッシュ・動的更新・境界補正として状態管理する **静的・動的セグメントグループ型髪データ構造** にある。
+```text
+本研究は、髪ストランド内部を Segment Group に分割し、
+各グループを runtime decision unit として扱う
+Segment Group Runtime Data Type を提案した。
 
-実装では、まず `SegmentGroup.h` と `SegmentGroup.cpp` を追加し、既存の `HairAsset`、`ActiveSetPlan`、`HybridRuntime`、`GpuHairViewer`、評価CSV、SQLite DBへ接続する。
+各Segment Groupは、certificate、cache validity、境界誤差、
+接触リスク、編集影響、cache ageを持ち、
+Static reuse、Static transform、Dynamic solve、Deferred correction、
+Boundary repair、Fallbackを実行時に切り替える。
 
-この構成により、研究としては以下を主張できる。
+さらに、false-static率、Static/Dynamic境界誤差、cache reuse率、
+watchdog repair数をtelemetryとして記録することで、
+単なる高速化ではなく、安全な再利用を評価可能にした。
 
-* 髪ストランド内部の再計算粒度を明確に定義した。
-* 静的キャッシュと動的更新をSegment Group単位で切り替えた。
-* 半球境界により静的/動的の接続破綻を抑えた。
-* watchdogにより誤静的判定を検出・修復した。
-* 60FPS予算とデータ構造を直接結びつけた。
-* ActiveSetよりも細かい粒度で、髪の再計算量を制御できる。
+これにより、既存のguide/follower、LOD、ActiveSet、PBD/XPBD、
+cache reuseの考え方を前提としつつ、
+髪strand内部の再計算粒度を細かく制御し、
+固定60FPS・32GB制約下で編集可能なリアルタイム髪表現を目指す。
+```
 
-以上により、本研究は、固定60FPS・32GB制約下で編集可能なリアルタイム髪システムを実現するための、新しい髪データ構造と実行時更新方式を提案するものである。
+---
+
+# 28. まとめ
+
+本研究で最も重要なのは、以下である。
+
+```text
+点-線-点そのものが新しいわけではない。
+Static reuseそのものが新しいわけでもない。
+GPU化そのものが新しいわけでもない。
+
+新しいのは、
+髪strand内部のSegment Groupを、
+処理経路を選択するためのデータ型として定義し、
+certificateとcache validityによって
+Static / Dynamic / Repair / Fallbackを切り替え、
+false-static率と境界誤差で安全性を評価する点である。
+```
+
+この形であれば、既存研究との衝突を避けつつ、卒業研究として安全に主張できる。
