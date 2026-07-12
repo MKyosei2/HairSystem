@@ -571,47 +571,143 @@ class FinalStageDatabase:
 
         with Path(frame_csv_path).open("r", encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle)
-            rows = [
+            phase1_rows = [
                 (
+                    int(float(self._pick_csv_value(row, "topLevelNoveltyMask", "top_level_novelty_mask", default="0"))),
+                    int(float(self._pick_csv_value(row, "overflowCount", "overflow_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "budgetDropCount", "budget_drop_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "deferCount", "defer_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "microtypeDecodedCount", "microtype_decoded_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "safeDecodeCount", "safe_decode_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "falseSafeCount", "false_safe_count", default="0"))),
+
+                    # 01: Segment Group Static/Dynamic metrics.
+                    int(float(self._pick_csv_value(row, "totalSegmentGroupCount", "total_segment_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "staticCachedGroupCount", "static_cached_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "staticTransformedGroupCount", "static_transformed_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "dynamicGroupCount", "dynamic_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "deferredCorrectionGroupCount", "deferred_correction_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairRequiredGroupCount", "repair_required_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "fallbackGroupCount", "fallback_group_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "falseStaticCount", "false_static_count", default="0"))),
+                    float(self._pick_csv_value(row, "falseStaticRate", "false_static_rate", default="0")),
+                    int(float(self._pick_csv_value(row, "cacheHitCount", "cache_hit_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "cacheMissCount", "cache_miss_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "cacheInvalidationCount", "cache_invalidation_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "watchdogCheckCount", "watchdog_check_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "watchdogRepairCount", "watchdog_repair_count", default="0"))),
+                    float(self._pick_csv_value(row, "staticDynamicBoundaryMeanErrorMm", "static_dynamic_boundary_mean_error_mm", default="0")),
+                    float(self._pick_csv_value(row, "staticDynamicBoundaryMaxErrorMm", "static_dynamic_boundary_max_error_mm", default="0")),
+                    float(self._pick_csv_value(row, "directionCacheMemoryMb", "direction_cache_memory_mb", default="0")),
+                    float(self._pick_csv_value(row, "fullPositionMemoryMb", "full_position_memory_mb", default="0")),
+                    float(self._pick_csv_value(row, "directionCacheMemorySavingRate", "direction_cache_memory_saving_rate", default="0")),
+
+                    int(float(self._pick_csv_value(row, "typedRepairRequestCount", "typed_repair_request_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "floatFallbackRequestCount", "float_fallback_request_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "rejectPayloadCount", "reject_payload_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "riskyStrandCount", "risky_strand_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairCommitCount", "repair_commit_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairRejectCount", "repair_reject_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "repairDeferCount", "repair_defer_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "islandCandidateCount", "island_candidate_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "physicsFallbackCount", "physics_fallback_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderCertificateCount", "render_certificate_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderSkipCount", "render_skip_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderCoarseOpacityCount", "render_coarse_opacity_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderStrandRasterCount", "render_strand_raster_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderHighQualityShadowCount", "render_high_quality_shadow_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderHighQualitySpecularCount", "render_high_quality_specular_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderFullQualityCount", "render_full_quality_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "renderDroppedFullQualityCount", "render_dropped_full_quality_count", default="0"))),
+                    float(self._pick_csv_value(row, "p95ShadowErrorBound", "p95_shadow_error_bound", default="0")),
+                    float(self._pick_csv_value(row, "p95SpecularErrorBound", "p95_specular_error_bound", default="0")),
+                    float(self._pick_csv_value(row, "temporalFlickerScore", "temporal_flicker_score", default="0")),
+                    int(float(self._pick_csv_value(row, "editOperationCount", "edit_operation_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "editRepairTaskCount", "edit_repair_task_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "editIslandEscalationCount", "edit_island_escalation_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "editCommitCount", "edit_commit_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "editRejectCount", "edit_reject_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "editPreviewFullQualityCount", "edit_preview_full_quality_count", default="0"))),
+                    float(self._pick_csv_value(row, "editLatencyMs", "edit_latency_ms", default="0")),
+                    int(float(self._pick_csv_value(row, "gpuResidentTaskCount", "gpu_resident_task_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "riskyCompactionCount", "risky_compaction_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "dispatchIndirectCount", "dispatch_indirect_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "drawIndirectCount", "draw_indirect_count", default="0"))),
+                    int(float(self._pick_csv_value(row, "delayedTelemetryReadCount", "delayed_telemetry_read_count", default="0"))),
                     run_id,
                     int(float(self._pick_csv_value(row, "sampleIndex", "sample_index", default="0"))),
-                    float(self._pick_csv_value(row, "elapsedSeconds", "elapsed_seconds", default="0")),
-                    float(self._pick_csv_value(row, "frameMilliseconds", "frame_ms", default="0")),
-                    float(self._pick_csv_value(row, "simulationMilliseconds", "simulation_ms", default="0")),
-                    float(self._pick_csv_value(row, "fps", default="0")),
-                    int(float(self._pick_csv_value(row, "guideCount", "guide_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "followerCount", "follower_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "totalStrandCount", "total_strand_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "totalParticleCount", "total_particle_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "globalFrameIndex", "global_frame_index", default="0"))),
-                    int(float(self._pick_csv_value(row, "measuredFrameIndex", "measured_frame_index", default="0"))),
-                    int(float(self._pick_csv_value(row, "certificateFailureCount", "certificate_failure_count", default="0"))),
-                    float(self._pick_csv_value(row, "certificateFailureRate", "certificate_failure_rate", default="0")),
-                    int(float(self._pick_csv_value(row, "fallbackCount", "fallback_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "modeSkipCount", "mode_skip_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "modeQSOnlyCount", "modeQsCount", "mode_qs_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "modeDynamicCount", "mode_dynamic_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "modeIslandCount", "mode_island_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "modeRepairCount", "mode_repair_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "modeFloatFallbackCount", "mode_float_fallback_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "islandCount", "island_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "islandMemberCount", "island_member_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "islandCommitCount", "island_commit_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "islandRejectCount", "island_reject_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "repairTaskCount", "repair_task_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "repairCommittedCount", "repair_committed_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "repairRejectedCount", "repair_rejected_count", default="0"))),
-                    int(float(self._pick_csv_value(row, "repairDeferredCount", "repair_deferred_count", default="0"))),
-                    float(self._pick_csv_value(row, "repairSuccessRate", "repair_success_rate", default="0")),
-                    int(float(self._pick_csv_value(row, "cpuReadbackCount", "cpu_readback_count", default="0"))),
-                    float(self._pick_csv_value(row, "gpuHairMilliseconds", "gpuHairMs", "gpu_hair_ms", default="0")),
-                    float(self._pick_csv_value(row, "vramMegabytes", "vramMb", "vram_mb", default="0")),
-                    float(self._pick_csv_value(row, "bandwidthMegabytesPerFrame", "bandwidthMbFrame", "bandwidth_mb_frame", default="0")),
-                    float(self._pick_csv_value(row, "meanDecodeErrorMm", "mean_decode_error_mm", default="0")),
-                    float(self._pick_csv_value(row, "maxPenetrationMm", "max_penetration_mm", default="0")),
                 )
                 for row in reader
             ]
+
+        if phase1_rows:
+            self.connection.executemany(
+                """
+                UPDATE runtime_frame_metrics
+                SET top_level_novelty_mask = ?,
+                    overflow_count = ?,
+                    budget_drop_count = ?,
+                    defer_count = ?,
+                    microtype_decoded_count = ?,
+                    safe_decode_count = ?,
+                    false_safe_count = ?,
+
+                    total_segment_group_count = ?,
+                    static_cached_group_count = ?,
+                    static_transformed_group_count = ?,
+                    dynamic_group_count = ?,
+                    deferred_correction_group_count = ?,
+                    repair_required_group_count = ?,
+                    fallback_group_count = ?,
+                    false_static_count = ?,
+                    false_static_rate = ?,
+                    cache_hit_count = ?,
+                    cache_miss_count = ?,
+                    cache_invalidation_count = ?,
+                    watchdog_check_count = ?,
+                    watchdog_repair_count = ?,
+                    static_dynamic_boundary_mean_error_mm = ?,
+                    static_dynamic_boundary_max_error_mm = ?,
+                    direction_cache_memory_mb = ?,
+                    full_position_memory_mb = ?,
+                    direction_cache_memory_saving_rate = ?,
+
+                    typed_repair_request_count = ?,
+                    float_fallback_request_count = ?,
+                    reject_payload_count = ?,
+                    risky_strand_count = ?,
+                    repair_commit_count = ?,
+                    repair_reject_count = ?,
+                    repair_defer_count = ?,
+                    island_candidate_count = ?,
+                    physics_fallback_count = ?,
+                    render_certificate_count = ?,
+                    render_skip_count = ?,
+                    render_coarse_opacity_count = ?,
+                    render_strand_raster_count = ?,
+                    render_high_quality_shadow_count = ?,
+                    render_high_quality_specular_count = ?,
+                    render_full_quality_count = ?,
+                    render_dropped_full_quality_count = ?,
+                    p95_shadow_error_bound = ?,
+                    p95_specular_error_bound = ?,
+                    temporal_flicker_score = ?,
+                    edit_operation_count = ?,
+                    edit_repair_task_count = ?,
+                    edit_island_escalation_count = ?,
+                    edit_commit_count = ?,
+                    edit_reject_count = ?,
+                    edit_preview_full_quality_count = ?,
+                    edit_latency_ms = ?,
+                    gpu_resident_task_count = ?,
+                    risky_compaction_count = ?,
+                    dispatch_indirect_count = ?,
+                    draw_indirect_count = ?,
+                    delayed_telemetry_read_count = ?
+                WHERE run_id = ? AND sample_index = ?
+                """,
+                phase1_rows,
+            )
         self.connection.executemany(
             """
             INSERT INTO runtime_frame_metrics (
@@ -722,7 +818,112 @@ class FinalStageDatabase:
                 """,
                 phase1_rows,
             )
-        self.connection.commit()
+        self.connection.execute(
+            """
+            UPDATE runtime_runs
+            SET false_static_count = COALESCE((
+                    SELECT SUM(false_static_count)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                false_static_rate = COALESCE((
+                    SELECT
+                        1.0 * SUM(false_static_count) /
+                        NULLIF(SUM(static_cached_group_count + static_transformed_group_count), 0)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                group_static_reuse_rate = COALESCE((
+                    SELECT
+                        1.0 * SUM(static_cached_group_count + static_transformed_group_count) /
+                        NULLIF(SUM(total_segment_group_count), 0)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                group_dynamic_rate = COALESCE((
+                    SELECT
+                        1.0 * SUM(dynamic_group_count) /
+                        NULLIF(SUM(total_segment_group_count), 0)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                deferred_correction_rate = COALESCE((
+                    SELECT
+                        1.0 * SUM(deferred_correction_group_count) /
+                        NULLIF(SUM(total_segment_group_count), 0)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                avg_static_dynamic_boundary_error_mm = COALESCE((
+                    SELECT AVG(static_dynamic_boundary_mean_error_mm)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                max_static_dynamic_boundary_error_mm = COALESCE((
+                    SELECT MAX(static_dynamic_boundary_max_error_mm)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                cache_hit_count = COALESCE((
+                    SELECT SUM(cache_hit_count)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                cache_miss_count = COALESCE((
+                    SELECT SUM(cache_miss_count)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                cache_invalidation_count = COALESCE((
+                    SELECT SUM(cache_invalidation_count)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                watchdog_check_count = COALESCE((
+                    SELECT SUM(watchdog_check_count)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                watchdog_repair_count = COALESCE((
+                    SELECT SUM(watchdog_repair_count)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                direction_cache_memory_mb = COALESCE((
+                    SELECT AVG(direction_cache_memory_mb)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                full_position_memory_mb = COALESCE((
+                    SELECT AVG(full_position_memory_mb)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0),
+
+                direction_cache_memory_saving_rate = COALESCE((
+                    SELECT
+                        1.0 - SUM(direction_cache_memory_mb) /
+                        NULLIF(SUM(full_position_memory_mb), 0)
+                    FROM runtime_frame_metrics
+                    WHERE run_id = :run_id
+                ), 0)
+            WHERE run_id = :run_id
+            """,
+            {"run_id": run_id},
+        )
 
         avg_frame_ms = float(self._resolve_summary_value(summary, "avg_frame_ms", "avgFrameMs", default=0.0))
         p95_frame_ms = float(self._resolve_summary_value(summary, "p95_frame_ms", "p95FrameMs", default=0.0))
