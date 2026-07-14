@@ -442,7 +442,15 @@
         {
             return false;
         }
-
+        if (!CreateSegmentGroupRuntimeResources())
+        {
+            ShowStartupDialog(
+                m_hwnd,
+                L"Hair GPU Viewer Startup Failure",
+                L"CreateSegmentGroupRuntimeResources() failed.\r\n"
+                L"Check the strand topology and D3D11 buffer creation.");
+            return false;
+        }
         m_scalpPositions = CreateStructuredBuffer(sizeof(GpuParticle), static_cast<UINT>(m_animatedScalpParticles.size()), m_animatedScalpParticles.data(), false);
         m_scalpTrianglesBuffer = CreateStructuredBuffer(sizeof(TriangleGpuData), static_cast<UINT>(m_scalpTriangles.size()), m_scalpTriangles.data(), false);
         m_rootBindingsBuffer = CreateStructuredBuffer(sizeof(RootBindingGpuData), static_cast<UINT>(m_rootBindingGpuData.size()), m_rootBindingGpuData.data(), false);
@@ -583,6 +591,380 @@
 
         m_gpuDebugLinesDirty = true;
         m_debugLineStats = {};
+        return true;
+    }
+
+    bool GpuHairViewer::BuildSegmentGroupRuntimeTopology()
+    {
+        m_segmentGroupInitialData.clear();
+        m_segmentGroupBlockInitialData.clear();
+        m_segmentGroupCertificateInitialData.clear();
+
+        m_segmentGroupCount = 0u;
+        m_segmentGroupBlockCount = 0u;
+
+        const uint32_t invalidId =
+            std::numeric_limits<uint32_t>::max();
+
+        const uint32_t groupsPerBlock =
+            std::max<uint32_t>(m_segmentGroupsPerBlock, 1u);
+
+        for (uint32_t strandId = 0u;
+            strandId < static_cast<uint32_t>(m_asset.strands.size());
+            ++strandId)
+        {
+            const hairgpu::StrandRange& strand =
+                m_asset.strands[strandId];
+
+            if (strand.pointCount < 2u)
+            {
+                continue;
+            }
+
+            const uint32_t firstPoint = strand.pointOffset;
+            const uint32_t lastPointExclusive =
+                strand.pointOffset + strand.pointCount;
+
+            if (lastPointExclusive > m_asset.restPoints.size())
+            {
+                return false;
+            }
+
+            const uint32_t firstGroupForStrand =
+                static_cast<uint32_t>(m_segmentGroupInitialData.size());
+
+            const uint32_t groupCountForStrand =
+                strand.pointCount - 1u;
+
+            for (uint32_t localGroupIndex = 0u;
+                localGroupIndex < groupCountForStrand;
+                ++localGroupIndex)
+            {
+                const uint32_t globalGroupId =
+                    static_cast<uint32_t>(
+                        m_segmentGroupInitialData.size());
+
+                const uint32_t startPointIndex =
+                    firstPoint + localGroupIndex;
+
+                const uint32_t endPointIndex =
+                    startPointIndex + 1u;
+
+                const hairgpu::Vec3& start =
+                    m_asset.restPoints[startPointIndex];
+
+                const hairgpu::Vec3& end =
+                    m_asset.restPoints[endPointIndex];
+
+                const hairgpu::Vec3 segment = end - start;
+                const float length =
+                    std::max(hairgpu::Length(segment), 1.0e-6f);
+
+                const hairgpu::Vec3 direction =
+                    segment * (1.0f / length);
+
+                SegmentGroupGpuData group = {};
+                group.strandId = strandId;
+                group.groupId = globalGroupId;
+
+                group.parentGroupId =
+                    localGroupIndex > 0u
+                    ? globalGroupId - 1u
+                    : invalidId;
+
+                group.childGroupId =
+                    localGroupIndex + 1u < groupCountForStrand
+                    ? globalGroupId + 1u
+                    : invalidId;
+
+                group.startPointIndex = startPointIndex;
+                group.endPointIndex = endPointIndex;
+
+                // The previous group owns the shared point.
+                // The first group's root point is owned by itself.
+                group.ownerGroupId =
+                    localGroupIndex > 0u
+                    ? globalGroupId - 1u
+                    : globalGroupId;
+
+                group.blockId =
+                    m_segmentGroupBlockCount +
+                    localGroupIndex / groupsPerBlock;
+
+                group.state =
+                    static_cast<uint32_t>(
+                        SegmentGroupRuntimeState::Dynamic);
+
+                group.previousState = group.state;
+                group.dirtyReason =
+                    SegmentGroupDirty_CacheExpired;
+
+                group.restLength = length;
+                group.currentLength = length;
+
+                group.direction[0] = direction.x;
+                group.direction[1] = direction.y;
+                group.direction[2] = direction.z;
+
+                group.previousDirection[0] = direction.x;
+                group.previousDirection[1] = direction.y;
+                group.previousDirection[2] = direction.z;
+
+                group.motionScore = 1.0f;
+                group.lastSolvedFrame = m_globalFrameIndex;
+
+                m_segmentGroupInitialData.push_back(group);
+
+                SegmentGroupCertificateGpuData certificate = {};
+                certificate.sourceFrame = m_globalFrameIndex;
+                certificate.parentVersion = m_headTransformVersion;
+                certificate.colliderVersion = m_colliderVersion;
+                certificate.editVersion = m_editVersion;
+
+                // Initial data starts invalid and must first pass
+                // classification before becoming StaticCached.
+                certificate.parentValid = 0u;
+                certificate.collisionValid = 0u;
+                certificate.boundaryValid = 0u;
+                certificate.editValid = 0u;
+                certificate.cacheValid = 0u;
+
+                m_segmentGroupCertificateInitialData.push_back(
+                    certificate);
+            }
+
+            for (uint32_t blockStart = 0u;
+                blockStart < groupCountForStrand;
+                blockStart += groupsPerBlock)
+            {
+                SegmentGroupBlockGpuData block = {};
+                block.firstGroupIndex =
+                    firstGroupForStrand + blockStart;
+
+                block.groupCount =
+                    std::min(
+                        groupsPerBlock,
+                        groupCountForStrand - blockStart);
+
+                block.strandId = strandId;
+                block.dirtyMask =
+                    SegmentGroupDirty_CacheExpired;
+
+                block.maxMotionScore = 1.0f;
+
+                m_segmentGroupBlockInitialData.push_back(block);
+            }
+
+            m_segmentGroupBlockCount =
+                static_cast<uint32_t>(
+                    m_segmentGroupBlockInitialData.size());
+        }
+
+        m_segmentGroupCount =
+            static_cast<uint32_t>(
+                m_segmentGroupInitialData.size());
+
+        if (m_segmentGroupCount == 0u)
+        {
+            // D3D11 structured buffers cannot be created with zero
+            // elements in the current helper path.
+            SegmentGroupGpuData dummyGroup = {};
+            dummyGroup.groupId = 0u;
+            dummyGroup.parentGroupId = invalidId;
+            dummyGroup.childGroupId = invalidId;
+
+            m_segmentGroupInitialData.push_back(dummyGroup);
+            m_segmentGroupCertificateInitialData.emplace_back();
+
+            SegmentGroupBlockGpuData dummyBlock = {};
+            dummyBlock.groupCount = 1u;
+            m_segmentGroupBlockInitialData.push_back(dummyBlock);
+        }
+
+        m_segmentGroupTopologyDirty = false;
+        return true;
+    }
+
+    bool GpuHairViewer::CreateSegmentGroupIndirectArgsResources()
+    {
+        m_segmentGroupDynamicDispatchArgsBuffer.Reset();
+        m_segmentGroupDynamicDispatchArgsUav.Reset();
+
+        m_segmentGroupRepairDispatchArgsBuffer.Reset();
+        m_segmentGroupRepairDispatchArgsUav.Reset();
+
+        D3D11_BUFFER_DESC desc = {};
+        desc.ByteWidth = sizeof(UINT) * 4u;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        desc.MiscFlags =
+            D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS |
+            D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        uavDesc.Buffer.FirstElement = 0u;
+        uavDesc.Buffer.NumElements =
+            desc.ByteWidth / sizeof(UINT);
+        uavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+
+        if (FAILED(
+            m_device->CreateBuffer(
+                &desc,
+                nullptr,
+                &m_segmentGroupDynamicDispatchArgsBuffer)))
+        {
+            return false;
+        }
+
+        if (FAILED(
+            m_device->CreateUnorderedAccessView(
+                m_segmentGroupDynamicDispatchArgsBuffer.Get(),
+                &uavDesc,
+                &m_segmentGroupDynamicDispatchArgsUav)))
+        {
+            return false;
+        }
+
+        if (FAILED(
+            m_device->CreateBuffer(
+                &desc,
+                nullptr,
+                &m_segmentGroupRepairDispatchArgsBuffer)))
+        {
+            return false;
+        }
+
+        if (FAILED(
+            m_device->CreateUnorderedAccessView(
+                m_segmentGroupRepairDispatchArgsBuffer.Get(),
+                &uavDesc,
+                &m_segmentGroupRepairDispatchArgsUav)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool GpuHairViewer::CreateSegmentGroupRuntimeResources()
+    {
+        if (!BuildSegmentGroupRuntimeTopology())
+        {
+            return false;
+        }
+
+        const UINT groupBufferCount =
+            static_cast<UINT>(
+                std::max<size_t>(
+                    m_segmentGroupInitialData.size(),
+                    1u));
+
+        const UINT blockBufferCount =
+            static_cast<UINT>(
+                std::max<size_t>(
+                    m_segmentGroupBlockInitialData.size(),
+                    1u));
+
+        m_segmentGroupBuffer =
+            CreateStructuredBuffer(
+                sizeof(SegmentGroupGpuData),
+                groupBufferCount,
+                m_segmentGroupInitialData.data(),
+                true);
+
+        m_segmentGroupBlockBuffer =
+            CreateStructuredBuffer(
+                sizeof(SegmentGroupBlockGpuData),
+                blockBufferCount,
+                m_segmentGroupBlockInitialData.data(),
+                true);
+
+        m_segmentGroupCertificateBuffer =
+            CreateStructuredBuffer(
+                sizeof(SegmentGroupCertificateGpuData),
+                groupBufferCount,
+                m_segmentGroupCertificateInitialData.data(),
+                true);
+
+        std::vector<uint32_t> emptyGroupIndices(
+            groupBufferCount,
+            0u);
+
+        m_dynamicSegmentGroupIndicesBuffer =
+            CreateStructuredBuffer(
+                sizeof(uint32_t),
+                groupBufferCount,
+                emptyGroupIndices.data(),
+                true);
+
+        m_repairSegmentGroupIndicesBuffer =
+            CreateStructuredBuffer(
+                sizeof(uint32_t),
+                groupBufferCount,
+                emptyGroupIndices.data(),
+                true);
+
+        const std::array<uint32_t, 4> zeroCounters =
+        {
+            0u,
+            0u,
+            0u,
+            0u
+        };
+
+        m_segmentGroupCounterBuffer =
+            CreateStructuredBuffer(
+                sizeof(uint32_t),
+                static_cast<UINT>(zeroCounters.size()),
+                zeroCounters.data(),
+                true);
+
+        SegmentGroupRuntimeCounters runtimeCounters = {};
+        runtimeCounters.totalGroupCount =
+            m_segmentGroupCount;
+
+        runtimeCounters.fullPositionMemoryMb =
+            static_cast<float>(
+                static_cast<double>(m_segmentGroupCount) *
+                sizeof(GpuParticle) *
+                2.0 /
+                (1024.0 * 1024.0));
+
+        runtimeCounters.directionCacheMemoryMb =
+            static_cast<float>(
+                static_cast<double>(m_segmentGroupCount) *
+                sizeof(float) *
+                4.0 /
+                (1024.0 * 1024.0));
+
+        m_segmentGroupRuntimeCountersBuffer =
+            CreateStructuredBuffer(
+                sizeof(SegmentGroupRuntimeCounters),
+                1u,
+                &runtimeCounters,
+                true);
+
+        if (!m_segmentGroupBuffer.buffer ||
+            !m_segmentGroupBlockBuffer.buffer ||
+            !m_segmentGroupCertificateBuffer.buffer ||
+            !m_dynamicSegmentGroupIndicesBuffer.buffer ||
+            !m_repairSegmentGroupIndicesBuffer.buffer ||
+            !m_segmentGroupCounterBuffer.buffer ||
+            !m_segmentGroupRuntimeCountersBuffer.buffer)
+        {
+            return false;
+        }
+
+        if (!CreateSegmentGroupIndirectArgsResources())
+        {
+            return false;
+        }
+
+        m_segmentGroupRuntimeReady = true;
+        m_forceAllSegmentGroupsDirty = true;
+
         return true;
     }
 

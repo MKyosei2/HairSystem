@@ -544,8 +544,8 @@ return true;
         m_lastSimulationStepMilliseconds = 0.0f;
         m_performanceSamples.clear();
         m_noveltyTelemetry = hairgpu::MakeZeroNoveltyTelemetry();
-        RebuildActiveSetFoundation();
-        RecomputeAssetBounds();
+        ResetSegmentGroupRuntimeResources();
+        RebuildActiveSetFoundation();RecomputeAssetBounds();
         AutoFrameCameraToAsset(true);
         m_lastEstimatedVisibleParticles = 0u;
         m_lastReadbackParticleCount = 0u;
@@ -561,6 +561,735 @@ return true;
         QueueVisibilityRecovery();
         SyncControlsFromState();
         UpdateStatsLabel();
+    }
+
+    void GpuHairViewer::ResetSegmentGroupRuntimeResources()
+    {
+        if (!m_segmentGroupRuntimeReady)
+        {
+            return;
+        }
+
+        ++m_simulationResetVersion;
+        ++m_headTransformVersion;
+        ++m_scalpVersion;
+        ++m_colliderVersion;
+        ++m_editVersion;
+
+        if (!BuildSegmentGroupRuntimeTopology())
+        {
+            m_segmentGroupRuntimeReady = false;
+            return;
+        }
+
+        if (m_segmentGroupBuffer.buffer &&
+            !m_segmentGroupInitialData.empty())
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                m_segmentGroupInitialData.data(),
+                0u,
+                0u);
+        }
+
+        if (m_segmentGroupBlockBuffer.buffer &&
+            !m_segmentGroupBlockInitialData.empty())
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupBlockBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                m_segmentGroupBlockInitialData.data(),
+                0u,
+                0u);
+        }
+
+        if (m_segmentGroupCertificateBuffer.buffer &&
+            !m_segmentGroupCertificateInitialData.empty())
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupCertificateBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                m_segmentGroupCertificateInitialData.data(),
+                0u,
+                0u);
+        }
+
+        const std::array<uint32_t, 4> zeroCounters =
+        {
+            0u,
+            0u,
+            0u,
+            0u
+        };
+
+        if (m_segmentGroupCounterBuffer.buffer)
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupCounterBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                zeroCounters.data(),
+                0u,
+                0u);
+        }
+
+        SegmentGroupRuntimeCounters runtimeCounters = {};
+        runtimeCounters.totalGroupCount =
+            m_segmentGroupCount;
+
+        runtimeCounters.fullPositionMemoryMb =
+            static_cast<float>(
+                static_cast<double>(m_segmentGroupCount) *
+                sizeof(GpuParticle) *
+                2.0 /
+                (1024.0 * 1024.0));
+
+        runtimeCounters.directionCacheMemoryMb =
+            static_cast<float>(
+                static_cast<double>(m_segmentGroupCount) *
+                sizeof(float) *
+                4.0 /
+                (1024.0 * 1024.0));
+
+        if (m_segmentGroupRuntimeCountersBuffer.buffer)
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupRuntimeCountersBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                &runtimeCounters,
+                0u,
+                0u);
+        }
+
+        const UINT zeroDispatchArgs[4] =
+        {
+            0u,
+            1u,
+            1u,
+            0u
+        };
+
+        if (m_segmentGroupDynamicDispatchArgsBuffer)
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupDynamicDispatchArgsBuffer.Get(),
+                0u,
+                nullptr,
+                zeroDispatchArgs,
+                0u,
+                0u);
+        }
+
+        if (m_segmentGroupRepairDispatchArgsBuffer)
+        {
+            m_context->UpdateSubresource(
+                m_segmentGroupRepairDispatchArgsBuffer.Get(),
+                0u,
+                nullptr,
+                zeroDispatchArgs,
+                0u,
+                0u);
+        }
+
+        m_forceAllSegmentGroupsDirty = true;
+    }
+
+    void GpuHairViewer::DetectSegmentGroupDirtyEvents()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_noveltyFlags.enableMicrotype)
+        {
+            return;
+        }
+
+        bool colliderChanged = false;
+
+        const uint32_t sphereCount =
+            static_cast<uint32_t>(m_colliders.spheres.size());
+
+        const uint32_t capsuleCount =
+            static_cast<uint32_t>(m_colliders.capsules.size());
+
+        const uint32_t planeCount =
+            static_cast<uint32_t>(m_colliders.planes.size());
+
+        const uint32_t aabbCount =
+            static_cast<uint32_t>(m_colliders.aabbs.size());
+
+        if (sphereCount != m_previousSphereColliderCount ||
+            capsuleCount != m_previousCapsuleColliderCount ||
+            planeCount != m_previousPlaneColliderCount ||
+            aabbCount != m_previousAabbColliderCount)
+        {
+            colliderChanged = true;
+
+            m_previousSphereColliderCount = sphereCount;
+            m_previousCapsuleColliderCount = capsuleCount;
+            m_previousPlaneColliderCount = planeCount;
+            m_previousAabbColliderCount = aabbCount;
+        }
+
+        if (colliderChanged)
+        {
+            ++m_colliderVersion;
+            m_forceAllSegmentGroupsDirty = true;
+        }
+
+        // The current viewer updates scalp positions every frame when
+        // scalp motion is enabled. Until precise transform-difference
+        // detection is implemented, treat this as a head/scalp event.
+        if (m_enableScalpMotion)
+        {
+            ++m_headTransformVersion;
+            ++m_scalpVersion;
+            m_forceAllSegmentGroupsDirty = true;
+        }
+
+        // A full dirty upload is acceptable only as a temporary
+        // initialization/fallback path. Normal operation must later
+        // replace this with GPU dirty propagation.
+        if (m_forceAllSegmentGroupsDirty &&
+            m_segmentGroupBuffer.buffer &&
+            !m_segmentGroupInitialData.empty())
+        {
+            for (SegmentGroupGpuData& group :
+                m_segmentGroupInitialData)
+            {
+                group.dirtyReason |=
+                    SegmentGroupDirty_HeadMoved |
+                    SegmentGroupDirty_CacheExpired;
+            }
+
+            for (SegmentGroupBlockGpuData& block :
+                m_segmentGroupBlockInitialData)
+            {
+                block.dirtyMask |=
+                    SegmentGroupDirty_HeadMoved |
+                    SegmentGroupDirty_CacheExpired;
+            }
+
+            m_context->UpdateSubresource(
+                m_segmentGroupBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                m_segmentGroupInitialData.data(),
+                0u,
+                0u);
+
+            m_context->UpdateSubresource(
+                m_segmentGroupBlockBuffer.buffer.Get(),
+                0u,
+                nullptr,
+                m_segmentGroupBlockInitialData.data(),
+                0u,
+                0u);
+
+            m_forceAllSegmentGroupsDirty = false;
+        }
+    }
+
+    void GpuHairViewer::ClassifySegmentGroupBlocks()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupBlockClassifyCS ||
+            m_segmentGroupBlockCount == 0u)
+        {
+            return;
+        }
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_segmentGroupBlockBuffer.uav.Get(),
+            m_segmentGroupRuntimeCountersBuffer.uav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupBlockClassifyCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            static_cast<UINT>(std::size(uavs)),
+            uavs,
+            nullptr);
+
+        const UINT dispatchCount =
+            (m_segmentGroupBlockCount + 63u) / 64u;
+
+        m_context->Dispatch(
+            std::max<UINT>(dispatchCount, 1u),
+            1u,
+            1u);
+
+        ID3D11UnorderedAccessView* nullUavs[2] =
+        {
+            nullptr,
+            nullptr
+        };
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            2u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
+
+    void GpuHairViewer::ClassifyDirtySegmentGroups()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupClassifyCS ||
+            m_segmentGroupCount == 0u)
+        {
+            return;
+        }
+
+        ID3D11ShaderResourceView* srvs[] =
+        {
+            m_positions[m_currentBufferIndex].srv.Get(),
+            m_previousPositions[m_currentBufferIndex].srv.Get(),
+            m_segmentGroupBlockBuffer.srv.Get()
+        };
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_segmentGroupBuffer.uav.Get(),
+            m_segmentGroupCertificateBuffer.uav.Get(),
+            m_segmentGroupRuntimeCountersBuffer.uav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupClassifyCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetShaderResources(
+            0u,
+            static_cast<UINT>(std::size(srvs)),
+            srvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            static_cast<UINT>(std::size(uavs)),
+            uavs,
+            nullptr);
+
+        const UINT dispatchCount =
+            (m_segmentGroupCount + 63u) / 64u;
+
+        m_context->Dispatch(
+            std::max<UINT>(dispatchCount, 1u),
+            1u,
+            1u);
+
+        ID3D11ShaderResourceView* nullSrvs[3] =
+        {
+            nullptr,
+            nullptr,
+            nullptr
+        };
+
+        ID3D11UnorderedAccessView* nullUavs[3] =
+        {
+            nullptr,
+            nullptr,
+            nullptr
+        };
+
+        m_context->CSSetShaderResources(
+            0u,
+            3u,
+            nullSrvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            3u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
+
+    void GpuHairViewer::CompactDynamicSegmentGroups()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupCompactDynamicCS ||
+            m_segmentGroupCount == 0u)
+        {
+            return;
+        }
+
+        const std::array<uint32_t, 4> zeroCounters =
+        {
+            0u,
+            0u,
+            0u,
+            0u
+        };
+
+        m_context->UpdateSubresource(
+            m_segmentGroupCounterBuffer.buffer.Get(),
+            0u,
+            nullptr,
+            zeroCounters.data(),
+            0u,
+            0u);
+
+        ID3D11ShaderResourceView* srvs[] =
+        {
+            m_segmentGroupBuffer.srv.Get()
+        };
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_dynamicSegmentGroupIndicesBuffer.uav.Get(),
+            m_repairSegmentGroupIndicesBuffer.uav.Get(),
+            m_segmentGroupCounterBuffer.uav.Get(),
+            m_segmentGroupRuntimeCountersBuffer.uav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupCompactDynamicCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetShaderResources(0u, 1u, srvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            static_cast<UINT>(std::size(uavs)),
+            uavs,
+            nullptr);
+
+        const UINT dispatchCount =
+            (m_segmentGroupCount + 63u) / 64u;
+
+        m_context->Dispatch(
+            std::max<UINT>(dispatchCount, 1u),
+            1u,
+            1u);
+
+        ID3D11ShaderResourceView* nullSrvs[1] =
+        {
+            nullptr
+        };
+
+        ID3D11UnorderedAccessView* nullUavs[4] =
+        {
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr
+        };
+
+        m_context->CSSetShaderResources(
+            0u,
+            1u,
+            nullSrvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            4u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
+
+    void GpuHairViewer::BuildSegmentGroupDispatchArguments()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupBuildDispatchArgsCS)
+        {
+            return;
+        }
+
+        ID3D11ShaderResourceView* srvs[] =
+        {
+            m_segmentGroupCounterBuffer.srv.Get()
+        };
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_segmentGroupDynamicDispatchArgsUav.Get(),
+            m_segmentGroupRepairDispatchArgsUav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupBuildDispatchArgsCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetShaderResources(0u, 1u, srvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            2u,
+            uavs,
+            nullptr);
+
+        m_context->Dispatch(1u, 1u, 1u);
+
+        ID3D11ShaderResourceView* nullSrvs[1] =
+        {
+            nullptr
+        };
+
+        ID3D11UnorderedAccessView* nullUavs[2] =
+        {
+            nullptr,
+            nullptr
+        };
+
+        m_context->CSSetShaderResources(
+            0u,
+            1u,
+            nullSrvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            2u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+
+        ++m_noveltyTelemetry.dispatchIndirectCount;
+    }
+
+    void GpuHairViewer::TransformStaticSegmentGroups()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupStaticTransformCS)
+        {
+            return;
+        }
+
+        ID3D11ShaderResourceView* srvs[] =
+        {
+            m_segmentGroupBuffer.srv.Get()
+        };
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_positions[m_currentBufferIndex].uav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupStaticTransformCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetShaderResources(0u, 1u, srvs);
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            1u,
+            uavs,
+            nullptr);
+
+        const UINT dispatchCount =
+            (m_segmentGroupCount + 63u) / 64u;
+
+        m_context->Dispatch(
+            std::max<UINT>(dispatchCount, 1u),
+            1u,
+            1u);
+
+        ID3D11ShaderResourceView* nullSrvs[1] =
+        {
+            nullptr
+        };
+
+        ID3D11UnorderedAccessView* nullUavs[1] =
+        {
+            nullptr
+        };
+
+        m_context->CSSetShaderResources(
+            0u,
+            1u,
+            nullSrvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            1u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
+
+    void GpuHairViewer::RepairSegmentGroupBoundaries()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupBoundaryRepairCS ||
+            !m_segmentGroupRepairDispatchArgsBuffer)
+        {
+            return;
+        }
+
+        ID3D11ShaderResourceView* srvs[] =
+        {
+            m_repairSegmentGroupIndicesBuffer.srv.Get()
+        };
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_segmentGroupBuffer.uav.Get(),
+            m_segmentGroupCertificateBuffer.uav.Get(),
+            m_positions[m_currentBufferIndex].uav.Get(),
+            m_segmentGroupRuntimeCountersBuffer.uav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupBoundaryRepairCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetShaderResources(0u, 1u, srvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            static_cast<UINT>(std::size(uavs)),
+            uavs,
+            nullptr);
+
+        m_context->DispatchIndirect(
+            m_segmentGroupRepairDispatchArgsBuffer.Get(),
+            0u);
+
+        ID3D11ShaderResourceView* nullSrvs[1] =
+        {
+            nullptr
+        };
+
+        ID3D11UnorderedAccessView* nullUavs[4] =
+        {
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr
+        };
+
+        m_context->CSSetShaderResources(
+            0u,
+            1u,
+            nullSrvs);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            4u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
+
+    void GpuHairViewer::ExecuteSegmentGroupWatchdog()
+    {
+        if (!m_segmentGroupRuntimeReady ||
+            !m_segmentGroupWatchdogCS ||
+            m_segmentGroupCount == 0u)
+        {
+            return;
+        }
+
+        if (m_segmentGroupWatchdogIntervalFrames == 0u)
+        {
+            return;
+        }
+
+        ID3D11UnorderedAccessView* uavs[] =
+        {
+            m_segmentGroupBuffer.uav.Get(),
+            m_segmentGroupCertificateBuffer.uav.Get(),
+            m_segmentGroupRuntimeCountersBuffer.uav.Get()
+        };
+
+        m_context->CSSetShader(
+            m_segmentGroupWatchdogCS.Get(),
+            nullptr,
+            0u);
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            3u,
+            uavs,
+            nullptr);
+
+        const UINT dispatchCount =
+            (m_segmentGroupCount + 63u) / 64u;
+
+        m_context->Dispatch(
+            std::max<UINT>(dispatchCount, 1u),
+            1u,
+            1u);
+
+        ID3D11UnorderedAccessView* nullUavs[3] =
+        {
+            nullptr,
+            nullptr,
+            nullptr
+        };
+
+        m_context->CSSetUnorderedAccessViews(
+            0u,
+            3u,
+            nullUavs,
+            nullptr);
+
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
+
+    void GpuHairViewer::ResolveSegmentGroupTelemetry()
+    {
+        if (!m_segmentGroupRuntimeReady)
+        {
+            return;
+        }
+
+        m_noveltyTelemetry.totalSegmentGroupCount =
+            m_segmentGroupCount;
+
+        const float fullPositionMemoryMb =
+            static_cast<float>(
+                static_cast<double>(m_segmentGroupCount) *
+                sizeof(GpuParticle) *
+                2.0 /
+                (1024.0 * 1024.0));
+
+        const float directionCacheMemoryMb =
+            static_cast<float>(
+                static_cast<double>(m_segmentGroupCount) *
+                sizeof(float) *
+                4.0 /
+                (1024.0 * 1024.0));
+
+        m_noveltyTelemetry.fullPositionMemoryMb =
+            fullPositionMemoryMb;
+
+        m_noveltyTelemetry.directionCacheMemoryMb =
+            directionCacheMemoryMb;
+
+        if (fullPositionMemoryMb > 1.0e-6f)
+        {
+            m_noveltyTelemetry.directionCacheMemorySavingRate =
+                1.0f -
+                directionCacheMemoryMb /
+                fullPositionMemoryMb;
+        }
+        else
+        {
+            m_noveltyTelemetry.directionCacheMemorySavingRate =
+                0.0f;
+        }
     }
 
     void GpuHairViewer::StepSingleFrame()
@@ -608,10 +1337,29 @@ return true;
 
     void GpuHairViewer::EvaluateMicrotypeCertificates()
     {
-        if (!m_noveltyFlags.enableMicrotype)
+        if (!m_noveltyFlags.enableMicrotype ||
+            !m_segmentGroupRuntimeReady)
         {
             return;
         }
+
+        DetectSegmentGroupDirtyEvents();
+
+        ClassifySegmentGroupBlocks();
+        ClassifyDirtySegmentGroups();
+
+        CompactDynamicSegmentGroups();
+        BuildSegmentGroupDispatchArguments();
+
+        TransformStaticSegmentGroups();
+
+        RepairSegmentGroupBoundaries();
+        ExecuteSegmentGroupWatchdog();
+
+        ResolveSegmentGroupTelemetry();
+
+        // These legacy Phase1 fields remain zero until the matching
+        // typed decode path is connected.
         m_noveltyTelemetry.microtypeDecodedCount = 0u;
         m_noveltyTelemetry.safeDecodeCount = 0u;
         m_noveltyTelemetry.certificateFailureCount = 0u;

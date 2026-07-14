@@ -23,6 +23,19 @@ namespace hairgpu
         f.enablePhysicsIslands = enablePhysicsIslands ? 1u : 0u;
         f.enableRodRepair = enableRodRepair ? 1u : 0u;
         f.enableNoNoveltyBaseline = enableNoNoveltyBaseline ? 1u : 0u;
+        // The full 01 configuration is the default when the top-level
+        // microtype switch is enabled. Individual experiment runs may
+        // disable one or more of these flags after normalization.
+        if (f.enableMicrotype)
+        {
+            f.enableMicrotypeCertificate = 1u;
+            f.enableMicrotypeDirtyPropagation = 1u;
+            f.enableMicrotypeBlockHierarchy = 1u;
+            f.enableMicrotypeBoundaryRepair = 1u;
+            f.enableMicrotypeWatchdog = 1u;
+            f.enableMicrotypeHemisphereOwnership = 1u;
+            f.enableMicrotypeIndirectDispatch = 1u;
+        }
 
         if (f.enableCBMA || f.enablePhysicsIslands || f.enableRodRepair)
         {
@@ -40,6 +53,76 @@ namespace hairgpu
         {
             f = {};
             f.enableNoNoveltyBaseline = 1u;
+        }
+        f = NormalizeMicrotypeAblationFlags(f);
+        return f;
+    }
+
+        HairNoveltyFeatureFlags NormalizeMicrotypeAblationFlags(
+        const HairNoveltyFeatureFlags& inputFlags)
+    {
+        HairNoveltyFeatureFlags f = inputFlags;
+
+        f.enableMicrotype =
+            f.enableMicrotype ? 1u : 0u;
+
+        f.enableMicrotypeCertificate =
+            f.enableMicrotypeCertificate ? 1u : 0u;
+
+        f.enableMicrotypeDirtyPropagation =
+            f.enableMicrotypeDirtyPropagation ? 1u : 0u;
+
+        f.enableMicrotypeBlockHierarchy =
+            f.enableMicrotypeBlockHierarchy ? 1u : 0u;
+
+        f.enableMicrotypeBoundaryRepair =
+            f.enableMicrotypeBoundaryRepair ? 1u : 0u;
+
+        f.enableMicrotypeWatchdog =
+            f.enableMicrotypeWatchdog ? 1u : 0u;
+
+        f.enableMicrotypeHemisphereOwnership =
+            f.enableMicrotypeHemisphereOwnership ? 1u : 0u;
+
+        f.enableMicrotypeIndirectDispatch =
+            f.enableMicrotypeIndirectDispatch ? 1u : 0u;
+
+        if (!f.enableMicrotype)
+        {
+            f.enableMicrotypeCertificate = 0u;
+            f.enableMicrotypeDirtyPropagation = 0u;
+            f.enableMicrotypeBlockHierarchy = 0u;
+            f.enableMicrotypeBoundaryRepair = 0u;
+            f.enableMicrotypeWatchdog = 0u;
+            f.enableMicrotypeHemisphereOwnership = 0u;
+            f.enableMicrotypeIndirectDispatch = 0u;
+        }
+
+        if (f.enableNoNoveltyBaseline)
+        {
+            f.enableMicrotype = 0u;
+            f.enableMicrotypeCertificate = 0u;
+            f.enableMicrotypeDirtyPropagation = 0u;
+            f.enableMicrotypeBlockHierarchy = 0u;
+            f.enableMicrotypeBoundaryRepair = 0u;
+            f.enableMicrotypeWatchdog = 0u;
+            f.enableMicrotypeHemisphereOwnership = 0u;
+            f.enableMicrotypeIndirectDispatch = 0u;
+        }
+
+        // Boundary repair requires certificates because the repair path
+        // must know why a cached group became invalid.
+        if (f.enableMicrotypeBoundaryRepair &&
+            !f.enableMicrotypeCertificate)
+        {
+            f.enableMicrotypeBoundaryRepair = 0u;
+        }
+
+        // Watchdog without certificates cannot validate static reuse.
+        if (f.enableMicrotypeWatchdog &&
+            !f.enableMicrotypeCertificate)
+        {
+            f.enableMicrotypeWatchdog = 0u;
         }
 
         return f;
@@ -65,6 +148,35 @@ namespace hairgpu
         bits.push_back(f.enableCertificateRender ? '1' : '0');
         bits.push_back(f.enablePerStrandEdit ? '1' : '0');
         bits.push_back(f.enableGpuResident ? '1' : '0');
+        return bits;
+    }
+
+        std::string BuildMicrotypeAblationBits(const HairNoveltyFeatureFlags& f)
+    {
+        std::string bits;
+        bits.reserve(7);
+
+        bits.push_back(
+            f.enableMicrotypeCertificate ? '1' : '0');
+
+        bits.push_back(
+            f.enableMicrotypeDirtyPropagation ? '1' : '0');
+
+        bits.push_back(
+            f.enableMicrotypeBlockHierarchy ? '1' : '0');
+
+        bits.push_back(
+            f.enableMicrotypeBoundaryRepair ? '1' : '0');
+
+        bits.push_back(
+            f.enableMicrotypeWatchdog ? '1' : '0');
+
+        bits.push_back(
+            f.enableMicrotypeHemisphereOwnership ? '1' : '0');
+
+        bits.push_back(
+            f.enableMicrotypeIndirectDispatch ? '1' : '0');
+
         return bits;
     }
 }

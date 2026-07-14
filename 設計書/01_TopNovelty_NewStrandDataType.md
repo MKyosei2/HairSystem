@@ -1,52 +1,818 @@
 # 01 企画書兼設計書
 
-# 証明付き静的/動的セグメントグループ型ストランド表現
+# 証明付き静的／動的セグメントグループ型ストランド表現
 
 ## Segment-Group Certified Strand Data Type
 
-## 0. 対象
+---
+
+# 0. 対象
 
 * 対象リポジトリ：`MKyosei2/HairSystem`
 * 対象ブランチ：`Novelty`
+* 対象バージョン：`61.48`
+* 対象コミット：`4a2b77f6a86374acde8d649ce150b4394b385242`
 * 対象機能番号：`01`
 * 対応Noveltyフラグ：`enableMicrotype`
-* 目的：01単体で10万本規模の髪を60FPSに近づけるための、髪専用データ型の追加実装
+* 実装状況：企画書兼設計書段階。01の主要機能は未実装
+* 対象髪本数：100,000本
+* 基本点数：1本あたり16点
+* 基本セグメント数：1本あたり15セグメント
+* 目標フレームレート：固定60 FPS
+* 目標フレーム時間：16.67 ms以下
+* 想定環境：最新世代に限定しない、少し古い一般的なデスクトップPC
 
-本設計書では、01を単なるキャッシュ最適化ではなく、**証明付き静的/動的セグメントグループ型ストランド表現**として定義する。
-髪一本を単なる点列として扱うのではなく、共有端点を持つ `点-線-点` のセグメントグループ列として扱い、各グループを `StaticCached`、`StaticTransformed`、`Dynamic`、`Deferred`、`Repair` の5状態で管理する。
+本設計書では、髪ストランドを単純な点列として扱うのではなく、共有端点を持つ複数の「点―線―点」グループによって構成されるデータ型として扱う。
 
-これにより、静的な髪部分は物理再計算せず、固定端点・方向・長さから再構成する。
-一方で、衝突・大きな運動・境界破綻・編集対象などの危険があるグループだけを動的計算または修復に回す。
+各グループは、静的、変換可能な静的、動的、計算延期、修復の状態を持ち、静的なグループについては物理計算および詳細な状態分類を毎フレーム行わない。
+
+本研究の目的は、単に動かない髪をキャッシュすることではない。
+
+共有端点、親子関係、キャッシュの有効条件、静的・動的境界、誤った静的判定からの復旧処理までを、一つのストランド専用データ型として統一的に管理することを目的とする。
 
 ---
 
-# 1. 01の最終的な新規性定義
+# 1. 研究テーマ
 
-本研究の01は、以下のように定義する。
+本研究では、10万本規模の髪を固定60 FPSに近い状態で処理するため、髪一本を共有端点付きのセグメントグループ列として表現する。
+
+通常の髪データは、次のような点列として表現される。
 
 ```text
-証明付き静的/動的セグメントグループ型ストランド表現
-=
-髪ストランドを共有端点を持つ点-線-点グループ列として扱い、
-各グループを状態付きデータ型として分類し、
-静的グループを方向キャッシュで再構成し、
-動的グループのみ物理計算し、
-Static/Dynamic境界とfalse staticを検出・補正することで、
-10万本規模の髪を固定60FPS制約下で扱うための髪専用データ表現。
+P0 ― P1 ― P2 ― P3 ― P4 ― P5
 ```
 
-本研究の新規性は、単に「動かない髪をキャッシュする」ことではない。
-新規性の核は次の3点である。
+本研究では、この点列を次のようなグループ列として扱う。
 
-1. 髪一本を `点-線-点` のセグメントグループ列として再定義すること。
-2. 各グループに `StaticCached / StaticTransformed / Dynamic / Deferred / Repair` の5状態を持たせること。
-3. `falseStaticRate`、`Static/Dynamic境界誤差`、`direction cache memory saving` によって、静的再利用の安全性を評価すること。
+```text
+Group 0 = P0 ― P1
+Group 1 = P1 ― P2
+Group 2 = P2 ― P3
+Group 3 = P3 ― P4
+Group 4 = P4 ― P5
+```
+
+各グループは、一つ前のグループの終点を、自身の開始点として共有する。
+
+```text
+Group i の終了点
+        =
+Group i+1 の開始点
+```
+
+ただし、共有点を両方のグループが個別に更新すると、書き込み競合、位置の不一致、長さ制約の破綻が起きる。
+
+そのため、本研究では共有点の最終位置を一つ前のグループが決定し、次のグループはその点を読み取り専用の開始点として利用する。
 
 ---
 
-# 2. 最終的に追加するソースファイル
+# 2. 本研究の目的
 
-最終的に追加するファイルは以下である。
+本研究の目的は、次の条件を同時に満たす髪専用データ型を構築することである。
+
+1. 静止している髪部分を毎フレーム再計算しない
+2. 髪一本全体ではなく、細かなセグメントグループ単位で状態を変更できる
+3. 静的なグループと動的なグループを同じ髪の中に共存させる
+4. 静的なグループを開始点、方向、長さから復元する
+5. 髪全体が頭部とともに動く場合は、局所形状を再計算せず変換だけを適用する
+6. 静的・動的境界のずれを検出する
+7. 誤って静的と判定されたグループを検出する
+8. 誤判定時に動的状態または修復状態へ復帰させる
+9. 静的グループを状態分類処理からも除外する
+10. 10万本規模で固定60 FPSに近づける
+
+---
+
+# 3. 本研究の新規性
+
+本研究の新規性は、次の三つを中心とする。
+
+## 3.1 セグメントグループを状態付きデータ型として定義する
+
+本研究では、髪を単なる位置配列として扱わず、各「点―線―点」に以下の情報を持たせる。
+
+* ストランド番号
+* グループ番号
+* 親グループ番号
+* 子グループ番号
+* 開始点番号
+* 終了点番号
+* 開始点の所有者
+* 方向
+* 長さ
+* 現在状態
+* 前フレーム状態
+* キャッシュ生成時のフレーム番号
+* 親グループのバージョン
+* コライダー環境のバージョン
+* 境界誤差
+* 衝突危険度
+* 誤静的化フラグ
+* 最終修復フレーム
+* 更新要求の原因
+
+これにより、単なる計算結果のキャッシュではなく、実行時の判断規則を持つストランド専用データ型として扱う。
+
+## 3.2 共有端点に所有規則を持たせる
+
+隣接するグループ間の共有点は、一つ前のグループが所有する。
+
+```text
+Group 0 = P0 ― P1
+Group 1 = P1 ― P2
+```
+
+この場合、`P1`の位置を決定するのは`Group 0`である。
+
+`Group 1`は`P1`を書き換えず、開始点として参照する。
+
+これにより、静的グループと動的グループが隣接する場合でも、共有点の二重更新を防ぐ。
+
+## 3.3 静的再利用の成立条件と失敗時の復旧をデータ型に含める
+
+静的なグループは、単に前回結果が存在するという理由だけでは再利用しない。
+
+次の条件を満たす場合にのみ、静的キャッシュを有効とする。
+
+* 親グループの接続状態が有効
+* 長さ誤差が許容範囲内
+* 方向誤差が許容範囲内
+* 境界誤差が許容範囲内
+* 衝突危険度が許容範囲内
+* コライダー環境の世代が一致
+* 編集対象ではない
+* 修復待ちではない
+
+条件を満たさなくなった場合は、静的キャッシュを無効化し、`Dynamic`または`Repair`へ遷移させる。
+
+---
+
+# 4. 既存方式との差
+
+本研究は、次の既存概念と一部の考え方を共有する。
+
+* sleeping
+* inactive particle
+* active set
+* simulation island
+* temporal cache
+* animation cache
+* LOD
+* adaptive simulation
+* region of interest
+* guide/follower hair
+* position-based dynamics
+* rod simulation
+
+ただし、本研究の主張は「動かない要素を止めること」ではない。
+
+本研究では、共有端点を持つ細かなセグメントグループを最小単位とし、以下を統合する。
+
+* グループ単位の実行状態
+* 共有端点の所有関係
+* 静的キャッシュの有効証明
+* 隣接グループへの依存関係
+* 静的・動的境界の連続性
+* 誤静的化の検出
+* 修復状態への遷移
+* 更新理由の伝播
+
+この統合されたデータ表現を、本研究では「証明付き静的／動的セグメントグループ型ストランド表現」と呼ぶ。
+
+---
+
+# 5. 用語定義
+
+## 5.1 Strand
+
+頭部などに接続された一本の髪を表す。
+
+## 5.2 Point
+
+髪の形状を構成する位置情報である。
+
+## 5.3 Segment
+
+二つの点を結ぶ線分である。
+
+## 5.4 Segment Group
+
+開始点、線分、終了点を一組として扱う最小単位である。
+
+```text
+開始点 ― 線分 ― 終了点
+```
+
+## 5.5 Shared Endpoint
+
+隣り合う二つのグループが共有する点である。
+
+## 5.6 Parent Group
+
+共有点の位置を決定する一つ前のグループである。
+
+## 5.7 Child Group
+
+親グループの終了点を、自身の開始点として参照するグループである。
+
+## 5.8 Cache Certificate
+
+静的キャッシュが現在の環境でも利用可能であることを示す情報である。
+
+## 5.9 False Static
+
+静的状態として再利用されたグループが、後から判明した安全条件または参照結果に対して、許容誤差を超えていた状態である。
+
+## 5.10 Boundary Error
+
+静的グループと動的グループの共有点または方向が、不連続になったときの誤差である。
+
+---
+
+# 6. データ型の不変条件
+
+本データ型は、常に以下の条件を満たす。
+
+1. 各グループは必ず一つのストランドに属する
+2. 各グループは開始点と終了点を一つずつ持つ
+3. 子グループの開始点は親グループの終了点と一致する
+4. 共有点の最終位置を書き込めるのは親グループだけである
+5. 子グループは共有開始点を読み取り専用として扱う
+6. 各グループの基準長は、明示的な編集がない限り変化しない
+7. 同一ストランド内では、基本的に各グループの基準長を同じとする
+8. 異なるストランド間では、グループ長が異なってもよい
+9. `StaticCached`は有効なCache Certificateを必要とする
+10. `StaticTransformed`は局所形状が変化していないことを必要とする
+11. `Dynamic`は物理計算の対象となる
+12. `Deferred`は誤差上限を超える前に再評価される
+13. `Repair`完了前に`StaticCached`へ直接戻らない
+14. 誤差上限を超えた静的グループは必ず`Repair`または`Dynamic`へ移る
+15. 編集対象になったグループは静的状態を維持しない
+16. 衝突危険領域へ入った静的グループは再評価対象となる
+17. 親グループが更新された場合、子グループへ更新要求を伝播する
+
+---
+
+# 7. 状態定義
+
+## 7.1 StaticCached
+
+完全に停止している状態である。
+
+物理計算、詳細な状態分類、位置再生成を原則として行わず、前回の有効な結果を利用する。
+
+頭部、親グループ、周辺コライダー、編集状態に変化がない場合に利用する。
+
+## 7.2 StaticTransformed
+
+局所形状は変化していないが、頭部または親グループの移動に合わせて、剛体的な変換だけを適用する状態である。
+
+物理拘束計算は行わない。
+
+## 7.3 Dynamic
+
+衝突、慣性、外力、編集、親グループの変形などにより、物理計算が必要な状態である。
+
+## 7.4 Deferred
+
+動的処理が必要になる可能性があるが、現フレームでは計算を延期している状態である。
+
+延期中も誤差上限、衝突危険度、経過フレーム数を監視する。
+
+## 7.5 Repair
+
+誤静的化、境界破綻、長さ誤差、方向不連続、めり込みなどを修復する状態である。
+
+---
+
+# 8. 状態遷移
+
+## 8.1 StaticCachedからの遷移
+
+```text
+頭部のみが移動
+    → StaticTransformed
+
+親グループが移動
+    → StaticTransformedまたはDynamic
+
+衝突候補が接近
+    → Dynamic
+
+編集対象になる
+    → Dynamic
+
+境界誤差が上限を超える
+    → Repair
+
+方向または長さの誤差が上限を超える
+    → Repair
+
+キャッシュ証明が無効
+    → Dynamic
+```
+
+## 8.2 StaticTransformedからの遷移
+
+```text
+変換のみで安全
+    → StaticTransformed
+
+一定時間停止
+    → StaticCached
+
+局所変形が必要
+    → Dynamic
+
+境界誤差が上限を超える
+    → Repair
+```
+
+## 8.3 Dynamicからの遷移
+
+```text
+一定時間安定
+    → StaticCached候補
+
+頭部追従のみで形状維持可能
+    → StaticTransformed
+
+計算予算不足
+    → Deferred
+
+境界破綻
+    → Repair
+```
+
+## 8.4 Deferredからの遷移
+
+```text
+計算予算を確保
+    → Dynamic
+
+誤差上限を超える
+    → Repair
+
+安全性を再確認
+    → StaticCachedまたはStaticTransformed
+```
+
+## 8.5 Repairからの遷移
+
+```text
+修復成功
+    → Dynamic
+
+修復後、一定時間安定
+    → StaticCachedまたはStaticTransformed
+
+修復失敗
+    → DynamicまたはFallback
+```
+
+---
+
+# 9. 共有端点の所有規則
+
+次のようにグループが接続されている場合を考える。
+
+```text
+Group i     = Pi ― Pi+1
+Group i + 1 = Pi+1 ― Pi+2
+```
+
+共有点`Pi+1`は、`Group i`が所有する。
+
+```text
+Owner(Pi+1) = Group i
+```
+
+`Group i+1`は`Pi+1`を読み取り専用の開始点として利用する。
+
+GPU上でも、共有点への書き込みは所有者のみが行う。
+
+これにより、同じ点へ複数スレッドが同時に異なる位置を書き込むことを防止する。
+
+---
+
+# 10. 共有点周辺の半球分割
+
+共有点周辺では、前のグループと次のグループのどちらが衝突または修復処理を担当するかを決める必要がある。
+
+共有点を`P`、前方向を`din`、次方向を`dout`、接触方向を`c`とする。
+
+```text
+din  = normalize(P - Pprev)
+dout = normalize(Pnext - P)
+```
+
+接触方向と各方向の内積を利用して、処理責任を分ける。
+
+```text
+scoreParent = dot(c, -din)
+scoreChild  = dot(c,  dout)
+```
+
+```text
+scoreParent >= scoreChild
+    → 親グループ側が処理
+
+scoreParent < scoreChild
+    → 子グループ側が処理
+```
+
+この半球分割は、共有点の衝突形状そのものを二つの物理オブジェクトに分けることを必須としない。
+
+主な目的は、共有点周辺の衝突処理、境界補正、責任範囲を一意に決定することである。
+
+---
+
+# 11. 静的グループの復元
+
+静的グループは、開始点、方向、長さから終了点を復元する。
+
+```text
+Pend = Pstart + direction × length
+```
+
+開始点は親グループの終了点または髪の根元位置を参照する。
+
+```text
+P0 = root position
+P1 = P0 + d0 × L0
+P2 = P1 + d1 × L1
+P3 = P2 + d2 × L2
+```
+
+これは単純なXYZ軸の正負だけで表すのではなく、正規化方向ベクトルと長さを利用する。
+
+保存形式は、以下のいずれかとする。
+
+* 32ビット浮動小数点方向
+* 16ビット量子化方向
+* 球面座標による量子化方向
+* 親方向との差分角度
+
+初期実装では32ビット浮動小数点方向を使用し、性能評価後に量子化形式を検討する。
+
+---
+
+# 12. 髪一本全体が移動する場合
+
+髪一本の局所形状が変わらず、頭部または親オブジェクトとともに移動する場合は、各グループを物理計算しない。
+
+キャッシュ生成時の頭部変換を`Hcached`、現在の頭部変換を`Hcurrent`とする。
+
+```text
+T = Hcurrent × inverse(Hcached)
+```
+
+各点または根元に対して、次を適用する。
+
+```text
+Pcurrent = T × Pcached
+```
+
+この状態を`StaticTransformed`とする。
+
+ただし、変換後に衝突候補領域へ入った場合は、対象グループを`Dynamic`へ昇格させる。
+
+---
+
+# 13. キャッシュ証明
+
+静的キャッシュが現在も安全に利用できるかを確認するため、各グループはCache Certificateを持つ。
+
+```cpp
+struct SegmentGroupCacheCertificate
+{
+    uint32_t sourceFrame;
+    uint32_t parentVersion;
+    uint32_t colliderVersion;
+    uint32_t editVersion;
+
+    float maximumPositionErrorMm;
+    float maximumDirectionErrorDeg;
+    float maximumLengthErrorRatio;
+    float maximumBoundaryErrorMm;
+
+    uint8_t parentValid;
+    uint8_t collisionValid;
+    uint8_t boundaryValid;
+    uint8_t editValid;
+    uint8_t cacheValid;
+};
+```
+
+Cache Certificateは、以下の条件を満たした場合に有効とする。
+
+```text
+parentValid
+AND collisionValid
+AND boundaryValid
+AND editValid
+AND maximumPositionErrorMm <= 許容値
+AND maximumDirectionErrorDeg <= 許容値
+AND maximumLengthErrorRatio <= 許容値
+AND maximumBoundaryErrorMm <= 許容値
+```
+
+Cache Certificateが無効になったグループは、`StaticCached`を継続できない。
+
+---
+
+# 14. Dirty Reason
+
+静的なグループを毎フレームすべて再分類すると、判定処理そのものが大きな負荷になる。
+
+そのため、各グループは再評価が必要になった理由を持つ。
+
+```cpp
+enum class SegmentGroupDirtyReason : uint16_t
+{
+    None            = 0,
+    ParentMoved     = 1 << 0,
+    HeadMoved       = 1 << 1,
+    ColliderEntered = 1 << 2,
+    ColliderChanged = 1 << 3,
+    NeighborChanged = 1 << 4,
+    Edited          = 1 << 5,
+    CacheExpired    = 1 << 6,
+    BoundaryFailed  = 1 << 7,
+    Watchdog        = 1 << 8
+};
+```
+
+`DirtyReason::None`かつCache Certificateが有効な`StaticCached`グループは、詳細な再分類を行わない。
+
+これにより、静的グループは物理計算だけでなく、毎フレームの分類処理からも除外される。
+
+---
+
+# 15. Dirty Propagation
+
+親グループが更新された場合、子グループへ更新理由を伝播する。
+
+```text
+親が位置変更
+    → 子へParentMoved
+
+親がRepair
+    → 子へNeighborChanged
+
+親の終了点が許容値以上移動
+    → 子へBoundaryFailed
+
+髪の根元が移動
+    → 先頭グループへHeadMoved
+```
+
+ただし、一つの変更によって髪全体を必ず動的化するのではない。
+
+子グループが`StaticTransformed`で対応可能な場合は、物理計算へ移さず変換のみを行う。
+
+---
+
+# 16. 階層管理
+
+10万本、約150万グループをすべて毎フレーム確認することは避ける。
+
+次の三段階で管理する。
+
+```text
+Strand
+    ↓
+Segment Group Block
+    ↓
+Segment Group
+```
+
+## 16.1 Strand単位
+
+髪一本全体が頭部変換だけで動いているかを判定する。
+
+## 16.2 Block単位
+
+複数の連続グループを一つのBlockにまとめる。
+
+基本値は8グループとする。
+
+Blockが完全に静的で、Dirty Reasonが存在しない場合、内部グループを個別に評価しない。
+
+## 16.3 Group単位
+
+危険と判定されたBlock内だけ、個別のグループ状態を評価する。
+
+---
+
+# 17. 衝突候補の絞り込み
+
+全グループに対して詳細衝突判定を行わない。
+
+次の順序で候補を絞り込む。
+
+```text
+1. 頭部またはコライダーの大域AABB判定
+2. StrandまたはBlockのAABB判定
+3. 危険BlockのGroup判定
+4. 危険Groupだけ詳細衝突
+5. 必要なGroupだけDynamicへ昇格
+```
+
+髪同士の衝突についても、全組み合わせを確認せず、空間グリッド、ハッシュ、ボクセルなどを利用する。
+
+---
+
+# 18. False Static
+
+## 18.1 定義
+
+false staticとは、静的状態として再利用されたグループが、後から得られた安全条件または参照結果に対して許容誤差を超えていた状態である。
+
+## 18.2 判定条件
+
+次のいずれかを満たした場合、false staticとする。
+
+```text
+boundaryErrorMm > 6.0 mm
+
+directionDeltaDeg > 8.0 degrees
+
+lengthErrorRatio > 0.05
+
+penetrationDepthMm > 1.0 mm
+
+parentVersion mismatch
+
+colliderVersion mismatch
+
+共有点の位置差 > 6.0 mm
+```
+
+## 18.3 対応
+
+false staticを検出した場合は、次を行う。
+
+```text
+1. falseStatic = true
+2. state = Repair
+3. cacheValid = false
+4. 子グループへNeighborChangedを伝播
+5. 修復失敗時はDynamicへ移行
+```
+
+false staticを完全にゼロにすることだけを目標にしない。
+
+重要なのは、誤判定を検出可能であり、破綻が描画結果へ長時間残らないことである。
+
+---
+
+# 19. Watchdog
+
+静的グループを永久に検査しない場合、外部変化を見逃す可能性がある。
+
+そのため、静的グループの一部を周期的に再確認する。
+
+```text
+(frameIndex + groupId) mod watchdogInterval == 0
+```
+
+基本値は64フレームとする。
+
+```text
+watchdogInterval = 64
+```
+
+これにより、一度に全グループを検査せず、複数フレームへ分散して安全性を確認する。
+
+---
+
+# 20. 境界補正
+
+静的グループと動的グループが隣接する場合、共有点と方向の連続性を確認する。
+
+## 20.1 位置誤差
+
+```text
+positionError =
+distance(parent.endPoint, child.startPoint)
+```
+
+## 20.2 方向誤差
+
+```text
+directionError =
+angle(parent.direction, child.direction)
+```
+
+## 20.3 軽微な誤差
+
+誤差がSoft Limit以下の場合、軽量補間で修正する。
+
+```text
+corrected =
+lerp(current, target, boundaryCorrectionBlend)
+```
+
+## 20.4 大きな誤差
+
+誤差がHard Limitを超えた場合、静的側を`Repair`へ移す。
+
+---
+
+# 21. 初期しきい値
+
+```cpp
+struct SegmentGroupMicrotypeSettings
+{
+    float staticCachedRiskThreshold = 0.20f;
+    float staticTransformedRiskThreshold = 0.35f;
+    float deferredRiskThreshold = 0.65f;
+
+    float maxStaticRootMotionMm = 1.0f;
+    float maxStaticEndpointMotionMm = 1.5f;
+    float maxStaticDirectionDeltaDeg = 2.0f;
+    float maxStaticCurvatureDeltaDeg = 3.0f;
+
+    float boundarySoftLimitMm = 2.0f;
+    float boundaryHardLimitMm = 6.0f;
+    float boundaryCorrectionBlend = 0.35f;
+
+    float colliderNearDistanceMm = 8.0f;
+    float maxPenetrationMm = 1.0f;
+    float maxLengthErrorRatio = 0.05f;
+    float falseStaticDirectionDeltaDeg = 8.0f;
+
+    uint32_t repairCooldownFrames = 8;
+    uint32_t groupsPerStrandBlock = 8;
+    uint32_t watchdogIntervalFrames = 64;
+
+    float targetMaxDynamicRate = 0.15f;
+    float targetMinStaticReuseRate = 0.75f;
+    float targetMaxFalseStaticRate = 0.01f;
+};
+```
+
+これらは最終値ではなく、実験によって調整する。
+
+---
+
+# 22. 追加するデータ構造
+
+```cpp
+enum class SegmentGroupState : uint8_t
+{
+    StaticCached = 0,
+    StaticTransformed = 1,
+    Dynamic = 2,
+    Deferred = 3,
+    Repair = 4
+};
+
+struct SegmentGroupMicrotype
+{
+    uint32_t strandId;
+    uint32_t groupId;
+
+    uint32_t parentGroupId;
+    uint32_t childGroupId;
+
+    uint32_t startPointIndex;
+    uint32_t endPointIndex;
+
+    uint32_t ownerGroupId;
+
+    SegmentGroupState state;
+    SegmentGroupState previousState;
+
+    Vec3 direction;
+    Vec3 previousDirection;
+
+    float restLength;
+    float currentLength;
+
+    float motionScore;
+    float collisionRisk;
+    float boundaryErrorMm;
+    float errorBoundMm;
+
+    uint32_t lastSolvedFrame;
+    uint32_t lastRepairFrame;
+    uint32_t stateStableFrameCount;
+
+    SegmentGroupDirtyReason dirtyReason;
+    SegmentGroupCacheCertificate certificate;
+
+    uint8_t edited;
+    uint8_t colliderNear;
+    uint8_t falseStatic;
+    uint8_t reserved;
+};
+```
+
+---
+
+# 23. 追加するソースファイル
 
 ```text
 include/hairgpu/SegmentGroupMicrotype.h
@@ -55,1350 +821,548 @@ src/hairgpu_core/SegmentGroupMicrotype.cpp
 apps/dx11_viewer/shaders/HairMicrotypeClassify.hlsl
 apps/dx11_viewer/shaders/HairMicrotypeReconstruct.hlsl
 apps/dx11_viewer/shaders/HairMicrotypeBoundaryRepair.hlsl
+apps/dx11_viewer/shaders/HairMicrotypeDirtyPropagation.hlsl
+apps/dx11_viewer/shaders/HairMicrotypeWatchdog.hlsl
 ```
 
-既存ファイルでは、以下に追記する。
+---
+
+# 24. 修正する既存ファイル
 
 ```text
 HairSystem.vcxproj
+
+include/hairgpu/HairNoveltyFlags.h
 include/hairgpu/HairNoveltyTelemetry.h
+
 apps/dx11_viewer/src/GpuHairViewer.h
-apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl
-apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
-apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
-apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+
+apps/dx11_viewer/src/GpuHairViewer_parts/
+    02_resource_creation_and_shader_loading.inl
+    03_simulation_reset_and_frame_step.inl
+    10_phase1_telemetry_csv_jsonl_summary.inl
+    11_experiment_env_and_performance_sample.inl
+
+tools/final_stage/schema.sql
+tools/final_stage/hairgpu_final_db.py
+
+docs/sample_assets/metric_definitions.json
 ```
 
 ---
 
-# 3. 追加コード：`include/hairgpu/SegmentGroupMicrotype.h`
+# 25. GPU処理順序
 
-```cpp
-#pragma once
-
-#include <cstdint>
-#include <vector>
-
-#include "hairgpu/Math.h"
-#include "hairgpu/Types.h"
-#include "hairgpu/HairNoveltyTelemetry.h"
-
-namespace hairgpu
-{
-    enum class SegmentGroupState : uint8_t
-    {
-        StaticCached = 0,
-        StaticTransformed = 1,
-        Dynamic = 2,
-        Deferred = 3,
-        Repair = 4
-    };
-
-    struct SegmentGroupMicrotypeSettings
-    {
-        // State thresholds.
-        float staticCachedRiskThreshold = 0.20f;
-        float staticTransformedRiskThreshold = 0.35f;
-        float deferredRiskThreshold = 0.65f;
-
-        // Motion thresholds.
-        float maxStaticRootMotionMm = 1.0f;
-        float maxStaticEndpointMotionMm = 1.5f;
-        float maxStaticDirectionDeltaDeg = 2.0f;
-        float maxStaticCurvatureDeltaDeg = 3.0f;
-
-        // Boundary safety.
-        float boundarySoftLimitMm = 2.0f;
-        float boundaryHardLimitMm = 6.0f;
-        float boundaryCorrectionBlend = 0.35f;
-
-        // Collision / false static.
-        float colliderNearDistanceMm = 8.0f;
-        float maxPenetrationMm = 1.0f;
-        float maxLengthErrorRatio = 0.05f;
-        float falseStaticDirectionDeltaDeg = 8.0f;
-
-        // Stability.
-        uint32_t repairCooldownFrames = 8u;
-        uint32_t groupsPerStrandBlock = 8u;
-
-        // Target ratio for 60 FPS-oriented evaluation.
-        float targetMaxDynamicRate = 0.15f;
-        float targetMinStaticReuseRate = 0.75f;
-        float targetMaxFalseStaticRate = 0.01f;
-    };
-
-    struct SegmentGroupMicrotype
-    {
-        uint32_t strandId = 0u;
-        uint32_t groupId = 0u;
-
-        uint32_t startPointIndex = 0u;
-        uint32_t endPointIndex = 0u;
-
-        SegmentGroupState state = SegmentGroupState::Dynamic;
-        SegmentGroupState previousState = SegmentGroupState::Dynamic;
-
-        float length = 0.0f;
-        Vec3 direction = { 0.0f, 1.0f, 0.0f };
-        Vec3 previousDirection = { 0.0f, 1.0f, 0.0f };
-
-        float motionScore = 0.0f;
-        float collisionRisk = 0.0f;
-        float boundaryErrorMm = 0.0f;
-        float errorBoundMm = 0.0f;
-
-        uint32_t lastSolvedFrame = 0u;
-        uint32_t lastRepairFrame = 0u;
-
-        uint8_t edited = 0u;
-        uint8_t colliderNear = 0u;
-        uint8_t falseStatic = 0u;
-        uint8_t reserved = 0u;
-    };
-
-    struct SegmentGroupBlock
-    {
-        uint32_t firstGroupIndex = 0u;
-        uint32_t groupCount = 0u;
-
-        float maxMotionScore = 0.0f;
-        float maxCollisionRisk = 0.0f;
-        float maxBoundaryErrorMm = 0.0f;
-
-        SegmentGroupState state = SegmentGroupState::StaticCached;
-    };
-
-    struct SegmentGroupMicrotypeResult
-    {
-        std::vector<SegmentGroupMicrotype> groups;
-        std::vector<SegmentGroupBlock> blocks;
-        HairNoveltyFrameTelemetry telemetry = {};
-    };
-
-    struct SegmentGroupMicrotypeFrameInput
-    {
-        const HairAsset* asset = nullptr;
-        const std::vector<Vec3>* currentPoints = nullptr;
-        const std::vector<Vec3>* previousPoints = nullptr;
-
-        // Optional per-point or per-group authoring masks.
-        const std::vector<uint8_t>* editedPointMask = nullptr;
-
-        uint32_t frameIndex = 0u;
-        uint32_t measuredFrameIndex = 0u;
-
-        Vec3 headTranslation = { 0.0f, 0.0f, 0.0f };
-        Mat4 headTransform = {};
-        Mat4 previousHeadTransform = {};
-    };
-
-    SegmentGroupMicrotypeResult BuildSegmentGroupMicrotypes(
-        const HairAsset& asset,
-        const std::vector<Vec3>& currentPoints,
-        const std::vector<Vec3>& previousPoints,
-        const SegmentGroupMicrotypeSettings& settings,
-        uint32_t frameIndex);
-
-    void EvaluateSegmentGroupMicrotypes(
-        SegmentGroupMicrotypeResult& result,
-        const SegmentGroupMicrotypeFrameInput& input,
-        const SegmentGroupMicrotypeSettings& settings);
-
-    void ReconstructStaticSegmentGroups(
-        SegmentGroupMicrotypeResult& result,
-        std::vector<Vec3>& outputPoints,
-        const SegmentGroupMicrotypeFrameInput& input,
-        const SegmentGroupMicrotypeSettings& settings);
-
-    void RepairSegmentGroupBoundaries(
-        SegmentGroupMicrotypeResult& result,
-        std::vector<Vec3>& outputPoints,
-        const SegmentGroupMicrotypeSettings& settings);
-
-    HairNoveltyFrameTelemetry BuildMicrotypeTelemetry(
-        const SegmentGroupMicrotypeResult& result,
-        const SegmentGroupMicrotypeSettings& settings,
-        uint32_t frameIndex,
-        uint32_t measuredFrameIndex);
-}
-```
-
----
-
-# 4. 追加コード：`src/hairgpu_core/SegmentGroupMicrotype.cpp`
-
-```cpp
-#include "hairgpu/SegmentGroupMicrotype.h"
-
-#include <algorithm>
-#include <cmath>
-#include <limits>
-
-namespace hairgpu
-{
-    namespace
-    {
-        constexpr float kPi = 3.14159265358979323846f;
-
-        float SafeLength(const Vec3& v)
-        {
-            return std::max(Length(v), 1.0e-6f);
-        }
-
-        float DistanceMm(const Vec3& a, const Vec3& b)
-        {
-            return Length(a - b) * 1000.0f;
-        }
-
-        float DirectionDeltaDeg(const Vec3& a, const Vec3& b)
-        {
-            const Vec3 na = Normalize(a);
-            const Vec3 nb = Normalize(b);
-            const float d = Clamp(Dot(na, nb), -1.0f, 1.0f);
-            return std::acos(d) * 180.0f / kPi;
-        }
-
-        float SafeRatio(float a, float b)
-        {
-            return a / std::max(b, 1.0e-6f);
-        }
-
-        SegmentGroupState ClassifyByRisk(float risk, const SegmentGroupMicrotypeSettings& settings)
-        {
-            if (risk < settings.staticCachedRiskThreshold)
-            {
-                return SegmentGroupState::StaticCached;
-            }
-            if (risk < settings.staticTransformedRiskThreshold)
-            {
-                return SegmentGroupState::StaticTransformed;
-            }
-            if (risk < settings.deferredRiskThreshold)
-            {
-                return SegmentGroupState::Deferred;
-            }
-            return SegmentGroupState::Dynamic;
-        }
-
-        bool IsStaticState(SegmentGroupState state)
-        {
-            return state == SegmentGroupState::StaticCached ||
-                   state == SegmentGroupState::StaticTransformed;
-        }
-
-        float StateWeight(SegmentGroupState state)
-        {
-            switch (state)
-            {
-            case SegmentGroupState::StaticCached: return 0.0f;
-            case SegmentGroupState::StaticTransformed: return 0.15f;
-            case SegmentGroupState::Deferred: return 0.45f;
-            case SegmentGroupState::Dynamic: return 1.0f;
-            case SegmentGroupState::Repair: return 1.0f;
-            default: return 1.0f;
-            }
-        }
-    }
-
-    SegmentGroupMicrotypeResult BuildSegmentGroupMicrotypes(
-        const HairAsset& asset,
-        const std::vector<Vec3>& currentPoints,
-        const std::vector<Vec3>& previousPoints,
-        const SegmentGroupMicrotypeSettings& settings,
-        uint32_t frameIndex)
-    {
-        SegmentGroupMicrotypeResult result;
-
-        if (currentPoints.empty() || previousPoints.empty())
-        {
-            return result;
-        }
-
-        result.groups.reserve(currentPoints.size());
-
-        uint32_t globalGroupId = 0u;
-
-        for (uint32_t strandId = 0u; strandId < static_cast<uint32_t>(asset.strands.size()); ++strandId)
-        {
-            const StrandRange& strand = asset.strands[strandId];
-
-            if (strand.pointCount < 2u)
-            {
-                continue;
-            }
-
-            const uint32_t firstPoint = strand.pointOffset;
-            const uint32_t lastPointExclusive = strand.pointOffset + strand.pointCount;
-
-            if (lastPointExclusive > currentPoints.size() ||
-                lastPointExclusive > previousPoints.size())
-            {
-                continue;
-            }
-
-            const uint32_t firstGroupForStrand = static_cast<uint32_t>(result.groups.size());
-
-            for (uint32_t pointIndex = firstPoint; pointIndex + 1u < lastPointExclusive; ++pointIndex)
-            {
-                const Vec3 start = currentPoints[pointIndex];
-                const Vec3 end = currentPoints[pointIndex + 1u];
-
-                const Vec3 prevStart = previousPoints[pointIndex];
-                const Vec3 prevEnd = previousPoints[pointIndex + 1u];
-
-                const Vec3 segment = end - start;
-                const Vec3 prevSegment = prevEnd - prevStart;
-
-                SegmentGroupMicrotype group;
-                group.strandId = strandId;
-                group.groupId = globalGroupId++;
-                group.startPointIndex = pointIndex;
-                group.endPointIndex = pointIndex + 1u;
-                group.length = SafeLength(segment);
-                group.direction = Normalize(segment);
-                group.previousDirection = Normalize(prevSegment);
-                group.previousState = SegmentGroupState::Dynamic;
-                group.state = SegmentGroupState::Dynamic;
-                group.lastSolvedFrame = frameIndex;
-
-                result.groups.push_back(group);
-            }
-
-            const uint32_t groupCountForStrand =
-                static_cast<uint32_t>(result.groups.size()) - firstGroupForStrand;
-
-            if (groupCountForStrand > 0u)
-            {
-                for (uint32_t blockStart = 0u;
-                     blockStart < groupCountForStrand;
-                     blockStart += std::max(settings.groupsPerStrandBlock, 1u))
-                {
-                    SegmentGroupBlock block;
-                    block.firstGroupIndex = firstGroupForStrand + blockStart;
-                    block.groupCount = std::min(
-                        settings.groupsPerStrandBlock,
-                        groupCountForStrand - blockStart);
-                    result.blocks.push_back(block);
-                }
-            }
-        }
-
-        result.telemetry = BuildMicrotypeTelemetry(
-            result,
-            settings,
-            frameIndex,
-            frameIndex);
-
-        return result;
-    }
-
-    void EvaluateSegmentGroupMicrotypes(
-        SegmentGroupMicrotypeResult& result,
-        const SegmentGroupMicrotypeFrameInput& input,
-        const SegmentGroupMicrotypeSettings& settings)
-    {
-        if (!input.currentPoints || !input.previousPoints)
-        {
-            return;
-        }
-
-        const std::vector<Vec3>& currentPoints = *input.currentPoints;
-        const std::vector<Vec3>& previousPoints = *input.previousPoints;
-
-        for (SegmentGroupBlock& block : result.blocks)
-        {
-            block.maxMotionScore = 0.0f;
-            block.maxCollisionRisk = 0.0f;
-            block.maxBoundaryErrorMm = 0.0f;
-
-            for (uint32_t i = 0u; i < block.groupCount; ++i)
-            {
-                const uint32_t groupIndex = block.firstGroupIndex + i;
-                if (groupIndex >= result.groups.size())
-                {
-                    continue;
-                }
-
-                const SegmentGroupMicrotype& g = result.groups[groupIndex];
-                block.maxMotionScore = std::max(block.maxMotionScore, g.motionScore);
-                block.maxCollisionRisk = std::max(block.maxCollisionRisk, g.collisionRisk);
-                block.maxBoundaryErrorMm = std::max(block.maxBoundaryErrorMm, g.boundaryErrorMm);
-            }
-
-            const float blockRisk = std::max(
-                block.maxMotionScore,
-                std::max(block.maxCollisionRisk, block.maxBoundaryErrorMm / settings.boundaryHardLimitMm));
-
-            block.state = ClassifyByRisk(blockRisk, settings);
-        }
-
-        for (SegmentGroupMicrotype& group : result.groups)
-        {
-            if (group.startPointIndex >= currentPoints.size() ||
-                group.endPointIndex >= currentPoints.size() ||
-                group.startPointIndex >= previousPoints.size() ||
-                group.endPointIndex >= previousPoints.size())
-            {
-                continue;
-            }
-
-            const Vec3 currentStart = currentPoints[group.startPointIndex];
-            const Vec3 currentEnd = currentPoints[group.endPointIndex];
-            const Vec3 previousStart = previousPoints[group.startPointIndex];
-            const Vec3 previousEnd = previousPoints[group.endPointIndex];
-
-            const float rootMotionMm = DistanceMm(currentStart, previousStart);
-            const float endpointMotionMm = DistanceMm(currentEnd, previousEnd);
-
-            const Vec3 currentSegment = currentEnd - currentStart;
-            const Vec3 previousSegment = previousEnd - previousStart;
-
-            const float currentLength = SafeLength(currentSegment);
-            const float previousLength = SafeLength(previousSegment);
-
-            const Vec3 currentDirection = Normalize(currentSegment);
-            const Vec3 previousDirection = Normalize(previousSegment);
-
-            const float directionDeltaDeg = DirectionDeltaDeg(currentDirection, previousDirection);
-            const float lengthErrorRatio = std::fabs(currentLength - previousLength) / std::max(previousLength, 1.0e-6f);
-
-            const float rootMotionScore = Clamp(rootMotionMm / settings.maxStaticRootMotionMm, 0.0f, 1.0f);
-            const float endpointMotionScore = Clamp(endpointMotionMm / settings.maxStaticEndpointMotionMm, 0.0f, 1.0f);
-            const float directionScore = Clamp(directionDeltaDeg / settings.maxStaticDirectionDeltaDeg, 0.0f, 1.0f);
-            const float lengthScore = Clamp(lengthErrorRatio / settings.maxLengthErrorRatio, 0.0f, 1.0f);
-
-            group.previousState = group.state;
-            group.previousDirection = group.direction;
-            group.direction = currentDirection;
-            group.length = currentLength;
-
-            group.motionScore =
-                rootMotionScore * 0.35f +
-                endpointMotionScore * 0.25f +
-                directionScore * 0.20f +
-                lengthScore * 0.20f;
-
-            group.collisionRisk = group.colliderNear ? 1.0f : 0.0f;
-
-            const float boundaryRisk = Clamp(
-                group.boundaryErrorMm / settings.boundaryHardLimitMm,
-                0.0f,
-                1.0f);
-
-            const float editRisk = group.edited ? 1.0f : 0.0f;
-
-            const float risk = std::max(
-                group.motionScore,
-                std::max(group.collisionRisk, std::max(boundaryRisk, editRisk)));
-
-            group.state = ClassifyByRisk(risk, settings);
-
-            const bool coolingDown =
-                input.frameIndex > group.lastRepairFrame &&
-                (input.frameIndex - group.lastRepairFrame) < settings.repairCooldownFrames;
-
-            if (coolingDown && IsStaticState(group.state))
-            {
-                group.state = SegmentGroupState::Deferred;
-            }
-
-            const bool falseStatic =
-                IsStaticState(group.previousState) &&
-                (
-                    group.boundaryErrorMm > settings.boundaryHardLimitMm ||
-                    directionDeltaDeg > settings.falseStaticDirectionDeltaDeg ||
-                    lengthErrorRatio > settings.maxLengthErrorRatio
-                );
-
-            group.falseStatic = falseStatic ? 1u : 0u;
-
-            if (falseStatic)
-            {
-                group.state = SegmentGroupState::Repair;
-                group.lastRepairFrame = input.frameIndex;
-            }
-
-            if (group.state == SegmentGroupState::Dynamic ||
-                group.state == SegmentGroupState::Repair)
-            {
-                group.lastSolvedFrame = input.frameIndex;
-            }
-        }
-
-        result.telemetry = BuildMicrotypeTelemetry(
-            result,
-            settings,
-            input.frameIndex,
-            input.measuredFrameIndex);
-    }
-
-    void ReconstructStaticSegmentGroups(
-        SegmentGroupMicrotypeResult& result,
-        std::vector<Vec3>& outputPoints,
-        const SegmentGroupMicrotypeFrameInput& input,
-        const SegmentGroupMicrotypeSettings& settings)
-    {
-        (void)settings;
-
-        if (!input.currentPoints)
-        {
-            return;
-        }
-
-        if (outputPoints.size() != input.currentPoints->size())
-        {
-            outputPoints = *input.currentPoints;
-        }
-
-        for (const SegmentGroupMicrotype& group : result.groups)
-        {
-            if (!IsStaticState(group.state))
-            {
-                continue;
-            }
-
-            if (group.startPointIndex >= outputPoints.size() ||
-                group.endPointIndex >= outputPoints.size())
-            {
-                continue;
-            }
-
-            const Vec3 start = outputPoints[group.startPointIndex];
-
-            if (group.state == SegmentGroupState::StaticCached)
-            {
-                outputPoints[group.endPointIndex] = start + group.direction * group.length;
-            }
-            else if (group.state == SegmentGroupState::StaticTransformed)
-            {
-                const Vec3 transformedStart = TransformPoint(input.headTransform, start);
-                const Vec3 transformedEnd = transformedStart + group.direction * group.length;
-                outputPoints[group.startPointIndex] = transformedStart;
-                outputPoints[group.endPointIndex] = transformedEnd;
-            }
-        }
-    }
-
-    void RepairSegmentGroupBoundaries(
-        SegmentGroupMicrotypeResult& result,
-        std::vector<Vec3>& outputPoints,
-        const SegmentGroupMicrotypeSettings& settings)
-    {
-        if (result.groups.size() < 2u)
-        {
-            return;
-        }
-
-        for (size_t i = 0; i + 1u < result.groups.size(); ++i)
-        {
-            SegmentGroupMicrotype& left = result.groups[i];
-            SegmentGroupMicrotype& right = result.groups[i + 1u];
-
-            if (left.strandId != right.strandId)
-            {
-                continue;
-            }
-
-            const bool leftStatic = IsStaticState(left.state);
-            const bool rightStatic = IsStaticState(right.state);
-
-            if (leftStatic == rightStatic)
-            {
-                continue;
-            }
-
-            if (left.endPointIndex >= outputPoints.size() ||
-                right.startPointIndex >= outputPoints.size() ||
-                left.startPointIndex >= outputPoints.size())
-            {
-                continue;
-            }
-
-            const Vec3 leftStart = outputPoints[left.startPointIndex];
-            const Vec3 leftEnd = outputPoints[left.endPointIndex];
-            const Vec3 rightStart = outputPoints[right.startPointIndex];
-
-            const float errorMm = DistanceMm(leftEnd, rightStart);
-
-            left.boundaryErrorMm = std::max(left.boundaryErrorMm, errorMm);
-            right.boundaryErrorMm = std::max(right.boundaryErrorMm, errorMm);
-
-            if (errorMm > settings.boundarySoftLimitMm)
-            {
-                if (leftStatic)
-                {
-                    const Vec3 targetDirection = Normalize(rightStart - leftStart);
-                    left.direction = Normalize(Lerp(left.direction, targetDirection, settings.boundaryCorrectionBlend));
-                    outputPoints[left.endPointIndex] = leftStart + left.direction * left.length;
-                }
-                else if (rightStatic)
-                {
-                    outputPoints[right.startPointIndex] = leftEnd;
-                }
-            }
-
-            if (errorMm > settings.boundaryHardLimitMm)
-            {
-                if (leftStatic)
-                {
-                    left.state = SegmentGroupState::Repair;
-                    left.lastRepairFrame += 1u;
-                }
-                if (rightStatic)
-                {
-                    right.state = SegmentGroupState::Repair;
-                    right.lastRepairFrame += 1u;
-                }
-            }
-        }
-
-        result.telemetry = BuildMicrotypeTelemetry(
-            result,
-            settings,
-            result.telemetry.frameIndex,
-            result.telemetry.measuredFrameIndex);
-    }
-
-    HairNoveltyFrameTelemetry BuildMicrotypeTelemetry(
-        const SegmentGroupMicrotypeResult& result,
-        const SegmentGroupMicrotypeSettings& settings,
-        uint32_t frameIndex,
-        uint32_t measuredFrameIndex)
-    {
-        HairNoveltyFrameTelemetry telemetry = {};
-        telemetry.frameIndex = frameIndex;
-        telemetry.measuredFrameIndex = measuredFrameIndex;
-        telemetry.topLevelNoveltyMask = 1u << 0;
-
-        telemetry.totalSegmentGroupCount = static_cast<uint32_t>(result.groups.size());
-
-        float boundaryErrorSum = 0.0f;
-        float boundaryErrorMax = 0.0f;
-        uint32_t boundaryErrorCount = 0u;
-
-        for (const SegmentGroupMicrotype& group : result.groups)
-        {
-            switch (group.state)
-            {
-            case SegmentGroupState::StaticCached:
-                ++telemetry.staticCachedGroupCount;
-                break;
-            case SegmentGroupState::StaticTransformed:
-                ++telemetry.staticTransformedGroupCount;
-                break;
-            case SegmentGroupState::Dynamic:
-                ++telemetry.dynamicGroupCount;
-                break;
-            case SegmentGroupState::Deferred:
-                ++telemetry.deferredCorrectionGroupCount;
-                break;
-            case SegmentGroupState::Repair:
-                ++telemetry.repairRequiredGroupCount;
-                break;
-            default:
-                ++telemetry.fallbackGroupCount;
-                break;
-            }
-
-            if (group.falseStatic)
-            {
-                ++telemetry.falseStaticCount;
-            }
-
-            if (group.boundaryErrorMm > 0.0f)
-            {
-                boundaryErrorSum += group.boundaryErrorMm;
-                boundaryErrorMax = std::max(boundaryErrorMax, group.boundaryErrorMm);
-                ++boundaryErrorCount;
-            }
-        }
-
-        telemetry.falseStaticRate =
-            SafeRatio(
-                static_cast<float>(telemetry.falseStaticCount),
-                static_cast<float>(std::max(telemetry.totalSegmentGroupCount, 1u)));
-
-        telemetry.staticDynamicBoundaryMeanErrorMm =
-            boundaryErrorCount > 0u
-                ? boundaryErrorSum / static_cast<float>(boundaryErrorCount)
-                : 0.0f;
-
-        telemetry.staticDynamicBoundaryMaxErrorMm = boundaryErrorMax;
-
-        const float fullPositionBytes =
-            static_cast<float>(telemetry.totalSegmentGroupCount) *
-            2.0f *
-            3.0f *
-            sizeof(float);
-
-        const float directionCacheBytes =
-            static_cast<float>(telemetry.totalSegmentGroupCount) *
-            4.0f *
-            sizeof(float);
-
-        telemetry.fullPositionMemoryMb = fullPositionBytes / (1024.0f * 1024.0f);
-        telemetry.directionCacheMemoryMb = directionCacheBytes / (1024.0f * 1024.0f);
-
-        telemetry.directionCacheMemorySavingRate =
-            1.0f - SafeRatio(telemetry.directionCacheMemoryMb, telemetry.fullPositionMemoryMb);
-
-        const float staticReuseRate =
-            SafeRatio(
-                static_cast<float>(telemetry.staticCachedGroupCount + telemetry.staticTransformedGroupCount),
-                static_cast<float>(std::max(telemetry.totalSegmentGroupCount, 1u)));
-
-        const float dynamicRate =
-            SafeRatio(
-                static_cast<float>(telemetry.dynamicGroupCount),
-                static_cast<float>(std::max(telemetry.totalSegmentGroupCount, 1u)));
-
-        if (staticReuseRate < settings.targetMinStaticReuseRate)
-        {
-            ++telemetry.budgetDropCount;
-        }
-
-        if (dynamicRate > settings.targetMaxDynamicRate)
-        {
-            ++telemetry.deferCount;
-        }
-
-        if (telemetry.falseStaticRate > settings.targetMaxFalseStaticRate)
-        {
-            ++telemetry.fallbackCount;
-        }
-
-        telemetry.microtypeDecodedCount = telemetry.totalSegmentGroupCount;
-        telemetry.safeDecodeCount =
-            telemetry.staticCachedGroupCount +
-            telemetry.staticTransformedGroupCount;
-
-        return telemetry;
-    }
-}
-```
-
----
-
-# 5. 追加コード：`apps/dx11_viewer/shaders/HairMicrotypeClassify.hlsl`
-
-```hlsl
-struct MicrotypeGroup
-{
-    uint startPointIndex;
-    uint endPointIndex;
-    uint state;
-    uint flags;
-
-    float4 directionLength;
-    float4 previousDirectionError;
-    float4 riskScores;
-};
-
-RWStructuredBuffer<MicrotypeGroup> gGroups : register(u0);
-StructuredBuffer<float4> gCurrentPositions : register(t0);
-StructuredBuffer<float4> gPreviousPositions : register(t1);
-
-cbuffer MicrotypeClassifyConstants : register(b0)
-{
-    uint gGroupCount;
-    uint gFrameIndex;
-    float gStaticCachedRiskThreshold;
-    float gStaticTransformedRiskThreshold;
-
-    float gDeferredRiskThreshold;
-    float gBoundaryHardLimitMm;
-    float gMaxStaticEndpointMotionMm;
-    float gMaxStaticDirectionDeltaDeg;
-
-    float gMaxLengthErrorRatio;
-    float gFalseStaticDirectionDeltaDeg;
-    float2 gPadding;
-};
-
-static const uint STATE_STATIC_CACHED = 0;
-static const uint STATE_STATIC_TRANSFORMED = 1;
-static const uint STATE_DYNAMIC = 2;
-static const uint STATE_DEFERRED = 3;
-static const uint STATE_REPAIR = 4;
-
-float SafeLength3(float3 v)
-{
-    return max(length(v), 1.0e-6);
-}
-
-float DirectionDeltaDeg(float3 a, float3 b)
-{
-    float3 na = normalize(a);
-    float3 nb = normalize(b);
-    float d = clamp(dot(na, nb), -1.0, 1.0);
-    return degrees(acos(d));
-}
-
-[numthreads(128, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    uint id = dispatchThreadId.x;
-    if (id >= gGroupCount)
-    {
-        return;
-    }
-
-    MicrotypeGroup group = gGroups[id];
-
-    float3 currentStart = gCurrentPositions[group.startPointIndex].xyz;
-    float3 currentEnd = gCurrentPositions[group.endPointIndex].xyz;
-    float3 previousStart = gPreviousPositions[group.startPointIndex].xyz;
-    float3 previousEnd = gPreviousPositions[group.endPointIndex].xyz;
-
-    float3 currentSegment = currentEnd - currentStart;
-    float3 previousSegment = previousEnd - previousStart;
-
-    float currentLength = SafeLength3(currentSegment);
-    float previousLength = SafeLength3(previousSegment);
-
-    float3 currentDirection = currentSegment / currentLength;
-    float3 previousDirection = previousSegment / previousLength;
-
-    float endpointMotionMm = length(currentEnd - previousEnd) * 1000.0;
-    float directionDeltaDeg = DirectionDeltaDeg(currentDirection, previousDirection);
-    float lengthErrorRatio = abs(currentLength - previousLength) / max(previousLength, 1.0e-6);
-
-    float endpointScore = saturate(endpointMotionMm / gMaxStaticEndpointMotionMm);
-    float directionScore = saturate(directionDeltaDeg / gMaxStaticDirectionDeltaDeg);
-    float lengthScore = saturate(lengthErrorRatio / gMaxLengthErrorRatio);
-
-    float boundaryErrorMm = group.previousDirectionError.w;
-    float boundaryRisk = saturate(boundaryErrorMm / gBoundaryHardLimitMm);
-
-    float motionScore =
-        endpointScore * 0.45 +
-        directionScore * 0.35 +
-        lengthScore * 0.20;
-
-    float editRisk = (group.flags & 1u) ? 1.0 : 0.0;
-    float colliderRisk = (group.flags & 2u) ? 1.0 : 0.0;
-
-    float risk = max(motionScore, max(boundaryRisk, max(editRisk, colliderRisk)));
-
-    uint previousState = group.state;
-    uint nextState = STATE_DYNAMIC;
-
-    if (risk < gStaticCachedRiskThreshold)
-    {
-        nextState = STATE_STATIC_CACHED;
-    }
-    else if (risk < gStaticTransformedRiskThreshold)
-    {
-        nextState = STATE_STATIC_TRANSFORMED;
-    }
-    else if (risk < gDeferredRiskThreshold)
-    {
-        nextState = STATE_DEFERRED;
-    }
-    else
-    {
-        nextState = STATE_DYNAMIC;
-    }
-
-    bool wasStatic =
-        previousState == STATE_STATIC_CACHED ||
-        previousState == STATE_STATIC_TRANSFORMED;
-
-    bool falseStatic =
-        wasStatic &&
-        (
-            boundaryErrorMm > gBoundaryHardLimitMm ||
-            directionDeltaDeg > gFalseStaticDirectionDeltaDeg ||
-            lengthErrorRatio > gMaxLengthErrorRatio
-        );
-
-    if (falseStatic)
-    {
-        nextState = STATE_REPAIR;
-        group.flags |= 4u;
-    }
-
-    group.state = nextState;
-    group.directionLength = float4(currentDirection, currentLength);
-    group.previousDirectionError.xyz = previousDirection;
-    group.riskScores = float4(motionScore, colliderRisk, boundaryRisk, risk);
-
-    gGroups[id] = group;
-}
-```
-
----
-
-# 6. 追加コード：`apps/dx11_viewer/shaders/HairMicrotypeReconstruct.hlsl`
-
-```hlsl
-struct MicrotypeGroup
-{
-    uint startPointIndex;
-    uint endPointIndex;
-    uint state;
-    uint flags;
-
-    float4 directionLength;
-    float4 previousDirectionError;
-    float4 riskScores;
-};
-
-StructuredBuffer<MicrotypeGroup> gGroups : register(t0);
-RWStructuredBuffer<float4> gPositions : register(u0);
-
-cbuffer MicrotypeReconstructConstants : register(b0)
-{
-    uint gGroupCount;
-    uint gEnableStaticTransform;
-    float2 gPadding0;
-
-    float4x4 gHeadTransform;
-};
-
-static const uint STATE_STATIC_CACHED = 0;
-static const uint STATE_STATIC_TRANSFORMED = 1;
-
-[numthreads(128, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    uint id = dispatchThreadId.x;
-    if (id >= gGroupCount)
-    {
-        return;
-    }
-
-    MicrotypeGroup group = gGroups[id];
-
-    if (group.state != STATE_STATIC_CACHED &&
-        group.state != STATE_STATIC_TRANSFORMED)
-    {
-        return;
-    }
-
-    float3 start = gPositions[group.startPointIndex].xyz;
-    float3 direction = normalize(group.directionLength.xyz);
-    float segmentLength = group.directionLength.w;
-
-    if (group.state == STATE_STATIC_TRANSFORMED && gEnableStaticTransform != 0)
-    {
-        float4 transformedStart = mul(float4(start, 1.0), gHeadTransform);
-        start = transformedStart.xyz;
-        gPositions[group.startPointIndex] = float4(start, 1.0);
-    }
-
-    float3 endPosition = start + direction * segmentLength;
-    gPositions[group.endPointIndex] = float4(endPosition, 1.0);
-}
-```
-
----
-
-# 7. 追加コード：`apps/dx11_viewer/shaders/HairMicrotypeBoundaryRepair.hlsl`
-
-```hlsl
-struct MicrotypeGroup
-{
-    uint startPointIndex;
-    uint endPointIndex;
-    uint state;
-    uint flags;
-
-    float4 directionLength;
-    float4 previousDirectionError;
-    float4 riskScores;
-};
-
-RWStructuredBuffer<MicrotypeGroup> gGroups : register(u0);
-RWStructuredBuffer<float4> gPositions : register(u1);
-
-cbuffer MicrotypeBoundaryRepairConstants : register(b0)
-{
-    uint gGroupCount;
-    float gBoundarySoftLimitMm;
-    float gBoundaryHardLimitMm;
-    float gBoundaryCorrectionBlend;
-};
-
-static const uint STATE_STATIC_CACHED = 0;
-static const uint STATE_STATIC_TRANSFORMED = 1;
-static const uint STATE_DYNAMIC = 2;
-static const uint STATE_DEFERRED = 3;
-static const uint STATE_REPAIR = 4;
-
-bool IsStaticState(uint state)
-{
-    return state == STATE_STATIC_CACHED ||
-           state == STATE_STATIC_TRANSFORMED;
-}
-
-[numthreads(128, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    uint id = dispatchThreadId.x;
-    if (id + 1 >= gGroupCount)
-    {
-        return;
-    }
-
-    MicrotypeGroup left = gGroups[id];
-    MicrotypeGroup right = gGroups[id + 1];
-
-    bool leftStatic = IsStaticState(left.state);
-    bool rightStatic = IsStaticState(right.state);
-
-    if (leftStatic == rightStatic)
-    {
-        return;
-    }
-
-    if (left.endPointIndex != right.startPointIndex)
-    {
-        return;
-    }
-
-    float3 leftStart = gPositions[left.startPointIndex].xyz;
-    float3 leftEnd = gPositions[left.endPointIndex].xyz;
-    float3 rightStart = gPositions[right.startPointIndex].xyz;
-
-    float errorMm = length(leftEnd - rightStart) * 1000.0;
-
-    left.previousDirectionError.w = max(left.previousDirectionError.w, errorMm);
-    right.previousDirectionError.w = max(right.previousDirectionError.w, errorMm);
-
-    if (errorMm > gBoundarySoftLimitMm)
-    {
-        if (leftStatic)
-        {
-            float3 targetDirection = normalize(rightStart - leftStart);
-            float3 correctedDirection = normalize(lerp(
-                normalize(left.directionLength.xyz),
-                targetDirection,
-                gBoundaryCorrectionBlend));
-
-            left.directionLength.xyz = correctedDirection;
-            gPositions[left.endPointIndex] = float4(
-                leftStart + correctedDirection * left.directionLength.w,
-                1.0);
-        }
-        else if (rightStatic)
-        {
-            gPositions[right.startPointIndex] = float4(leftEnd, 1.0);
-        }
-    }
-
-    if (errorMm > gBoundaryHardLimitMm)
-    {
-        if (leftStatic)
-        {
-            left.state = STATE_REPAIR;
-        }
-
-        if (rightStatic)
-        {
-            right.state = STATE_REPAIR;
-        }
-    }
-
-    gGroups[id] = left;
-    gGroups[id + 1] = right;
-}
-```
-
----
-
-# 8. `HairSystem.vcxproj` に追加する項目
-
-現在のプロジェクトでは `src\hairgpu_core\*.cpp` と `include\hairgpu\*.h` が明示的に並んでいるため、01の新規ファイルも追加する。
-
-`<ClCompile>` の一覧に以下を追加する。
-
-```xml
-<ClCompile Include="src\hairgpu_core\SegmentGroupMicrotype.cpp" />
-```
-
-`<ClInclude>` の一覧に以下を追加する。
-
-```xml
-<ClInclude Include="include\hairgpu\SegmentGroupMicrotype.h" />
-```
-
-`<None>` のHLSL一覧に以下を追加する。
-
-```xml
-<None Include="apps\dx11_viewer\shaders\HairMicrotypeClassify.hlsl" />
-<None Include="apps\dx11_viewer\shaders\HairMicrotypeReconstruct.hlsl" />
-<None Include="apps\dx11_viewer\shaders\HairMicrotypeBoundaryRepair.hlsl" />
-```
-
----
-
-# 9. `GpuHairViewer.h` に追加するメンバ
-
-`GpuHairViewer.h` に以下のメンバを追加する。
-
-```cpp
-// 01: Segment-Group Certified Strand Data Type
-bool m_enableMicrotypeRuntime = false;
-
-hairgpu::SegmentGroupMicrotypeSettings m_microtypeSettings;
-hairgpu::SegmentGroupMicrotypeResult m_microtypeResult;
-std::vector<hairgpu::Vec3> m_microtypeOutputPoints;
-
-Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_microtypeClassifyShader;
-Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_microtypeReconstructShader;
-Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_microtypeBoundaryRepairShader;
-
-Microsoft::WRL::ComPtr<ID3D11Buffer> m_microtypeGroupBuffer;
-Microsoft::WRL::ComPtr<ID3D11Buffer> m_microtypeGroupUavBuffer;
-Microsoft::WRL::ComPtr<ID3D11Buffer> m_microtypeStatsBuffer;
-
-uint32_t m_microtypeGroupCount = 0u;
-```
-
-既存の `PerformanceSample` に以下がまだない場合は追加する。
-
-```cpp
-uint32_t totalSegmentGroupCount = 0u;
-uint32_t staticCachedGroupCount = 0u;
-uint32_t staticTransformedGroupCount = 0u;
-uint32_t dynamicGroupCount = 0u;
-uint32_t deferredCorrectionGroupCount = 0u;
-uint32_t repairRequiredGroupCount = 0u;
-uint32_t fallbackGroupCount = 0u;
-
-uint32_t falseStaticCount = 0u;
-float falseStaticRate = 0.0f;
-
-float staticDynamicBoundaryMeanErrorMm = 0.0f;
-float staticDynamicBoundaryMaxErrorMm = 0.0f;
-
-float directionCacheMemoryMb = 0.0f;
-float fullPositionMemoryMb = 0.0f;
-float directionCacheMemorySavingRate = 0.0f;
-```
-
----
-
-# 10. `03_simulation_reset_and_frame_step.inl` に追加する処理
-
-既存の毎フレーム更新処理の中で、`enableMicrotype` がONの場合に以下を実行する。
-
-```cpp
-if (m_experimentCase.enableMicrotype)
-{
-    m_enableMicrotypeRuntime = true;
-
-    hairgpu::SegmentGroupMicrotypeFrameInput microtypeInput;
-    microtypeInput.asset = &m_asset;
-    microtypeInput.currentPoints = &m_currentCpuPoints;
-    microtypeInput.previousPoints = &m_previousCpuPoints;
-    microtypeInput.frameIndex = m_globalFrameIndex;
-    microtypeInput.measuredFrameIndex = m_measuredFrameIndex;
-    microtypeInput.headTransform = m_currentHeadTransform;
-    microtypeInput.previousHeadTransform = m_previousHeadTransform;
-
-    if (m_microtypeResult.groups.empty())
-    {
-        m_microtypeResult = hairgpu::BuildSegmentGroupMicrotypes(
-            m_asset,
-            m_currentCpuPoints,
-            m_previousCpuPoints,
-            m_microtypeSettings,
-            m_globalFrameIndex);
-
-        m_microtypeOutputPoints = m_currentCpuPoints;
-        m_microtypeGroupCount = static_cast<uint32_t>(m_microtypeResult.groups.size());
-    }
-
-    hairgpu::EvaluateSegmentGroupMicrotypes(
-        m_microtypeResult,
-        microtypeInput,
-        m_microtypeSettings);
-
-    hairgpu::ReconstructStaticSegmentGroups(
-        m_microtypeResult,
-        m_microtypeOutputPoints,
-        microtypeInput,
-        m_microtypeSettings);
-
-    hairgpu::RepairSegmentGroupBoundaries(
-        m_microtypeResult,
-        m_microtypeOutputPoints,
-        m_microtypeSettings);
-
-    m_noveltyTelemetry = m_microtypeResult.telemetry;
-}
-```
-
-注意点として、上の `m_currentCpuPoints`、`m_previousCpuPoints`、`m_currentHeadTransform` などは、実際のViewer側で使われている既存名に合わせる。
-既存名が異なる場合は、以下の意味を持つ変数へ置き換える。
+毎フレーム、次の順番で処理する。
 
 ```text
-m_currentCpuPoints      = 現在フレームの髪点列
-m_previousCpuPoints     = 前フレームの髪点列
-m_currentHeadTransform  = 現在フレームの頭部変換
-m_previousHeadTransform = 前フレームの頭部変換
+1. 頭部変換、コライダー、編集状態の世代更新
+
+2. StrandまたはBlock単位のDirty判定
+
+3. Dirty BlockだけGroup判定
+
+4. StaticCachedグループの証明確認
+
+5. StaticTransformedグループへ変換適用
+
+6. Dynamicグループ一覧を生成
+
+7. Dynamicグループだけ物理計算
+
+8. Static/Dynamic境界を検査
+
+9. Repairグループを補正
+
+10. Watchdog対象を分散検査
+
+11. 描画用位置を生成
+
+12. Telemetryを集計
 ```
 
-01単体評価では、以下の状態にする。
+CPUへ毎フレーム全グループ状態を読み戻さない。
+
+CPU readbackは、数フレーム遅延した集計値だけとする。
+
+---
+
+# 26. メモリ表現
+
+全点位置を各状態で重複保持しない。
+
+静的グループについては、次を基本情報とする。
 
 ```text
-enableMicrotype = ON
-enableBudgetedPhysics = OFF
-enableCertificateRender = OFF
-enablePerStrandEdit = OFF
-enableGpuResident = OFF
+開始点参照
+方向
+長さ
+状態
+証明情報
 ```
+
+Dynamicグループのみ、現在位置、前位置、速度、拘束計算用情報を保持する。
+
+方向情報は、初期実装では`float3`を使う。
+
+その後、次の形式と比較する。
+
+```text
+float3 direction
+half3 direction
+octahedral encoded direction
+spherical quantized direction
+```
+
+方向キャッシュによるメモリ削減率を評価する。
 
 ---
 
-# 11. Telemetryへ反映するコード
+# 27. Telemetry
 
-`10_phase1_telemetry_csv_jsonl_summary.inl` またはPerformanceSampleを作る箇所で、以下を入れる。
-
-```cpp
-sample.totalSegmentGroupCount = m_noveltyTelemetry.totalSegmentGroupCount;
-sample.staticCachedGroupCount = m_noveltyTelemetry.staticCachedGroupCount;
-sample.staticTransformedGroupCount = m_noveltyTelemetry.staticTransformedGroupCount;
-sample.dynamicGroupCount = m_noveltyTelemetry.dynamicGroupCount;
-sample.deferredCorrectionGroupCount = m_noveltyTelemetry.deferredCorrectionGroupCount;
-sample.repairRequiredGroupCount = m_noveltyTelemetry.repairRequiredGroupCount;
-sample.fallbackGroupCount = m_noveltyTelemetry.fallbackGroupCount;
-
-sample.falseStaticCount = m_noveltyTelemetry.falseStaticCount;
-sample.falseStaticRate = m_noveltyTelemetry.falseStaticRate;
-
-sample.staticDynamicBoundaryMeanErrorMm =
-    m_noveltyTelemetry.staticDynamicBoundaryMeanErrorMm;
-
-sample.staticDynamicBoundaryMaxErrorMm =
-    m_noveltyTelemetry.staticDynamicBoundaryMaxErrorMm;
-
-sample.directionCacheMemoryMb =
-    m_noveltyTelemetry.directionCacheMemoryMb;
-
-sample.fullPositionMemoryMb =
-    m_noveltyTelemetry.fullPositionMemoryMb;
-
-sample.directionCacheMemorySavingRate =
-    m_noveltyTelemetry.directionCacheMemorySavingRate;
-```
-
----
-
-# 12. CSVに必ず出す列
-
-最終評価CSVには、少なくとも以下の列を出す。
+最低限、次の値を記録する。
 
 ```text
 totalSegmentGroupCount
+
 staticCachedGroupCount
 staticTransformedGroupCount
 dynamicGroupCount
 deferredCorrectionGroupCount
 repairRequiredGroupCount
 fallbackGroupCount
+
+dirtyBlockCount
+dirtyGroupCount
+
 falseStaticCount
 falseStaticRate
+
+watchdogCheckCount
+watchdogRepairCount
+
+cacheHitCount
+cacheMissCount
+cacheInvalidationCount
+
 staticDynamicBoundaryMeanErrorMm
 staticDynamicBoundaryMaxErrorMm
+
 directionCacheMemoryMb
 fullPositionMemoryMb
 directionCacheMemorySavingRate
-```
 
-01単体で60FPSを評価する場合、特に重要なのは以下である。
+classificationGpuMilliseconds
+reconstructionGpuMilliseconds
+dynamicPhysicsGpuMilliseconds
+boundaryRepairGpuMilliseconds
+renderGpuMilliseconds
 
-```text
 frameMilliseconds
 fps
-totalSegmentGroupCount
-staticCachedGroupCount
-staticTransformedGroupCount
-dynamicGroupCount
+```
+
+---
+
+# 28. 評価指標
+
+## 28.1 性能
+
+```text
+average FPS
+p50 frame time
+p95 frame time
+p99 frame time
+1% low FPS
+GPU frame time
+CPU frame time
+```
+
+## 28.2 状態割合
+
+```text
+StaticCached率
+StaticTransformed率
+Dynamic率
+Deferred率
+Repair率
+```
+
+## 28.3 安全性
+
+```text
 falseStaticRate
-staticDynamicBoundaryMeanErrorMm
-directionCacheMemorySavingRate
+Static/Dynamic境界平均誤差
+Static/Dynamic境界最大誤差
+最大めり込み量
+修復成功率
+修復失敗率
+```
+
+## 28.4 メモリ
+
+```text
+全点位置保持時のメモリ
+方向キャッシュ時のメモリ
+メモリ削減率
+```
+
+## 28.5 判定コスト
+
+```text
+全グループ判定数
+Dirty Group判定数
+Dirty Block判定数
+Watchdog判定数
 ```
 
 ---
 
-# 13. 01単体60FPSの成功条件
+# 29. 比較対象
 
-10万本の髪を対象に、01単体で60FPSを狙う場合の成功条件は以下である。
+次の方式を比較する。
+
+## Baseline A
+
+全髪、全グループを毎フレーム物理計算する。
+
+## Baseline B
+
+髪一本単位で静的または動的を決定する。
+
+## Baseline C
+
+セグメント単位で静的化するが、共有端点の所有規則とRepairを持たない。
+
+## Proposed 01
+
+共有端点所有、半球責任分割、5状態、Cache Certificate、Dirty Propagation、Boundary Repair、false static検出を持つ方式。
+
+---
+
+# 30. アブレーション評価
+
+提案手法から各要素を一つずつ外して比較する。
 
 ```text
-髪本数: 100,000
-points per strand: 16を基本
-p95 frame time <= 16.67ms
-average FPS >= 60
+01-Full
+
+01-NoCertificate
+01-NoDirtyPropagation
+01-NoBoundaryRepair
+01-NoWatchdog
+01-NoHalfSphereOwnership
+01-NoBlockHierarchy
+01-TwoStateOnly
+```
+
+これにより、単なるキャッシュとの差を明確にする。
+
+---
+
+# 31. テストシナリオ
+
+## 31.1 完全静止
+
+頭部、髪、コライダーが動かない。
+
+目的：
+
+* StaticCached率
+* キャッシュヒット率
+* 判定コスト
+* 60 FPS維持率
+
+## 31.2 頭部の平行移動
+
+髪の局所形状を変えず、頭部だけを移動する。
+
+目的：
+
+* StaticTransformedの有効性
+* 一括変換コスト
+* 不要なDynamic昇格の有無
+
+## 31.3 頭部の回転
+
+頭部を連続回転させる。
+
+目的：
+
+* 方向キャッシュの追従
+* 親子境界の連続性
+* Dynamic率の増加
+
+## 31.4 一部接触
+
+髪の一部分だけをコライダーへ接触させる。
+
+目的：
+
+* 局所的なDynamic昇格
+* 非接触部分の静的維持
+* Dirty Propagation範囲
+
+## 31.5 高速運動
+
+頭部を急激に動かす。
+
+目的：
+
+* false static検出
+* Repair移行
+* 最悪フレーム時間
+
+## 31.6 部分編集
+
+一部ストランドまたは一部グループだけを編集する。
+
+目的：
+
+* 編集対象だけのDynamic化
+* 周辺への伝播範囲
+* 再静的化までの時間
+
+## 31.7 多数衝突
+
+複数のコライダーを髪へ接近させる。
+
+目的：
+
+* 衝突候補絞り込み
+* Dynamic率増加時の性能
+* Fallback発生率
+
+## 31.8 Watchdog検出
+
+静的グループへ、通常のDirty通知では検出できない変化を与える。
+
+目的：
+
+* Watchdog検出率
+* 検出までの遅延
+* 修復成功率
+
+---
+
+# 32. 10万本条件
+
+基本条件は次とする。
+
+```text
+髪本数：100,000
+1本あたりの点数：16
+1本あたりのグループ数：15
+総グループ数：約1,500,000
+```
+
+目標状態は次とする。
+
+```text
 StaticCached + StaticTransformed >= 75%
+
 Dynamic <= 15%
+
+Deferred <= 7%
+
 Repair <= 3%
+
 falseStaticRate <= 1%
-staticDynamicBoundaryMeanErrorMm <= 2.0mm
-staticDynamicBoundaryMaxErrorMm <= 6.0mm
-directionCacheMemorySavingRate >= 30%
 ```
 
-特に重要なのは、以下である。
+ただし、激しい運動、広範囲な衝突、強い編集が行われる場面では、一時的にDynamic率が15%を超えることを許容する。
 
-```text
-Dynamic <= 15%
-```
-
-Dynamic率が15%を超えると、01単体で60FPSを安定させるのは難しくなる。
-その場合は、`StaticTransformed` と `Deferred` を増やし、完全なDynamic計算に回すグループを減らす。
+その場合でも、長時間にわたり16.67 msを超え続けないことを評価する。
 
 ---
 
-# 14. 01の論文上の書き方
+# 33. 60 FPS成功条件
 
-以下のようには書かない。
+```text
+平均FPS >= 60
+
+p95 frame time <= 16.67 ms
+
+p99 frame time <= 20.0 ms
+
+1% low FPS >= 50
+
+StaticCached + StaticTransformed >= 75%
+
+Dynamic <= 15%
+
+Repair <= 3%
+
+falseStaticRate <= 1%
+
+境界平均誤差 <= 2.0 mm
+
+境界最大誤差 <= 6.0 mm
+
+最大めり込み <= 1.0 mm
+
+direction cache memory saving rate >= 30%
+```
+
+平均FPSだけで成功と判定しない。
+
+---
+
+# 34. 少し古いPCでの目標
+
+少し古いPCでは、最新GPUと同じ処理量を前提としない。
+
+次を重視する。
+
+* 全グループ走査を避ける
+* CPUとGPU間の同期を避ける
+* Dynamic一覧をGPU上で作る
+* 静的ブロックを詳細判定しない
+* 詳細衝突候補を事前に減らす
+* CPU readbackを集計値だけにする
+* Repairを複数フレームへ分散する
+* Watchdogを分散実行する
+
+初期実装時の安定60 FPS達成確率は、25～40%程度と予測する。
+
+GPU完結、階層判定、衝突候補絞り込みを実装した場合は、55～70%程度を予測する。
+
+さらに実測予算に基づく処理数制御を導入した場合は、70～85%程度を目標とする。
+
+これらは実測前の予測値であり、保証値ではない。
+
+---
+
+# 35. 失敗条件
+
+次のいずれかに該当する場合、01単体では目標未達とする。
+
+```text
+p95 frame time > 16.67 ms
+
+Dynamic率が通常場面で継続的に15%を超える
+
+全グループを毎フレーム分類している
+
+CPU readback待ちがフレーム処理を停止させる
+
+falseStaticRate > 1%
+
+境界最大誤差 > 6.0 mm
+
+Repairが連続的に増え続ける
+
+衝突候補の絞り込みが機能しない
+
+StaticCachedが頻繁に無効化される
+```
+
+---
+
+# 36. 新規性を弱くする書き方
+
+論文では、次のようには書かない。
 
 ```text
 動かない髪をキャッシュして高速化する。
 ```
 
-この書き方では、既存のLOD、active set、sleeping、temporal cacheに近く見える。
-
-代わりに、以下のように書く。
+```text
+動く髪だけを計算する。
+```
 
 ```text
-本研究では、髪ストランドを単なる点列ではなく、共有端点を持つセグメントグループ列として再定義する。
-各セグメントグループはStaticCached、StaticTransformed、Dynamic、Deferred、Repairの状態を持ち、静的状態では全点座標を保持せず、固定端点・方向・長さから復元する。
-さらに、falseStaticRate、Static/Dynamic境界誤差、方向キャッシュによるメモリ削減率を用いて、静的再利用の安全性と有効性を評価する。
+髪を細かな部分に分割して処理する。
 ```
+
+これらだけでは、sleeping、active set、LOD、simulation island、temporal cacheとの差が弱い。
 
 ---
 
-# 15. 最終結論
+# 37. 論文での新規性の書き方
 
-本01では、髪を `点-線-点` のセグメントグループ列として扱い、各グループを5状態に分類する。
-静的グループは全点座標を再計算せず、方向キャッシュから復元する。
-動的グループのみ物理計算し、Static/Dynamic境界では軽量補正を行う。
-誤って静的化されたグループはfalse staticとして検出し、Repairへ遷移させる。
+本研究では、髪ストランドを単なる点列ではなく、共有端点を持つセグメントグループ列として再定義する。
 
-この設計により、01は単なるキャッシュ最適化ではなく、以下の特徴を持つ髪専用データ型になる。
+各セグメントグループは、実行状態、方向・長さキャッシュ、共有端点の所有関係、親子依存、キャッシュ有効証明、境界誤差および修復履歴を保持する。
+
+静的グループは、キャッシュ有効条件が成立する間、物理計算と毎フレームの詳細分類処理から除外される。
+
+頭部変換、親グループの更新、コライダーの接近、編集、境界誤差などが発生した場合のみ、Dirty Reasonを用いて対象グループへ更新要求を伝播する。
+
+また、静的判定の誤りをfalse staticとして検出し、異なる状態のグループ間に生じる境界不連続をRepair状態によって修正する。
+
+これにより、従来のsleepingやtemporal cacheのように計算を停止するだけではなく、静的再利用の成立条件、共有端点の責任範囲、失敗検出、復旧処理までを、一つのストランド専用データ型として統一的に管理する。
+
+---
+
+# 38. 本研究の貢献
+
+本研究の貢献は次のとおりである。
+
+1. 髪ストランドを共有端点付きのセグメントグループ列として再定義した
+2. グループ単位で5種類の実行状態を持たせた
+3. 共有端点の書き込み所有規則を定義した
+4. 共有点周辺の処理責任を半球的に分割した
+5. 静的キャッシュの有効条件をCache Certificateとして定義した
+6. 静的グループを詳細分類処理から除外するDirty方式を導入した
+7. 親子関係に基づくDirty Propagationを定義した
+8. 静的・動的境界の誤差を検出・補正する方式を定義した
+9. 誤った静的化をfalse staticとして計測可能にした
+10. 修復状態を用いて静的化の失敗から復旧できるようにした
+11. 10万本規模を対象とした性能と安全性の評価条件を定義した
+
+---
+
+# 39. 新規性の最終判定条件
+
+次の要素を実装し、比較実験によって効果を示せた場合、本研究の新規性は安全側と判断する。
 
 ```text
-1. 点-線-点グループを最小単位とする
-2. 5状態を持つ
-3. 静的グループを方向キャッシュで復元する
-4. Static/Dynamic境界を補正する
-5. false staticを検出する
-6. Telemetryで安全性と性能を評価する
+共有端点所有規則
+
+半球的な処理責任分割
+
+5状態の明確な遷移
+
+Cache Certificate
+
+Dirty Reason
+
+Dirty Propagation
+
+Block階層管理
+
+Static/Dynamic境界補正
+
+false static検出
+
+Repairによる復旧
+
+既存方式とのアブレーション比較
 ```
 
-最終的な目標は、10万本規模の髪に対し、01単体で以下を満たすことである。
+一方、単に各線分へ状態enumを追加し、静的部分を前フレームからコピーするだけの場合は、新規性が弱くなる。
 
-```text
-StaticCached + StaticTransformed >= 75%
-Dynamic <= 15%
-falseStaticRate <= 1%
-p95 frame time <= 16.67ms
-```
+---
 
-この条件を満たせれば、01は新規性としても安全寄りになり、裏目標である01単体60FPSにも近づく。
+# 40. 最終結論
+
+本研究では、髪一本を共有端点を持つ「点―線―点」のセグメントグループ列として扱う。
+
+各グループは、`StaticCached`、`StaticTransformed`、`Dynamic`、`Deferred`、`Repair`の状態を持つ。
+
+静的グループは、開始点、方向、長さおよび親子接続情報から復元し、キャッシュ証明が有効な間は物理計算と詳細分類処理を行わない。
+
+隣接するグループの共有点は親グループが所有し、子グループはその位置を読み取り専用として利用する。
+
+共有点周辺の衝突および修復責任は、前後方向を基準とした半球的な規則によって分割する。
+
+頭部変換、衝突候補、編集、親グループの更新、境界誤差などが発生した場合のみ、Dirty Reasonを通じて対象グループを再評価する。
+
+誤って静的化されたグループはfalse staticとして検出し、`Repair`または`Dynamic`へ遷移させる。
+
+本研究の新規性は、静的な髪を単にキャッシュすることではない。
+
+共有端点、状態遷移、キャッシュ有効証明、依存関係、境界保証、失敗検出、復旧処理を統合した、新しいストランド専用実行時データ型を構築することにある。
+
+最終的には、10万本、約150万セグメントグループの髪に対して、静的再利用率75%以上、Dynamic率15%以下、false static率1%以下、p95フレーム時間16.67 ms以下を目標とする。
