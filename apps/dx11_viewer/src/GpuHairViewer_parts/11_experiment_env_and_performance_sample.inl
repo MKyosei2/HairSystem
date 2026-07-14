@@ -1,65 +1,88 @@
 // GpuHairViewer.cpp ordered part 11: experiment_env_and_performance_sample
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
 
-        sample.topLevelNoveltyMask = m_noveltyTelemetry.topLevelNoveltyMask;
-        sample.overflowCount = m_noveltyTelemetry.overflowCount;
-        sample.budgetDropCount = m_noveltyTelemetry.budgetDropCount;
-        sample.deferCount = m_noveltyTelemetry.deferCount;
-        sample.microtypeDecodedCount = m_noveltyTelemetry.microtypeDecodedCount;
-        sample.safeDecodeCount = m_noveltyTelemetry.safeDecodeCount;
-        sample.falseSafeCount = m_noveltyTelemetry.falseSafeCount;
-        sample.totalSegmentGroupCount = m_noveltyTelemetry.totalSegmentGroupCount;
-        sample.staticCachedGroupCount = m_noveltyTelemetry.staticCachedGroupCount;
-        sample.staticTransformedGroupCount = m_noveltyTelemetry.staticTransformedGroupCount;
-        sample.dynamicGroupCount = m_noveltyTelemetry.dynamicGroupCount;
-        sample.deferredCorrectionGroupCount = m_noveltyTelemetry.deferredCorrectionGroupCount;
-        sample.repairRequiredGroupCount = m_noveltyTelemetry.repairRequiredGroupCount;
-        sample.fallbackGroupCount = m_noveltyTelemetry.fallbackGroupCount;
-        sample.falseStaticCount = m_noveltyTelemetry.falseStaticCount;
-        sample.falseStaticRate = m_noveltyTelemetry.falseStaticRate;
-        sample.cacheHitCount = m_noveltyTelemetry.cacheHitCount;
-        sample.cacheMissCount = m_noveltyTelemetry.cacheMissCount;
-        sample.cacheInvalidationCount = m_noveltyTelemetry.cacheInvalidationCount;
-        sample.watchdogCheckCount = m_noveltyTelemetry.watchdogCheckCount;
-        sample.watchdogRepairCount = m_noveltyTelemetry.watchdogRepairCount;
-        sample.staticDynamicBoundaryMeanErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMeanErrorMm;
-        sample.staticDynamicBoundaryMaxErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMaxErrorMm;
-        sample.directionCacheMemoryMb = m_noveltyTelemetry.directionCacheMemoryMb;
-        sample.fullPositionMemoryMb = m_noveltyTelemetry.fullPositionMemoryMb;
-        sample.directionCacheMemorySavingRate = m_noveltyTelemetry.directionCacheMemorySavingRate;
-        sample.typedRepairRequestCount = m_noveltyTelemetry.typedRepairRequestCount;
-        sample.floatFallbackRequestCount = m_noveltyTelemetry.floatFallbackRequestCount;
-        sample.rejectPayloadCount = m_noveltyTelemetry.rejectPayloadCount;
-        sample.riskyStrandCount = m_noveltyTelemetry.riskyStrandCount;
-        sample.repairCommitCount = m_noveltyTelemetry.repairCommitCount;
-        sample.repairRejectCount = m_noveltyTelemetry.repairRejectCount;
-        sample.repairDeferCount = m_noveltyTelemetry.repairDeferCount;
-        sample.islandCandidateCount = m_noveltyTelemetry.islandCandidateCount;
-        sample.physicsFallbackCount = m_noveltyTelemetry.physicsFallbackCount;
-        sample.renderCertificateCount = m_noveltyTelemetry.renderCertificateCount;
-        sample.renderSkipCount = m_noveltyTelemetry.renderSkipCount;
-        sample.renderCoarseOpacityCount = m_noveltyTelemetry.renderCoarseOpacityCount;
-        sample.renderStrandRasterCount = m_noveltyTelemetry.renderStrandRasterCount;
-        sample.renderHighQualityShadowCount = m_noveltyTelemetry.renderHighQualityShadowCount;
-        sample.renderHighQualitySpecularCount = m_noveltyTelemetry.renderHighQualitySpecularCount;
-        sample.renderFullQualityCount = m_noveltyTelemetry.renderFullQualityCount;
-        sample.renderDroppedFullQualityCount = m_noveltyTelemetry.renderDroppedFullQualityCount;
-        sample.p95ShadowErrorBound = m_noveltyTelemetry.p95ShadowErrorBound;
-        sample.p95SpecularErrorBound = m_noveltyTelemetry.p95SpecularErrorBound;
-        sample.temporalFlickerScore = m_noveltyTelemetry.temporalFlickerScore;
-        sample.editOperationCount = m_noveltyTelemetry.editOperationCount;
-        sample.editRepairTaskCount = m_noveltyTelemetry.editRepairTaskCount;
-        sample.editIslandEscalationCount = m_noveltyTelemetry.editIslandEscalationCount;
-        sample.editCommitCount = m_noveltyTelemetry.editCommitCount;
-        sample.editRejectCount = m_noveltyTelemetry.editRejectCount;
-        sample.editPreviewFullQualityCount = m_noveltyTelemetry.editPreviewFullQualityCount;
-        sample.editLatencyMs = m_noveltyTelemetry.editLatencyMs;
-        sample.gpuResidentTaskCount = m_noveltyTelemetry.gpuResidentTaskCount;
-        sample.riskyCompactionCount = m_noveltyTelemetry.riskyCompactionCount;
-        sample.dispatchIndirectCount = m_noveltyTelemetry.dispatchIndirectCount;
-        sample.drawIndirectCount = m_noveltyTelemetry.drawIndirectCount;
-        sample.delayedTelemetryReadCount = m_noveltyTelemetry.delayedTelemetryReadCount;
-        return sample;
+sample.topLevelNoveltyMask = m_noveltyTelemetry.topLevelNoveltyMask;
+sample.overflowCount = m_noveltyTelemetry.overflowCount;
+sample.budgetDropCount = m_noveltyTelemetry.budgetDropCount;
+sample.deferCount = m_noveltyTelemetry.deferCount;
+sample.microtypeDecodedCount = m_noveltyTelemetry.microtypeDecodedCount;
+sample.safeDecodeCount = m_noveltyTelemetry.safeDecodeCount;
+sample.falseSafeCount = m_noveltyTelemetry.falseSafeCount;
+sample.totalSegmentGroupCount = m_noveltyTelemetry.totalSegmentGroupCount;
+sample.staticCachedGroupCount = m_noveltyTelemetry.staticCachedGroupCount;
+sample.staticTransformedGroupCount = m_noveltyTelemetry.staticTransformedGroupCount;
+sample.dynamicGroupCount = m_noveltyTelemetry.dynamicGroupCount;
+sample.deferredCorrectionGroupCount = m_noveltyTelemetry.deferredCorrectionGroupCount;
+sample.repairRequiredGroupCount = m_noveltyTelemetry.repairRequiredGroupCount;
+sample.fallbackGroupCount = m_noveltyTelemetry.fallbackGroupCount;
+sample.falseStaticCount = m_noveltyTelemetry.falseStaticCount;
+sample.falseStaticRate = m_noveltyTelemetry.falseStaticRate;
+sample.cacheHitCount = m_noveltyTelemetry.cacheHitCount;
+sample.cacheMissCount = m_noveltyTelemetry.cacheMissCount;
+sample.cacheInvalidationCount = m_noveltyTelemetry.cacheInvalidationCount;
+sample.watchdogCheckCount = m_noveltyTelemetry.watchdogCheckCount;
+sample.watchdogRepairCount = m_noveltyTelemetry.watchdogRepairCount;
+sample.staticDynamicBoundaryMeanErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMeanErrorMm;
+sample.staticDynamicBoundaryMaxErrorMm = m_noveltyTelemetry.staticDynamicBoundaryMaxErrorMm;
+sample.directionCacheMemoryMb = m_noveltyTelemetry.directionCacheMemoryMb;
+sample.fullPositionMemoryMb = m_noveltyTelemetry.fullPositionMemoryMb;
+sample.directionCacheMemorySavingRate = m_noveltyTelemetry.directionCacheMemorySavingRate;
+sample.totalSegmentGroupBlockCount = m_noveltyTelemetry.totalSegmentGroupBlockCount;
+sample.dirtyBlockCount = m_noveltyTelemetry.dirtyBlockCount;
+sample.dirtyGroupCount = m_noveltyTelemetry.dirtyGroupCount;
+sample.certificateValidGroupCount = m_noveltyTelemetry.certificateValidGroupCount;
+sample.certificateInvalidGroupCount = m_noveltyTelemetry.certificateInvalidGroupCount;
+sample.parentVersionMismatchCount = m_noveltyTelemetry.parentVersionMismatchCount;
+sample.colliderVersionMismatchCount = m_noveltyTelemetry.colliderVersionMismatchCount;
+sample.editVersionMismatchCount = m_noveltyTelemetry.editVersionMismatchCount;
+sample.topologyVersionMismatchCount = m_noveltyTelemetry.topologyVersionMismatchCount;
+sample.staticReuseAttemptCount = m_noveltyTelemetry.staticReuseAttemptCount;
+sample.sharedPointConflictCount = m_noveltyTelemetry.sharedPointConflictCount;
+sample.hemisphereParentResolveCount = m_noveltyTelemetry.hemisphereParentResolveCount;
+sample.hemisphereChildResolveCount = m_noveltyTelemetry.hemisphereChildResolveCount;
+sample.dynamicCompactionInputCount = m_noveltyTelemetry.dynamicCompactionInputCount;
+sample.dynamicCompactionOutputCount = m_noveltyTelemetry.dynamicCompactionOutputCount;
+sample.repairCompactionOutputCount = m_noveltyTelemetry.repairCompactionOutputCount;
+sample.blockClassificationGpuMilliseconds = m_noveltyTelemetry.blockClassificationGpuMilliseconds;
+sample.groupClassificationGpuMilliseconds = m_noveltyTelemetry.groupClassificationGpuMilliseconds;
+sample.compactionGpuMilliseconds = m_noveltyTelemetry.compactionGpuMilliseconds;
+sample.staticTransformGpuMilliseconds = m_noveltyTelemetry.staticTransformGpuMilliseconds;
+sample.boundaryRepairGpuMilliseconds = m_noveltyTelemetry.boundaryRepairGpuMilliseconds;
+sample.watchdogGpuMilliseconds = m_noveltyTelemetry.watchdogGpuMilliseconds;
+sample.telemetryReductionGpuMilliseconds = m_noveltyTelemetry.telemetryReductionGpuMilliseconds;
+sample.typedRepairRequestCount = m_noveltyTelemetry.typedRepairRequestCount;
+sample.floatFallbackRequestCount = m_noveltyTelemetry.floatFallbackRequestCount;
+sample.rejectPayloadCount = m_noveltyTelemetry.rejectPayloadCount;
+sample.riskyStrandCount = m_noveltyTelemetry.riskyStrandCount;
+sample.repairCommitCount = m_noveltyTelemetry.repairCommitCount;
+sample.repairRejectCount = m_noveltyTelemetry.repairRejectCount;
+sample.repairDeferCount = m_noveltyTelemetry.repairDeferCount;
+sample.islandCandidateCount = m_noveltyTelemetry.islandCandidateCount;
+sample.physicsFallbackCount = m_noveltyTelemetry.physicsFallbackCount;
+sample.renderCertificateCount = m_noveltyTelemetry.renderCertificateCount;
+sample.renderSkipCount = m_noveltyTelemetry.renderSkipCount;
+sample.renderCoarseOpacityCount = m_noveltyTelemetry.renderCoarseOpacityCount;
+sample.renderStrandRasterCount = m_noveltyTelemetry.renderStrandRasterCount;
+sample.renderHighQualityShadowCount = m_noveltyTelemetry.renderHighQualityShadowCount;
+sample.renderHighQualitySpecularCount = m_noveltyTelemetry.renderHighQualitySpecularCount;
+sample.renderFullQualityCount = m_noveltyTelemetry.renderFullQualityCount;
+sample.renderDroppedFullQualityCount = m_noveltyTelemetry.renderDroppedFullQualityCount;
+sample.p95ShadowErrorBound = m_noveltyTelemetry.p95ShadowErrorBound;
+sample.p95SpecularErrorBound = m_noveltyTelemetry.p95SpecularErrorBound;
+sample.temporalFlickerScore = m_noveltyTelemetry.temporalFlickerScore;
+sample.editOperationCount = m_noveltyTelemetry.editOperationCount;
+sample.editRepairTaskCount = m_noveltyTelemetry.editRepairTaskCount;
+sample.editIslandEscalationCount = m_noveltyTelemetry.editIslandEscalationCount;
+sample.editCommitCount = m_noveltyTelemetry.editCommitCount;
+sample.editRejectCount = m_noveltyTelemetry.editRejectCount;
+sample.editPreviewFullQualityCount = m_noveltyTelemetry.editPreviewFullQualityCount;
+sample.editLatencyMs = m_noveltyTelemetry.editLatencyMs;
+sample.gpuResidentTaskCount = m_noveltyTelemetry.gpuResidentTaskCount;
+sample.riskyCompactionCount = m_noveltyTelemetry.riskyCompactionCount;
+sample.dispatchIndirectCount = m_noveltyTelemetry.dispatchIndirectCount;
+sample.drawIndirectCount = m_noveltyTelemetry.drawIndirectCount;
+sample.delayedTelemetryReadCount = m_noveltyTelemetry.delayedTelemetryReadCount;
+return sample;
     }
 
     bool GpuHairViewer::ExportPerformanceCsv(const std::wstring& filePath) const
@@ -70,7 +93,7 @@
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval\n";
         const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
@@ -207,7 +230,40 @@
                 << "," << s.riskyCompactionCount
                 << "," << s.dispatchIndirectCount
                 << "," << s.drawIndirectCount
-                << "," << s.delayedTelemetryReadCount << "\n";
+                << "," << s.delayedTelemetryReadCount
+                << "," << s.totalSegmentGroupBlockCount
+                << "," << s.dirtyBlockCount
+                << "," << s.dirtyGroupCount
+                << "," << s.certificateValidGroupCount
+                << "," << s.certificateInvalidGroupCount
+                << "," << s.parentVersionMismatchCount
+                << "," << s.colliderVersionMismatchCount
+                << "," << s.editVersionMismatchCount
+                << "," << s.topologyVersionMismatchCount
+                << "," << s.staticReuseAttemptCount
+                << "," << s.sharedPointConflictCount
+                << "," << s.hemisphereParentResolveCount
+                << "," << s.hemisphereChildResolveCount
+                << "," << s.dynamicCompactionInputCount
+                << "," << s.dynamicCompactionOutputCount
+                << "," << s.repairCompactionOutputCount
+                << "," << s.blockClassificationGpuMilliseconds
+                << "," << s.groupClassificationGpuMilliseconds
+                << "," << s.compactionGpuMilliseconds
+                << "," << s.staticTransformGpuMilliseconds
+                << "," << s.boundaryRepairGpuMilliseconds
+                << "," << s.watchdogGpuMilliseconds
+                << "," << s.telemetryReductionGpuMilliseconds
+                << "," << m_noveltyFlags.enableMicrotypeCertificate
+                << "," << m_noveltyFlags.enableMicrotypeDirtyPropagation
+                << "," << m_noveltyFlags.enableMicrotypeBlockHierarchy
+                << "," << m_noveltyFlags.enableMicrotypeBoundaryRepair
+                << "," << m_noveltyFlags.enableMicrotypeWatchdog
+                << "," << m_noveltyFlags.enableMicrotypeHemisphereOwnership
+                << "," << m_noveltyFlags.enableMicrotypeIndirectDispatch
+                << "," << m_segmentGroupsPerBlock
+                << "," << m_segmentGroupWatchdogIntervalFrames
+                << "\n";
         }
         return true;
     }
@@ -318,7 +374,30 @@
                 << "\"risky_compaction_count\":" << s.riskyCompactionCount << ","
                 << "\"dispatch_indirect_count\":" << s.dispatchIndirectCount << ","
                 << "\"draw_indirect_count\":" << s.drawIndirectCount << ","
-                << "\"delayed_telemetry_read_count\":" << s.delayedTelemetryReadCount
+                << "\"delayed_telemetry_read_count\":" << s.delayedTelemetryReadCount << ","
+                << "\"total_segment_group_block_count\":" << s.totalSegmentGroupBlockCount << ","
+                << "\"dirty_block_count\":" << s.dirtyBlockCount << ","
+                << "\"dirty_group_count\":" << s.dirtyGroupCount << ","
+                << "\"certificate_valid_group_count\":" << s.certificateValidGroupCount << ","
+                << "\"certificate_invalid_group_count\":" << s.certificateInvalidGroupCount << ","
+                << "\"parent_version_mismatch_count\":" << s.parentVersionMismatchCount << ","
+                << "\"collider_version_mismatch_count\":" << s.colliderVersionMismatchCount << ","
+                << "\"edit_version_mismatch_count\":" << s.editVersionMismatchCount << ","
+                << "\"topology_version_mismatch_count\":" << s.topologyVersionMismatchCount << ","
+                << "\"static_reuse_attempt_count\":" << s.staticReuseAttemptCount << ","
+                << "\"shared_point_conflict_count\":" << s.sharedPointConflictCount << ","
+                << "\"hemisphere_parent_resolve_count\":" << s.hemisphereParentResolveCount << ","
+                << "\"hemisphere_child_resolve_count\":" << s.hemisphereChildResolveCount << ","
+                << "\"dynamic_compaction_input_count\":" << s.dynamicCompactionInputCount << ","
+                << "\"dynamic_compaction_output_count\":" << s.dynamicCompactionOutputCount << ","
+                << "\"repair_compaction_output_count\":" << s.repairCompactionOutputCount << ","
+                << "\"block_classification_gpu_ms\":" << s.blockClassificationGpuMilliseconds << ","
+                << "\"group_classification_gpu_ms\":" << s.groupClassificationGpuMilliseconds << ","
+                << "\"compaction_gpu_ms\":" << s.compactionGpuMilliseconds << ","
+                << "\"static_transform_gpu_ms\":" << s.staticTransformGpuMilliseconds << ","
+                << "\"boundary_repair_gpu_ms\":" << s.boundaryRepairGpuMilliseconds << ","
+                << "\"watchdog_gpu_ms\":" << s.watchdogGpuMilliseconds << ","
+                << "\"telemetry_reduction_gpu_ms\":" << s.telemetryReductionGpuMilliseconds
                 << "}\n";
         }
         return true;
@@ -354,6 +433,18 @@
         out << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
         out << "    \"enableRodRepair\": " << (m_experimentCase.enableRodRepair ? "true" : "false") << ",\n";
         out << "    \"enableGpuResident\": " << (m_experimentCase.enableGpuResident ? "true" : "false") << "\n";
+        out << "  },\n";
+        out << "  \"microtype_ablation\": {\n";
+        out << "    \"certificate\": " << m_noveltyFlags.enableMicrotypeCertificate << ",\n";
+        out << "    \"dirtyPropagation\": " << m_noveltyFlags.enableMicrotypeDirtyPropagation << ",\n";
+        out << "    \"blockHierarchy\": " << m_noveltyFlags.enableMicrotypeBlockHierarchy << ",\n";
+        out << "    \"boundaryRepair\": " << m_noveltyFlags.enableMicrotypeBoundaryRepair << ",\n";
+        out << "    \"watchdog\": " << m_noveltyFlags.enableMicrotypeWatchdog << ",\n";
+        out << "    \"hemisphereOwnership\": " << m_noveltyFlags.enableMicrotypeHemisphereOwnership << ",\n";
+        out << "    \"indirectDispatch\": " << m_noveltyFlags.enableMicrotypeIndirectDispatch << ",\n";
+        out << "    \"groupsPerBlock\": " << m_segmentGroupsPerBlock << ",\n";
+        out << "    \"watchdogIntervalFrames\": " << m_segmentGroupWatchdogIntervalFrames << ",\n";
+        out << "    \"bits\": \"" << hairgpu::BuildMicrotypeAblationBits(m_noveltyFlags) << "\"\n";
         out << "  }\n";
         out << "}\n";
         return true;
@@ -753,10 +844,10 @@
     }
 
     hairgpu::EditLayer GpuHairViewer::BuildViewportBrushLayer(const Vec2& centerUv,
-                                                              const Vec2& startUv,
-                                                              const Vec2& currentUv,
-                                                              const POINT& currentPoint,
-                                                              uint32_t* outAffectedGuideCount) const
+        const Vec2& startUv,
+        const Vec2& currentUv,
+        const POINT& currentPoint,
+        uint32_t* outAffectedGuideCount) const
     {
         hairgpu::EditLayer layer = {};
         ++const_cast<GpuHairViewer*>(this)->m_viewportStrokeSerial;

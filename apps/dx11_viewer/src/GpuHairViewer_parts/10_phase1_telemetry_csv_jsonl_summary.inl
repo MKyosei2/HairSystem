@@ -1,15 +1,15 @@
 // GpuHairViewer.cpp ordered part 10: phase1_telemetry_csv_jsonl_summary
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
 
-        std::swap(stack.layers[static_cast<size_t>(selectedIndex)], stack.layers[static_cast<size_t>(targetIndex)]);
-        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
-        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
-        LoadQuickEditFormFromInlineText(targetIndex);
-        if (applyAfterMove)
-        {
-            return ApplyInlineEditStackFromUi(true);
-        }
-        return true;
+std::swap(stack.layers[static_cast<size_t>(selectedIndex)], stack.layers[static_cast<size_t>(targetIndex)]);
+const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
+SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+LoadQuickEditFormFromInlineText(targetIndex);
+if (applyAfterMove)
+{
+    return ApplyInlineEditStackFromUi(true);
+}
+return true;
     }
 
     bool GpuHairViewer::ToggleSelectedInlineLayerEnabled(bool applyAfterToggle)
@@ -574,6 +574,74 @@
             m_experimentCase.enablePhysicsIslands ? 1u : 0u,
             m_experimentCase.enableRodRepair ? 1u : 0u,
             m_experimentCase.enableNoNoveltyBaseline ? 1u : 0u);
+
+        const auto applyOptionalFlag =
+            [](const std::wstring& value, uint32_t& destination)
+            {
+                if (!value.empty())
+                {
+                    destination =
+                        EnvironmentValueIsTrue(value) ? 1u : 0u;
+                }
+            };
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_CERTIFICATE"),
+            m_noveltyFlags.enableMicrotypeCertificate);
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_DIRTY_PROPAGATION"),
+            m_noveltyFlags.enableMicrotypeDirtyPropagation);
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_BLOCK_HIERARCHY"),
+            m_noveltyFlags.enableMicrotypeBlockHierarchy);
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_BOUNDARY_REPAIR"),
+            m_noveltyFlags.enableMicrotypeBoundaryRepair);
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_WATCHDOG"),
+            m_noveltyFlags.enableMicrotypeWatchdog);
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_HEMISPHERE_OWNERSHIP"),
+            m_noveltyFlags.enableMicrotypeHemisphereOwnership);
+
+        applyOptionalFlag(
+            GetEnvironmentVariableString(
+                L"HAIRGPU_MICROTYPE_INDIRECT_DISPATCH"),
+            m_noveltyFlags.enableMicrotypeIndirectDispatch);
+
+        m_noveltyFlags =
+            hairgpu::NormalizeMicrotypeAblationFlags(
+                m_noveltyFlags);
+
+        m_segmentGroupsPerBlock =
+            std::max<uint32_t>(
+                1u,
+                EnvironmentValueToUInt(
+                    GetEnvironmentVariableString(
+                        L"HAIRGPU_MICROTYPE_GROUPS_PER_BLOCK"),
+                    m_segmentGroupsPerBlock));
+
+        m_segmentGroupWatchdogIntervalFrames =
+            std::max<uint32_t>(
+                1u,
+                EnvironmentValueToUInt(
+                    GetEnvironmentVariableString(
+                        L"HAIRGPU_MICROTYPE_WATCHDOG_INTERVAL"),
+                    m_segmentGroupWatchdogIntervalFrames));
+
+        m_segmentGroupTopologyDirty = true;
+        m_forceAllSegmentGroupsDirty = true;
         m_experimentCase.enableNoNoveltyBaseline = m_noveltyFlags.enableNoNoveltyBaseline != 0u;
         m_experimentCase.enableMicrotype = m_noveltyFlags.enableMicrotype != 0u;
         m_experimentCase.enableBudgetedPhysics = m_noveltyFlags.enableBudgetedPhysics != 0u;
