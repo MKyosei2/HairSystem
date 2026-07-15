@@ -1,12 +1,19 @@
 {
-  "manifestVersion": "novelty01-100k-v1",
+  "manifestVersion": "novelty01-100k-v1.1",
   "purpose": "Deterministic 100,000 displayed-strand benchmark asset contract",
+  "freezeStatus": "UNFROZEN_REJECT_FOR_PAPER_EVIDENCE",
   "assetId": "novelty01_100k_display_strands",
   "sourceAssetPath": "REPLACE_WITH_LOCAL_ASSET_PATH",
   "sourceAssetSha256": "REPLACE_AFTER_ASSET_FREEZE",
+  "generatedTopologySha256": "REPLACE_AFTER_ASSET_FREEZE",
+  "generatorSettingsSha256": "REPLACE_AFTER_ASSET_FREEZE",
   "generation": {
     "displayStrandCount": 100000,
-    "guideStrandCounts": [2000, 3000, 5000],
+    "guideStrandCounts": [
+      2000,
+      3000,
+      5000
+    ],
     "primaryGuideStrandCount": 3000,
     "particlesPerGuide": 20,
     "followerGeneration": "deterministic_root_neighborhood",
@@ -23,11 +30,17 @@
     "nonFinitePointsAllowed": false,
     "topologyMutationDuringMeasurementAllowed": false
   },
+  "evidenceGate": {
+    "rejectWhenFreezeStatusIsNot": "FROZEN",
+    "rejectPlaceholderHashes": true,
+    "requireSameAssetHashAcrossAllMethodsAndSeeds": true
+  },
   "freezeChecklist": [
     "Replace sourceAssetPath with the final local asset path.",
     "Write sourceAssetSha256 after the asset is frozen.",
     "Record generated guide/follower topology hash.",
     "Store the generator settings JSON and its SHA-256.",
+    "Set freezeStatus to FROZEN.",
     "Do not change the asset between methods or seeds."
   ]
 }

@@ -1,7 +1,13 @@
 {
-  "suite_version": "novelty01-safe-v1.0",
+  "suite_version": "novelty01-safe-v1.1",
   "suite_name": "novelty01_safe_100k_runtime",
   "experiment_name": "novelty01_segment_group_safe_evaluation",
+  "source": {
+    "repository": "MKyosei2/HairSystem",
+    "branch": "Novelty",
+    "commit": "ed2d14473a5ba6b7a8b44a8d8ba4d004899c2b6e",
+    "commit_message": "61.53"
+  },
   "db": "../../out/novelty01_safe/runtime_suite.sqlite",
   "excel": "../../out/novelty01_safe/runtime_suite.xlsx",
   "outputs_dir": "../../out/novelty01_safe/summary",
@@ -18,9 +24,12 @@
     "reject_pending_or_synthetic_results": true,
     "require_vsync_disabled": true,
     "require_fixed_timestep": true,
-    "fixed_timestep_seconds": 0.0166666667,
-    "fixed_timestep_tolerance_seconds": 0.00001,
-    "required_resolution": [1920, 1080],
+    "fixed_timestep_seconds": 0.016666666666666666,
+    "fixed_timestep_tolerance_seconds": 1e-05,
+    "required_resolution": [
+      1920,
+      1080
+    ],
     "minimum_warmup_frames": 600,
     "minimum_measurement_frames": 6000,
     "minimum_seed_count": 5,
@@ -30,19 +39,23 @@
       "executableSha256",
       "shaderBundleSha256",
       "assetSha256",
-      "settingsSha256"
+      "settingsSha256",
+      "scenarioTimelineSha256",
+      "assetManifestSha256"
     ],
     "require_hardware_fields": [
       "cpuName",
       "gpuName",
       "gpuDriver",
-      "operatingSystem"
+      "operatingSystem",
+      "hardwareProfile"
     ],
     "required_frame_columns_any": [
       "frameMilliseconds",
       "frame_ms",
       "frameMs",
-      "totalFrameMilliseconds"
+      "totalFrameMilliseconds",
+      "frame_time_ms"
     ],
     "required_telemetry_fields": [
       "totalSegmentGroupCount",
@@ -70,8 +83,39 @@
       "followerReconstructionGpuMilliseconds",
       "renderPreparationGpuMilliseconds",
       "hairDrawGpuMilliseconds",
-      "totalHairGpuMilliseconds"
-    ]
+      "totalHairGpuMilliseconds",
+      "realMeasurement",
+      "buildConfiguration",
+      "platform",
+      "renderWidth",
+      "renderHeight",
+      "vsyncEnabled",
+      "fixedTimeStepEnabled",
+      "fixedTimeStepSeconds",
+      "caseId",
+      "appliedMethodCode",
+      "appliedMethodSettingsSha256"
+    ],
+    "require_identity_match": true,
+    "require_method_setting_acknowledgement": true,
+    "reject_unacknowledged_feature_flags": true
+  },
+  "statistics": {
+    "pairing_keys": [
+      "scenario",
+      "seed",
+      "asset",
+      "hardware_profile"
+    ],
+    "baseline_required_for_every_pair": true,
+    "confidence_level": 0.95,
+    "bootstrap_iterations": 2000,
+    "minimum_matched_seed_count": 5,
+    "report_p50": true,
+    "report_p95": true,
+    "report_p99": true,
+    "report_p999": true,
+    "randomize_execution_order": true
   },
   "run_defaults": {
     "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
@@ -80,11 +124,12 @@
     "asset_manifest": "../../docs/sample_assets/novelty01_100k_asset_manifest.json",
     "build_configuration": "Release",
     "platform": "x64",
+    "hardware_profile": "low_gtx1660_reference",
     "width": 1920,
     "height": 1080,
     "vsync": false,
     "fixed_timestep": true,
-    "fixed_timestep_seconds": 0.0166666667,
+    "fixed_timestep_seconds": 0.016666666666666666,
     "warmup_frames": 600,
     "measurement_frames": 6000,
     "timeout_seconds": 900,
@@ -97,7 +142,13 @@
     "gpu_timestamp_delay_frames": 4,
     "operator": "automated_suite"
   },
-  "seeds": [1, 11, 21, 31, 41],
+  "seeds": [
+    1,
+    11,
+    21,
+    31,
+    41
+  ],
   "methods": [
     {
       "code": "full_physics",
@@ -211,24 +262,96 @@
     }
   ],
   "scenarios": [
-    {"code": "S01_Idle", "category": "normal", "timeline": "../../benchmarks/novelty01/scenarios/S01_idle.json"},
-    {"code": "S02_Breathing", "category": "normal", "timeline": "../../benchmarks/novelty01/scenarios/S02_breathing.json"},
-    {"code": "S03_Walk", "category": "normal", "timeline": "../../benchmarks/novelty01/scenarios/S03_walk.json"},
-    {"code": "S04_SuddenStop", "category": "wake", "timeline": "../../benchmarks/novelty01/scenarios/S04_sudden_stop.json"},
-    {"code": "S05_HeadRotation", "category": "transform", "timeline": "../../benchmarks/novelty01/scenarios/S05_head_rotation.json"},
-    {"code": "S06_Teleport", "category": "repair", "timeline": "../../benchmarks/novelty01/scenarios/S06_teleport.json"},
-    {"code": "S07_ColliderApproach", "category": "collision", "timeline": "../../benchmarks/novelty01/scenarios/S07_collider_approach.json"},
-    {"code": "S08_StaticDynamicBoundaryContact", "category": "boundary", "timeline": "../../benchmarks/novelty01/scenarios/S08_boundary_contact.json"},
-    {"code": "S09_StrongWind", "category": "load", "timeline": "../../benchmarks/novelty01/scenarios/S09_strong_wind.json"},
-    {"code": "S10_WindStop", "category": "wake", "timeline": "../../benchmarks/novelty01/scenarios/S10_wind_stop.json"},
-    {"code": "S11_LocalEdit", "category": "edit", "timeline": "../../benchmarks/novelty01/scenarios/S11_local_edit.json"},
-    {"code": "S12_FalseStaticTrap", "category": "safety", "timeline": "../../benchmarks/novelty01/scenarios/S12_false_static_trap.json"},
-    {"code": "S13_RepairStorm", "category": "repair", "timeline": "../../benchmarks/novelty01/scenarios/S13_repair_storm.json"},
-    {"code": "S14_AllDynamic", "category": "worst_case", "timeline": "../../benchmarks/novelty01/scenarios/S14_all_dynamic.json"},
-    {"code": "S15_AllStatic", "category": "best_case", "timeline": "../../benchmarks/novelty01/scenarios/S15_all_static.json"},
-    {"code": "S16_StateThrashing", "category": "stability", "timeline": "../../benchmarks/novelty01/scenarios/S16_state_thrashing.json"},
-    {"code": "S17_CloseCamera100k", "category": "render", "timeline": "../../benchmarks/novelty01/scenarios/S17_close_camera_100k.json"},
-    {"code": "S18_FarCamera100k", "category": "render", "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json"}
+    {
+      "code": "S01_Idle",
+      "category": "normal",
+      "timeline": "../../benchmarks/novelty01/scenarios/S01_idle.json"
+    },
+    {
+      "code": "S02_Breathing",
+      "category": "normal",
+      "timeline": "../../benchmarks/novelty01/scenarios/S02_breathing.json"
+    },
+    {
+      "code": "S03_Walk",
+      "category": "normal",
+      "timeline": "../../benchmarks/novelty01/scenarios/S03_walk.json"
+    },
+    {
+      "code": "S04_SuddenStop",
+      "category": "wake",
+      "timeline": "../../benchmarks/novelty01/scenarios/S04_sudden_stop.json"
+    },
+    {
+      "code": "S05_HeadRotation",
+      "category": "transform",
+      "timeline": "../../benchmarks/novelty01/scenarios/S05_head_rotation.json"
+    },
+    {
+      "code": "S06_Teleport",
+      "category": "repair",
+      "timeline": "../../benchmarks/novelty01/scenarios/S06_teleport.json"
+    },
+    {
+      "code": "S07_ColliderApproach",
+      "category": "collision",
+      "timeline": "../../benchmarks/novelty01/scenarios/S07_collider_approach.json"
+    },
+    {
+      "code": "S08_StaticDynamicBoundaryContact",
+      "category": "boundary",
+      "timeline": "../../benchmarks/novelty01/scenarios/S08_boundary_contact.json"
+    },
+    {
+      "code": "S09_StrongWind",
+      "category": "load",
+      "timeline": "../../benchmarks/novelty01/scenarios/S09_strong_wind.json"
+    },
+    {
+      "code": "S10_WindStop",
+      "category": "wake",
+      "timeline": "../../benchmarks/novelty01/scenarios/S10_wind_stop.json"
+    },
+    {
+      "code": "S11_LocalEdit",
+      "category": "edit",
+      "timeline": "../../benchmarks/novelty01/scenarios/S11_local_edit.json"
+    },
+    {
+      "code": "S12_FalseStaticTrap",
+      "category": "safety",
+      "timeline": "../../benchmarks/novelty01/scenarios/S12_false_static_trap.json"
+    },
+    {
+      "code": "S13_RepairStorm",
+      "category": "repair",
+      "timeline": "../../benchmarks/novelty01/scenarios/S13_repair_storm.json"
+    },
+    {
+      "code": "S14_AllDynamic",
+      "category": "worst_case",
+      "timeline": "../../benchmarks/novelty01/scenarios/S14_all_dynamic.json"
+    },
+    {
+      "code": "S15_AllStatic",
+      "category": "best_case",
+      "timeline": "../../benchmarks/novelty01/scenarios/S15_all_static.json"
+    },
+    {
+      "code": "S16_StateThrashing",
+      "category": "stability",
+      "timeline": "../../benchmarks/novelty01/scenarios/S16_state_thrashing.json"
+    },
+    {
+      "code": "S17_CloseCamera100k",
+      "category": "render",
+      "timeline": "../../benchmarks/novelty01/scenarios/S17_close_camera_100k.json"
+    },
+    {
+      "code": "S18_FarCamera100k",
+      "category": "render",
+      "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json"
+    }
   ],
   "goals": {
     "max_avg_p95_frame_ms": 16.67,
@@ -272,6 +395,16 @@
       "metric": "avg_repair_success_rate",
       "comparator": ">=",
       "threshold": 0.95
+    },
+    {
+      "hypothesis_id": "H04",
+      "title": "Matched-seed p99 does not regress against external-state baseline",
+      "source": "safe_pairwise",
+      "method": "proposal_hybrid",
+      "baseline": "external_state_array",
+      "metric": "ci_high_delta_p99_frame_ms",
+      "comparator": "<",
+      "threshold": 0.0
     }
   ],
   "runs": []

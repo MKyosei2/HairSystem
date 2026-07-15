@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,76 @@ def wait_for_file(path: Path, timeout_seconds: int) -> None:
     raise TimeoutError(f"Timed out waiting for {path}")
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _env_token(name: str) -> str:
+    step1 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return re.sub(r"[^A-Za-z0-9]+", "_", step1).strip("_").upper()
+
+
+def _env_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def _resolve_case_path(value: Any) -> Path | None:
+    if value in (None, ""):
+        return None
+    path = Path(str(value))
+    return path.resolve() if not path.is_absolute() else path
+
+
+def _set_if_present(env: dict[str, str], key: str, value: Any) -> None:
+    if value not in (None, ""):
+        env[key] = _env_value(value)
+
+
+def _write_case_snapshot(telemetry_dir: Path, run_name: str, case: dict[str, Any], viewer_exe: Path) -> Path:
+    snapshot = dict(case)
+    snapshot.setdefault("run_name", run_name)
+    snapshot.setdefault("settings_hash", canonical_json_sha256(case))
+    snapshot["viewerExecutable"] = str(viewer_exe)
+    snapshot["executableSha256"] = sha256_file(viewer_exe)
+
+    timeline = _resolve_case_path(case.get("scenario_timeline"))
+    if timeline and timeline.exists():
+        snapshot["scenarioTimelinePath"] = str(timeline)
+        snapshot["scenarioTimelineSha256"] = sha256_file(timeline)
+
+    asset_manifest = _resolve_case_path(case.get("asset_manifest"))
+    if asset_manifest and asset_manifest.exists():
+        snapshot["assetManifestPath"] = str(asset_manifest)
+        snapshot["assetManifestSha256"] = sha256_file(asset_manifest)
+        try:
+            manifest = json.loads(asset_manifest.read_text(encoding="utf-8-sig"))
+            snapshot.setdefault("assetSha256", manifest.get("sourceAssetSha256", ""))
+        except Exception:
+            pass
+
+    path = telemetry_dir / f"{run_name}_case.json"
+    write_json(path, snapshot)
+    return path
+
+
 def run_viewer(
     viewer_exe: Path,
     telemetry_dir: Path,
@@ -54,6 +125,10 @@ def run_viewer(
     timeout_seconds: int,
     case: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path | None, Path | None]:
+    viewer_exe = Path(viewer_exe).resolve()
+    if not viewer_exe.exists():
+        raise FileNotFoundError(f"Viewer executable does not exist: {viewer_exe}")
+
     telemetry_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["HAIRGPU_AUTO_TELEMETRY"] = "1"
@@ -61,6 +136,8 @@ def run_viewer(
     env["HAIRGPU_TELEMETRY_RUN_NAME"] = run_name
 
     if case:
+        case_snapshot_path = _write_case_snapshot(telemetry_dir, run_name, case, viewer_exe)
+        env["HAIRGPU_CASE_JSON"] = str(case_snapshot_path)
         env["HAIRGPU_EXPERIMENT_CASE_ID"] = str(case.get("case_id", ""))
         env["HAIRGPU_VARIANT"] = str(case.get("method", case.get("variant", "")))
         env["HAIRGPU_SCENARIO"] = str(case.get("scenario", ""))
@@ -68,16 +145,58 @@ def run_viewer(
         env["HAIRGPU_WARMUP_FRAMES"] = str(case.get("warmup_frames", 0))
         env["HAIRGPU_MEASUREMENT_FRAMES"] = str(case.get("measurement_frames", 0))
         env["HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"] = "1"
-        env["HAIRGPU_ENABLE_NO_NOVELTY_BASELINE"] = "1" if case.get("enableNoNoveltyBaseline") else "0"
-        env["HAIRGPU_ENABLE_MICROTYPE"] = "1" if case.get("enableMicrotype") else "0"
-        env["HAIRGPU_ENABLE_BUDGETED_PHYSICS"] = "1" if case.get("enableBudgetedPhysics") else "0"
-        env["HAIRGPU_ENABLE_CERTIFICATE_RENDER"] = "1" if case.get("enableCertificateRender") else "0"
-        env["HAIRGPU_ENABLE_PER_STRAND_EDIT"] = "1" if case.get("enablePerStrandEdit") else "0"
-        env["HAIRGPU_ENABLE_CBMA"] = "1" if case.get("enableCBMA") else "0"
-        env["HAIRGPU_ENABLE_PHYSICS_ISLANDS"] = "1" if case.get("enablePhysicsIslands") else "0"
-        env["HAIRGPU_ENABLE_ROD_REPAIR"] = "1" if case.get("enableRodRepair") else "0"
-        env["HAIRGPU_ENABLE_GPU_RESIDENT"] = "1" if case.get("enableGpuResident") else "0"
-        env["HAIRGPU_SETTINGS_HASH"] = str(case.get("settings_hash", ""))
+        env["HAIRGPU_SETTINGS_HASH"] = str(case.get("settings_hash") or canonical_json_sha256(case))
+        env["HAIRGPU_EXECUTABLE_SHA256"] = sha256_file(viewer_exe)
+
+        direct_flags = {
+            "enableNoNoveltyBaseline": "HAIRGPU_ENABLE_NO_NOVELTY_BASELINE",
+            "enableMicrotype": "HAIRGPU_ENABLE_MICROTYPE",
+            "enableBudgetedPhysics": "HAIRGPU_ENABLE_BUDGETED_PHYSICS",
+            "enableCertificateRender": "HAIRGPU_ENABLE_CERTIFICATE_RENDER",
+            "enablePerStrandEdit": "HAIRGPU_ENABLE_PER_STRAND_EDIT",
+            "enableCBMA": "HAIRGPU_ENABLE_CBMA",
+            "enablePhysicsIslands": "HAIRGPU_ENABLE_PHYSICS_ISLANDS",
+            "enableRodRepair": "HAIRGPU_ENABLE_ROD_REPAIR",
+            "enableGpuResident": "HAIRGPU_ENABLE_GPU_RESIDENT",
+            "enableSegmentGroupSleep": "HAIRGPU_ENABLE_SEGMENT_GROUP_SLEEP",
+            "enableSegmentGroupIntegratedState": "HAIRGPU_ENABLE_SEGMENT_GROUP_INTEGRATED_STATE",
+            "enableExternalStateArray": "HAIRGPU_ENABLE_EXTERNAL_STATE_ARRAY",
+            "enableSharedPointOwnership": "HAIRGPU_ENABLE_SHARED_POINT_OWNERSHIP",
+            "enableDirectionalResponsibility": "HAIRGPU_ENABLE_DIRECTIONAL_RESPONSIBILITY",
+            "enableStaticCertificate": "HAIRGPU_ENABLE_STATIC_CERTIFICATE",
+            "enablePredictiveWake": "HAIRGPU_ENABLE_PREDICTIVE_WAKE",
+            "enableVelocityRecovery": "HAIRGPU_ENABLE_VELOCITY_RECOVERY",
+            "enableRepair": "HAIRGPU_ENABLE_REPAIR",
+            "enableGpuCompaction": "HAIRGPU_ENABLE_GPU_COMPACTION",
+            "enableActiveSet": "HAIRGPU_ENABLE_ACTIVE_SET",
+            "enableStrandSleep": "HAIRGPU_ENABLE_STRAND_SLEEP",
+            "enableBlockSleep": "HAIRGPU_ENABLE_BLOCK_SLEEP",
+            "enableSleepHysteresis": "HAIRGPU_ENABLE_SLEEP_HYSTERESIS",
+            "enableStaticCache": "HAIRGPU_ENABLE_STATIC_CACHE",
+        }
+        settings = dict(case.get("method_settings", {}))
+        for key, value in case.items():
+            if key.startswith("enable") or key in ("groupsPerBlock", "solver_iterations", "guide_strand_count", "display_strand_count"):
+                settings.setdefault(key, value)
+        for key, value in settings.items():
+            env[f"HAIRGPU_SETTING_{_env_token(key)}"] = _env_value(value)
+            if key in direct_flags:
+                env[direct_flags[key]] = _env_value(value)
+
+        _set_if_present(env, "HAIRGPU_SCENARIO_TIMELINE", case.get("scenario_timeline"))
+        _set_if_present(env, "HAIRGPU_ASSET_MANIFEST", case.get("asset_manifest"))
+        _set_if_present(env, "HAIRGPU_BUILD_CONFIGURATION", case.get("build_configuration"))
+        _set_if_present(env, "HAIRGPU_PLATFORM", case.get("platform"))
+        _set_if_present(env, "HAIRGPU_RENDER_WIDTH", case.get("width"))
+        _set_if_present(env, "HAIRGPU_RENDER_HEIGHT", case.get("height"))
+        _set_if_present(env, "HAIRGPU_VSYNC", case.get("vsync"))
+        _set_if_present(env, "HAIRGPU_FIXED_TIMESTEP_ENABLED", case.get("fixed_timestep"))
+        _set_if_present(env, "HAIRGPU_FIXED_TIMESTEP_SECONDS", case.get("fixed_timestep_seconds"))
+        _set_if_present(env, "HAIRGPU_GUIDE_STRAND_COUNT", case.get("guide_strand_count"))
+        _set_if_present(env, "HAIRGPU_DISPLAY_STRAND_COUNT", case.get("display_strand_count"))
+        _set_if_present(env, "HAIRGPU_PARTICLES_PER_GUIDE", case.get("particles_per_guide"))
+        _set_if_present(env, "HAIRGPU_SOLVER_ITERATIONS", case.get("solver_iterations"))
+        _set_if_present(env, "HAIRGPU_GPU_TIMESTAMP_DELAY_FRAMES", case.get("gpu_timestamp_delay_frames"))
 
     process = subprocess.Popen([str(viewer_exe)], env=env)
     try:
@@ -89,6 +208,8 @@ def run_viewer(
         except subprocess.TimeoutExpired:
             process.kill()
         raise TimeoutError(f"Timed out waiting for viewer process for run '{run_name}'") from exc
+    if process.returncode not in (0, None):
+        raise RuntimeError(f"Viewer exited with code {process.returncode} for run '{run_name}'")
 
     summary_json = telemetry_dir / f"{run_name}_summary.json"
     frame_csv = telemetry_dir / f"{run_name}_frames.csv"
@@ -108,48 +229,26 @@ def run_viewer(
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def copy_artifact(path: Path, destination_dir: Path) -> dict[str, Any]:
     destination_dir.mkdir(parents=True, exist_ok=True)
     dst = destination_dir / path.name
     shutil.copy2(path, dst)
-    return {
-        "source": str(path),
-        "copiedTo": str(dst),
-        "sizeBytes": dst.stat().st_size,
-        "sha256": sha256_file(dst),
-    }
+    return {"source": str(path), "copiedTo": str(dst), "sizeBytes": dst.stat().st_size, "sha256": sha256_file(dst)}
 
 
 def harvest_artifacts(values: list[str], output_dir: Path) -> list[dict[str, Any]]:
     harvested: list[dict[str, Any]] = []
     for index, value in enumerate(values):
-        if "=" in value:
-            label, raw_path = value.split("=", 1)
-        else:
-            label, raw_path = f"artifact_{index}", value
+        label, raw_path = value.split("=", 1) if "=" in value else (f"artifact_{index}", value)
         artifact_path = Path(raw_path).resolve()
-        if not artifact_path.exists():
-            continue
-        record = copy_artifact(artifact_path, output_dir / "artifacts")
-        record["label"] = label
-        harvested.append(record)
+        if artifact_path.exists():
+            record = copy_artifact(artifact_path, output_dir / "artifacts")
+            record["label"] = label
+            harvested.append(record)
     return harvested
-
-
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def main() -> int:
@@ -172,20 +271,12 @@ def main() -> int:
     parser.add_argument("--frame-jsonl")
     parser.add_argument("--settings-json")
     parser.add_argument("--timeout-seconds", type=int, default=120)
-    parser.add_argument("--config-json", help="Optional JSON config with the same fields as the CLI arguments.")
-    parser.add_argument("--output-dir", help="Optional directory to copy telemetry and harvested artifacts into.")
-    parser.add_argument(
-        "--artifact",
-        action="append",
-        default=[],
-        help="Optional artifact to attach. Use label=/absolute/or/relative/path or just a path.",
-    )
+    parser.add_argument("--config-json")
+    parser.add_argument("--output-dir")
+    parser.add_argument("--artifact", action="append", default=[])
     args = parser.parse_args()
 
-    config: dict[str, Any] = {}
-    if args.config_json:
-        config = load_config(Path(args.config_json))
-
+    config: dict[str, Any] = load_config(Path(args.config_json)) if args.config_json else {}
     db_path = Path(args.db or config.get("db", "runtime.db"))
     schema_path = Path(args.schema or config.get("schema", "tools/final_stage/schema.sql"))
     excel_path = Path(args.excel or config.get("excel", db_path.with_suffix(".xlsx")))
@@ -198,13 +289,11 @@ def main() -> int:
     notes = args.notes or config.get("notes", "")
     runtime_source = args.runtime_source or config.get("runtime_source", "dx11_viewer")
     timeout_seconds = int(args.timeout_seconds or config.get("timeout_seconds", 120))
-
     if not experiment_name or not run_name:
         raise SystemExit("--experiment and --run-name are required unless provided in --config-json")
 
     telemetry_dir = Path(args.telemetry_dir or config.get("telemetry_dir", "runtime_telemetry"))
     telemetry_dir.mkdir(parents=True, exist_ok=True)
-
     db = FinalStageDatabase(db_path)
     db.initialize(schema_path)
 
@@ -223,7 +312,7 @@ def main() -> int:
         if not viewer_exe_value:
             raise SystemExit("Provide either --viewer-exe or both --summary-json and --frame-csv")
         if sys.platform != "win32":
-            print("Viewer launch is Windows-only. Use --summary-json/--frame-csv to ingest existing telemetry on this platform.", file=sys.stderr)
+            print("Viewer launch is Windows-only. Use existing telemetry on this platform.", file=sys.stderr)
             return 2
         case_config = config.get("case") if isinstance(config.get("case"), dict) else config
         summary_json, frame_csv, frame_jsonl, settings_json = run_viewer(Path(viewer_exe_value), telemetry_dir, run_name, timeout_seconds, case_config)
@@ -241,24 +330,15 @@ def main() -> int:
     run_id = db.import_runtime_run(metadata, summary_json, frame_csv, frame_jsonl_path=frame_jsonl, settings_json_path=settings_json)
 
     output_dir_value = args.output_dir or config.get("output_dir")
-    harvested: list[dict[str, Any]] = []
     if output_dir_value:
         output_dir = Path(output_dir_value)
-        copied_summary = copy_artifact(summary_json, output_dir / run_name)
-        copied_summary["label"] = "summary_json"
-        copied_frame = copy_artifact(frame_csv, output_dir / run_name)
-        copied_frame["label"] = "frame_csv"
-        harvested.extend([copied_summary, copied_frame])
-        if frame_jsonl and frame_jsonl.exists():
-            copied_jsonl = copy_artifact(frame_jsonl, output_dir / run_name)
-            copied_jsonl["label"] = "frame_jsonl"
-            harvested.append(copied_jsonl)
-        if settings_json and settings_json.exists():
-            copied_settings = copy_artifact(settings_json, output_dir / run_name)
-            copied_settings["label"] = "settings_json"
-            harvested.append(copied_settings)
-        for artifact in harvest_artifacts(list(config.get("artifacts", [])) + list(args.artifact), output_dir / run_name):
-            harvested.append(artifact)
+        harvested = []
+        for source, label in ((summary_json, "summary_json"), (frame_csv, "frame_csv"), (frame_jsonl, "frame_jsonl"), (settings_json, "settings_json")):
+            if source and Path(source).exists():
+                record = copy_artifact(Path(source), output_dir / run_name)
+                record["label"] = label
+                harvested.append(record)
+        harvested.extend(harvest_artifacts(list(config.get("artifacts", [])) + list(args.artifact), output_dir / run_name))
         manifest = {
             "runId": run_id,
             "experiment": experiment_name,
@@ -275,18 +355,16 @@ def main() -> int:
                 "settingsJson": str(settings_json) if settings_json else None,
                 "summarySha256": sha256_file(summary_json),
                 "frameSha256": sha256_file(frame_csv),
-                "frameJsonlSha256": sha256_file(frame_jsonl) if frame_jsonl and frame_jsonl.exists() else None,
-                "settingsSha256": sha256_file(settings_json) if settings_json and settings_json.exists() else None,
+                "frameJsonlSha256": sha256_file(frame_jsonl) if frame_jsonl and Path(frame_jsonl).exists() else None,
+                "settingsSha256": sha256_file(settings_json) if settings_json and Path(settings_json).exists() else None,
             },
             "artifacts": harvested,
-            "configSnapshot": config if config else None,
+            "configSnapshot": config or None,
         }
         write_json(output_dir / run_name / "run_manifest.json", manifest)
         for artifact in harvested:
-            label = artifact.get("label", "artifact")
-            copied_to = artifact.get("copiedTo")
-            if copied_to:
-                db.add_artifact(run_id, "harvested", label, Path(copied_to))
+            if artifact.get("copiedTo"):
+                db.add_artifact(run_id, "harvested", artifact.get("label", "artifact"), Path(artifact["copiedTo"]))
 
     db.close()
     export_workbook(db_path, excel_path)

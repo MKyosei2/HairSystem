@@ -40,8 +40,7 @@ namespace hairgpu
         std::vector<ValidationIssue> issues;
     };
 
-    // Pre-01 support: deterministic large-scale benchmark construction.
-    // "totalStrandCount" means guides + followers.
+    // Deterministic benchmark construction. This remains outside novelty 01.
     struct HairBenchmarkAssetSettings
     {
         uint32_t totalStrandCount = 100000u;
@@ -61,12 +60,10 @@ namespace hairgpu
         uint32_t infoCount = 0u;
         uint32_t warningCount = 0u;
         uint32_t errorCount = 0u;
-
         uint32_t expectedGroupCount = 0u;
         uint32_t actualGroupCount = 0u;
         uint32_t expectedBlockCount = 0u;
         uint32_t actualBlockCount = 0u;
-
         uint32_t invalidStrandRangeCount = 0u;
         uint32_t invalidBlockRangeCount = 0u;
         uint32_t overlappingBlockCount = 0u;
@@ -75,10 +72,8 @@ namespace hairgpu
         uint32_t topologyHashMismatchCount = 0u;
         uint32_t zeroLengthSegmentCount = 0u;
         uint32_t nonFinitePointCount = 0u;
-
         uint64_t expectedTopologyHash = 0u;
         uint64_t actualTopologyHash = 0u;
-
         std::vector<ValidationIssue> issues;
     };
 
@@ -96,14 +91,12 @@ namespace hairgpu
 
         bool HasFatalFailure() const
         {
-            return positionNaNCount > 0u ||
-                   velocityNaNCount > 0u ||
-                   forcedStopCount > 0u;
+            return positionNaNCount > 0u || velocityNaNCount > 0u || forcedStopCount > 0u;
         }
     };
 
-    // Non-novelty evaluation contract used to reject invalid benchmark evidence.
-    // This is intentionally independent from the Segment Group algorithm itself.
+    // Test-environment evidence contract. It intentionally does not define or change
+    // Segment Group behavior; it only decides whether a run is admissible as paper evidence.
     struct RuntimeMeasurementContract
     {
         bool requireReleaseBuild = true;
@@ -113,35 +106,65 @@ namespace hairgpu
         bool requireFixedTimeStep = true;
         bool requireReproducibilityHashes = true;
         bool requireHardwareIdentity = true;
+        bool requireUniqueCaseIdentity = true;
+        bool requireScenarioTimelineHash = true;
+        bool requireAssetManifestHash = true;
+        bool requireFrozenAsset = true;
+        bool requirePairedBaseline = true;
+        bool requireExactDisplayedStrandCount = true;
+        bool requireFiniteFrameStatistics = true;
+        bool requireThermalTelemetry = false;
         uint32_t requiredWidth = 1920u;
         uint32_t requiredHeight = 1080u;
+        uint32_t requiredDisplayedStrandCount = 100000u;
         uint32_t minWarmupFrames = 600u;
         uint32_t minMeasurementFrames = 6000u;
         uint32_t minIndependentSeeds = 5u;
+        uint32_t minMatchedBaselineSeeds = 5u;
         float fixedTimeStepSeconds = 1.0f / 60.0f;
         float fixedTimeStepToleranceSeconds = 0.00001f;
         float frameBudgetMilliseconds = 16.67f;
+        float maxFrameBudgetOverrunRate = 0.05f;
+        float maxGpuTemperatureSpreadCelsius = 12.0f;
     };
 
     struct RuntimeMeasurementObservation
     {
+        std::string caseId;
+        std::string methodCode;
+        std::string scenarioCode;
+        std::string baselineMethodCode;
+        std::string hardwareProfile;
         std::string buildConfiguration;
         std::string platform;
         bool realMeasurement = false;
         bool vsyncEnabled = false;
         bool fixedTimeStepEnabled = false;
+        bool pairedBaselineAvailable = false;
+        bool assetFrozen = false;
         uint32_t width = 0u;
         uint32_t height = 0u;
+        uint32_t displayedStrandCount = 0u;
         uint32_t warmupFrames = 0u;
         uint32_t measurementFrames = 0u;
         uint32_t independentSeedCount = 0u;
+        uint32_t matchedBaselineSeedCount = 0u;
         float fixedTimeStepSeconds = 0.0f;
+        float averageFrameMilliseconds = 0.0f;
+        float p95FrameMilliseconds = 0.0f;
+        float p99FrameMilliseconds = 0.0f;
+        float p999FrameMilliseconds = 0.0f;
+        float frameBudgetOverrunRate = 1.0f;
+        float minimumGpuTemperatureCelsius = 0.0f;
+        float maximumGpuTemperatureCelsius = 0.0f;
 
         std::string commitSha;
         std::string executableSha256;
         std::string shaderBundleSha256;
         std::string assetSha256;
         std::string settingsSha256;
+        std::string scenarioTimelineSha256;
+        std::string assetManifestSha256;
 
         std::string cpuName;
         std::string gpuName;
@@ -174,12 +197,24 @@ namespace hairgpu
         }
     }
 
+    inline bool HasRequiredHash(const std::string& value)
+    {
+        return value.size() >= 32u && value.find("REPLACE") == std::string::npos &&
+               value.find("PENDING") == std::string::npos && value.find("UNKNOWN") == std::string::npos;
+    }
+
     inline RuntimeMeasurementValidationReport ValidateRuntimeMeasurement(
         const RuntimeMeasurementObservation& observation,
         const RuntimeMeasurementContract& contract = {})
     {
         RuntimeMeasurementValidationReport report = {};
 
+        if (contract.requireUniqueCaseIdentity &&
+            (observation.caseId.empty() || observation.methodCode.empty() || observation.scenarioCode.empty()))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "A unique case id, method code, and scenario code are required.");
+        }
         if (contract.requireReleaseBuild && observation.buildConfiguration != "Release")
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
@@ -197,8 +232,7 @@ namespace hairgpu
         }
         if (contract.requireVsyncDisabled && observation.vsyncEnabled)
         {
-            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
-                "VSync must be disabled for benchmark capture.");
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error, "VSync must be disabled.");
         }
         if (contract.requireFixedTimeStep && !observation.fixedTimeStepEnabled)
         {
@@ -209,6 +243,12 @@ namespace hairgpu
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Resolution does not match the benchmark contract.");
+        }
+        if (contract.requireExactDisplayedStrandCount &&
+            observation.displayedStrandCount != contract.requiredDisplayedStrandCount)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Displayed strand count does not match the 100,000-strand contract.");
         }
         if (observation.warmupFrames < contract.minWarmupFrames)
         {
@@ -225,6 +265,13 @@ namespace hairgpu
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Independent seed coverage is below the minimum.");
         }
+        if (contract.requirePairedBaseline &&
+            (!observation.pairedBaselineAvailable ||
+             observation.matchedBaselineSeedCount < contract.minMatchedBaselineSeeds))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "A matched baseline with the same scenario, seed, asset, and hardware is required.");
+        }
         if (contract.requireFixedTimeStep &&
             (!std::isfinite(observation.fixedTimeStepSeconds) ||
              std::fabs(observation.fixedTimeStepSeconds - contract.fixedTimeStepSeconds) >
@@ -233,28 +280,64 @@ namespace hairgpu
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Fixed time step differs from the declared benchmark value.");
         }
-
-        if (contract.requireReproducibilityHashes)
-        {
-            if (observation.commitSha.empty() ||
-                observation.executableSha256.empty() ||
-                observation.shaderBundleSha256.empty() ||
-                observation.assetSha256.empty() ||
-                observation.settingsSha256.empty())
-            {
-                AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
-                    "Commit, executable, shader, asset, and settings hashes are required.");
-            }
-        }
-
-        if (contract.requireHardwareIdentity &&
-            (observation.cpuName.empty() || observation.gpuName.empty() ||
-             observation.gpuDriver.empty() || observation.operatingSystem.empty()))
+        if (contract.requireFiniteFrameStatistics &&
+            (!std::isfinite(observation.averageFrameMilliseconds) ||
+             !std::isfinite(observation.p95FrameMilliseconds) ||
+             !std::isfinite(observation.p99FrameMilliseconds) ||
+             !std::isfinite(observation.p999FrameMilliseconds) ||
+             !std::isfinite(observation.frameBudgetOverrunRate)))
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
-                "CPU, GPU, GPU driver, and operating-system identities are required.");
+                "Frame-time statistics must be finite.");
+        }
+        if (observation.frameBudgetOverrunRate > contract.maxFrameBudgetOverrunRate)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Warning,
+                "Frame-budget overrun rate exceeds the strong 60 FPS target.");
         }
 
+        if (contract.requireReproducibilityHashes &&
+            (!HasRequiredHash(observation.commitSha) ||
+             !HasRequiredHash(observation.executableSha256) ||
+             !HasRequiredHash(observation.shaderBundleSha256) ||
+             !HasRequiredHash(observation.assetSha256) ||
+             !HasRequiredHash(observation.settingsSha256)))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Commit, executable, shader, asset, and settings hashes are required.");
+        }
+        if (contract.requireScenarioTimelineHash && !HasRequiredHash(observation.scenarioTimelineSha256))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Scenario timeline SHA-256 is required.");
+        }
+        if (contract.requireAssetManifestHash && !HasRequiredHash(observation.assetManifestSha256))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Asset manifest SHA-256 is required.");
+        }
+        if (contract.requireFrozenAsset && !observation.assetFrozen)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "The benchmark asset must be frozen before paper evidence is captured.");
+        }
+        if (contract.requireHardwareIdentity &&
+            (observation.cpuName.empty() || observation.gpuName.empty() ||
+             observation.gpuDriver.empty() || observation.operatingSystem.empty() ||
+             observation.hardwareProfile.empty()))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "CPU, GPU, GPU driver, operating system, and hardware profile are required.");
+        }
+        if (contract.requireThermalTelemetry)
+        {
+            const float spread = observation.maximumGpuTemperatureCelsius - observation.minimumGpuTemperatureCelsius;
+            if (!std::isfinite(spread) || spread < 0.0f || spread > contract.maxGpuTemperatureSpreadCelsius)
+            {
+                AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                    "GPU temperature spread is missing or exceeds the thermal-stability contract.");
+            }
+        }
         return report;
     }
 
@@ -264,7 +347,6 @@ namespace hairgpu
         bool includeIssueList = false,
         size_t maxIssues = 12);
 
-    // Rebuilds only the generic topology cache. This does not implement novelty 01.
     bool RebuildSegmentGroupTopology(
         HairAsset& asset,
         uint32_t groupsPerBlock,
