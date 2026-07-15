@@ -24,7 +24,7 @@ namespace hairgpu
         uint32_t floatFallbackRequestCount = 0u;
         uint32_t rejectPayloadCount = 0u;
 
-                // -----------------------------------------------------------------
+        // -----------------------------------------------------------------
         // 01: Segment-Group Certified Strand Data Type
         // -----------------------------------------------------------------
 
@@ -65,6 +65,40 @@ namespace hairgpu
         uint32_t hemisphereParentResolveCount = 0u;
         uint32_t hemisphereChildResolveCount = 0u;
 
+        // Predictive wake and recovery quality.
+        uint32_t wakeRequestGroupCount = 0u;
+        uint32_t predictiveWakeTruePositiveCount = 0u;
+        uint32_t predictiveWakeFalsePositiveCount = 0u;
+        uint32_t predictiveWakeFalseNegativeCount = 0u;
+        uint32_t wakeDelayFrameSum = 0u;
+        uint32_t wakeDelayFrameMax = 0u;
+        float wakePositionErrorMeanMm = 0.0f;
+        float wakePositionErrorMaxMm = 0.0f;
+        float wakeVelocityErrorMean = 0.0f;
+        float wakeVelocityErrorMax = 0.0f;
+
+        // Repair quality.
+        uint32_t repairAttemptCount = 0u;
+        uint32_t repairSuccessCount = 0u;
+        uint32_t repairFailureCount = 0u;
+        uint32_t repairRecurrenceCount = 0u;
+        uint32_t repairLatencyFrameSum = 0u;
+        uint32_t repairLatencyFrameMax = 0u;
+        float repairSuccessRate = 0.0f;
+
+        // State stability.
+        uint32_t stateTransitionCount = 0u;
+        uint32_t stateOscillationCount = 0u;
+        uint32_t staticLifetimeFrameSum = 0u;
+        uint32_t staticLifetimeFrameMax = 0u;
+
+        // Collision-ground-truth checks.
+        uint32_t collisionCandidateCount = 0u;
+        uint32_t collisionMissCount = 0u;
+        uint32_t penetrationEventCount = 0u;
+        float collisionMissRate = 0.0f;
+        float meanPenetrationMm = 0.0f;
+
         // GPU compaction.
         uint32_t dynamicCompactionInputCount = 0u;
         uint32_t dynamicCompactionOutputCount = 0u;
@@ -83,14 +117,23 @@ namespace hairgpu
         float fullPositionMemoryMb = 0.0f;
         float directionCacheMemorySavingRate = 0.0f;
 
-        // GPU pass timings.
+        // GPU pass timings. All fields must come from delayed timestamp-query
+        // readback and must not force same-frame CPU/GPU synchronization.
         float blockClassificationGpuMilliseconds = 0.0f;
         float groupClassificationGpuMilliseconds = 0.0f;
+        float wakePropagationGpuMilliseconds = 0.0f;
         float compactionGpuMilliseconds = 0.0f;
         float staticTransformGpuMilliseconds = 0.0f;
+        float dynamicSolveGpuMilliseconds = 0.0f;
+        float repairSolveGpuMilliseconds = 0.0f;
         float boundaryRepairGpuMilliseconds = 0.0f;
+        float cacheUpdateGpuMilliseconds = 0.0f;
         float watchdogGpuMilliseconds = 0.0f;
+        float followerReconstructionGpuMilliseconds = 0.0f;
+        float renderPreparationGpuMilliseconds = 0.0f;
+        float hairDrawGpuMilliseconds = 0.0f;
         float telemetryReductionGpuMilliseconds = 0.0f;
+        float totalHairGpuMilliseconds = 0.0f;
 
         uint32_t riskyStrandCount = 0u;
         uint32_t repairTaskCount = 0u;
@@ -131,6 +174,29 @@ namespace hairgpu
         uint32_t drawIndirectCount = 0u;
         uint32_t delayedTelemetryReadCount = 0u;
     };
+
+    inline void FinalizeNoveltyTelemetryRates(HairNoveltyFrameTelemetry& telemetry)
+    {
+        const uint32_t staticGroupCount =
+            telemetry.staticCachedGroupCount + telemetry.staticTransformedGroupCount;
+        telemetry.falseStaticRate = staticGroupCount > 0u
+            ? static_cast<float>(telemetry.falseStaticCount) / static_cast<float>(staticGroupCount)
+            : 0.0f;
+
+        telemetry.repairSuccessRate = telemetry.repairAttemptCount > 0u
+            ? static_cast<float>(telemetry.repairSuccessCount) /
+                static_cast<float>(telemetry.repairAttemptCount)
+            : 1.0f;
+
+        telemetry.collisionMissRate = telemetry.collisionCandidateCount > 0u
+            ? static_cast<float>(telemetry.collisionMissCount) /
+                static_cast<float>(telemetry.collisionCandidateCount)
+            : 0.0f;
+
+        telemetry.directionCacheMemorySavingRate = telemetry.fullPositionMemoryMb > 0.0f
+            ? 1.0f - telemetry.directionCacheMemoryMb / telemetry.fullPositionMemoryMb
+            : 0.0f;
+    }
 
     inline HairNoveltyFrameTelemetry MakeZeroNoveltyTelemetry()
     {

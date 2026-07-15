@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -100,6 +101,162 @@ namespace hairgpu
                    forcedStopCount > 0u;
         }
     };
+
+    // Non-novelty evaluation contract used to reject invalid benchmark evidence.
+    // This is intentionally independent from the Segment Group algorithm itself.
+    struct RuntimeMeasurementContract
+    {
+        bool requireReleaseBuild = true;
+        bool requireX64Platform = true;
+        bool requireRealMeasurement = true;
+        bool requireVsyncDisabled = true;
+        bool requireFixedTimeStep = true;
+        bool requireReproducibilityHashes = true;
+        bool requireHardwareIdentity = true;
+        uint32_t requiredWidth = 1920u;
+        uint32_t requiredHeight = 1080u;
+        uint32_t minWarmupFrames = 600u;
+        uint32_t minMeasurementFrames = 6000u;
+        uint32_t minIndependentSeeds = 5u;
+        float fixedTimeStepSeconds = 1.0f / 60.0f;
+        float fixedTimeStepToleranceSeconds = 0.00001f;
+        float frameBudgetMilliseconds = 16.67f;
+    };
+
+    struct RuntimeMeasurementObservation
+    {
+        std::string buildConfiguration;
+        std::string platform;
+        bool realMeasurement = false;
+        bool vsyncEnabled = false;
+        bool fixedTimeStepEnabled = false;
+        uint32_t width = 0u;
+        uint32_t height = 0u;
+        uint32_t warmupFrames = 0u;
+        uint32_t measurementFrames = 0u;
+        uint32_t independentSeedCount = 0u;
+        float fixedTimeStepSeconds = 0.0f;
+
+        std::string commitSha;
+        std::string executableSha256;
+        std::string shaderBundleSha256;
+        std::string assetSha256;
+        std::string settingsSha256;
+
+        std::string cpuName;
+        std::string gpuName;
+        std::string gpuDriver;
+        std::string operatingSystem;
+    };
+
+    struct RuntimeMeasurementValidationReport
+    {
+        bool valid = true;
+        uint32_t warningCount = 0u;
+        uint32_t errorCount = 0u;
+        std::vector<ValidationIssue> issues;
+    };
+
+    inline void AddRuntimeMeasurementIssue(
+        RuntimeMeasurementValidationReport& report,
+        ValidationSeverity severity,
+        const std::string& message)
+    {
+        report.issues.push_back({ severity, message });
+        if (severity == ValidationSeverity::Error)
+        {
+            ++report.errorCount;
+            report.valid = false;
+        }
+        else if (severity == ValidationSeverity::Warning)
+        {
+            ++report.warningCount;
+        }
+    }
+
+    inline RuntimeMeasurementValidationReport ValidateRuntimeMeasurement(
+        const RuntimeMeasurementObservation& observation,
+        const RuntimeMeasurementContract& contract = {})
+    {
+        RuntimeMeasurementValidationReport report = {};
+
+        if (contract.requireReleaseBuild && observation.buildConfiguration != "Release")
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Performance evidence must be captured from a Release build.");
+        }
+        if (contract.requireX64Platform && observation.platform != "x64")
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Performance evidence must be captured from the x64 target.");
+        }
+        if (contract.requireRealMeasurement && !observation.realMeasurement)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Build-only, pending, estimated, or synthetic FPS data cannot be used as real evidence.");
+        }
+        if (contract.requireVsyncDisabled && observation.vsyncEnabled)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "VSync must be disabled for benchmark capture.");
+        }
+        if (contract.requireFixedTimeStep && !observation.fixedTimeStepEnabled)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "A deterministic fixed time step is required.");
+        }
+        if (observation.width != contract.requiredWidth || observation.height != contract.requiredHeight)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Resolution does not match the benchmark contract.");
+        }
+        if (observation.warmupFrames < contract.minWarmupFrames)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Warm-up frame count is below the minimum.");
+        }
+        if (observation.measurementFrames < contract.minMeasurementFrames)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Measured frame count is below the minimum.");
+        }
+        if (observation.independentSeedCount < contract.minIndependentSeeds)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Independent seed coverage is below the minimum.");
+        }
+        if (contract.requireFixedTimeStep &&
+            (!std::isfinite(observation.fixedTimeStepSeconds) ||
+             std::fabs(observation.fixedTimeStepSeconds - contract.fixedTimeStepSeconds) >
+                 contract.fixedTimeStepToleranceSeconds))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Fixed time step differs from the declared benchmark value.");
+        }
+
+        if (contract.requireReproducibilityHashes)
+        {
+            if (observation.commitSha.empty() ||
+                observation.executableSha256.empty() ||
+                observation.shaderBundleSha256.empty() ||
+                observation.assetSha256.empty() ||
+                observation.settingsSha256.empty())
+            {
+                AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                    "Commit, executable, shader, asset, and settings hashes are required.");
+            }
+        }
+
+        if (contract.requireHardwareIdentity &&
+            (observation.cpuName.empty() || observation.gpuName.empty() ||
+             observation.gpuDriver.empty() || observation.operatingSystem.empty()))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "CPU, GPU, GPU driver, and operating-system identities are required.");
+        }
+
+        return report;
+    }
 
     HairAssetValidationReport ValidateHairAsset(const HairAsset& asset);
     std::string BuildHairAssetValidationSummary(

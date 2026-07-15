@@ -1,0 +1,49 @@
+{
+  "scenario": "S11_LocalEdit",
+  "version": 1,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": [
+    {
+      "frame": 1200,
+      "type": "local_groom_edit",
+      "regionUv": [
+        0.45,
+        0.35,
+        0.12
+      ],
+      "translationMeters": [
+        0.03,
+        0.02,
+        0.0
+      ]
+    },
+    {
+      "frame": 2400,
+      "type": "undo_edit"
+    }
+  ]
+}

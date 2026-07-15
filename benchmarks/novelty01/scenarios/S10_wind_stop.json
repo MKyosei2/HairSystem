@@ -1,0 +1,50 @@
+{
+  "scenario": "S10_WindStop",
+  "version": 1,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "piecewise",
+    "segments": [
+      {
+        "start": 0,
+        "end": 1800,
+        "vector": [
+          6,
+          0,
+          1
+        ]
+      },
+      {
+        "start": 1800,
+        "end": 7200,
+        "vector": [
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "colliders": [],
+  "events": [
+    {
+      "frame": 1800,
+      "type": "wind_cut"
+    }
+  ]
+}

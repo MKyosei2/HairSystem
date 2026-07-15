@@ -1,0 +1,22 @@
+{
+  "scenario": "S05_HeadRotation",
+  "version": 1,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "yaw_sweep",
+    "amplitudeDegrees": 90,
+    "periodFrames": 600
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": []
+}

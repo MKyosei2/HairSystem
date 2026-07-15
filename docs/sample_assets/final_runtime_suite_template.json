@@ -1,29 +1,278 @@
 {
-  "db": "../../out/final_runtime/runtime_suite.sqlite",
-  "excel": "../../out/final_runtime/runtime_suite.xlsx",
-  "outputs_dir": "../../out/final_runtime/summary",
-  "telemetry_dir": "../../runtime_telemetry",
+  "suite_version": "novelty01-safe-v1.0",
+  "suite_name": "novelty01_safe_100k_runtime",
+  "experiment_name": "novelty01_segment_group_safe_evaluation",
+  "db": "../../out/novelty01_safe/runtime_suite.sqlite",
+  "excel": "../../out/novelty01_safe/runtime_suite.xlsx",
+  "outputs_dir": "../../out/novelty01_safe/summary",
+  "telemetry_dir": "../../runtime_telemetry/novelty01_safe",
   "schema": "../../tools/final_stage/schema.sql",
-  "runs": [
+  "metric_definitions": "metric_definitions.json",
+  "package_zip": "../../out/novelty01_safe/runtime_suite_outputs.zip",
+  "baseline_method": "external_state_array",
+  "preflight": {
+    "strict": true,
+    "require_release_build": true,
+    "required_platform": "x64",
+    "require_real_measurement": true,
+    "reject_pending_or_synthetic_results": true,
+    "require_vsync_disabled": true,
+    "require_fixed_timestep": true,
+    "fixed_timestep_seconds": 0.0166666667,
+    "fixed_timestep_tolerance_seconds": 0.00001,
+    "required_resolution": [1920, 1080],
+    "minimum_warmup_frames": 600,
+    "minimum_measurement_frames": 6000,
+    "minimum_seed_count": 5,
+    "frame_budget_milliseconds": 16.67,
+    "require_hashes": [
+      "commitSha",
+      "executableSha256",
+      "shaderBundleSha256",
+      "assetSha256",
+      "settingsSha256"
+    ],
+    "require_hardware_fields": [
+      "cpuName",
+      "gpuName",
+      "gpuDriver",
+      "operatingSystem"
+    ],
+    "required_frame_columns_any": [
+      "frameMilliseconds",
+      "frame_ms",
+      "frameMs",
+      "totalFrameMilliseconds"
+    ],
+    "required_telemetry_fields": [
+      "totalSegmentGroupCount",
+      "staticCachedGroupCount",
+      "staticTransformedGroupCount",
+      "dynamicGroupCount",
+      "repairRequiredGroupCount",
+      "falseStaticCount",
+      "staticDynamicBoundaryMaxErrorMm",
+      "wakeRequestGroupCount",
+      "predictiveWakeFalseNegativeCount",
+      "wakeDelayFrameMax",
+      "repairAttemptCount",
+      "repairSuccessCount",
+      "repairFailureCount",
+      "stateTransitionCount",
+      "stateOscillationCount",
+      "collisionCandidateCount",
+      "collisionMissCount",
+      "maxPenetrationMm",
+      "groupClassificationGpuMilliseconds",
+      "compactionGpuMilliseconds",
+      "dynamicSolveGpuMilliseconds",
+      "repairSolveGpuMilliseconds",
+      "followerReconstructionGpuMilliseconds",
+      "renderPreparationGpuMilliseconds",
+      "hairDrawGpuMilliseconds",
+      "totalHairGpuMilliseconds"
+    ]
+  },
+  "run_defaults": {
+    "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
+    "runtime_source": "dx11_viewer",
+    "asset": "novelty01_100k_display_strands",
+    "asset_manifest": "../../docs/sample_assets/novelty01_100k_asset_manifest.json",
+    "build_configuration": "Release",
+    "platform": "x64",
+    "width": 1920,
+    "height": 1080,
+    "vsync": false,
+    "fixed_timestep": true,
+    "fixed_timestep_seconds": 0.0166666667,
+    "warmup_frames": 600,
+    "measurement_frames": 6000,
+    "timeout_seconds": 900,
+    "guide_strand_count": 3000,
+    "display_strand_count": 100000,
+    "particles_per_guide": 20,
+    "solver_iterations": 5,
+    "disable_debug_draw": true,
+    "disable_same_frame_readback": true,
+    "gpu_timestamp_delay_frames": 4,
+    "operator": "automated_suite"
+  },
+  "seeds": [1, 11, 21, 31, 41],
+  "methods": [
     {
-      "experiment": "proposal_final_runtime",
-      "method": "prediction_only",
-      "scenario": "idle",
-      "asset": "sample_groom",
-      "run_name": "prediction_idle",
-      "summary_json": "../../runtime_telemetry/prediction_idle_summary.json",
-      "frame_csv": "../../runtime_telemetry/prediction_idle_frames.csv",
-      "notes": "Replace with real telemetry files or add viewer_exe on Windows."
+      "code": "full_physics",
+      "label": "B0 Full Dynamic",
+      "settings": {
+        "enableNoNoveltyBaseline": true,
+        "enableSegmentGroupSleep": false,
+        "enableGpuCompaction": false,
+        "enableExternalStateArray": false,
+        "enableActiveSet": false
+      }
     },
     {
-      "experiment": "proposal_final_runtime",
-      "method": "proposal_hybrid",
-      "scenario": "idle",
-      "asset": "sample_groom",
-      "run_name": "hybrid_idle",
-      "summary_json": "../../runtime_telemetry/hybrid_idle_summary.json",
-      "frame_csv": "../../runtime_telemetry/hybrid_idle_frames.csv",
-      "notes": "Template entry for the proposed method."
+      "code": "strand_sleep",
+      "label": "B1 Strand Sleep",
+      "settings": {
+        "enableStrandSleep": true,
+        "enableSegmentGroupSleep": false,
+        "enableGpuCompaction": false
+      }
+    },
+    {
+      "code": "block_sleep",
+      "label": "B2 Fixed Block Sleep",
+      "settings": {
+        "enableBlockSleep": true,
+        "groupsPerBlock": 8,
+        "enableGpuCompaction": false
+      }
+    },
+    {
+      "code": "segment_sleep_threshold",
+      "label": "B3 Segment Threshold Sleep",
+      "settings": {
+        "enableSegmentGroupSleep": true,
+        "enableSleepHysteresis": false,
+        "enableStaticCache": false,
+        "enableGpuCompaction": false
+      }
+    },
+    {
+      "code": "segment_sleep_hysteresis",
+      "label": "B4 Segment Sleep plus Hysteresis",
+      "settings": {
+        "enableSegmentGroupSleep": true,
+        "enableSleepHysteresis": true,
+        "enableStaticCache": false,
+        "enableGpuCompaction": false
+      }
+    },
+    {
+      "code": "segment_sleep_cache",
+      "label": "B5 Segment Sleep plus Cache",
+      "settings": {
+        "enableSegmentGroupSleep": true,
+        "enableSleepHysteresis": true,
+        "enableStaticCache": true,
+        "enableGpuCompaction": false
+      }
+    },
+    {
+      "code": "segment_sleep_compaction",
+      "label": "B6 Segment Sleep plus GPU Compaction",
+      "settings": {
+        "enableSegmentGroupSleep": true,
+        "enableSleepHysteresis": true,
+        "enableStaticCache": true,
+        "enableGpuCompaction": true,
+        "enableStaticCertificate": false,
+        "enablePredictiveWake": false,
+        "enableRepair": false
+      }
+    },
+    {
+      "code": "active_set_runtime",
+      "label": "B7 Active Set Only",
+      "settings": {
+        "enableActiveSet": true,
+        "enableSegmentGroupSleep": false,
+        "enableGpuCompaction": true
+      }
+    },
+    {
+      "code": "external_state_array",
+      "label": "B8 External State Array with Same Decisions",
+      "settings": {
+        "enableExternalStateArray": true,
+        "enableSegmentGroupIntegratedState": false,
+        "enableStaticCertificate": true,
+        "enablePredictiveWake": true,
+        "enableVelocityRecovery": true,
+        "enableRepair": true,
+        "enableGpuCompaction": true,
+        "enableActiveSet": true
+      }
+    },
+    {
+      "code": "proposal_hybrid",
+      "label": "P Segment Group Integrated Representation",
+      "settings": {
+        "enableSegmentGroupIntegratedState": true,
+        "enableSharedPointOwnership": true,
+        "enableDirectionalResponsibility": true,
+        "enableStaticCertificate": true,
+        "enablePredictiveWake": true,
+        "enableVelocityRecovery": true,
+        "enableRepair": true,
+        "enableGpuCompaction": true,
+        "enableActiveSet": true
+      }
     }
-  ]
+  ],
+  "scenarios": [
+    {"code": "S01_Idle", "category": "normal", "timeline": "../../benchmarks/novelty01/scenarios/S01_idle.json"},
+    {"code": "S02_Breathing", "category": "normal", "timeline": "../../benchmarks/novelty01/scenarios/S02_breathing.json"},
+    {"code": "S03_Walk", "category": "normal", "timeline": "../../benchmarks/novelty01/scenarios/S03_walk.json"},
+    {"code": "S04_SuddenStop", "category": "wake", "timeline": "../../benchmarks/novelty01/scenarios/S04_sudden_stop.json"},
+    {"code": "S05_HeadRotation", "category": "transform", "timeline": "../../benchmarks/novelty01/scenarios/S05_head_rotation.json"},
+    {"code": "S06_Teleport", "category": "repair", "timeline": "../../benchmarks/novelty01/scenarios/S06_teleport.json"},
+    {"code": "S07_ColliderApproach", "category": "collision", "timeline": "../../benchmarks/novelty01/scenarios/S07_collider_approach.json"},
+    {"code": "S08_StaticDynamicBoundaryContact", "category": "boundary", "timeline": "../../benchmarks/novelty01/scenarios/S08_boundary_contact.json"},
+    {"code": "S09_StrongWind", "category": "load", "timeline": "../../benchmarks/novelty01/scenarios/S09_strong_wind.json"},
+    {"code": "S10_WindStop", "category": "wake", "timeline": "../../benchmarks/novelty01/scenarios/S10_wind_stop.json"},
+    {"code": "S11_LocalEdit", "category": "edit", "timeline": "../../benchmarks/novelty01/scenarios/S11_local_edit.json"},
+    {"code": "S12_FalseStaticTrap", "category": "safety", "timeline": "../../benchmarks/novelty01/scenarios/S12_false_static_trap.json"},
+    {"code": "S13_RepairStorm", "category": "repair", "timeline": "../../benchmarks/novelty01/scenarios/S13_repair_storm.json"},
+    {"code": "S14_AllDynamic", "category": "worst_case", "timeline": "../../benchmarks/novelty01/scenarios/S14_all_dynamic.json"},
+    {"code": "S15_AllStatic", "category": "best_case", "timeline": "../../benchmarks/novelty01/scenarios/S15_all_static.json"},
+    {"code": "S16_StateThrashing", "category": "stability", "timeline": "../../benchmarks/novelty01/scenarios/S16_state_thrashing.json"},
+    {"code": "S17_CloseCamera100k", "category": "render", "timeline": "../../benchmarks/novelty01/scenarios/S17_close_camera_100k.json"},
+    {"code": "S18_FarCamera100k", "category": "render", "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json"}
+  ],
+  "goals": {
+    "max_avg_p95_frame_ms": 16.67,
+    "min_avg_sixty_fps_ratio": 0.95,
+    "min_scenario_method_coverage_rate": 1.0,
+    "max_false_static_rate": 0.02,
+    "min_repair_success_rate": 0.95,
+    "max_collision_miss_rate": 0.01,
+    "max_state_oscillation_rate": 0.02,
+    "max_static_dynamic_boundary_error_mm": 1.0,
+    "max_frame_budget_overrun_rate": 0.05
+  },
+  "hypotheses": [
+    {
+      "hypothesis_id": "H01",
+      "title": "Integrated representation reduces p95 against external-state baseline",
+      "source": "runtime",
+      "scenario": "S03_Walk",
+      "method": "proposal_hybrid",
+      "baseline": "external_state_array",
+      "metric": "avg_p95_frame_ms",
+      "comparator": "<=",
+      "threshold_delta": -0.5
+    },
+    {
+      "hypothesis_id": "H02",
+      "title": "False Static remains below the safe threshold",
+      "source": "runtime",
+      "scenario": "S12_FalseStaticTrap",
+      "method": "proposal_hybrid",
+      "metric": "avg_false_static_rate",
+      "comparator": "<=",
+      "threshold": 0.02
+    },
+    {
+      "hypothesis_id": "H03",
+      "title": "Repair succeeds under concentrated failures",
+      "source": "runtime",
+      "scenario": "S13_RepairStorm",
+      "method": "proposal_hybrid",
+      "metric": "avg_repair_success_rate",
+      "comparator": ">=",
+      "threshold": 0.95
+    }
+  ],
+  "runs": []
 }

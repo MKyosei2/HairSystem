@@ -1,0 +1,31 @@
+{
+  "scenario": "S02_Breathing",
+  "version": 1,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "sinusoidal",
+    "translationAmplitudeMeters": [
+      0,
+      0.003,
+      0.001
+    ],
+    "rotationAmplitudeDegrees": [
+      0.5,
+      0.8,
+      0.3
+    ],
+    "frequencyHz": 0.25
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": []
+}

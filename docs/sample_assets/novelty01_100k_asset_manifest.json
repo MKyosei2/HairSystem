@@ -1,0 +1,33 @@
+{
+  "manifestVersion": "novelty01-100k-v1",
+  "purpose": "Deterministic 100,000 displayed-strand benchmark asset contract",
+  "assetId": "novelty01_100k_display_strands",
+  "sourceAssetPath": "REPLACE_WITH_LOCAL_ASSET_PATH",
+  "sourceAssetSha256": "REPLACE_AFTER_ASSET_FREEZE",
+  "generation": {
+    "displayStrandCount": 100000,
+    "guideStrandCounts": [2000, 3000, 5000],
+    "primaryGuideStrandCount": 3000,
+    "particlesPerGuide": 20,
+    "followerGeneration": "deterministic_root_neighborhood",
+    "followerSeed": 20260715,
+    "requireExactDisplayStrandCount": true,
+    "requireUniformGuidePointCount": true,
+    "requireStableTopologyHash": true
+  },
+  "geometryContract": {
+    "units": "meters",
+    "coordinateSystem": "right_handed_y_up",
+    "rootBindingRequired": true,
+    "zeroLengthSegmentsAllowed": false,
+    "nonFinitePointsAllowed": false,
+    "topologyMutationDuringMeasurementAllowed": false
+  },
+  "freezeChecklist": [
+    "Replace sourceAssetPath with the final local asset path.",
+    "Write sourceAssetSha256 after the asset is frozen.",
+    "Record generated guide/follower topology hash.",
+    "Store the generator settings JSON and its SHA-256.",
+    "Do not change the asset between methods or seeds."
+  ]
+}

@@ -115,12 +115,6 @@ namespace hairgpu
         uint32_t maxRepairSegmentGroups = 0u;
         float estimatedSegmentGroupCostMilliseconds = 0.00001f;
         float estimatedRepairGroupCostMilliseconds = 0.00003f;
-        bool enforceRepairCoverage = true;
-        float mandatoryRepairThreshold = 0.50f;
-        uint32_t maxDynamicSegmentGroups = 0u;
-        uint32_t maxRepairSegmentGroups = 0u;
-        float estimatedSegmentGroupCostMilliseconds = 0.00001f;
-        float estimatedRepairGroupCostMilliseconds = 0.00003f;
     };
 
     struct ActiveSetClusterScore
@@ -212,7 +206,6 @@ namespace hairgpu
         uint32_t strandCount = 0u;
     };
 
-
     struct DispatchIndirectArgs
     {
         uint32_t threadGroupCountX = 0u;
@@ -259,7 +252,6 @@ namespace hairgpu
         ActiveSetDispatchPackTier frozen = {};
         ActiveSetDispatchPackTier cached = {};
     };
-
 
     struct ActiveSetDispatchPlan
     {

@@ -1,0 +1,60 @@
+{
+  "scenario": "S08_StaticDynamicBoundaryContact",
+  "version": 1,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "localized_pulse",
+    "center": [
+      0.0,
+      0.2,
+      0.0
+    ],
+    "radiusMeters": 0.18,
+    "vector": [
+      3.0,
+      0,
+      0
+    ],
+    "startFrame": 1200,
+    "endFrame": 1500
+  },
+  "colliders": [
+    {
+      "id": "capsule0",
+      "shape": "capsule",
+      "radiusMeters": 0.05,
+      "halfHeightMeters": 0.18,
+      "motion": {
+        "type": "oscillate",
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "amplitudeMeters": 0.08,
+        "frequencyHz": 0.7
+      }
+    }
+  ],
+  "events": [
+    {
+      "frame": 1200,
+      "type": "target_static_dynamic_boundary"
+    }
+  ]
+}

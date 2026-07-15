@@ -49,7 +49,7 @@
       "interpretation": "Lower is better; approximates interactive response time from edit commit to runtime-ready output."
     }
   ],
-    "runtimeMetrics": [
+  "runtimeMetrics": [
     {
       "name": "selectedClusterCount",
       "formula": "number of active-set clusters selected under the current budget",
@@ -63,7 +63,7 @@
     {
       "name": "estimatedFrameMilliseconds",
       "formula": "estimatedFixedCostMilliseconds + selectedClusterCount * estimatedClusterCostMilliseconds",
-      "interpretation": "Predicted frame cost used for bounded-latency reasoning; lower is safer for the 16.67 ms budget."
+      "interpretation": "Predicted frame cost only; it must never be reported as measured FPS evidence."
     },
     {
       "name": "recommendedSolverIterations",
@@ -73,17 +73,17 @@
     {
       "name": "falseStaticRate",
       "formula": "falseStaticCount / max(staticCachedGroupCount + staticTransformedGroupCount, 1)",
-      "interpretation": "Lower is better; measures how often a group classified as static was later found to require dynamic solve or repair."
+      "interpretation": "Lower is better; measures how often a static classification was contradicted by the full-dynamic reference or repair escalation."
     },
     {
       "name": "groupStaticReuseRate",
       "formula": "(staticCachedGroupCount + staticTransformedGroupCount) / max(totalSegmentGroupCount, 1)",
-      "interpretation": "Higher is better when quality constraints are satisfied; measures how much segment-group computation was avoided by cache reuse."
+      "interpretation": "Higher is better only when quality gates remain satisfied."
     },
     {
       "name": "groupDynamicRate",
       "formula": "dynamicGroupCount / max(totalSegmentGroupCount, 1)",
-      "interpretation": "Lower is better when quality is stable; reports how much of the hairstyle required full group-level dynamic solving."
+      "interpretation": "Reports how much of the hairstyle required full group-level dynamic solving."
     },
     {
       "name": "deferredCorrectionRate",
@@ -92,23 +92,163 @@
     },
     {
       "name": "deferredCorrectionSuccessRate",
-      "formula": "successful deferred corrections / max(deferredCorrectionGroupCount, 1)",
-      "interpretation": "Higher means temporary correction preserved visual continuity until the full calculation could run."
+      "formula": "successfulDeferredCorrections / max(deferredCorrectionGroupCount, 1)",
+      "interpretation": "Higher means temporary correction preserved continuity until full work ran."
     },
     {
       "name": "staticDynamicBoundaryErrorMm",
-      "formula": "mean or max discontinuity error at boundaries between Static and Dynamic segment groups",
-      "interpretation": "Lower is better; measures whether Static/Dynamic mixing creates visible or physical discontinuities."
+      "formula": "mean and maximum shared-point discontinuity at Static/Dynamic boundaries",
+      "interpretation": "Lower is better; verifies that mixed states do not create visible or physical discontinuities."
     },
     {
       "name": "watchdogRepairCount",
-      "formula": "number of Static Watchdog checks that escalated a group to repair or dynamic solve",
-      "interpretation": "Shows whether the safety net detected frozen/static-cache artifacts during stillness or emergency recovery."
+      "formula": "number of watchdog checks escalating a group to Repair or Dynamic",
+      "interpretation": "Shows whether the safety net detected frozen-cache artifacts."
     },
     {
       "name": "directionCacheMemorySavingRate",
       "formula": "1 - directionCacheMemoryMb / max(fullPositionMemoryMb, eps)",
-      "interpretation": "Higher is better; estimates memory saved by storing root position plus direction vectors instead of full point positions."
+      "interpretation": "Higher is better; estimates memory saved by the direction cache."
+    },
+    {
+      "name": "wakeDelayFrames",
+      "formula": "frame(wake committed) - frame(ground-truth wake became necessary)",
+      "interpretation": "Lower is better; zero or one frame is the normal target."
+    },
+    {
+      "name": "predictiveWakePrecision",
+      "formula": "truePositive / max(truePositive + falsePositive, 1)",
+      "interpretation": "Higher is better; penalizes unnecessary wake requests."
+    },
+    {
+      "name": "predictiveWakeRecall",
+      "formula": "truePositive / max(truePositive + falseNegative, 1)",
+      "interpretation": "Higher is better; penalizes missed future motion or contact."
+    },
+    {
+      "name": "wakePositionErrorMm",
+      "formula": "distance between recovered state and full-dynamic reference at wake",
+      "interpretation": "Lower is better; exposes visible popping after cache reuse."
+    },
+    {
+      "name": "wakeVelocityError",
+      "formula": "norm(v_recovered - v_reference) at wake",
+      "interpretation": "Lower is better; exposes energy injection or frozen-looking recovery."
+    },
+    {
+      "name": "repairSuccessRate",
+      "formula": "repairSuccessCount / max(repairAttemptCount, 1)",
+      "interpretation": "Higher is better; a repair counts only after the invariant remains valid for the hold window."
+    },
+    {
+      "name": "repairLatencyFrames",
+      "formula": "frame(repair accepted) - frame(repair requested)",
+      "interpretation": "Lower is better; measures bounded recovery delay."
+    },
+    {
+      "name": "repairRecurrenceRate",
+      "formula": "repairRecurrenceCount / max(repairSuccessCount, 1)",
+      "interpretation": "Lower is better; detects repairs that immediately fail again."
+    },
+    {
+      "name": "stateOscillationRate",
+      "formula": "stateOscillationCount / max(stateTransitionCount, 1)",
+      "interpretation": "Lower is better; detects per-frame Static/Dynamic thrashing."
+    },
+    {
+      "name": "collisionMissRate",
+      "formula": "collisionMissCount / max(collisionCandidateCount, 1)",
+      "interpretation": "Lower is better; uses the full-dynamic or high-accuracy collision reference."
+    },
+    {
+      "name": "meanPenetrationMm",
+      "formula": "mean penetration depth over accepted penetration events",
+      "interpretation": "Lower is better; report together with maximum penetration."
+    },
+    {
+      "name": "referenceRmsPositionErrorMm",
+      "formula": "RMS point-position difference against CPU or full-dynamic reference",
+      "interpretation": "Lower is better; primary physical-correctness comparison."
+    },
+    {
+      "name": "determinismMismatchCount",
+      "formula": "count of repeated identical-seed runs whose canonical result hash differs",
+      "interpretation": "Must be zero for deterministic benchmark evidence."
+    },
+    {
+      "name": "p99FrameMilliseconds",
+      "formula": "99th percentile of measured frameMilliseconds after warm-up",
+      "interpretation": "Lower is better; primary tail-latency metric."
+    },
+    {
+      "name": "p999FrameMilliseconds",
+      "formula": "99.9th percentile of measured frameMilliseconds after warm-up",
+      "interpretation": "Lower is better; detects rare but visible stalls."
+    },
+    {
+      "name": "frameBudgetOverrunRate",
+      "formula": "count(frameMilliseconds > 16.67) / measuredFrameCount",
+      "interpretation": "Lower is better; direct 60 FPS stability measure."
+    },
+    {
+      "name": "realMeasurementAccepted",
+      "formula": "1 only when the executable actually ran and telemetry is neither pending nor synthetic",
+      "interpretation": "Must equal one before performance results are publishable."
+    },
+    {
+      "name": "scenarioMethodCoverageRate",
+      "formula": "present required scenario-method-seed cells / total required cells",
+      "interpretation": "Must equal one for the final comparison table."
+    },
+    {
+      "name": "blockClassificationGpuMilliseconds",
+      "formula": "GPU timestamp duration of block classification",
+      "interpretation": "Pass-level cost; collect with delayed timestamp readback."
+    },
+    {
+      "name": "groupClassificationGpuMilliseconds",
+      "formula": "GPU timestamp duration of group certificate and state classification",
+      "interpretation": "Pass-level cost; exposes the mandatory O(N) classification overhead."
+    },
+    {
+      "name": "wakePropagationGpuMilliseconds",
+      "formula": "GPU timestamp duration of predictive wake propagation",
+      "interpretation": "Pass-level cost of safety-driven wake expansion."
+    },
+    {
+      "name": "compactionGpuMilliseconds",
+      "formula": "GPU timestamp duration of scan, compaction, and indirect-argument generation",
+      "interpretation": "Pass-level cost required to turn skipped work into real savings."
+    },
+    {
+      "name": "dynamicSolveGpuMilliseconds",
+      "formula": "GPU timestamp duration of Dynamic group solve",
+      "interpretation": "Primary variable physical-simulation cost."
+    },
+    {
+      "name": "repairSolveGpuMilliseconds",
+      "formula": "GPU timestamp duration of Repair solve",
+      "interpretation": "Must be bounded during wake storms and collision-heavy scenes."
+    },
+    {
+      "name": "followerReconstructionGpuMilliseconds",
+      "formula": "GPU timestamp duration of follower reconstruction",
+      "interpretation": "Required to prevent claiming simulation-only savings as whole-hair savings."
+    },
+    {
+      "name": "renderPreparationGpuMilliseconds",
+      "formula": "GPU timestamp duration of draw-data and render preparation",
+      "interpretation": "Required for end-to-end 60 FPS analysis."
+    },
+    {
+      "name": "hairDrawGpuMilliseconds",
+      "formula": "GPU timestamp duration of hair drawing",
+      "interpretation": "Separates simulation gains from overdraw and shading cost."
+    },
+    {
+      "name": "totalHairGpuMilliseconds",
+      "formula": "sum of all hair-specific GPU passes measured by timestamps",
+      "interpretation": "Use with total frame time; never substitute an estimate."
     }
   ]
 }
