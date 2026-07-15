@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "novelty01-hardware-profile-v1.0",
+  "profiles": {
+    "low_gtx1660_reference": {
+      "role": "primary_low_end_target",
+      "description": "GTX 1660-class 6 GB GPU and an older six-core desktop CPU.",
+      "requiredIdentityFields": [
+        "cpuName",
+        "gpuName",
+        "gpuDriver",
+        "operatingSystem",
+        "hardwareProfile"
+      ],
+      "target": {
+        "gpuClass": "GeForce GTX 1660 class",
+        "minimumDedicatedVramMiB": 6144,
+        "cpuPhysicalCoreCount": 6,
+        "maximumSystemRamMiB": 32768
+      },
+      "executionContract": {
+        "acPowerRequired": true,
+        "windowsPowerMode": "best_performance",
+        "backgroundCaptureDisabled": true,
+        "vsyncDisabled": true,
+        "resolution": [
+          1920,
+          1080
+        ],
+        "maximumGpuTemperatureSpreadCelsius": 12.0,
+        "recordGpuClockRange": true,
+        "recordGpuTemperatureRange": true
+      }
+    },
+    "secondary_midrange_reference": {
+      "role": "secondary_external_validity_target",
+      "description": "A current midrange discrete GPU used only to check whether conclusions generalize.",
+      "requiredIdentityFields": [
+        "cpuName",
+        "gpuName",
+        "gpuDriver",
+        "operatingSystem",
+        "hardwareProfile"
+      ],
+      "executionContract": {
+        "acPowerRequired": true,
+        "windowsPowerMode": "best_performance",
+        "backgroundCaptureDisabled": true,
+        "vsyncDisabled": true,
+        "resolution": [
+          1920,
+          1080
+        ],
+        "maximumGpuTemperatureSpreadCelsius": 12.0,
+        "recordGpuClockRange": true,
+        "recordGpuTemperatureRange": true
+      }
+    }
+  }
+}

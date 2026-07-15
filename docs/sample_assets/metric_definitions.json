@@ -1,4 +1,5 @@
 {
+  "schemaVersion": "metric-definitions-v1.2",
   "editMetrics": [
     {
       "name": "rmsPositionError",
@@ -249,6 +250,46 @@
       "name": "totalHairGpuMilliseconds",
       "formula": "sum of all hair-specific GPU passes measured by timestamps",
       "interpretation": "Use with total frame time; never substitute an estimate."
+    },
+    {
+      "name": "matchedBaselineCoverageRate",
+      "formula": "valid matched pairs / required scenario-seed-asset-hardware pairs for every non-baseline method",
+      "interpretation": "Must equal one; missing baseline pairs invalidate comparative claims instead of being silently skipped."
+    },
+    {
+      "name": "sourceCommitMatch",
+      "formula": "1 when telemetry commitSha exactly equals the clean Git HEAD resolved by the suite",
+      "interpretation": "Must equal one; stale or dirty source states are not admissible."
+    },
+    {
+      "name": "methodSettingsAcknowledgementRate",
+      "formula": "acknowledged requested method settings / requested method settings",
+      "interpretation": "Must equal one and the canonical method-settings SHA-256 must match."
+    },
+    {
+      "name": "invalidFrameSampleRate",
+      "formula": "missing, non-positive, or non-finite frame samples / all frame rows",
+      "interpretation": "Must equal zero for final evidence."
+    },
+    {
+      "name": "assetFreezeIntegrity",
+      "formula": "1 when freezeStatus is FROZEN and the local asset, topology, and generator settings hashes match the manifest",
+      "interpretation": "Must equal one before any paper-quality measurement is accepted."
+    },
+    {
+      "name": "thermalSpreadCelsius",
+      "formula": "maximum GPU temperature - minimum GPU temperature during the accepted measurement window",
+      "interpretation": "Report with clock range; excessive spread indicates thermal order bias."
+    },
+    {
+      "name": "evidenceIntegrityPassed",
+      "formula": "1 only when run validity, matrix coverage, matched baselines, deterministic replay, and source/asset identity all pass",
+      "interpretation": "Separates evidence validity from whether a scientific hypothesis is supported."
+    },
+    {
+      "name": "hypothesisSupportStatus",
+      "formula": "supported, not_supported, or not_evaluable after the evidence-integrity gate",
+      "interpretation": "A failed hypothesis remains a valid result and must not be rewritten as an evidence error."
     }
   ]
 }

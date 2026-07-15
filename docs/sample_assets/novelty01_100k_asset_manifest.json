@@ -1,12 +1,19 @@
 {
-  "manifestVersion": "novelty01-100k-v1.1",
+  "manifestVersion": "novelty01-100k-v1.2",
   "purpose": "Deterministic 100,000 displayed-strand benchmark asset contract",
   "freezeStatus": "UNFROZEN_REJECT_FOR_PAPER_EVIDENCE",
   "assetId": "novelty01_100k_display_strands",
   "sourceAssetPath": "REPLACE_WITH_LOCAL_ASSET_PATH",
   "sourceAssetSha256": "REPLACE_AFTER_ASSET_FREEZE",
+  "sourceAssetSizeBytes": 0,
   "generatedTopologySha256": "REPLACE_AFTER_ASSET_FREEZE",
+  "generatorSettingsPath": "REPLACE_WITH_GENERATOR_SETTINGS_PATH",
   "generatorSettingsSha256": "REPLACE_AFTER_ASSET_FREEZE",
+  "sourceCommitSha": "REPLACE_AFTER_PATCH_IS_COMMITTED",
+  "frozenAtUtc": "REPLACE_AFTER_ASSET_FREEZE",
+  "frozenBy": "REPLACE_AFTER_ASSET_FREEZE",
+  "freezeTool": "tools/final_stage/freeze_novelty01_asset.py",
+  "freezeToolVersion": "1.2",
   "generation": {
     "displayStrandCount": 100000,
     "guideStrandCounts": [
@@ -20,7 +27,15 @@
     "followerSeed": 20260715,
     "requireExactDisplayStrandCount": true,
     "requireUniformGuidePointCount": true,
-    "requireStableTopologyHash": true
+    "requireStableTopologyHash": true,
+    "topologyMutationDuringMeasurementAllowed": false
+  },
+  "segmentGroupContract": {
+    "sharedPointReferenceRequired": true,
+    "singleFinalWriterRequired": true,
+    "groupsPerBlock": 8,
+    "groupLengthPolicy": "uniform_within_each_strand_last_group_uses_validLengthRatio",
+    "nonFiniteRuntimeStateAllowed": false
   },
   "geometryContract": {
     "units": "meters",
@@ -33,14 +48,17 @@
   "evidenceGate": {
     "rejectWhenFreezeStatusIsNot": "FROZEN",
     "rejectPlaceholderHashes": true,
-    "requireSameAssetHashAcrossAllMethodsAndSeeds": true
+    "requireExactSha256Format": true,
+    "requireSameAssetHashAcrossAllMethodsAndSeeds": true,
+    "requireSourceCommitMatch": true,
+    "requireCleanGitWorktreeAtFreeze": true,
+    "requireLocalFileHashVerification": true
   },
   "freezeChecklist": [
-    "Replace sourceAssetPath with the final local asset path.",
-    "Write sourceAssetSha256 after the asset is frozen.",
-    "Record generated guide/follower topology hash.",
-    "Store the generator settings JSON and its SHA-256.",
-    "Set freezeStatus to FROZEN.",
-    "Do not change the asset between methods or seeds."
+    "Commit all source changes before freezing the asset.",
+    "Run tools/final_stage/freeze_novelty01_asset.py with the real asset, generator settings, and topology bytes or topology SHA-256.",
+    "Confirm freezeStatus is FROZEN and all hashes are 64 hexadecimal characters.",
+    "Confirm sourceCommitSha matches the clean Git HEAD.",
+    "Do not change the asset, generator settings, or topology between methods, seeds, and repetitions."
   ]
 }

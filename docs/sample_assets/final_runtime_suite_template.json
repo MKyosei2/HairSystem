@@ -1,12 +1,14 @@
 {
-  "suite_version": "novelty01-safe-v1.1",
+  "suite_version": "novelty01-safe-v1.2",
   "suite_name": "novelty01_safe_100k_runtime",
   "experiment_name": "novelty01_segment_group_safe_evaluation",
   "source": {
     "repository": "MKyosei2/HairSystem",
     "branch": "Novelty",
-    "commit": "ed2d14473a5ba6b7a8b44a8d8ba4d004899c2b6e",
-    "commit_message": "61.53"
+    "commit_mode": "git_head_clean",
+    "commit": "AUTO",
+    "base_commit": "88dac976977078b6d39499f169de661c6b4b83e9",
+    "base_commit_message": "61.54"
   },
   "db": "../../out/novelty01_safe/runtime_suite.sqlite",
   "excel": "../../out/novelty01_safe/runtime_suite.xlsx",
@@ -14,10 +16,13 @@
   "telemetry_dir": "../../runtime_telemetry/novelty01_safe",
   "schema": "../../tools/final_stage/schema.sql",
   "metric_definitions": "metric_definitions.json",
+  "hardware_profiles": "../../benchmarks/novelty01/hardware_profiles.json",
   "package_zip": "../../out/novelty01_safe/runtime_suite_outputs.zip",
   "baseline_method": "external_state_array",
   "preflight": {
     "strict": true,
+    "require_clean_git_worktree": true,
+    "require_source_commit_match": true,
     "require_release_build": true,
     "required_platform": "x64",
     "require_real_measurement": true,
@@ -34,6 +39,23 @@
     "minimum_measurement_frames": 6000,
     "minimum_seed_count": 5,
     "frame_budget_milliseconds": 16.67,
+    "max_invalid_frame_fraction": 0.0,
+    "require_seed_driven_timeline": true,
+    "require_frozen_asset": true,
+    "verify_source_asset_file": true,
+    "require_no_fatal_runtime_failure": true,
+    "required_method_codes": [
+      "full_physics",
+      "strand_sleep",
+      "block_sleep",
+      "segment_sleep_threshold",
+      "segment_sleep_hysteresis",
+      "segment_sleep_cache",
+      "segment_sleep_compaction",
+      "active_set_runtime",
+      "external_state_array",
+      "proposal_hybrid"
+    ],
     "require_hashes": [
       "commitSha",
       "executableSha256",
@@ -41,7 +63,8 @@
       "assetSha256",
       "settingsSha256",
       "scenarioTimelineSha256",
-      "assetManifestSha256"
+      "assetManifestSha256",
+      "appliedMethodSettingsSha256"
     ],
     "require_hardware_fields": [
       "cpuName",
@@ -89,12 +112,15 @@
       "platform",
       "renderWidth",
       "renderHeight",
+      "displayStrandCount",
       "vsyncEnabled",
       "fixedTimeStepEnabled",
       "fixedTimeStepSeconds",
       "caseId",
       "appliedMethodCode",
-      "appliedMethodSettingsSha256"
+      "appliedMethodSettingsSha256",
+      "canonicalResultSha256",
+      "fatalRuntimeFailureCount"
     ],
     "require_identity_match": true,
     "require_method_setting_acknowledgement": true,
@@ -115,7 +141,8 @@
     "report_p95": true,
     "report_p99": true,
     "report_p999": true,
-    "randomize_execution_order": true
+    "randomize_execution_order": true,
+    "execution_order_seed": 20260715
   },
   "run_defaults": {
     "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
@@ -353,6 +380,36 @@
       "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json"
     }
   ],
+  "determinism_replays": [
+    {
+      "id": "D01_walk_proposal",
+      "scenario": "S03_Walk",
+      "method": "proposal_hybrid",
+      "seed": 1,
+      "repetitions": 2
+    },
+    {
+      "id": "D02_false_static_proposal",
+      "scenario": "S12_FalseStaticTrap",
+      "method": "proposal_hybrid",
+      "seed": 1,
+      "repetitions": 2
+    },
+    {
+      "id": "D03_repair_proposal",
+      "scenario": "S13_RepairStorm",
+      "method": "proposal_hybrid",
+      "seed": 1,
+      "repetitions": 2
+    },
+    {
+      "id": "D04_walk_external",
+      "scenario": "S03_Walk",
+      "method": "external_state_array",
+      "seed": 1,
+      "repetitions": 2
+    }
+  ],
   "goals": {
     "max_avg_p95_frame_ms": 16.67,
     "min_avg_sixty_fps_ratio": 0.95,
@@ -362,19 +419,20 @@
     "max_collision_miss_rate": 0.01,
     "max_state_oscillation_rate": 0.02,
     "max_static_dynamic_boundary_error_mm": 1.0,
-    "max_frame_budget_overrun_rate": 0.05
+    "max_frame_budget_overrun_rate": 0.05,
+    "max_determinism_mismatch_count": 0
   },
   "hypotheses": [
     {
       "hypothesis_id": "H01",
       "title": "Integrated representation reduces p95 against external-state baseline",
-      "source": "runtime",
+      "source": "safe_pairwise",
       "scenario": "S03_Walk",
       "method": "proposal_hybrid",
       "baseline": "external_state_array",
-      "metric": "avg_p95_frame_ms",
+      "metric": "mean_delta_p95_frame_ms",
       "comparator": "<=",
-      "threshold_delta": -0.5
+      "threshold": -0.5
     },
     {
       "hypothesis_id": "H02",
@@ -403,7 +461,7 @@
       "method": "proposal_hybrid",
       "baseline": "external_state_array",
       "metric": "ci_high_delta_p99_frame_ms",
-      "comparator": "<",
+      "comparator": "<=",
       "threshold": 0.0
     }
   ],

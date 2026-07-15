@@ -95,8 +95,8 @@ namespace hairgpu
         }
     };
 
-    // Test-environment evidence contract. It intentionally does not define or change
-    // Segment Group behavior; it only decides whether a run is admissible as paper evidence.
+    // Evidence-only contract. This intentionally does not change Segment Group
+    // representation, state transitions, solver behavior, or ownership semantics.
     struct RuntimeMeasurementContract
     {
         bool requireReleaseBuild = true;
@@ -105,6 +105,8 @@ namespace hairgpu
         bool requireVsyncDisabled = true;
         bool requireFixedTimeStep = true;
         bool requireReproducibilityHashes = true;
+        bool requireExactSha256Format = true;
+        bool requireSourceCommitMatch = true;
         bool requireHardwareIdentity = true;
         bool requireUniqueCaseIdentity = true;
         bool requireScenarioTimelineHash = true;
@@ -113,7 +115,13 @@ namespace hairgpu
         bool requirePairedBaseline = true;
         bool requireExactDisplayedStrandCount = true;
         bool requireFiniteFrameStatistics = true;
+        bool requirePositiveFrameStatistics = true;
+        bool requireOrderedTailPercentiles = true;
+        bool requireMethodSettingsAcknowledgement = true;
+        bool requireDeterministicReplay = true;
+        bool requireNoFatalRuntimeFailure = true;
         bool requireThermalTelemetry = false;
+        bool treatFrameBudgetOverrunAsError = false;
         uint32_t requiredWidth = 1920u;
         uint32_t requiredHeight = 1080u;
         uint32_t requiredDisplayedStrandCount = 100000u;
@@ -142,13 +150,18 @@ namespace hairgpu
         bool fixedTimeStepEnabled = false;
         bool pairedBaselineAvailable = false;
         bool assetFrozen = false;
+        bool methodSettingsAcknowledged = false;
         uint32_t width = 0u;
         uint32_t height = 0u;
         uint32_t displayedStrandCount = 0u;
         uint32_t warmupFrames = 0u;
         uint32_t measurementFrames = 0u;
+        uint32_t acceptedFrameSampleCount = 0u;
+        uint32_t invalidFrameSampleCount = 0u;
         uint32_t independentSeedCount = 0u;
         uint32_t matchedBaselineSeedCount = 0u;
+        uint32_t determinismMismatchCount = 0u;
+        uint32_t fatalRuntimeFailureCount = 0u;
         float fixedTimeStepSeconds = 0.0f;
         float averageFrameMilliseconds = 0.0f;
         float p95FrameMilliseconds = 0.0f;
@@ -158,11 +171,13 @@ namespace hairgpu
         float minimumGpuTemperatureCelsius = 0.0f;
         float maximumGpuTemperatureCelsius = 0.0f;
 
+        std::string expectedCommitSha;
         std::string commitSha;
         std::string executableSha256;
         std::string shaderBundleSha256;
         std::string assetSha256;
         std::string settingsSha256;
+        std::string appliedMethodSettingsSha256;
         std::string scenarioTimelineSha256;
         std::string assetManifestSha256;
 
@@ -197,10 +212,43 @@ namespace hairgpu
         }
     }
 
-    inline bool HasRequiredHash(const std::string& value)
+    inline bool IsHexCharacter(char value)
     {
+        return (value >= '0' && value <= '9') ||
+               (value >= 'a' && value <= 'f') ||
+               (value >= 'A' && value <= 'F');
+    }
+
+    inline bool IsExactHexDigest(const std::string& value, size_t expectedLength)
+    {
+        if (value.size() != expectedLength)
+        {
+            return false;
+        }
+        for (char character : value)
+        {
+            if (!IsHexCharacter(character))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    inline bool HasRequiredHash(const std::string& value, bool requireExactSha256Format = true)
+    {
+        if (requireExactSha256Format)
+        {
+            return IsExactHexDigest(value, 64u);
+        }
         return value.size() >= 32u && value.find("REPLACE") == std::string::npos &&
-               value.find("PENDING") == std::string::npos && value.find("UNKNOWN") == std::string::npos;
+               value.find("PENDING") == std::string::npos && value.find("UNKNOWN") == std::string::npos &&
+               value.find("SYNTHETIC") == std::string::npos && value.find("TBD") == std::string::npos;
+    }
+
+    inline bool HasRequiredCommitSha(const std::string& value)
+    {
+        return IsExactHexDigest(value, 40u);
     }
 
     inline RuntimeMeasurementValidationReport ValidateRuntimeMeasurement(
@@ -260,13 +308,23 @@ namespace hairgpu
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Measured frame count is below the minimum.");
         }
+        if (observation.acceptedFrameSampleCount < observation.measurementFrames)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Accepted frame sample count is below the declared measurement frame count.");
+        }
+        if (observation.invalidFrameSampleCount > 0u)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Frame telemetry contains missing, non-positive, or non-finite samples.");
+        }
         if (observation.independentSeedCount < contract.minIndependentSeeds)
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Independent seed coverage is below the minimum.");
         }
         if (contract.requirePairedBaseline &&
-            (!observation.pairedBaselineAvailable ||
+            (observation.baselineMethodCode.empty() || !observation.pairedBaselineAvailable ||
              observation.matchedBaselineSeedCount < contract.minMatchedBaselineSeeds))
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
@@ -280,38 +338,75 @@ namespace hairgpu
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Fixed time step differs from the declared benchmark value.");
         }
-        if (contract.requireFiniteFrameStatistics &&
-            (!std::isfinite(observation.averageFrameMilliseconds) ||
-             !std::isfinite(observation.p95FrameMilliseconds) ||
-             !std::isfinite(observation.p99FrameMilliseconds) ||
-             !std::isfinite(observation.p999FrameMilliseconds) ||
-             !std::isfinite(observation.frameBudgetOverrunRate)))
+
+        const bool finiteStatistics =
+            std::isfinite(observation.averageFrameMilliseconds) &&
+            std::isfinite(observation.p95FrameMilliseconds) &&
+            std::isfinite(observation.p99FrameMilliseconds) &&
+            std::isfinite(observation.p999FrameMilliseconds) &&
+            std::isfinite(observation.frameBudgetOverrunRate);
+        if (contract.requireFiniteFrameStatistics && !finiteStatistics)
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Frame-time statistics must be finite.");
         }
+        if (contract.requirePositiveFrameStatistics && finiteStatistics &&
+            (observation.averageFrameMilliseconds <= 0.0f ||
+             observation.p95FrameMilliseconds <= 0.0f ||
+             observation.p99FrameMilliseconds <= 0.0f ||
+             observation.p999FrameMilliseconds <= 0.0f ||
+             observation.frameBudgetOverrunRate < 0.0f ||
+             observation.frameBudgetOverrunRate > 1.0f))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Frame-time statistics must be positive and rates must be in [0, 1].");
+        }
+        if (contract.requireOrderedTailPercentiles && finiteStatistics &&
+            (observation.p95FrameMilliseconds > observation.p99FrameMilliseconds ||
+             observation.p99FrameMilliseconds > observation.p999FrameMilliseconds))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Tail percentiles are not monotonically ordered.");
+        }
         if (observation.frameBudgetOverrunRate > contract.maxFrameBudgetOverrunRate)
         {
-            AddRuntimeMeasurementIssue(report, ValidationSeverity::Warning,
+            AddRuntimeMeasurementIssue(
+                report,
+                contract.treatFrameBudgetOverrunAsError ? ValidationSeverity::Error : ValidationSeverity::Warning,
                 "Frame-budget overrun rate exceeds the strong 60 FPS target.");
         }
 
         if (contract.requireReproducibilityHashes &&
-            (!HasRequiredHash(observation.commitSha) ||
-             !HasRequiredHash(observation.executableSha256) ||
-             !HasRequiredHash(observation.shaderBundleSha256) ||
-             !HasRequiredHash(observation.assetSha256) ||
-             !HasRequiredHash(observation.settingsSha256)))
+            (!HasRequiredCommitSha(observation.commitSha) ||
+             !HasRequiredHash(observation.executableSha256, contract.requireExactSha256Format) ||
+             !HasRequiredHash(observation.shaderBundleSha256, contract.requireExactSha256Format) ||
+             !HasRequiredHash(observation.assetSha256, contract.requireExactSha256Format) ||
+             !HasRequiredHash(observation.settingsSha256, contract.requireExactSha256Format)))
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
-                "Commit, executable, shader, asset, and settings hashes are required.");
+                "Commit, executable, shader, asset, and settings hashes are required and must use exact formats.");
         }
-        if (contract.requireScenarioTimelineHash && !HasRequiredHash(observation.scenarioTimelineSha256))
+        if (contract.requireSourceCommitMatch &&
+            (!HasRequiredCommitSha(observation.expectedCommitSha) || observation.commitSha != observation.expectedCommitSha))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Telemetry commit does not match the clean source commit declared by the suite.");
+        }
+        if (contract.requireMethodSettingsAcknowledgement &&
+            (!observation.methodSettingsAcknowledged ||
+             !HasRequiredHash(observation.appliedMethodSettingsSha256, contract.requireExactSha256Format)))
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Runtime method settings were not acknowledged with an exact SHA-256.");
+        }
+        if (contract.requireScenarioTimelineHash &&
+            !HasRequiredHash(observation.scenarioTimelineSha256, contract.requireExactSha256Format))
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Scenario timeline SHA-256 is required.");
         }
-        if (contract.requireAssetManifestHash && !HasRequiredHash(observation.assetManifestSha256))
+        if (contract.requireAssetManifestHash &&
+            !HasRequiredHash(observation.assetManifestSha256, contract.requireExactSha256Format))
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "Asset manifest SHA-256 is required.");
@@ -328,6 +423,16 @@ namespace hairgpu
         {
             AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
                 "CPU, GPU, GPU driver, operating system, and hardware profile are required.");
+        }
+        if (contract.requireDeterministicReplay && observation.determinismMismatchCount > 0u)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Identical-seed deterministic replay produced a different canonical result hash.");
+        }
+        if (contract.requireNoFatalRuntimeFailure && observation.fatalRuntimeFailureCount > 0u)
+        {
+            AddRuntimeMeasurementIssue(report, ValidationSeverity::Error,
+                "Fatal runtime failures were recorded during the measurement window.");
         }
         if (contract.requireThermalTelemetry)
         {
