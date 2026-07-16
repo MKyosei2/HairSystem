@@ -6,6 +6,12 @@ on:
       - agent/export-modified-experiment-sources
     paths:
       - ".github/workflows/export-modified-experiment-sources.yml"
+  pull_request:
+    branches:
+      - Novelty
+    paths:
+      - ".github/workflows/export-modified-experiment-sources.yml"
+      - "tools/tmp/**"
 
 permissions:
   contents: read
@@ -29,13 +35,14 @@ jobs:
           from pathlib import Path
           import base64
           import gzip
+          import os
 
           parts = sorted(Path("tools/tmp").glob("patcher.py.gz.b64.part*"))
           if len(parts) != 6:
               raise SystemExit(f"expected 6 payload parts, found {len(parts)}")
           encoded = "".join(path.read_text(encoding="ascii") for path in parts)
           payload = gzip.decompress(base64.b64decode(encoded))
-          output = Path("$env:RUNNER_TEMP") / "apply_experiment_runtime_patch.py"
+          output = Path(os.environ["RUNNER_TEMP"]) / "apply_experiment_runtime_patch.py"
           output.write_bytes(payload)
           print(output)
           '@ | Set-Content "$env:RUNNER_TEMP\rebuild_patcher.py" -Encoding utf8
@@ -47,10 +54,11 @@ jobs:
           @'
           from pathlib import Path
           import importlib.util
+          import os
           import py_compile
 
           repo = Path.cwd()
-          patcher_path = Path("$env:RUNNER_TEMP") / "apply_experiment_runtime_patch.py"
+          patcher_path = Path(os.environ["RUNNER_TEMP"]) / "apply_experiment_runtime_patch.py"
           spec = importlib.util.spec_from_file_location("hairgpu_patch", patcher_path)
           if spec is None or spec.loader is None:
               raise SystemExit("unable to load patcher")
