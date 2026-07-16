@@ -50,6 +50,19 @@
         const int panelHeight = (std::max)(static_cast<int>(client.bottom), 1);
         MoveWindow(m_uiPanel, panelX, 0, kUiPanelWidth, panelHeight, TRUE);
 
+        // Record the real hair viewport, not merely the outer swap-chain size.
+        // Formal runs are rejected later when this differs from the requested
+        // fixed resolution, preventing the UI panel from silently shrinking
+        // a nominal 1920 x 1080 measurement.
+        const RECT observedViewport = GetRenderViewportRect();
+        m_actualRenderWidth = static_cast<uint32_t>(
+            (std::max<LONG>)(observedViewport.right - observedViewport.left, 0));
+        m_actualRenderHeight = static_cast<uint32_t>(
+            (std::max<LONG>)(observedViewport.bottom - observedViewport.top, 0));
+        m_experimentCase.observedRenderWidth = m_actualRenderWidth;
+        m_experimentCase.observedRenderHeight = m_actualRenderHeight;
+        m_experimentCase.observedDisplayStrandCount = static_cast<uint32_t>(m_asset.strands.size());
+
         const int fullWidth = kUiPanelWidth - kUiMargin * 2;
         const int x = panelX + kUiMargin;
         const int leftRailWidth = 84;

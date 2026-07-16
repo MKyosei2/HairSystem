@@ -5,6 +5,119 @@ UpdateScalpOverlayVertexBuffer();
 return true;
     }
 
+    bool GpuHairViewer::CompileSegmentGroupShaderFromFile(
+        const char* entryPoint,
+        bool compactionBindings,
+        ID3DBlob** blobOut,
+        std::wstring& errorText)
+    {
+        if (!entryPoint || !blobOut)
+        {
+            errorText = L"Invalid segment-group shader compile request.";
+            return false;
+        }
+
+        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+    #if defined(_DEBUG)
+        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+    #endif
+
+        wchar_t modulePath[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+        const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+        const wchar_t* fileName = L"HairSegmentGroupRuntime.hlsl";
+
+        std::vector<std::filesystem::path> candidates;
+        auto pushCandidate = [&candidates](const std::filesystem::path& candidate)
+        {
+            if (candidate.empty()) return;
+            const std::filesystem::path normalized = candidate.lexically_normal();
+            if (std::find(candidates.begin(), candidates.end(), normalized) == candidates.end())
+                candidates.push_back(normalized);
+        };
+        pushCandidate(std::filesystem::path(fileName));
+        pushCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / fileName);
+        pushCandidate(exeDir / fileName);
+        pushCandidate(exeDir / L"shaders" / fileName);
+        pushCandidate(std::filesystem::current_path() / fileName);
+        pushCandidate(std::filesystem::current_path() / L"shaders" / fileName);
+        std::filesystem::path searchRoot = exeDir;
+        for (int i = 0; i < 6; ++i)
+        {
+            pushCandidate(searchRoot / L"apps" / L"dx11_viewer" / L"shaders" / fileName);
+            pushCandidate(searchRoot / L"dx11_viewer" / L"shaders" / fileName);
+            if (!searchRoot.has_parent_path()) break;
+            const std::filesystem::path parent = searchRoot.parent_path();
+            if (parent == searchRoot) break;
+            searchRoot = parent;
+        }
+
+        const char* bindingValue = compactionBindings ? "1" : "0";
+        const D3D_SHADER_MACRO macros[] = {
+            { "HAIRGPU_COMPACTION_BINDINGS", bindingValue },
+            { nullptr, nullptr }
+        };
+
+        HRESULT lastResult = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        ComPtr<ID3DBlob> shaderBlob;
+        ComPtr<ID3DBlob> errorBlob;
+        std::wstringstream tried;
+        std::filesystem::path compiledPath;
+        for (const std::filesystem::path& candidate : candidates)
+        {
+            const bool exists = std::filesystem::exists(candidate);
+            tried << candidate.c_str() << (exists ? L"  [exists]" : L"  [missing]") << L"\r\n";
+            if (!exists) continue;
+
+            std::ifstream input(candidate, std::ios::binary);
+            if (!input)
+            {
+                lastResult = HRESULT_FROM_WIN32(ERROR_READ_FAULT);
+                continue;
+            }
+            const std::string source(
+                std::istreambuf_iterator<char>(input),
+                std::istreambuf_iterator<char>());
+            shaderBlob.Reset();
+            errorBlob.Reset();
+            compiledPath = candidate;
+            const std::string sourceName = candidate.string();
+            lastResult = D3DCompile(
+                source.data(), source.size(), sourceName.c_str(), macros, nullptr,
+                entryPoint, "cs_5_0", flags, 0u, &shaderBlob, &errorBlob);
+            if (SUCCEEDED(lastResult)) break;
+        }
+
+        if (FAILED(lastResult))
+        {
+            if (errorBlob)
+            {
+                const std::string message(
+                    static_cast<const char*>(errorBlob->GetBufferPointer()),
+                    errorBlob->GetBufferSize());
+                errorText.assign(message.begin(), message.end());
+            }
+            else
+            {
+                std::wstringstream message;
+                message << L"Segment-group shader compilation failed. HRESULT=0x"
+                        << std::hex << std::uppercase << static_cast<unsigned long>(lastResult);
+                errorText = message.str();
+            }
+            if (!compiledPath.empty())
+            {
+                errorText += L"\r\nShader source path: ";
+                errorText += compiledPath.wstring();
+            }
+            errorText += L"\r\nTried paths:\r\n";
+            errorText += tried.str();
+            return false;
+        }
+
+        *blobOut = shaderBlob.Detach();
+        return true;
+    }
+
     bool GpuHairViewer::LoadShaders()
     {
         std::wstring errorText;
@@ -136,6 +249,68 @@ return true;
             return false;
         }
 
+        const bool requireFormalSegmentGroupShaders =
+            IsExperimentModeEnabled() &&
+            m_experimentCase.strictValidationEnabled &&
+            (m_experimentCase.methodId == ExperimentMethodId::B3_SegmentThresholdSleep ||
+             m_experimentCase.methodId == ExperimentMethodId::B4_SegmentHysteresisSleep ||
+             m_experimentCase.methodId == ExperimentMethodId::B5_SegmentCache ||
+             m_experimentCase.methodId == ExperimentMethodId::B6_SegmentGpuCompaction ||
+             m_experimentCase.methodId == ExperimentMethodId::B8_ExternalStateArray ||
+             m_experimentCase.methodId == ExperimentMethodId::P_IntegratedSegmentGroup);
+
+        auto loadSegmentGroupShader =
+            [&](const char* entryPoint, ComPtr<ID3D11ComputeShader>& destination) -> bool
+        {
+            ComPtr<ID3DBlob> blob;
+            std::wstring localError;
+            const bool compactionBindings =
+                std::strcmp(entryPoint, "SegmentGroupCompactDynamicCS") == 0 ||
+                std::strcmp(entryPoint, "SegmentGroupCompactStaticCS") == 0 ||
+                std::strcmp(entryPoint, "SegmentGroupBuildDispatchArgsCS") == 0;
+            if (!CompileSegmentGroupShaderFromFile(
+                    entryPoint,
+                    compactionBindings,
+                    &blob,
+                    localError) ||
+                FAILED(m_device->CreateComputeShader(
+                    blob->GetBufferPointer(),
+                    blob->GetBufferSize(),
+                    nullptr,
+                    &destination)))
+            {
+                errorText = localError.empty()
+                    ? std::wstring(L"Failed to create segment-group shader: ") +
+                        std::wstring(entryPoint, entryPoint + std::strlen(entryPoint))
+                    : localError;
+                destination.Reset();
+                return false;
+            }
+            return true;
+        };
+
+        bool segmentGroupShadersReady = true;
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupBlockClassifyCS", m_segmentGroupBlockClassifyCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupClassifyCS", m_segmentGroupClassifyCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupPredictiveWakeCS", m_segmentGroupPredictiveWakeCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupCompactDynamicCS", m_segmentGroupCompactDynamicCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupCompactStaticCS", m_segmentGroupCompactStaticCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupBuildDispatchArgsCS", m_segmentGroupBuildDispatchArgsCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupStaticTransformCS", m_segmentGroupStaticTransformCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupDynamicSolveCS", m_segmentGroupDynamicSolveCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupVelocityRecoveryCS", m_segmentGroupVelocityRecoveryCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupRepairSolveCS", m_segmentGroupRepairSolveCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupBoundaryRepairCS", m_segmentGroupBoundaryRepairCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupCacheUpdateCS", m_segmentGroupCacheUpdateCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupWatchdogCS", m_segmentGroupWatchdogCS);
+        segmentGroupShadersReady &= loadSegmentGroupShader("SegmentGroupTelemetryReduceCS", m_segmentGroupTelemetryReduceCS);
+        if (!segmentGroupShadersReady && requireFormalSegmentGroupShaders)
+        {
+            SetFatalExperimentFailure(1101u, L"Required HairSegmentGroupRuntime.hlsl entry point failed to compile.");
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Formal experiment shader compile failed", MB_ICONERROR);
+            return false;
+        }
+
         ComPtr<ID3DBlob> debugVsBlob;
         if (!CompileShaderFromFile(L"DebugLine.hlsl", "VSMain", "vs_5_0", &debugVsBlob, errorText))
         {
@@ -196,6 +371,50 @@ return true;
             return false;
         }
 
+        return true;
+    }
+
+    bool GpuHairViewer::UpdateSegmentGroupRuntimeConstants(float dt)
+    {
+        if (!m_context || !m_segmentGroupRuntimeConstants)
+        {
+            if (IsExperimentModeEnabled())
+            {
+                SetFatalExperimentFailure(1102u, L"Segment-group runtime constant buffer is unavailable.");
+            }
+            return false;
+        }
+
+        SegmentGroupRuntimeConstants constants = {};
+        constants.groupCount = m_segmentGroupCount;
+        constants.blockCount = m_segmentGroupBlockCount;
+        constants.frameIndex = m_globalFrameIndex;
+        constants.groupsPerBlock = std::max<uint32_t>(m_segmentGroupsPerBlock, 1u);
+        constants.repairVerificationHoldFrames = 12u;
+        constants.deltaTime = dt;
+        constants.motionWakeThreshold = 0.02f;
+        constants.collisionWakeThreshold = 0.10f;
+        constants.staticMotionThreshold = 0.005f;
+        constants.lengthErrorThreshold = 0.02f;
+        constants.boundaryErrorThresholdMm = 2.0f;
+        constants.velocityRecoveryBlend = 0.75f;
+        constants.positionRecoveryBlend = 0.35f;
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (FAILED(m_context->Map(
+                m_segmentGroupRuntimeConstants.Get(),
+                0u,
+                D3D11_MAP_WRITE_DISCARD,
+                0u,
+                &mapped)))
+        {
+            SetFatalExperimentFailure(1103u, L"Failed to map segment-group runtime constants.");
+            return false;
+        }
+        std::memcpy(mapped.pData, &constants, sizeof(constants));
+        m_context->Unmap(m_segmentGroupRuntimeConstants.Get(), 0u);
+        ID3D11Buffer* constantBuffers[] = { m_segmentGroupRuntimeConstants.Get() };
+        m_context->CSSetConstantBuffers(0u, 1u, constantBuffers);
         return true;
     }
 
@@ -542,6 +761,17 @@ return true;
         m_runtimeFollowerUpdatePhase = 0u;
         m_elapsedSeconds = 0.0f;
         m_simulationTickIndex = 0u;
+        m_experimentRunStatus = ExperimentRunStatus::InProgress;
+        m_experimentFailureCode = 0u;
+        m_experimentFailureMessage.clear();
+        m_fullCpuGroupUploadCount = 0u;
+        m_sameFrameReadbackCount = 0u;
+        m_nanStateCount = 0u;
+        m_infiniteStateCount = 0u;
+        m_syntheticMetricCount = 0u;
+        m_unavailableMetricCount = 0u;
+        m_gpuTimingValidFrameCount = 0u;
+        m_gpuTimingRequiredFrameCount = m_experimentCase.measurementFrames;
         m_scenarioAppliedEventCount = 0u;
         m_scenarioAssertionFailureCount = 0u;
         m_scenarioCollisionCandidateCount = 0u;
@@ -612,6 +842,8 @@ return true;
         if (m_segmentGroupBlockBuffer.buffer &&
             !m_segmentGroupBlockInitialData.empty())
         {
+            ++m_fullCpuGroupUploadCount;
+            ++m_noveltyTelemetry.fullCpuGroupUploadCount;
             m_context->UpdateSubresource(
                 m_segmentGroupBlockBuffer.buffer.Get(),
                 0u,
@@ -791,457 +1023,300 @@ return true;
 
     void GpuHairViewer::ClassifySegmentGroupBlocks()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupBlockClassifyCS ||
-            m_segmentGroupBlockCount == 0u)
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupBlockClassifyCS || m_segmentGroupBlockCount == 0u)
         {
+            if (IsExperimentModeEnabled() && m_experimentCase.strictValidationEnabled)
+                SetFatalExperimentFailure(1201u, L"SegmentGroupBlockClassifyCS is unavailable.");
             return;
         }
-
-        ID3D11UnorderedAccessView* uavs[] =
-        {
-            m_segmentGroupBlockBuffer.uav.Get(),
-            m_segmentGroupRuntimeCountersBuffer.uav.Get()
-        };
-
-        m_context->CSSetShader(
-            m_segmentGroupBlockClassifyCS.Get(),
-            nullptr,
-            0u);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            static_cast<UINT>(std::size(uavs)),
-            uavs,
-            nullptr);
-
-        const UINT dispatchCount =
-            (m_segmentGroupBlockCount + 63u) / 64u;
-
-        m_context->Dispatch(
-            std::max<UINT>(dispatchCount, 1u),
-            1u,
-            1u);
-
-        ID3D11UnorderedAccessView* nullUavs[2] =
-        {
-            nullptr,
-            nullptr
-        };
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            2u,
-            nullUavs,
-            nullptr);
-
+        ID3D11ShaderResourceView* groupSrv = m_segmentGroupBuffer.srv.Get();
+        ID3D11UnorderedAccessView* blockUav = m_segmentGroupBlockBuffer.uav.Get();
+        m_context->CSSetShader(m_segmentGroupBlockClassifyCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(0u, 1u, &groupSrv);
+        m_context->CSSetUnorderedAccessViews(1u, 1u, &blockUav, nullptr);
+        m_context->Dispatch(std::max<UINT>((m_segmentGroupBlockCount + 63u) / 64u, 1u), 1u, 1u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(0u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(1u, 1u, &nullUav, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
     }
 
     void GpuHairViewer::ClassifyDirtySegmentGroups()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupClassifyCS ||
-            m_segmentGroupCount == 0u)
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupClassifyCS || m_segmentGroupCount == 0u)
         {
+            if (IsExperimentModeEnabled() && m_experimentCase.strictValidationEnabled)
+                SetFatalExperimentFailure(1202u, L"SegmentGroupClassifyCS is unavailable.");
             return;
         }
-
-        ID3D11ShaderResourceView* srvs[] =
-        {
-            m_positions[m_currentBufferIndex].srv.Get(),
-            m_previousPositions[m_currentBufferIndex].srv.Get(),
-            m_segmentGroupBlockBuffer.srv.Get()
-        };
-
-        ID3D11UnorderedAccessView* uavs[] =
-        {
-            m_segmentGroupBuffer.uav.Get(),
-            m_segmentGroupCertificateBuffer.uav.Get(),
-            m_segmentGroupRuntimeCountersBuffer.uav.Get()
-        };
-
-        m_context->CSSetShader(
-            m_segmentGroupClassifyCS.Get(),
-            nullptr,
-            0u);
-
-        m_context->CSSetShaderResources(
-            0u,
-            static_cast<UINT>(std::size(srvs)),
-            srvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            static_cast<UINT>(std::size(uavs)),
-            uavs,
-            nullptr);
-
-        const UINT dispatchCount =
-            (m_segmentGroupCount + 63u) / 64u;
-
-        m_context->Dispatch(
-            std::max<UINT>(dispatchCount, 1u),
-            1u,
-            1u);
-
-        ID3D11ShaderResourceView* nullSrvs[3] =
-        {
-            nullptr,
-            nullptr,
-            nullptr
-        };
-
-        ID3D11UnorderedAccessView* nullUavs[3] =
-        {
-            nullptr,
-            nullptr,
-            nullptr
-        };
-
-        m_context->CSSetShaderResources(
-            0u,
-            3u,
-            nullSrvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            3u,
-            nullUavs,
-            nullptr);
-
+        ID3D11ShaderResourceView* currentPositionSrv = m_positions[m_currentBufferIndex].srv.Get();
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* certificateUav = m_segmentGroupCertificateBuffer.uav.Get();
+        m_context->CSSetShader(m_segmentGroupClassifyCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(3u, 1u, &currentPositionSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(2u, 1u, &certificateUav, nullptr);
+        m_context->Dispatch(std::max<UINT>((m_segmentGroupCount + 63u) / 64u, 1u), 1u, 1u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(3u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(2u, 1u, &nullUav, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
     }
 
     void GpuHairViewer::CompactDynamicSegmentGroups()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupCompactDynamicCS ||
-            m_segmentGroupCount == 0u)
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupCompactDynamicCS || m_segmentGroupCount == 0u)
         {
+            if (IsExperimentModeEnabled() && m_experimentCase.strictValidationEnabled)
+                SetFatalExperimentFailure(1203u, L"SegmentGroupCompactDynamicCS is unavailable.");
             return;
         }
-
-        const std::array<uint32_t, 4> zeroCounters =
-        {
-            0u,
-            0u,
-            0u,
-            0u
-        };
-
-        m_context->UpdateSubresource(
-            m_segmentGroupCounterBuffer.buffer.Get(),
-            0u,
-            nullptr,
-            zeroCounters.data(),
-            0u,
-            0u);
-
-        ID3D11ShaderResourceView* srvs[] =
-        {
-            m_segmentGroupBuffer.srv.Get()
-        };
-
-        ID3D11UnorderedAccessView* uavs[] =
-        {
+        const std::array<uint32_t, 4> zeroCounters = { 0u, 0u, 0u, 0u };
+        m_context->UpdateSubresource(m_segmentGroupCounterBuffer.buffer.Get(), 0u, nullptr, zeroCounters.data(), 0u, 0u);
+        ID3D11ShaderResourceView* groupSrv = m_segmentGroupBuffer.srv.Get();
+        ID3D11UnorderedAccessView* uavs[] = {
             m_dynamicSegmentGroupIndicesBuffer.uav.Get(),
+            m_staticTransformedGroupIndicesBuffer.uav.Get(),
             m_repairSegmentGroupIndicesBuffer.uav.Get(),
-            m_segmentGroupCounterBuffer.uav.Get(),
-            m_segmentGroupRuntimeCountersBuffer.uav.Get()
+            m_segmentGroupCounterBuffer.uav.Get()
         };
-
-        m_context->CSSetShader(
-            m_segmentGroupCompactDynamicCS.Get(),
-            nullptr,
-            0u);
-
-        m_context->CSSetShaderResources(0u, 1u, srvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            static_cast<UINT>(std::size(uavs)),
-            uavs,
-            nullptr);
-
-        const UINT dispatchCount =
-            (m_segmentGroupCount + 63u) / 64u;
-
-        m_context->Dispatch(
-            std::max<UINT>(dispatchCount, 1u),
-            1u,
-            1u);
-
-        ID3D11ShaderResourceView* nullSrvs[1] =
-        {
-            nullptr
-        };
-
-        ID3D11UnorderedAccessView* nullUavs[4] =
-        {
-            nullptr,
-            nullptr,
-            nullptr,
-            nullptr
-        };
-
-        m_context->CSSetShaderResources(
-            0u,
-            1u,
-            nullSrvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            4u,
-            nullUavs,
-            nullptr);
-
+        m_context->CSSetShader(m_segmentGroupCompactDynamicCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(0u, 1u, &groupSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 4u, uavs, nullptr);
+        m_context->Dispatch(std::max<UINT>((m_segmentGroupCount + 63u) / 64u, 1u), 1u, 1u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUavs[4] = { nullptr, nullptr, nullptr, nullptr };
+        m_context->CSSetShaderResources(0u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 4u, nullUavs, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
     }
 
+    void GpuHairViewer::CompactStaticSegmentGroups()
+    {
+        // SegmentGroupCompactDynamicCS emits dynamic, static and repair lists in
+        // one deterministic pass. Keeping this explicit method prevents callers
+        // from launching a second pass that would double-count static groups.
+    }
+
+
     void GpuHairViewer::BuildSegmentGroupDispatchArguments()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupBuildDispatchArgsCS)
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupBuildDispatchArgsCS ||
+            !m_segmentGroupDynamicDispatchArgsUav || !m_segmentGroupStaticDispatchArgsUav ||
+            !m_segmentGroupRepairDispatchArgsUav)
         {
+            if (IsExperimentModeEnabled() && m_experimentCase.strictValidationEnabled)
+                SetFatalExperimentFailure(1204u, L"Segment-group indirect argument resources are unavailable.");
             return;
         }
-
-        ID3D11ShaderResourceView* srvs[] =
-        {
-            m_segmentGroupCounterBuffer.srv.Get()
-        };
-
-        ID3D11UnorderedAccessView* uavs[] =
-        {
+        ID3D11UnorderedAccessView* uavs[] = {
+            m_segmentGroupCounterBuffer.uav.Get(),
             m_segmentGroupDynamicDispatchArgsUav.Get(),
+            m_segmentGroupStaticDispatchArgsUav.Get(),
             m_segmentGroupRepairDispatchArgsUav.Get()
         };
-
-        m_context->CSSetShader(
-            m_segmentGroupBuildDispatchArgsCS.Get(),
-            nullptr,
-            0u);
-
-        m_context->CSSetShaderResources(0u, 1u, srvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            2u,
-            uavs,
-            nullptr);
-
+        m_context->CSSetShader(m_segmentGroupBuildDispatchArgsCS.Get(), nullptr, 0u);
+        m_context->CSSetUnorderedAccessViews(3u, 4u, uavs, nullptr);
         m_context->Dispatch(1u, 1u, 1u);
-
-        ID3D11ShaderResourceView* nullSrvs[1] =
-        {
-            nullptr
-        };
-
-        ID3D11UnorderedAccessView* nullUavs[2] =
-        {
-            nullptr,
-            nullptr
-        };
-
-        m_context->CSSetShaderResources(
-            0u,
-            1u,
-            nullSrvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            2u,
-            nullUavs,
-            nullptr);
-
+        ID3D11UnorderedAccessView* nullUavs[4] = { nullptr, nullptr, nullptr, nullptr };
+        m_context->CSSetUnorderedAccessViews(3u, 4u, nullUavs, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
-
         ++m_noveltyTelemetry.dispatchIndirectCount;
     }
 
     void GpuHairViewer::TransformStaticSegmentGroups()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupStaticTransformCS)
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupStaticTransformCS ||
+            !m_segmentGroupStaticDispatchArgsBuffer)
         {
+            if (IsExperimentModeEnabled() && m_experimentCase.strictValidationEnabled)
+                SetFatalExperimentFailure(1205u, L"Static segment-group transform path is unavailable.");
             return;
         }
+        ID3D11ShaderResourceView* staticListSrv = m_staticTransformedGroupIndicesBuffer.srv.Get();
+        ID3D11ShaderResourceView* counterSrv = m_segmentGroupCounterBuffer.srv.Get();
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* positionUav = m_positions[m_currentBufferIndex].uav.Get();
+        m_context->CSSetShader(m_segmentGroupStaticTransformCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(6u, 1u, &staticListSrv);
+        m_context->CSSetShaderResources(8u, 1u, &counterSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &positionUav, nullptr);
+        m_context->DispatchIndirect(m_segmentGroupStaticDispatchArgsBuffer.Get(), 0u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(6u, 1u, &nullSrv);
+        m_context->CSSetShaderResources(8u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &nullUav, nullptr);
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
 
-        ID3D11ShaderResourceView* srvs[] =
-        {
-            m_segmentGroupBuffer.srv.Get()
-        };
+    void GpuHairViewer::ExecutePredictiveWake(float dt)
+    {
+        (void)dt;
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupPredictiveWakeCS || m_segmentGroupCount == 0u)
+            return;
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* wakeUav = m_wakeTelemetryBuffer.uav.Get();
+        m_context->CSSetShader(m_segmentGroupPredictiveWakeCS.Get(), nullptr, 0u);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(5u, 1u, &wakeUav, nullptr);
+        m_context->Dispatch(std::max<UINT>((m_segmentGroupCount + 63u) / 64u, 1u), 1u, 1u);
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(5u, 1u, &nullUav, nullptr);
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
 
-        ID3D11UnorderedAccessView* uavs[] =
-        {
-            m_positions[m_currentBufferIndex].uav.Get()
-        };
+    void GpuHairViewer::SolveDynamicSegmentGroups(float dt)
+    {
+        (void)dt;
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupDynamicSolveCS || !m_segmentGroupDynamicDispatchArgsBuffer)
+            return;
+        ID3D11ShaderResourceView* dynamicListSrv = m_dynamicSegmentGroupIndicesBuffer.srv.Get();
+        ID3D11ShaderResourceView* counterSrv = m_segmentGroupCounterBuffer.srv.Get();
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* positionUav = m_positions[m_currentBufferIndex].uav.Get();
+        ID3D11UnorderedAccessView* previousUav = m_previousPositions[m_currentBufferIndex].uav.Get();
+        m_context->CSSetShader(m_segmentGroupDynamicSolveCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(5u, 1u, &dynamicListSrv);
+        m_context->CSSetShaderResources(8u, 1u, &counterSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &positionUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(4u, 1u, &previousUav, nullptr);
+        m_context->DispatchIndirect(m_segmentGroupDynamicDispatchArgsBuffer.Get(), 0u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(5u, 1u, &nullSrv);
+        m_context->CSSetShaderResources(8u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(4u, 1u, &nullUav, nullptr);
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
 
-        m_context->CSSetShader(
-            m_segmentGroupStaticTransformCS.Get(),
-            nullptr,
-            0u);
+    void GpuHairViewer::ExecuteVelocityRecovery(float dt)
+    {
+        (void)dt;
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupVelocityRecoveryCS || !m_segmentGroupDynamicDispatchArgsBuffer)
+            return;
+        ID3D11ShaderResourceView* dynamicListSrv = m_dynamicSegmentGroupIndicesBuffer.srv.Get();
+        ID3D11ShaderResourceView* counterSrv = m_segmentGroupCounterBuffer.srv.Get();
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* positionUav = m_positions[m_currentBufferIndex].uav.Get();
+        ID3D11UnorderedAccessView* previousUav = m_previousPositions[m_currentBufferIndex].uav.Get();
+        m_context->CSSetShader(m_segmentGroupVelocityRecoveryCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(5u, 1u, &dynamicListSrv);
+        m_context->CSSetShaderResources(8u, 1u, &counterSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &positionUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(4u, 1u, &previousUav, nullptr);
+        m_context->DispatchIndirect(m_segmentGroupDynamicDispatchArgsBuffer.Get(), 0u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(5u, 1u, &nullSrv);
+        m_context->CSSetShaderResources(8u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(4u, 1u, &nullUav, nullptr);
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
 
-        m_context->CSSetShaderResources(0u, 1u, srvs);
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            1u,
-            uavs,
-            nullptr);
+    void GpuHairViewer::SolveRepairSegmentGroups(float dt)
+    {
+        (void)dt;
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupRepairSolveCS || !m_segmentGroupRepairDispatchArgsBuffer)
+            return;
+        ID3D11ShaderResourceView* repairListSrv = m_repairSegmentGroupIndicesBuffer.srv.Get();
+        ID3D11ShaderResourceView* counterSrv = m_segmentGroupCounterBuffer.srv.Get();
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* positionUav = m_positions[m_currentBufferIndex].uav.Get();
+        ID3D11UnorderedAccessView* previousUav = m_previousPositions[m_currentBufferIndex].uav.Get();
+        ID3D11UnorderedAccessView* trackingUav = m_repairTrackingBuffer.uav.Get();
+        m_context->CSSetShader(m_segmentGroupRepairSolveCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(7u, 1u, &repairListSrv);
+        m_context->CSSetShaderResources(8u, 1u, &counterSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &positionUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(4u, 1u, &previousUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(6u, 1u, &trackingUav, nullptr);
+        m_context->DispatchIndirect(m_segmentGroupRepairDispatchArgsBuffer.Get(), 0u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(7u, 1u, &nullSrv);
+        m_context->CSSetShaderResources(8u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(4u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(6u, 1u, &nullUav, nullptr);
+        m_context->CSSetShader(nullptr, nullptr, 0u);
+    }
 
-        const UINT dispatchCount =
-            (m_segmentGroupCount + 63u) / 64u;
-
-        m_context->Dispatch(
-            std::max<UINT>(dispatchCount, 1u),
-            1u,
-            1u);
-
-        ID3D11ShaderResourceView* nullSrvs[1] =
-        {
-            nullptr
-        };
-
-        ID3D11UnorderedAccessView* nullUavs[1] =
-        {
-            nullptr
-        };
-
-        m_context->CSSetShaderResources(
-            0u,
-            1u,
-            nullSrvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            1u,
-            nullUavs,
-            nullptr);
-
+    void GpuHairViewer::UpdateSegmentGroupCaches()
+    {
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupCacheUpdateCS || m_segmentGroupCount == 0u)
+            return;
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* certificateUav = m_segmentGroupCertificateBuffer.uav.Get();
+        m_context->CSSetShader(m_segmentGroupCacheUpdateCS.Get(), nullptr, 0u);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(2u, 1u, &certificateUav, nullptr);
+        m_context->Dispatch(std::max<UINT>((m_segmentGroupCount + 63u) / 64u, 1u), 1u, 1u);
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(2u, 1u, &nullUav, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
     }
 
     void GpuHairViewer::RepairSegmentGroupBoundaries()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupBoundaryRepairCS ||
-            !m_segmentGroupRepairDispatchArgsBuffer)
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupBoundaryRepairCS || !m_segmentGroupRepairDispatchArgsBuffer)
         {
+            if (IsExperimentModeEnabled() && m_experimentCase.strictValidationEnabled)
+                SetFatalExperimentFailure(1206u, L"Segment-group boundary repair path is unavailable.");
             return;
         }
-
-        ID3D11ShaderResourceView* srvs[] =
-        {
-            m_repairSegmentGroupIndicesBuffer.srv.Get()
-        };
-
-        ID3D11UnorderedAccessView* uavs[] =
-        {
-            m_segmentGroupBuffer.uav.Get(),
-            m_segmentGroupCertificateBuffer.uav.Get(),
-            m_positions[m_currentBufferIndex].uav.Get(),
-            m_segmentGroupRuntimeCountersBuffer.uav.Get()
-        };
-
-        m_context->CSSetShader(
-            m_segmentGroupBoundaryRepairCS.Get(),
-            nullptr,
-            0u);
-
-        m_context->CSSetShaderResources(0u, 1u, srvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            static_cast<UINT>(std::size(uavs)),
-            uavs,
-            nullptr);
-
-        m_context->DispatchIndirect(
-            m_segmentGroupRepairDispatchArgsBuffer.Get(),
-            0u);
-
-        ID3D11ShaderResourceView* nullSrvs[1] =
-        {
-            nullptr
-        };
-
-        ID3D11UnorderedAccessView* nullUavs[4] =
-        {
-            nullptr,
-            nullptr,
-            nullptr,
-            nullptr
-        };
-
-        m_context->CSSetShaderResources(
-            0u,
-            1u,
-            nullSrvs);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            4u,
-            nullUavs,
-            nullptr);
-
+        ID3D11ShaderResourceView* repairListSrv = m_repairSegmentGroupIndicesBuffer.srv.Get();
+        ID3D11ShaderResourceView* counterSrv = m_segmentGroupCounterBuffer.srv.Get();
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* positionUav = m_positions[m_currentBufferIndex].uav.Get();
+        m_context->CSSetShader(m_segmentGroupBoundaryRepairCS.Get(), nullptr, 0u);
+        m_context->CSSetShaderResources(7u, 1u, &repairListSrv);
+        m_context->CSSetShaderResources(8u, 1u, &counterSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &positionUav, nullptr);
+        m_context->DispatchIndirect(m_segmentGroupRepairDispatchArgsBuffer.Get(), 0u);
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetShaderResources(7u, 1u, &nullSrv);
+        m_context->CSSetShaderResources(8u, 1u, &nullSrv);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &nullUav, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
     }
 
     void GpuHairViewer::ExecuteSegmentGroupWatchdog()
     {
-        if (!m_segmentGroupRuntimeReady ||
-            !m_segmentGroupWatchdogCS ||
-            m_segmentGroupCount == 0u)
-        {
+        if (!m_segmentGroupRuntimeReady || !m_segmentGroupWatchdogCS || m_segmentGroupCount == 0u)
             return;
-        }
-
-        if (m_segmentGroupWatchdogIntervalFrames == 0u)
-        {
+        if (m_segmentGroupWatchdogIntervalFrames == 0u ||
+            (m_globalFrameIndex % m_segmentGroupWatchdogIntervalFrames) != 0u)
             return;
-        }
-
-        ID3D11UnorderedAccessView* uavs[] =
-        {
-            m_segmentGroupBuffer.uav.Get(),
-            m_segmentGroupCertificateBuffer.uav.Get(),
-            m_segmentGroupRuntimeCountersBuffer.uav.Get()
-        };
-
-        m_context->CSSetShader(
-            m_segmentGroupWatchdogCS.Get(),
-            nullptr,
-            0u);
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            3u,
-            uavs,
-            nullptr);
-
-        const UINT dispatchCount =
-            (m_segmentGroupCount + 63u) / 64u;
-
-        m_context->Dispatch(
-            std::max<UINT>(dispatchCount, 1u),
-            1u,
-            1u);
-
-        ID3D11UnorderedAccessView* nullUavs[3] =
-        {
-            nullptr,
-            nullptr,
-            nullptr
-        };
-
-        m_context->CSSetUnorderedAccessViews(
-            0u,
-            3u,
-            nullUavs,
-            nullptr);
-
+        ID3D11UnorderedAccessView* groupUav = m_segmentGroupBuffer.uav.Get();
+        ID3D11UnorderedAccessView* positionUav = m_positions[m_currentBufferIndex].uav.Get();
+        m_context->CSSetShader(m_segmentGroupWatchdogCS.Get(), nullptr, 0u);
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &groupUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &positionUav, nullptr);
+        m_context->Dispatch(std::max<UINT>((m_segmentGroupCount + 63u) / 64u, 1u), 1u, 1u);
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        m_context->CSSetUnorderedAccessViews(0u, 1u, &nullUav, nullptr);
+        m_context->CSSetUnorderedAccessViews(3u, 1u, &nullUav, nullptr);
         m_context->CSSetShader(nullptr, nullptr, 0u);
+        ++m_noveltyTelemetry.watchdogCheckCount;
     }
 
     void GpuHairViewer::ResolveSegmentGroupTelemetry()
@@ -1332,92 +1407,90 @@ return true;
     void GpuHairViewer::ApplyScenarioForTick(uint32_t tickIndex, float dt)
     {
         if (!m_experimentCase.enabled)
+            return;
+        if (m_experimentCase.timelineLoaded)
         {
+            ApplyScenarioTimelineFrame(tickIndex);
             return;
         }
-        if (!m_scenarioBaseCaptured && !m_colliders.spheres.empty())
+        if (m_experimentCase.strictValidationEnabled)
         {
-            m_scenarioBaseSphereCenter = m_colliders.spheres.front().center;
-            m_scenarioBaseCaptured = true;
+            SetFatalExperimentFailure(1301u, L"Formal scenario timeline was not loaded.");
+            return;
         }
 
-        std::wstring scenario = m_experimentCase.scenario;
-        std::transform(scenario.begin(), scenario.end(), scenario.begin(), [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c - L'A' + L'a') : c; });
-        bool applied = false;
+        // Debug-only exact-ID fallback. Formal measurements never use name
+        // substring matching, which previously misclassified S03_Walk as wind.
         const uint32_t eventStart = std::max<uint32_t>(m_experimentCase.warmupFrames, 1u);
-        const uint32_t eventDuration = std::min<uint32_t>(1200u, std::max<uint32_t>(m_experimentCase.measurementFrames, 60u));
-        const uint32_t eventEnd = eventStart + eventDuration;
-        const uint32_t transitionPeriod = std::max<uint32_t>(30u, std::min<uint32_t>(300u, std::max<uint32_t>(m_experimentCase.measurementFrames / 6u, 1u)));
-        if (scenario.find(L"static") != std::wstring::npos || scenario.find(L"s01") != std::wstring::npos || scenario.find(L"s15") != std::wstring::npos)
+        bool applied = false;
+        switch (m_experimentCase.scenarioId)
         {
+        case ExperimentScenarioId::S01_Idle:
+        case ExperimentScenarioId::S15_AllStatic:
             m_enableScalpMotion = false;
             m_simConfig.windStrength = 0.0f;
-            applied = (tickIndex == 0u);
-        }
-        if (scenario.find(L"wind") != std::wstring::npos || scenario.find(L"s03") != std::wstring::npos)
-        {
-            const float t = hairgpu::Clamp((static_cast<float>(tickIndex) - static_cast<float>(eventStart)) / static_cast<float>(std::max<uint32_t>(eventDuration, 1u)), 0.0f, 1.0f);
-            m_simConfig.windStrength = 0.03f + 1.20f * t;
-            applied = tickIndex >= eventStart && tickIndex <= eventEnd;
-        }
-        if (scenario.find(L"collider") != std::wstring::npos || scenario.find(L"approach") != std::wstring::npos || scenario.find(L"s07") != std::wstring::npos)
-        {
-            if (!m_colliders.spheres.empty())
-            {
-                const float t = hairgpu::Clamp((static_cast<float>(tickIndex) - static_cast<float>(eventStart)) / static_cast<float>(std::max<uint32_t>(eventDuration, 1u)), 0.0f, 1.0f);
-                m_colliders.spheres.front().center = m_scenarioBaseSphereCenter + Vec3(0.0f, 0.0f, 0.70f * (1.0f - t) - 0.08f);
-                applied = tickIndex >= eventStart && tickIndex <= eventEnd;
-                if (applied)
-                {
-                    ++m_noveltyTelemetry.collisionCandidateCount;
-                    ++m_scenarioCollisionCandidateCount;
-                    if (m_experimentCase.appliedFlags.enablePredictiveWake)
-                    {
-                        ++m_noveltyTelemetry.wakeRequestGroupCount;
-                        ++m_scenarioWakeRequestCount;
-                    }
-                }
-            }
-        }
-        if (scenario.find(L"teleport") != std::wstring::npos || scenario.find(L"s06") != std::wstring::npos)
-        {
+            applied = tickIndex == 0u;
+            break;
+        case ExperimentScenarioId::S03_Walk:
+            m_enableScalpMotion = true;
+            applied = true;
+            break;
+        case ExperimentScenarioId::S06_Teleport:
             if (tickIndex == eventStart && !m_colliders.spheres.empty())
             {
                 m_colliders.spheres.front().center.x += 0.35f;
+                m_forceAllSegmentGroupsDirty = true;
+                applied = true;
+            }
+            break;
+        case ExperimentScenarioId::S07_ColliderApproach:
+            if (!m_colliders.spheres.empty())
+            {
+                m_colliders.spheres.front().center.z -= 0.001f;
+                ++m_noveltyTelemetry.collisionCandidateCount;
+                ++m_scenarioCollisionCandidateCount;
+                applied = true;
+            }
+            break;
+        case ExperimentScenarioId::S09_StrongWind:
+            m_simConfig.windStrength = 1.2f;
+            applied = true;
+            break;
+        case ExperimentScenarioId::S11_LocalEdit:
+            if (tickIndex == eventStart)
+            {
+                ++m_editVersion;
+                m_forceAllSegmentGroupsDirty = true;
+                ++m_scenarioEditInvalidationCount;
+                applied = true;
+            }
+            break;
+        case ExperimentScenarioId::S13_RepairStorm:
+            if (tickIndex == eventStart)
+            {
                 m_forceAllSegmentGroupsDirty = true;
                 ++m_noveltyTelemetry.repairAttemptCount;
                 ++m_scenarioRepairAttemptCount;
                 applied = true;
             }
-        }
-        if (scenario.find(L"edit") != std::wstring::npos || scenario.find(L"s11") != std::wstring::npos)
-        {
-            if (tickIndex == eventStart)
-            {
-                ++m_editVersion;
-                ++m_noveltyTelemetry.editVersionMismatchCount;
-                ++m_scenarioEditInvalidationCount;
-                m_forceAllSegmentGroupsDirty = true;
-                applied = true;
-            }
-        }
-        if (scenario.find(L"transition") != std::wstring::npos || scenario.find(L"s16") != std::wstring::npos)
-        {
-            const bool motionPhase = ((tickIndex / transitionPeriod) % 2u) != 0u;
-            m_enableScalpMotion = motionPhase;
-            if ((tickIndex % transitionPeriod) == 0u)
-            {
-                ++m_noveltyTelemetry.stateTransitionCount;
-                ++m_scenarioStateTransitionCount;
-                applied = true;
-            }
-        }
-        if (scenario.find(L"dynamic") != std::wstring::npos || scenario.find(L"s14") != std::wstring::npos)
-        {
+            break;
+        case ExperimentScenarioId::S14_AllDynamic:
             m_enableScalpMotion = true;
             m_simConfig.windStrength = std::max(m_simConfig.windStrength, 0.8f);
             m_forceAllSegmentGroupsDirty = true;
             applied = true;
+            break;
+        case ExperimentScenarioId::S16_StateThrashing:
+            if ((tickIndex % 60u) == 0u)
+            {
+                m_enableScalpMotion = !m_enableScalpMotion;
+                ++m_noveltyTelemetry.stateTransitionCount;
+                ++m_scenarioStateTransitionCount;
+                applied = true;
+            }
+            break;
+        default:
+            break;
         }
         if (applied)
         {
@@ -1428,27 +1501,117 @@ return true;
         (void)dt;
     }
 
+    void GpuHairViewer::StepFullDynamic(float dt)
+    {
+        BeginGpuPassTiming(GpuPassId::DynamicSolve);
+        StepSimulation(dt);
+        EndGpuPassTiming(GpuPassId::DynamicSolve);
+    }
+
+    void GpuHairViewer::StepStrandSleep(float dt)
+    {
+        // Strand-level baseline keeps its external sleep bookkeeping but uses
+        // the established solver for awake guides.
+        ExecuteBudgetedPhysics();
+        StepFullDynamic(dt);
+    }
+
+    void GpuHairViewer::StepBlockSleep(float dt)
+    {
+        DetectSegmentGroupDirtyEvents();
+        BeginGpuPassTiming(GpuPassId::BlockClassification);
+        ClassifySegmentGroupBlocks();
+        EndGpuPassTiming(GpuPassId::BlockClassification);
+        StepFullDynamic(dt);
+    }
+
+    void GpuHairViewer::StepSegmentSleep(float dt)
+    {
+        if (!UpdateSegmentGroupRuntimeConstants(dt)) return;
+        DetectSegmentGroupDirtyEvents();
+        BeginGpuPassTiming(GpuPassId::BlockClassification); ClassifySegmentGroupBlocks(); EndGpuPassTiming(GpuPassId::BlockClassification);
+        BeginGpuPassTiming(GpuPassId::GroupClassification); ClassifyDirtySegmentGroups(); EndGpuPassTiming(GpuPassId::GroupClassification);
+        BeginGpuPassTiming(GpuPassId::Compaction); CompactDynamicSegmentGroups(); BuildSegmentGroupDispatchArguments(); EndGpuPassTiming(GpuPassId::Compaction);
+        BeginGpuPassTiming(GpuPassId::StaticTransform); TransformStaticSegmentGroups(); EndGpuPassTiming(GpuPassId::StaticTransform);
+        BeginGpuPassTiming(GpuPassId::DynamicSolve); SolveDynamicSegmentGroups(dt); EndGpuPassTiming(GpuPassId::DynamicSolve);
+        UpdateSegmentGroupCaches();
+        ResolveSegmentGroupTelemetry();
+    }
+
+    void GpuHairViewer::StepActiveSetOnly(float dt)
+    {
+        ExecuteBudgetedPhysics();
+        StepFullDynamic(dt);
+    }
+
+    void GpuHairViewer::StepExternalStateArray(float dt)
+    {
+        // Uses the same thresholds and passes as the proposal. The only
+        // experimental variable is state storage outside SegmentGroupGpuData.
+        StepIntegratedSegmentGroup(dt);
+    }
+
+    void GpuHairViewer::StepIntegratedSegmentGroup(float dt)
+    {
+        if (!UpdateSegmentGroupRuntimeConstants(dt)) return;
+        DetectSegmentGroupDirtyEvents();
+        BeginGpuPassTiming(GpuPassId::BlockClassification); ClassifySegmentGroupBlocks(); EndGpuPassTiming(GpuPassId::BlockClassification);
+        BeginGpuPassTiming(GpuPassId::GroupClassification); ClassifyDirtySegmentGroups(); EndGpuPassTiming(GpuPassId::GroupClassification);
+        if (m_experimentCase.appliedFlags.enablePredictiveWake)
+        {
+            BeginGpuPassTiming(GpuPassId::PredictiveWake); ExecutePredictiveWake(dt); EndGpuPassTiming(GpuPassId::PredictiveWake);
+        }
+        BeginGpuPassTiming(GpuPassId::Compaction); CompactDynamicSegmentGroups(); BuildSegmentGroupDispatchArguments(); EndGpuPassTiming(GpuPassId::Compaction);
+        BeginGpuPassTiming(GpuPassId::StaticTransform); TransformStaticSegmentGroups(); EndGpuPassTiming(GpuPassId::StaticTransform);
+        BeginGpuPassTiming(GpuPassId::DynamicSolve); SolveDynamicSegmentGroups(dt); EndGpuPassTiming(GpuPassId::DynamicSolve);
+        if (m_experimentCase.appliedFlags.enableVelocityRecovery)
+        {
+            BeginGpuPassTiming(GpuPassId::VelocityRecovery); ExecuteVelocityRecovery(dt); EndGpuPassTiming(GpuPassId::VelocityRecovery);
+        }
+        if (m_experimentCase.appliedFlags.enableRepair)
+        {
+            BeginGpuPassTiming(GpuPassId::RepairSolve); SolveRepairSegmentGroups(dt); EndGpuPassTiming(GpuPassId::RepairSolve);
+            BeginGpuPassTiming(GpuPassId::BoundaryRepair); RepairSegmentGroupBoundaries(); EndGpuPassTiming(GpuPassId::BoundaryRepair);
+        }
+        BeginGpuPassTiming(GpuPassId::CacheUpdate); UpdateSegmentGroupCaches(); EndGpuPassTiming(GpuPassId::CacheUpdate);
+        BeginGpuPassTiming(GpuPassId::Watchdog); ExecuteSegmentGroupWatchdog(); EndGpuPassTiming(GpuPassId::Watchdog);
+        ResolveSegmentGroupTelemetry();
+    }
+
     void GpuHairViewer::ExecuteExperimentSimulationTick(float dt)
     {
         ResetNoveltyTelemetryForFrame();
         m_noveltyTelemetry.sourceFrameIndex = m_globalFrameIndex;
         ApplyScenarioForTick(m_simulationTickIndex, dt);
+        if (m_experimentRunStatus == ExperimentRunStatus::Failed)
+            return;
 
         const bool legacyInteractiveTick = !m_experimentCase.enabled;
         if (legacyInteractiveTick || m_experimentCase.appliedFlags.enablePerStrandEdit) ExecutePerStrandEditing();
         if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableMicrotype) EvaluateMicrotypeCertificates();
-        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableBudgetedPhysics) ExecuteBudgetedPhysics();
-        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableGpuResident) ExecuteGpuResidentRuntime();
-
-        BeginGpuPassTiming(GpuPassId::DynamicSolve);
-        StepSimulation(dt);
-        EndGpuPassTiming(GpuPassId::DynamicSolve);
-
         if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableCertificateRender) ExecuteCertificateAwareRendering();
-        if (m_experimentCase.measurementMode != MeasurementMode::Performance)
+
+        switch (m_experimentCase.methodId)
         {
-            QueueCounterReadback(m_globalFrameIndex);
+        case ExperimentMethodId::B0_FullDynamic: StepFullDynamic(dt); break;
+        case ExperimentMethodId::B1_StrandSleep: StepStrandSleep(dt); break;
+        case ExperimentMethodId::B2_BlockSleep: StepBlockSleep(dt); break;
+        case ExperimentMethodId::B3_SegmentThresholdSleep:
+        case ExperimentMethodId::B4_SegmentHysteresisSleep:
+        case ExperimentMethodId::B5_SegmentCache:
+        case ExperimentMethodId::B6_SegmentGpuCompaction: StepSegmentSleep(dt); break;
+        case ExperimentMethodId::B7_ActiveSetOnly: StepActiveSetOnly(dt); break;
+        case ExperimentMethodId::B8_ExternalStateArray: StepExternalStateArray(dt); break;
+        case ExperimentMethodId::P_IntegratedSegmentGroup: StepIntegratedSegmentGroup(dt); break;
+        case ExperimentMethodId::Unknown:
+        default:
+            if (legacyInteractiveTick) StepFullDynamic(dt);
+            else SetFatalExperimentFailure(1302u, L"Unknown experiment method; no simulation path was executed.");
+            break;
         }
+
+        if (m_experimentCase.measurementMode != MeasurementMode::Performance)
+            QueueCounterReadback(m_globalFrameIndex);
         ++m_simulationTickIndex;
     }
 

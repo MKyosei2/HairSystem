@@ -293,7 +293,12 @@
                 &m_device,
                 nullptr,
                 &m_context);
-            return SUCCEEDED(outHr);
+            if (SUCCEEDED(outHr))
+            {
+                m_observedDriverType = driverType;
+                return true;
+            }
+            return false;
         };
 
         HRESULT hrHardwareDebug = E_FAIL;
@@ -317,7 +322,34 @@
             return false;
         }
 
+        if (IsExperimentModeEnabled() &&
+            m_experimentCase.hardwareAdapterRequired &&
+            m_observedDriverType != D3D_DRIVER_TYPE_HARDWARE)
+        {
+            SetFatalExperimentFailure(1001u, L"Formal measurement requires a hardware D3D11 adapter; WARP is rejected.");
+            return false;
+        }
+
+        ComPtr<IDXGIDevice> dxgiDevice;
+        ComPtr<IDXGIAdapter> adapter;
+        if (SUCCEEDED(m_device.As(&dxgiDevice)) &&
+            SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) &&
+            adapter)
+        {
+            DXGI_ADAPTER_DESC adapterDesc = {};
+            if (SUCCEEDED(adapter->GetDesc(&adapterDesc)))
+            {
+                m_observedGpuName = adapterDesc.Description;
+                m_observedGpuVendorId = adapterDesc.VendorId;
+                m_observedGpuDeviceId = adapterDesc.DeviceId;
+                m_observedDedicatedVideoMemory = adapterDesc.DedicatedVideoMemory;
+                m_experimentCase.observedGpuName = m_observedGpuName;
+            }
+        }
+
         Resize(m_width, m_height);
+        m_actualRenderWidth = m_width;
+        m_actualRenderHeight = m_height;
         return true;
     }
 
@@ -594,6 +626,12 @@
         cbDesc.Usage = D3D11_USAGE_DYNAMIC;
         cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
+        cbDesc.ByteWidth = sizeof(SegmentGroupRuntimeConstants);
+        if (FAILED(m_device->CreateBuffer(&cbDesc, nullptr, &m_segmentGroupRuntimeConstants)))
+        {
+            return false;
+        }
+
         cbDesc.ByteWidth = sizeof(SimConstantsHair);
         if (FAILED(m_device->CreateBuffer(&cbDesc, nullptr, &m_simConstantsHair)))
         {
@@ -824,6 +862,8 @@
     {
         m_segmentGroupDynamicDispatchArgsBuffer.Reset();
         m_segmentGroupDynamicDispatchArgsUav.Reset();
+        m_segmentGroupStaticDispatchArgsBuffer.Reset();
+        m_segmentGroupStaticDispatchArgsUav.Reset();
 
         m_segmentGroupRepairDispatchArgsBuffer.Reset();
         m_segmentGroupRepairDispatchArgsUav.Reset();
@@ -858,6 +898,24 @@
                 m_segmentGroupDynamicDispatchArgsBuffer.Get(),
                 &uavDesc,
                 &m_segmentGroupDynamicDispatchArgsUav)))
+        {
+            return false;
+        }
+
+        if (FAILED(
+            m_device->CreateBuffer(
+                &desc,
+                nullptr,
+                &m_segmentGroupStaticDispatchArgsBuffer)))
+        {
+            return false;
+        }
+
+        if (FAILED(
+            m_device->CreateUnorderedAccessView(
+                m_segmentGroupStaticDispatchArgsBuffer.Get(),
+                &uavDesc,
+                &m_segmentGroupStaticDispatchArgsUav)))
         {
             return false;
         }
@@ -934,12 +992,34 @@
                 emptyGroupIndices.data(),
                 true);
 
+        m_staticTransformedGroupIndicesBuffer =
+            CreateStructuredBuffer(
+                sizeof(uint32_t),
+                groupBufferCount,
+                emptyGroupIndices.data(),
+                true);
+
         m_repairSegmentGroupIndicesBuffer =
             CreateStructuredBuffer(
                 sizeof(uint32_t),
                 groupBufferCount,
                 emptyGroupIndices.data(),
                 true);
+
+        m_externalSegmentGroupStateBuffer =
+            CreateStructuredBuffer(
+                sizeof(uint32_t),
+                groupBufferCount,
+                emptyGroupIndices.data(),
+                true);
+
+        const std::vector<std::array<uint32_t, 4>> zeroRecords(
+            groupBufferCount, std::array<uint32_t, 4>{ 0u, 0u, 0u, 0u });
+        m_wakeRequestBuffer = CreateStructuredBuffer(sizeof(std::array<uint32_t, 4>), groupBufferCount, zeroRecords.data(), true);
+        m_wakeGroundTruthBuffer = CreateStructuredBuffer(sizeof(std::array<uint32_t, 4>), groupBufferCount, zeroRecords.data(), true);
+        m_wakeTelemetryBuffer = CreateStructuredBuffer(sizeof(std::array<uint32_t, 4>), groupBufferCount, zeroRecords.data(), true);
+        m_repairTrackingBuffer = CreateStructuredBuffer(sizeof(std::array<uint32_t, 4>), groupBufferCount, zeroRecords.data(), true);
+        m_repairVerificationBuffer = CreateStructuredBuffer(sizeof(std::array<uint32_t, 4>), groupBufferCount, zeroRecords.data(), true);
 
         const std::array<uint32_t, 4> zeroCounters =
         {
@@ -954,6 +1034,14 @@
                 sizeof(uint32_t),
                 static_cast<UINT>(zeroCounters.size()),
                 zeroCounters.data(),
+                true);
+
+        const std::array<uint32_t, 64> zeroAtomicCounters = {};
+        m_segmentGroupRuntimeAtomicCountersBuffer =
+            CreateStructuredBuffer(
+                sizeof(uint32_t),
+                static_cast<UINT>(zeroAtomicCounters.size()),
+                zeroAtomicCounters.data(),
                 true);
 
         SegmentGroupRuntimeCounters runtimeCounters = {};
@@ -985,8 +1073,13 @@
             !m_segmentGroupBlockBuffer.buffer ||
             !m_segmentGroupCertificateBuffer.buffer ||
             !m_dynamicSegmentGroupIndicesBuffer.buffer ||
+            !m_staticTransformedGroupIndicesBuffer.buffer ||
             !m_repairSegmentGroupIndicesBuffer.buffer ||
+            !m_externalSegmentGroupStateBuffer.buffer ||
+            !m_wakeTelemetryBuffer.buffer ||
+            !m_repairTrackingBuffer.buffer ||
             !m_segmentGroupCounterBuffer.buffer ||
+            !m_segmentGroupRuntimeAtomicCountersBuffer.buffer ||
             !m_segmentGroupRuntimeCountersBuffer.buffer)
         {
             return false;
@@ -1113,16 +1206,22 @@
                 {
                     sample.sourceFrameIndex = frame.sourceFrameIndex;
                     sample.gpuHairMilliseconds = m_lastGpuSimulationMilliseconds + m_lastGpuHairDrawMilliseconds;
-                sample.blockClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BlockClassification)];
-                sample.groupClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::GroupClassification)];
-                sample.compactionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Compaction)];
-                sample.staticTransformGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::StaticTransform)];
-                sample.dynamicSolveGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::DynamicSolve)];
-                sample.boundaryRepairGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BoundaryRepair)];
-                sample.watchdogGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Watchdog)];
-                sample.telemetryReductionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::TelemetryReduction)];
+                    sample.blockClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BlockClassification)];
+                    sample.groupClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::GroupClassification)];
+                    sample.compactionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Compaction)];
+                    sample.predictiveWakeGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::PredictiveWake)];
+                    sample.staticTransformGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::StaticTransform)];
+                    sample.dynamicSolveGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::DynamicSolve)];
+                    sample.velocityRecoveryGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::VelocityRecovery)];
+                    sample.repairSolveGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::RepairSolve)];
+                    sample.boundaryRepairGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BoundaryRepair)];
+                    sample.cacheUpdateGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::CacheUpdate)];
+                    sample.watchdogGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Watchdog)];
+                    sample.telemetryReductionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::TelemetryReduction)];
                     sample.availabilityMask |= hairgpu::HairTelemetryAvailability_GpuTiming;
+                    sample.metricAvailabilityMask |= hairgpu::HairTelemetryAvailability_GpuTiming;
                     ++m_gpuTimingValidCount;
+                    ++m_gpuTimingValidFrameCount;
                     break;
                 }
             }

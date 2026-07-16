@@ -1,20 +1,27 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 
 namespace hairgpu
 {
 
     // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
-    enum HairNoveltyTelemetryAvailabilityBits : uint32_t
+    enum HairNoveltyTelemetryAvailabilityBits : uint64_t
     {
-        HairTelemetryAvailability_None = 0u,
-        HairTelemetryAvailability_FrameInterval = 1u << 0u,
-        HairTelemetryAvailability_CpuFrameWork = 1u << 1u,
-        HairTelemetryAvailability_GpuTiming = 1u << 2u,
-        HairTelemetryAvailability_GpuCounters = 1u << 3u,
-        HairTelemetryAvailability_Scenario = 1u << 4u,
-        HairTelemetryAvailability_ObservedSettings = 1u << 5u
+        HairTelemetryAvailability_None = 0ull,
+        HairTelemetryAvailability_FrameInterval = 1ull << 0u,
+        HairTelemetryAvailability_CpuFrameWork = 1ull << 1u,
+        HairTelemetryAvailability_GpuTiming = 1ull << 2u,
+        HairTelemetryAvailability_GpuCounters = 1ull << 3u,
+        HairTelemetryAvailability_Scenario = 1ull << 4u,
+        HairTelemetryAvailability_ObservedSettings = 1ull << 5u,
+        HairTelemetryAvailability_CollisionGroundTruth = 1ull << 6u,
+        HairTelemetryAvailability_WakeGroundTruth = 1ull << 7u,
+        HairTelemetryAvailability_RepairVerification = 1ull << 8u,
+        HairTelemetryAvailability_BoundaryComparison = 1ull << 9u,
+        HairTelemetryAvailability_DeterminismHash = 1ull << 10u,
+        HairTelemetryAvailability_AdapterIdentity = 1ull << 11u
     };
     struct HairNoveltyFrameTelemetry
     {
@@ -26,7 +33,8 @@ namespace hairgpu
         // simulation/render frame that produced this record, not the frame on
         // which the CPU resolved the asynchronous query.
         uint32_t sourceFrameIndex = 0u;
-        uint32_t availabilityMask = HairTelemetryAvailability_None;
+        uint64_t availabilityMask = HairTelemetryAvailability_None;
+        uint64_t metricAvailabilityMask = HairTelemetryAvailability_None;
         uint32_t fatalFailure = 0u;
         uint32_t fatalFailureCode = 0u;
         uint32_t fatalRuntimeFailureCount = 0u;
@@ -37,6 +45,14 @@ namespace hairgpu
         uint32_t gpuTimingUnresolvedFrameCount = 0u;
         uint32_t counterReadbackResolvedFrameCount = 0u;
         uint32_t counterReadbackUnresolvedFrameCount = 0u;
+        uint32_t unavailableMetricCount = 0u;
+        uint32_t syntheticMetricCount = 0u;
+        uint32_t fullCpuGroupUploadCount = 0u;
+        uint32_t sameFrameReadbackCount = 0u;
+        uint32_t nanStateCount = 0u;
+        uint32_t infiniteStateCount = 0u;
+        uint32_t determinismMismatchCount = 0u;
+        float frameBudgetOverrunRate = 0.0f;
 
         uint32_t cpuReadbackCount = 0u;
         uint32_t overflowCount = 0u;
@@ -95,6 +111,7 @@ namespace hairgpu
 
         // Predictive wake and recovery quality.
         uint32_t wakeRequestGroupCount = 0u;
+        uint32_t predictiveWakeEvaluatedCount = 0u;
         uint32_t predictiveWakeTruePositiveCount = 0u;
         uint32_t predictiveWakeFalsePositiveCount = 0u;
         uint32_t predictiveWakeFalseNegativeCount = 0u;
@@ -108,6 +125,8 @@ namespace hairgpu
         // Repair quality.
         uint32_t repairAttemptCount = 0u;
         uint32_t repairSuccessCount = 0u;
+        uint32_t repairVerifiedCount = 0u;
+        uint32_t repairUnverifiedCount = 0u;
         uint32_t repairFailureCount = 0u;
         uint32_t repairRecurrenceCount = 0u;
         uint32_t repairLatencyFrameSum = 0u;
@@ -149,10 +168,12 @@ namespace hairgpu
         // readback and must not force same-frame CPU/GPU synchronization.
         float blockClassificationGpuMilliseconds = 0.0f;
         float groupClassificationGpuMilliseconds = 0.0f;
+        float predictiveWakeGpuMilliseconds = 0.0f;
         float wakePropagationGpuMilliseconds = 0.0f;
         float compactionGpuMilliseconds = 0.0f;
         float staticTransformGpuMilliseconds = 0.0f;
         float dynamicSolveGpuMilliseconds = 0.0f;
+        float velocityRecoveryGpuMilliseconds = 0.0f;
         float repairSolveGpuMilliseconds = 0.0f;
         float boundaryRepairGpuMilliseconds = 0.0f;
         float cacheUpdateGpuMilliseconds = 0.0f;
@@ -205,21 +226,27 @@ namespace hairgpu
 
     inline void FinalizeNoveltyTelemetryRates(HairNoveltyFrameTelemetry& telemetry)
     {
+        const float unavailable = std::numeric_limits<float>::quiet_NaN();
         const uint32_t staticGroupCount =
             telemetry.staticCachedGroupCount + telemetry.staticTransformedGroupCount;
-        telemetry.falseStaticRate = staticGroupCount > 0u
+        telemetry.falseStaticRate =
+            (telemetry.metricAvailabilityMask & HairTelemetryAvailability_CollisionGroundTruth) != 0ull && staticGroupCount > 0u
             ? static_cast<float>(telemetry.falseStaticCount) / static_cast<float>(staticGroupCount)
-            : 0.0f;
+            : unavailable;
 
-        telemetry.repairSuccessRate = telemetry.repairAttemptCount > 0u
-            ? static_cast<float>(telemetry.repairSuccessCount) /
+        telemetry.repairSuccessRate =
+            (telemetry.metricAvailabilityMask & HairTelemetryAvailability_RepairVerification) != 0ull &&
+            telemetry.repairAttemptCount > 0u
+            ? static_cast<float>(telemetry.repairVerifiedCount) /
                 static_cast<float>(telemetry.repairAttemptCount)
-            : 1.0f;
+            : unavailable;
 
-        telemetry.collisionMissRate = telemetry.collisionCandidateCount > 0u
+        telemetry.collisionMissRate =
+            (telemetry.metricAvailabilityMask & HairTelemetryAvailability_CollisionGroundTruth) != 0ull &&
+            telemetry.collisionCandidateCount > 0u
             ? static_cast<float>(telemetry.collisionMissCount) /
                 static_cast<float>(telemetry.collisionCandidateCount)
-            : 0.0f;
+            : unavailable;
 
         telemetry.directionCacheMemorySavingRate = telemetry.fullPositionMemoryMb > 0.0f
             ? 1.0f - telemetry.directionCacheMemoryMb / telemetry.fullPositionMemoryMb

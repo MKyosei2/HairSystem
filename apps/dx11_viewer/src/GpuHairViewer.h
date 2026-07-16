@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
 #include <string>
 #include <vector>
@@ -293,7 +294,14 @@ namespace hairgpu::viewer
             uint32_t globalFrameIndex = 0u;
             uint32_t measuredFrameIndex = 0u;
             uint32_t sourceFrameIndex = 0u;
-            uint32_t availabilityMask = 0u;
+            uint64_t availabilityMask = 0u;
+            uint64_t metricAvailabilityMask = 0u;
+            uint32_t unavailableMetricCount = 0u;
+            uint32_t syntheticMetricCount = 0u;
+            uint32_t fullCpuGroupUploadCount = 0u;
+            uint32_t sameFrameReadbackCount = 0u;
+            uint32_t nanStateCount = 0u;
+            uint32_t infiniteStateCount = 0u;
             uint32_t fatalFailure = 0u;
             uint32_t fatalFailureCode = 0u;
             uint32_t scenarioAppliedEventCount = 0u;
@@ -383,9 +391,13 @@ namespace hairgpu::viewer
             float blockClassificationGpuMilliseconds = 0.0f;
             float groupClassificationGpuMilliseconds = 0.0f;
             float compactionGpuMilliseconds = 0.0f;
+            float predictiveWakeGpuMilliseconds = 0.0f;
             float staticTransformGpuMilliseconds = 0.0f;
             float dynamicSolveGpuMilliseconds = 0.0f;
+            float velocityRecoveryGpuMilliseconds = 0.0f;
+            float repairSolveGpuMilliseconds = 0.0f;
             float boundaryRepairGpuMilliseconds = 0.0f;
+            float cacheUpdateGpuMilliseconds = 0.0f;
             float watchdogGpuMilliseconds = 0.0f;
             float telemetryReductionGpuMilliseconds = 0.0f;
             uint32_t warmupFrames = 0u;
@@ -417,7 +429,68 @@ namespace hairgpu::viewer
             float maxPenetrationMm = 0.0f;
         };
 
-        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
+        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V2
+        enum class ExperimentMethodId : uint32_t
+        {
+            B0_FullDynamic = 0u,
+            B1_StrandSleep,
+            B2_BlockSleep,
+            B3_SegmentThresholdSleep,
+            B4_SegmentHysteresisSleep,
+            B5_SegmentCache,
+            B6_SegmentGpuCompaction,
+            B7_ActiveSetOnly,
+            B8_ExternalStateArray,
+            P_IntegratedSegmentGroup,
+            Unknown
+        };
+
+        enum class ExperimentRunStatus : uint32_t
+        {
+            InProgress = 0u,
+            CompleteValid,
+            CompleteInvalid,
+            Incomplete,
+            Failed,
+            Synthetic
+        };
+
+        enum class ExperimentScenarioId : uint32_t
+        {
+            S01_Idle = 0u, S02_Breathing, S03_Walk, S04_SuddenStop,
+            S05_HeadRotation, S06_Teleport, S07_ColliderApproach,
+            S08_StaticDynamicBoundaryContact, S09_StrongWind, S10_WindStop,
+            S11_LocalEdit, S12_FalseStaticTrap, S13_RepairStorm,
+            S14_AllDynamic, S15_AllStatic, S16_StateThrashing,
+            S17_CloseCamera100k, S18_FarCamera100k, Unknown
+        };
+
+        enum class ScenarioEventType : uint32_t
+        {
+            SetWind = 0u, SetRootTranslation, SetRootRotation, TeleportRoot,
+            SetColliderTransform, InjectLocalEdit, InjectRepairStorm,
+            ForceAllDynamic, ForceAllStatic, SetCameraDistance, Unknown
+        };
+
+        struct ScenarioEvent
+        {
+            uint32_t frame = 0u;
+            ScenarioEventType type = ScenarioEventType::Unknown;
+            std::array<float, 4> value = { 0.0f, 0.0f, 0.0f, 0.0f };
+            uint32_t targetIndex = 0u;
+        };
+
+        struct ScenarioTimeline
+        {
+            ExperimentScenarioId scenarioId = ExperimentScenarioId::Unknown;
+            uint32_t durationFrames = 0u;
+            float fixedTimeStepSeconds = 1.0f / 60.0f;
+            bool seedDriven = true;
+            std::wstring sourcePath;
+            std::wstring sha256;
+            std::vector<ScenarioEvent> events;
+        };
+
         enum class MeasurementMode : uint32_t
         {
             Performance = 0u,
@@ -467,6 +540,15 @@ namespace hairgpu::viewer
             bool autoExitAfterCapture = false;
             bool fixedTimeStepEnabled = true;
             bool vsyncEnabled = false;
+            bool strictValidationEnabled = true;
+            bool realMeasurement = false;
+            bool hardwareAdapterRequired = true;
+            bool methodFlagsAcknowledged = false;
+            ExperimentMethodId methodId = ExperimentMethodId::Unknown;
+            ExperimentScenarioId scenarioId = ExperimentScenarioId::Unknown;
+            ExperimentRunStatus runStatus = ExperimentRunStatus::InProgress;
+            ScenarioTimeline timeline = {};
+            bool timelineLoaded = false;
             std::wstring caseId;
             std::wstring variant;
             std::wstring scenario;
@@ -484,13 +566,19 @@ namespace hairgpu::viewer
             std::wstring assetManifestSha256;
             std::wstring assetSha256;
             std::wstring appliedMethodSettingsSha256;
+            std::wstring shaderBundleSha256;
+            std::wstring canonicalResultSha256;
+            std::wstring observedGpuName;
             bool assetFrozen = false;
             uint32_t seed = 0u;
             uint32_t repetitionIndex = 0u;
             uint32_t warmupFrames = 0u;
             uint32_t measurementFrames = 0u;
-            uint32_t requestedWidth = 1600u;
-            uint32_t requestedHeight = 900u;
+            uint32_t requestedWidth = 1920u;
+            uint32_t requestedHeight = 1080u;
+            uint32_t observedRenderWidth = 0u;
+            uint32_t observedRenderHeight = 0u;
+            uint32_t observedDisplayStrandCount = 0u;
             uint32_t requestedGuideCount = 6000u;
             uint32_t requestedDisplayStrandCount = 0u;
             uint32_t requestedParticlesPerGuide = 128u;
@@ -502,7 +590,7 @@ namespace hairgpu::viewer
             uint32_t scenarioAssertionMinWakeRequests = 0u;
             uint32_t scenarioAssertionMinRepairs = 0u;
             uint32_t scenarioAssertionMinTransitions = 0u;
-            float fixedTimeStepSeconds = 1.0f / 120.0f;
+            float fixedTimeStepSeconds = 1.0f / 60.0f;
             MeasurementMode measurementMode = MeasurementMode::Performance;
             ExperimentMethodFlags requestedFlags = {};
             ExperimentMethodFlags appliedFlags = {};
@@ -525,6 +613,28 @@ namespace hairgpu::viewer
             float y = 0.0f;
             float z = 0.0f;
             float w = 0.0f;
+        };
+
+        struct alignas(16) SegmentGroupRuntimeConstants
+        {
+            uint32_t groupCount = 0u;
+            uint32_t blockCount = 0u;
+            uint32_t frameIndex = 0u;
+            uint32_t groupsPerBlock = 64u;
+            uint32_t dynamicCompactCount = 0u;
+            uint32_t staticCompactCount = 0u;
+            uint32_t repairCompactCount = 0u;
+            uint32_t repairVerificationHoldFrames = 12u;
+            float deltaTime = 1.0f / 60.0f;
+            float motionWakeThreshold = 0.02f;
+            float collisionWakeThreshold = 0.10f;
+            float staticMotionThreshold = 0.005f;
+            float lengthErrorThreshold = 0.02f;
+            float boundaryErrorThresholdMm = 2.0f;
+            float velocityRecoveryBlend = 0.75f;
+            float positionRecoveryBlend = 0.35f;
+            float rootTranslation[3] = { 0.0f, 0.0f, 0.0f };
+            float padding0 = 0.0f;
         };
 
         struct alignas(16) SimConstantsHair
@@ -902,6 +1012,7 @@ namespace hairgpu::viewer
             float renderPadding0 = 0.0f;
         };
 
+        static_assert(sizeof(SegmentGroupRuntimeConstants) == 80u, "SegmentGroupRuntimeConstants must match HairSegmentGroupRuntime.hlsl");
         static_assert(sizeof(SimConstantsHair) % 16u == 0u, "SimConstantsHair must stay 16-byte aligned");
         static_assert(sizeof(SimConstantsActiveSet) % 16u == 0u, "SimConstantsActiveSet must stay 16-byte aligned");
         static_assert(sizeof(SimConstantsScalp) % 16u == 0u, "SimConstantsScalp must stay 16-byte aligned");
@@ -922,10 +1033,19 @@ namespace hairgpu::viewer
             BlockClassification = 0u,
             GroupClassification,
             Compaction,
+            PredictiveWake,
             StaticTransform,
             DynamicSolve,
+            VelocityRecovery,
+            RepairSolve,
             BoundaryRepair,
+            CacheUpdate,
             Watchdog,
+            FollowerReconstruction,
+            RenderPreparation,
+            HairDraw,
+            SelfCollisionBroadphase,
+            SelfCollisionSolve,
             TelemetryReduction,
             Count
         };
@@ -987,9 +1107,20 @@ namespace hairgpu::viewer
         void StepSingleFrame();
         void ExecuteExperimentSimulationTick(float dt);
         void ApplyScenarioForTick(uint32_t tickIndex, float dt);
+        bool LoadScenarioTimeline();
+        bool ValidateScenarioTimeline() const;
+        void ApplyScenarioTimelineFrame(uint32_t frameIndex);
+        void StepFullDynamic(float dt);
+        void StepStrandSleep(float dt);
+        void StepBlockSleep(float dt);
+        void StepSegmentSleep(float dt);
+        void StepActiveSetOnly(float dt);
+        void StepExternalStateArray(float dt);
+        void StepIntegratedSegmentGroup(float dt);
         uint64_t ComputeColliderStateHash() const;
         void StepSimulation(float dt);
         void ResetNoveltyTelemetryForFrame();
+        bool UpdateSegmentGroupRuntimeConstants(float dt);
         bool BuildSegmentGroupRuntimeTopology();
         bool CreateSegmentGroupRuntimeResources();
         bool CreateSegmentGroupIndirectArgsResources();
@@ -998,9 +1129,15 @@ namespace hairgpu::viewer
         void ClassifySegmentGroupBlocks();
         void ClassifyDirtySegmentGroups();
         void CompactDynamicSegmentGroups();
+        void CompactStaticSegmentGroups();
         void BuildSegmentGroupDispatchArguments();
+        void ExecutePredictiveWake(float dt);
         void TransformStaticSegmentGroups();
+        void SolveDynamicSegmentGroups(float dt);
+        void ExecuteVelocityRecovery(float dt);
+        void SolveRepairSegmentGroups(float dt);
         void RepairSegmentGroupBoundaries();
+        void UpdateSegmentGroupCaches();
         void ExecuteSegmentGroupWatchdog();
         void ResolveSegmentGroupTelemetry();
         void EvaluateMicrotypeCertificates();
@@ -1052,6 +1189,10 @@ namespace hairgpu::viewer
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
         bool LoadExperimentCaseFromEnvironment();
+        bool ValidateExperimentMethodFlags() const;
+        ExperimentRunStatus ValidateCompletedExperiment() const;
+        void SetFatalExperimentFailure(uint32_t errorCode, const std::wstring& message);
+        static const char* ExperimentRunStatusToString(ExperimentRunStatus status);
         void ApplyExperimentConfigBeforeAssetCreation();
         bool IsExperimentModeEnabled() const;
         bool ShouldCaptureCurrentFrame() const;
@@ -1129,6 +1270,7 @@ namespace hairgpu::viewer
         hairgpu::Vec3 ApplySampleScalpSkinning(const hairgpu::Vec3& restPosition, const hairgpu::SkinWeight4& weights, float elapsedSeconds) const;
 
         bool CompileShaderFromFile(const wchar_t* filePath, const char* entryPoint, const char* target, ID3DBlob** blobOut, std::wstring& errorText);
+        bool CompileSegmentGroupShaderFromFile(const char* entryPoint, bool compactionBindings, ID3DBlob** blobOut, std::wstring& errorText);
         StructuredBuffer CreateStructuredBuffer(UINT elementSize, UINT elementCount, const void* initialData, bool unorderedAccess);
 
         static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -1295,6 +1437,9 @@ namespace hairgpu::viewer
         hairgpu::ActiveSetBudget m_activeSetBudget;
         std::vector<hairgpu::ActiveSetCluster> m_activeSetClusters;
         hairgpu::ActiveSetPlan m_activeSetPlan;
+        std::vector<hairgpu::Vec3> m_activeSetPreviousGuideRoots;
+        std::vector<float> m_activeSetGuideContactScores;
+        std::vector<float> m_activeSetGuideUncertainty;
         std::vector<SegmentGroupGpuData> m_segmentGroupInitialData;
         std::vector<SegmentGroupBlockGpuData> m_segmentGroupBlockInitialData;
         std::vector<SegmentGroupCertificateGpuData>
@@ -1364,12 +1509,19 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildFollowDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_compactGuideDispatchCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildGuideDispatchArgsCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_buildGuidePointDispatchArgsCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupBlockClassifyCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupClassifyCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupCompactDynamicCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupCompactStaticCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupBuildDispatchArgsCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupPredictiveWakeCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupStaticTransformCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupDynamicSolveCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupVelocityRecoveryCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupRepairSolveCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupBoundaryRepairCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupCacheUpdateCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupWatchdogCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_segmentGroupTelemetryReduceCS;
         Microsoft::WRL::ComPtr<ID3D11InputLayout> m_segmentInputLayout;
@@ -1401,12 +1553,24 @@ namespace hairgpu::viewer
         StructuredBuffer m_gridParticleNextBuffer;
         StructuredBuffer m_sortedKeysBuffer;
         StructuredBuffer m_sortedParticleIndicesBuffer;
+        StructuredBuffer m_sortedCellStartsBuffer;
+        StructuredBuffer m_sortedCellEndsBuffer;
         StructuredBuffer m_segmentGroupBuffer;
         StructuredBuffer m_segmentGroupBlockBuffer;
         StructuredBuffer m_segmentGroupCertificateBuffer;
         StructuredBuffer m_dynamicSegmentGroupIndicesBuffer;
+        StructuredBuffer m_staticTransformedGroupIndicesBuffer;
         StructuredBuffer m_repairSegmentGroupIndicesBuffer;
+        StructuredBuffer m_externalSegmentGroupStateBuffer;
+        StructuredBuffer m_wakeRequestBuffer;
+        StructuredBuffer m_wakeGroundTruthBuffer;
+        StructuredBuffer m_wakeTelemetryBuffer;
+        StructuredBuffer m_repairTrackingBuffer;
+        StructuredBuffer m_repairVerificationBuffer;
+        StructuredBuffer m_referencePositions[2];
+        StructuredBuffer m_referencePreviousPositions[2];
         StructuredBuffer m_segmentGroupCounterBuffer;
+        StructuredBuffer m_segmentGroupRuntimeAtomicCountersBuffer;
         StructuredBuffer m_segmentGroupRuntimeCountersBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_segmentVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_strandTubeVertexBuffer;
@@ -1420,13 +1584,18 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_followDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_guideDispatchArgsBuffer;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_guideDispatchArgsUav;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_guidePointDispatchArgsBuffer;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_guidePointDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_segmentGroupDynamicDispatchArgsBuffer;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_segmentGroupDynamicDispatchArgsUav;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_segmentGroupStaticDispatchArgsBuffer;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_segmentGroupStaticDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_segmentGroupRepairDispatchArgsBuffer;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> m_segmentGroupRepairDispatchArgsUav;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpVertexBuffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_scalpIndexBuffer;
         uint32_t m_scalpIndexCount = 0u;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> m_segmentGroupRuntimeConstants;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstantsHair;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstantsActiveSet;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_simConstantsScalp;
@@ -1469,6 +1638,26 @@ namespace hairgpu::viewer
         uint32_t m_gpuTimingWriteIndex = 0u;
         int32_t m_activeGpuTimingFrameIndex = -1;
         uint32_t m_simulationTickIndex = 0u;
+        ExperimentRunStatus m_experimentRunStatus = ExperimentRunStatus::InProgress;
+        std::wstring m_experimentFailureMessage;
+        uint32_t m_experimentFailureCode = 0u;
+        D3D_DRIVER_TYPE m_observedDriverType = D3D_DRIVER_TYPE_UNKNOWN;
+        std::wstring m_observedGpuName;
+        uint32_t m_observedGpuVendorId = 0u;
+        uint32_t m_observedGpuDeviceId = 0u;
+        uint64_t m_observedDedicatedVideoMemory = 0ull;
+        uint32_t m_actualRenderWidth = 0u;
+        uint32_t m_actualRenderHeight = 0u;
+        uint32_t m_fullCpuGroupUploadCount = 0u;
+        uint32_t m_sameFrameReadbackCount = 0u;
+        uint32_t m_nanStateCount = 0u;
+        uint32_t m_infiniteStateCount = 0u;
+        uint32_t m_syntheticMetricCount = 0u;
+        uint32_t m_unavailableMetricCount = 0u;
+        uint32_t m_gpuTimingRequiredFrameCount = 0u;
+        uint32_t m_gpuTimingValidFrameCount = 0u;
+        std::wstring m_shaderBundleSha256;
+        std::wstring m_canonicalResultSha256;
         uint32_t m_scenarioAppliedEventCount = 0u;
         uint32_t m_scenarioAssertionFailureCount = 0u;
         uint32_t m_scenarioCollisionCandidateCount = 0u;

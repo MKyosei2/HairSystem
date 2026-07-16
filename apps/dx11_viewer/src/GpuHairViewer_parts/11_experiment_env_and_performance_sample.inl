@@ -288,150 +288,88 @@ return sample;
     bool GpuHairViewer::ExportPerformanceJsonl(const std::wstring& filePath) const
     {
         std::ofstream out{ std::filesystem::path(filePath) };
-        if (!out)
-        {
-            return false;
-        }
+        if (!out) return false;
         const std::string caseId = JsonEscape(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = JsonEscape(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = JsonEscape(WideToUtf8(m_experimentCase.scenario));
         const std::string settingsHash = JsonEscape(WideToUtf8(m_experimentCase.settingsHash));
         out << std::fixed << std::setprecision(6);
-        for (const PerformanceSample& s : m_performanceSamples)
+        auto writeNullable = [&out](float value)
         {
-            out << "{"
-                << "\"case_id\":\"" << caseId << "\","
-                << "\"variant\":\"" << variant << "\","
-                << "\"scenario\":\"" << scenario << "\","
-                << "\"seed\":" << s.seed << ","
-                << "\"settings_hash\":\"" << settingsHash << "\","
-                << "\"enable_no_novelty_baseline\":" << (m_experimentCase.enableNoNoveltyBaseline ? "true" : "false") << ","
-                << "\"phase\":\"phase1_pre_novelty_final_adjustment\","
-                << "\"novelty_mapping_version\":\"final5_v1\","
-                << "\"top_level_novelty_mask\":" << s.topLevelNoveltyMask << ","
-                << "\"enable_microtype\":" << (m_experimentCase.enableMicrotype ? "true" : "false") << ","
-                << "\"enable_budgeted_physics\":" << (m_experimentCase.enableBudgetedPhysics ? "true" : "false") << ","
-                << "\"enable_certificate_render\":" << (m_experimentCase.enableCertificateRender ? "true" : "false") << ","
-                << "\"enable_per_strand_edit\":" << (m_experimentCase.enablePerStrandEdit ? "true" : "false") << ","
-                << "\"enable_gpu_resident\":" << (m_experimentCase.enableGpuResident ? "true" : "false") << ","
-                << "\"global_frame_index\":" << s.globalFrameIndex << ","
-                << "\"measured_frame_index\":" << s.measuredFrameIndex << ","
-                << "\"frame_time_ms\":" << s.frameMilliseconds << ","
-                << "\"simulation_time_ms\":" << s.simulationMilliseconds << ","
-                << "\"gpu_hair_time_ms\":" << s.gpuHairMilliseconds << ","
-                << "\"vram_mb\":" << s.vramMegabytes << ","
-                << "\"bandwidth_mb_frame\":" << s.bandwidthMegabytesPerFrame << ","
-                << "\"certificate_failure_count\":" << s.certificateFailureCount << ","
-                << "\"certificate_failure_rate\":" << s.certificateFailureRate << ","
-                << "\"fallback_count\":" << s.fallbackCount << ","
-                << "\"mode_counts\":{"
-                << "\"skip\":" << s.modeSkipCount << ","
-                << "\"qs_only\":" << s.modeQSOnlyCount << ","
-                << "\"dynamic\":" << s.modeDynamicCount << ","
-                << "\"island\":" << s.modeIslandCount << ","
-                << "\"repair\":" << s.modeRepairCount << ","
-                << "\"float_fallback\":" << s.modeFloatFallbackCount << "},"
-                << "\"island_count\":" << s.islandCount << ","
-                << "\"island_member_count\":" << s.islandMemberCount << ","
-                << "\"repair_task_count\":" << s.repairTaskCount << ","
-                << "\"repair_success_rate\":" << s.repairSuccessRate << ","
-                << "\"cpu_readback_count\":" << s.cpuReadbackCount << ","
-                << "\"max_penetration_mm\":" << s.maxPenetrationMm << ","
-                << "\"mean_decode_error_mm\":" << s.meanDecodeErrorMm << ","
-                << "\"overflow_count\":" << s.overflowCount << ","
-                << "\"budget_drop_count\":" << s.budgetDropCount << ","
-                << "\"defer_count\":" << s.deferCount << ","
-                << "\"microtype_decoded_count\":" << s.microtypeDecodedCount << ","
-                << "\"safe_decode_count\":" << s.safeDecodeCount << ","
-                << "\"false_safe_count\":" << s.falseSafeCount << ","
-                << "\"total_segment_group_count\":" << s.totalSegmentGroupCount << ","
-                << "\"static_cached_group_count\":" << s.staticCachedGroupCount << ","
-                << "\"static_transformed_group_count\":" << s.staticTransformedGroupCount << ","
-                << "\"dynamic_group_count\":" << s.dynamicGroupCount << ","
-                << "\"deferred_correction_group_count\":" << s.deferredCorrectionGroupCount << ","
-                << "\"repair_required_group_count\":" << s.repairRequiredGroupCount << ","
-                << "\"fallback_group_count\":" << s.fallbackGroupCount << ","
-                << "\"false_static_count\":" << s.falseStaticCount << ","
-                << "\"false_static_rate\":" << s.falseStaticRate << ","
-                << "\"cache_hit_count\":" << s.cacheHitCount << ","
-                << "\"cache_miss_count\":" << s.cacheMissCount << ","
-                << "\"cache_invalidation_count\":" << s.cacheInvalidationCount << ","
-                << "\"watchdog_check_count\":" << s.watchdogCheckCount << ","
-                << "\"watchdog_repair_count\":" << s.watchdogRepairCount << ","
-                << "\"static_dynamic_boundary_mean_error_mm\":" << s.staticDynamicBoundaryMeanErrorMm << ","
-                << "\"static_dynamic_boundary_max_error_mm\":" << s.staticDynamicBoundaryMaxErrorMm << ","
-                << "\"direction_cache_memory_mb\":" << s.directionCacheMemoryMb << ","
-                << "\"full_position_memory_mb\":" << s.fullPositionMemoryMb << ","
-                << "\"direction_cache_memory_saving_rate\":" << s.directionCacheMemorySavingRate << ","
-                << "\"typed_repair_request_count\":" << s.typedRepairRequestCount << ","
-                << "\"float_fallback_request_count\":" << s.floatFallbackRequestCount << ","
-                << "\"reject_payload_count\":" << s.rejectPayloadCount << ","
-                << "\"risky_strand_count\":" << s.riskyStrandCount << ","
-                << "\"island_candidate_count\":" << s.islandCandidateCount << ","
-                << "\"physics_fallback_count\":" << s.physicsFallbackCount << ","
-                << "\"render_certificate_count\":" << s.renderCertificateCount << ","
-                << "\"render_skip_count\":" << s.renderSkipCount << ","
-                << "\"render_coarse_opacity_count\":" << s.renderCoarseOpacityCount << ","
-                << "\"render_strand_raster_count\":" << s.renderStrandRasterCount << ","
-                << "\"render_high_quality_shadow_count\":" << s.renderHighQualityShadowCount << ","
-                << "\"render_high_quality_specular_count\":" << s.renderHighQualitySpecularCount << ","
-                << "\"render_full_quality_count\":" << s.renderFullQualityCount << ","
-                << "\"render_dropped_full_quality_count\":" << s.renderDroppedFullQualityCount << ","
-                << "\"p95_shadow_error_bound\":" << s.p95ShadowErrorBound << ","
-                << "\"p95_specular_error_bound\":" << s.p95SpecularErrorBound << ","
-                << "\"temporal_flicker_score\":" << s.temporalFlickerScore << ","
-                << "\"edit_operation_count\":" << s.editOperationCount << ","
-                << "\"edit_repair_task_count\":" << s.editRepairTaskCount << ","
-                << "\"edit_island_escalation_count\":" << s.editIslandEscalationCount << ","
-                << "\"edit_commit_count\":" << s.editCommitCount << ","
-                << "\"edit_reject_count\":" << s.editRejectCount << ","
-                << "\"edit_preview_full_quality_count\":" << s.editPreviewFullQualityCount << ","
-                << "\"edit_latency_ms\":" << s.editLatencyMs << ","
-                << "\"gpu_resident_task_count\":" << s.gpuResidentTaskCount << ","
-                << "\"risky_compaction_count\":" << s.riskyCompactionCount << ","
-                << "\"dispatch_indirect_count\":" << s.dispatchIndirectCount << ","
-                << "\"draw_indirect_count\":" << s.drawIndirectCount << ","
-                << "\"delayed_telemetry_read_count\":" << s.delayedTelemetryReadCount << ","
-                << "\"total_segment_group_block_count\":" << s.totalSegmentGroupBlockCount << ","
-                << "\"dirty_block_count\":" << s.dirtyBlockCount << ","
-                << "\"dirty_group_count\":" << s.dirtyGroupCount << ","
-                << "\"certificate_valid_group_count\":" << s.certificateValidGroupCount << ","
-                << "\"certificate_invalid_group_count\":" << s.certificateInvalidGroupCount << ","
-                << "\"parent_version_mismatch_count\":" << s.parentVersionMismatchCount << ","
-                << "\"collider_version_mismatch_count\":" << s.colliderVersionMismatchCount << ","
-                << "\"edit_version_mismatch_count\":" << s.editVersionMismatchCount << ","
-                << "\"topology_version_mismatch_count\":" << s.topologyVersionMismatchCount << ","
-                << "\"static_reuse_attempt_count\":" << s.staticReuseAttemptCount << ","
-                << "\"shared_point_conflict_count\":" << s.sharedPointConflictCount << ","
-                << "\"hemisphere_parent_resolve_count\":" << s.hemisphereParentResolveCount << ","
-                << "\"hemisphere_child_resolve_count\":" << s.hemisphereChildResolveCount << ","
-                << "\"dynamic_compaction_input_count\":" << s.dynamicCompactionInputCount << ","
-                << "\"dynamic_compaction_output_count\":" << s.dynamicCompactionOutputCount << ","
-                << "\"repair_compaction_output_count\":" << s.repairCompactionOutputCount << ","
-                << "\"block_classification_gpu_ms\":" << s.blockClassificationGpuMilliseconds << ","
-                << "\"group_classification_gpu_ms\":" << s.groupClassificationGpuMilliseconds << ","
-                << "\"compaction_gpu_ms\":" << s.compactionGpuMilliseconds << ","
-                << "\"static_transform_gpu_ms\":" << s.staticTransformGpuMilliseconds << ","
-                << "\"dynamic_solve_gpu_ms\":" << s.dynamicSolveGpuMilliseconds << ","
-                << "\"boundary_repair_gpu_ms\":" << s.boundaryRepairGpuMilliseconds << ","
-                << "\"watchdog_gpu_ms\":" << s.watchdogGpuMilliseconds << ","
-                << "\"telemetry_reduction_gpu_ms\":" << s.telemetryReductionGpuMilliseconds << ","
-                << "\"frame_interval_ms\":" << s.frameIntervalMilliseconds << ","
-                << "\"cpu_frame_work_ms\":" << s.cpuFrameWorkMilliseconds << ","
-                << "\"source_frame_index\":" << s.sourceFrameIndex << ","
-                << "\"availability_mask\":" << s.availabilityMask << ","
-                << "\"fatal_failure\":" << s.fatalFailure << ","
-                << "\"fatal_failure_code\":" << s.fatalFailureCode << ","
-                << "\"scenario_applied_event_count\":" << s.scenarioAppliedEventCount << ","
-                << "\"scenario_assertion_failure_count\":" << s.scenarioAssertionFailureCount << ","
-                << "\"collision_candidate_count\":" << s.collisionCandidateCount << ","
-                << "\"collision_miss_count\":" << s.collisionMissCount << ","
-                << "\"wake_request_group_count\":" << s.wakeRequestGroupCount << ","
-                << "\"repair_attempt_count\":" << s.repairAttemptCount << ","
-                << "\"repair_success_count\":" << s.repairSuccessCount << ","
-                << "\"state_transition_count\":" << s.stateTransitionCount << ","
-                << "\"state_oscillation_count\":" << s.stateOscillationCount
-                << "}\n";
+            if (std::isfinite(value)) out << value;
+            else out << "null";
+        };
+        for (const PerformanceSample& sample : m_performanceSamples)
+        {
+            out << "{";
+            out << "\"caseId\":\"" << caseId << "\",";
+            out << "\"case_id\":\"" << caseId << "\",";
+            out << "\"variant\":\"" << variant << "\",";
+            out << "\"appliedMethodCode\":\"" << variant << "\",";
+            out << "\"scenario\":\"" << scenario << "\",";
+            out << "\"seed\":" << sample.seed << ",";
+            out << "\"settingsSha256\":\"" << settingsHash << "\",";
+            out << "\"sourceFrameIndex\":" << sample.sourceFrameIndex << ",";
+            out << "\"globalFrameIndex\":" << sample.globalFrameIndex << ",";
+            out << "\"measuredFrameIndex\":" << sample.measuredFrameIndex << ",";
+            out << "\"frameMilliseconds\":" << sample.frameMilliseconds << ",";
+            out << "\"simulationMilliseconds\":" << sample.simulationMilliseconds << ",";
+            out << "\"gpuHairMilliseconds\":" << sample.gpuHairMilliseconds << ",";
+            out << "\"gpuTimingResolved\":" << ((sample.availabilityMask & hairgpu::HairTelemetryAvailability_GpuTiming) != 0ull ? "true" : "false") << ",";
+            out << "\"availabilityMask\":" << sample.availabilityMask << ",";
+            out << "\"metricAvailabilityMask\":" << sample.metricAvailabilityMask << ",";
+            out << "\"unavailableMetricCount\":" << sample.unavailableMetricCount << ",";
+            out << "\"syntheticMetricCount\":" << sample.syntheticMetricCount << ",";
+            out << "\"fatalFailure\":" << sample.fatalFailure << ",";
+            out << "\"fatalFailureCode\":" << sample.fatalFailureCode << ",";
+            out << "\"guideCount\":" << sample.guideCount << ",";
+            out << "\"followerCount\":" << sample.followerCount << ",";
+            out << "\"totalStrandCount\":" << sample.totalStrandCount << ",";
+            out << "\"totalParticleCount\":" << sample.totalParticleCount << ",";
+            out << "\"totalSegmentGroupCount\":" << sample.totalSegmentGroupCount << ",";
+            out << "\"staticCachedGroupCount\":" << sample.staticCachedGroupCount << ",";
+            out << "\"staticTransformedGroupCount\":" << sample.staticTransformedGroupCount << ",";
+            out << "\"dynamicGroupCount\":" << sample.dynamicGroupCount << ",";
+            out << "\"repairRequiredGroupCount\":" << sample.repairRequiredGroupCount << ",";
+            out << "\"falseStaticCount\":";
+            if ((sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_BoundaryComparison) != 0ull)
+                out << sample.falseStaticCount;
+            else out << "null";
+            out << ",";
+            out << "\"falseStaticRate\":"; writeNullable(sample.falseStaticRate); out << ",";
+            out << "\"collisionCandidateCount\":" << sample.collisionCandidateCount << ",";
+            out << "\"collisionMissCount\":";
+            if ((sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_CollisionGroundTruth) != 0ull)
+                out << sample.collisionMissCount;
+            else out << "null";
+            out << ",";
+            out << "\"wakeRequestGroupCount\":" << sample.wakeRequestGroupCount << ",";
+            out << "\"repairAttemptCount\":" << sample.repairAttemptCount << ",";
+            out << "\"repairSuccessCount\":";
+            if ((sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_RepairVerification) != 0ull)
+                out << sample.repairSuccessCount;
+            else out << "null";
+            out << ",";
+            out << "\"repairSuccessRate\":"; writeNullable(sample.repairSuccessRate); out << ",";
+            out << "\"stateTransitionCount\":" << sample.stateTransitionCount << ",";
+            out << "\"stateOscillationCount\":" << sample.stateOscillationCount << ",";
+            out << "\"fullCpuGroupUploadCount\":" << sample.fullCpuGroupUploadCount << ",";
+            out << "\"sameFrameReadbackCount\":" << sample.sameFrameReadbackCount << ",";
+            out << "\"nanStateCount\":" << sample.nanStateCount << ",";
+            out << "\"infiniteStateCount\":" << sample.infiniteStateCount << ",";
+            out << "\"blockClassificationGpuMilliseconds\":" << sample.blockClassificationGpuMilliseconds << ",";
+            out << "\"groupClassificationGpuMilliseconds\":" << sample.groupClassificationGpuMilliseconds << ",";
+            out << "\"compactionGpuMilliseconds\":" << sample.compactionGpuMilliseconds << ",";
+            out << "\"predictiveWakeGpuMilliseconds\":" << sample.predictiveWakeGpuMilliseconds << ",";
+            out << "\"staticTransformGpuMilliseconds\":" << sample.staticTransformGpuMilliseconds << ",";
+            out << "\"dynamicSolveGpuMilliseconds\":" << sample.dynamicSolveGpuMilliseconds << ",";
+            out << "\"velocityRecoveryGpuMilliseconds\":" << sample.velocityRecoveryGpuMilliseconds << ",";
+            out << "\"repairSolveGpuMilliseconds\":" << sample.repairSolveGpuMilliseconds << ",";
+            out << "\"boundaryRepairGpuMilliseconds\":" << sample.boundaryRepairGpuMilliseconds << ",";
+            out << "\"cacheUpdateGpuMilliseconds\":" << sample.cacheUpdateGpuMilliseconds << ",";
+            out << "\"watchdogGpuMilliseconds\":" << sample.watchdogGpuMilliseconds << ",";
+            out << "\"telemetryReductionGpuMilliseconds\":" << sample.telemetryReductionGpuMilliseconds;
+            out << "}\n";
         }
         return true;
     }
@@ -439,147 +377,62 @@ return sample;
     bool GpuHairViewer::ExportExperimentSettingsJson(const std::wstring& filePath) const
     {
         std::ofstream out{ std::filesystem::path(filePath) };
-        if (!out)
-        {
-            return false;
-        }
-        out << std::fixed << std::setprecision(6);
+        if (!out) return false;
+        const ExperimentRunStatus status = ValidateCompletedExperiment();
+        const bool realMeasurement = status == ExperimentRunStatus::CompleteValid;
+        const ExperimentMethodFlags& requested = m_experimentCase.requestedFlags;
+        const ExperimentMethodFlags& applied = m_experimentCase.appliedFlags;
+        out << std::fixed << std::setprecision(9);
         out << "{\n";
+        out << "  \"caseId\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
         out << "  \"case_id\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
         out << "  \"variant\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"requestedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"appliedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
         out << "  \"scenario\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenario)) << "\",\n";
         out << "  \"seed\": " << m_experimentCase.seed << ",\n";
-        out << "  \"warmup_frames\": " << m_experimentCase.warmupFrames << ",\n";
-        out << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
-        out << "  \"settings_hash\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
-        out << "  \"phase\": \"phase1_pre_novelty_final_adjustment\",\n";
-        out << "  \"novelty_mapping_version\": \"final5_v1\",\n";
-        out << "  \"top_level_novelty_mask\": " << hairgpu::BuildTopLevelNoveltyMask(m_noveltyFlags) << ",\n";
-        out << "  \"top_level_novelty_bits\": \"" << hairgpu::BuildTopLevelNoveltyBits(m_noveltyFlags) << "\",\n";
-        out << "  \"feature_flags\": {\n";
-        out << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
-        out << "    \"enableMicrotype\": " << (m_experimentCase.enableMicrotype ? "true" : "false") << ",\n";
-        out << "    \"enableBudgetedPhysics\": " << (m_experimentCase.enableBudgetedPhysics ? "true" : "false") << ",\n";
-        out << "    \"enableCertificateRender\": " << (m_experimentCase.enableCertificateRender ? "true" : "false") << ",\n";
-        out << "    \"enablePerStrandEdit\": " << (m_experimentCase.enablePerStrandEdit ? "true" : "false") << ",\n";
-        out << "    \"enableCBMA\": " << (m_experimentCase.enableCBMA ? "true" : "false") << ",\n";
-        out << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
-        out << "    \"enableRodRepair\": " << (m_experimentCase.enableRodRepair ? "true" : "false") << ",\n";
-        out << "    \"enableGpuResident\": " << (m_experimentCase.enableGpuResident ? "true" : "false") << "\n";
-        out << "  },\n";
-        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
-        out << "  \"buildConfiguration\": \"" << JsonEscape(WideToUtf8(m_experimentCase.buildConfiguration)) << "\",\n";
-        out << "  \"platform\": \"" << JsonEscape(WideToUtf8(m_experimentCase.platform)) << "\",\n";
-        out << "  \"hardwareProfile\": \"" << JsonEscape(WideToUtf8(m_experimentCase.hardwareProfile)) << "\",\n";
-        out << "  \"commitSha\": \"" << JsonEscape(WideToUtf8(m_experimentCase.commitSha)) << "\",\n";
+        out << "  \"repetitionIndex\": " << m_experimentCase.repetitionIndex << ",\n";
+        out << "  \"warmupFrames\": " << m_experimentCase.warmupFrames << ",\n";
+        out << "  \"measurementFrames\": " << m_experimentCase.measurementFrames << ",\n";
+        out << "  \"fixedTimeStepSeconds\": " << m_experimentCase.fixedTimeStepSeconds << ",\n";
         out << "  \"settingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
-        out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
-        out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
+        out << "  \"commitSha\": \"" << JsonEscape(WideToUtf8(m_experimentCase.commitSha)) << "\",\n";
+        out << "  \"executableSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.executableSha256)) << "\",\n";
+        out << "  \"shaderBundleSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.shaderBundleSha256)) << "\",\n";
         out << "  \"assetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\",\n";
-        out << "  \"appliedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
-        out << "  \"assetFrozen\": " << (m_experimentCase.assetFrozen ? "true" : "false") << ",\n";
-        out << "  \"realMeasurement\": true,\n";
-        out << "  \"measurement_mode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.measurementModeName)) << "\",\n";
-        out << "  \"requested\": {\n";
-        out << "    \"width\": " << m_experimentCase.requestedWidth << ",\n";
-        out << "    \"height\": " << m_experimentCase.requestedHeight << ",\n";
-        out << "    \"guideStrandCount\": " << m_experimentCase.requestedGuideCount << ",\n";
-        out << "    \"displayStrandCount\": " << m_experimentCase.requestedDisplayStrandCount << ",\n";
-        out << "    \"particlesPerGuide\": " << m_experimentCase.requestedParticlesPerGuide << ",\n";
-        out << "    \"solverIterations\": " << m_experimentCase.requestedSolverIterations << ",\n";
-        out << "    \"fixedTimeStepSeconds\": " << m_experimentCase.fixedTimeStepSeconds << ",\n";
-        out << "    \"vsyncEnabled\": " << (m_experimentCase.vsyncEnabled ? "true" : "false") << "\n";
-        out << "  },\n";
+        out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
+        out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
+        out << "  \"methodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
+        out << "  \"methodFlagsMatched\": " << (m_experimentCase.methodFlagsAcknowledged ? "true" : "false") << ",\n";
+        out << "  \"realMeasurement\": " << (realMeasurement ? "true" : "false") << ",\n";
+        auto writeFlags = [&out](const char* name, const ExperimentMethodFlags& flags, bool comma)
+        {
+            out << "  \"" << name << "\": {\n";
+            out << "    \"enableNoNoveltyBaseline\": " << (flags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
+            out << "    \"enableSegmentGroupSleep\": " << (flags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
+            out << "    \"enableSegmentGroupIntegratedState\": " << (flags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
+            out << "    \"enableExternalStateArray\": " << (flags.enableExternalStateArray ? "true" : "false") << ",\n";
+            out << "    \"enablePredictiveWake\": " << (flags.enablePredictiveWake ? "true" : "false") << ",\n";
+            out << "    \"enableVelocityRecovery\": " << (flags.enableVelocityRecovery ? "true" : "false") << ",\n";
+            out << "    \"enableRepair\": " << (flags.enableRepair ? "true" : "false") << ",\n";
+            out << "    \"enableGpuCompaction\": " << (flags.enableGpuCompaction ? "true" : "false") << ",\n";
+            out << "    \"enableActiveSet\": " << (flags.enableActiveSet ? "true" : "false") << "\n";
+            out << "  }" << (comma ? "," : "") << "\n";
+        };
+        writeFlags("requested", requested, true);
+        writeFlags("applied", applied, true);
         out << "  \"observed\": {\n";
-        out << "    \"width\": " << m_width << ",\n";
-        out << "    \"height\": " << m_height << ",\n";
-        out << "    \"guideStrandCount\": " << m_asset.guideStrandCount << ",\n";
+        out << "    \"adapterType\": \"" << (m_observedDriverType == D3D_DRIVER_TYPE_HARDWARE ? "hardware" : "non_hardware") << "\",\n";
+        out << "    \"gpuName\": \"" << JsonEscape(WideToUtf8(m_observedGpuName)) << "\",\n";
+        out << "    \"gpuVendorId\": " << m_observedGpuVendorId << ",\n";
+        out << "    \"gpuDeviceId\": " << m_observedGpuDeviceId << ",\n";
+        out << "    \"dedicatedVideoMemoryBytes\": " << m_observedDedicatedVideoMemory << ",\n";
+        out << "    \"renderWidth\": " << m_actualRenderWidth << ",\n";
+        out << "    \"renderHeight\": " << m_actualRenderHeight << ",\n";
         out << "    \"displayStrandCount\": " << m_asset.strands.size() << ",\n";
+        out << "    \"guideCount\": " << m_asset.guideStrandCount << ",\n";
         out << "    \"particlesPerGuide\": " << m_asset.particlesPerStrand << ",\n";
-        out << "    \"solverIterations\": " << m_simConfig.solverIterations << ",\n";
-        out << "    \"fixedTimeStepEnabled\": " << (m_experimentCase.fixedTimeStepEnabled ? "true" : "false") << ",\n";
-        out << "    \"fixedTimeStepSeconds\": " << m_simConfig.fixedTimeStep << ",\n";
-        out << "    \"vsyncEnabled\": " << (m_vsyncEnabled ? "true" : "false") << ",\n";
-        out << "    \"presentSyncInterval\": " << m_lastObservedPresentSyncInterval << ",\n";
-        out << "    \"gpuTimingResolvedFrameCount\": " << m_gpuTimingResolvedCount << ",\n";
-        out << "    \"gpuTimingValidFrameCount\": " << m_gpuTimingValidCount << ",\n";
-        out << "    \"gpuTimingUnresolvedFrameCount\": " << m_gpuTimingUnresolvedCount << ",\n";
-        out << "    \"counterReadbackResolvedFrameCount\": " << m_counterReadbackResolvedCount << ",\n";
-        out << "    \"counterReadbackUnresolvedFrameCount\": " << m_counterReadbackUnresolvedCount << ",\n";
-        out << "    \"scenarioAppliedEventCount\": " << m_scenarioAppliedEventCount << ",\n";
-        out << "    \"scenarioAssertionFailureCount\": " << m_scenarioAssertionFailureCount << ",\n";
-        out << "    \"collisionCandidateCount\": " << m_scenarioCollisionCandidateCount << ",\n";
-        out << "    \"collisionMissCount\": " << 0u << ",\n";
-        out << "    \"wakeRequestGroupCount\": " << m_scenarioWakeRequestCount << ",\n";
-        out << "    \"repairAttemptCount\": " << m_scenarioRepairAttemptCount << ",\n";
-        out << "    \"repairSuccessCount\": " << m_scenarioRepairAttemptCount << ",\n";
-        out << "    \"editVersionMismatchCount\": " << m_scenarioEditInvalidationCount << ",\n";
-        out << "    \"stateTransitionCount\": " << m_scenarioStateTransitionCount << ",\n";
-        out << "    \"stateOscillationCount\": " << 0u << "\n";
-        out << "  },\n";
-        out << "  \"requested_flags\": {\n";
-        out << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.requestedFlags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
-        out << "    \"enableMicrotype\": " << (m_experimentCase.requestedFlags.enableMicrotype ? "true" : "false") << ",\n";
-        out << "    \"enableBudgetedPhysics\": " << (m_experimentCase.requestedFlags.enableBudgetedPhysics ? "true" : "false") << ",\n";
-        out << "    \"enableCertificateRender\": " << (m_experimentCase.requestedFlags.enableCertificateRender ? "true" : "false") << ",\n";
-        out << "    \"enablePerStrandEdit\": " << (m_experimentCase.requestedFlags.enablePerStrandEdit ? "true" : "false") << ",\n";
-        out << "    \"enableCBMA\": " << (m_experimentCase.requestedFlags.enableCBMA ? "true" : "false") << ",\n";
-        out << "    \"enablePhysicsIslands\": " << (m_experimentCase.requestedFlags.enablePhysicsIslands ? "true" : "false") << ",\n";
-        out << "    \"enableRodRepair\": " << (m_experimentCase.requestedFlags.enableRodRepair ? "true" : "false") << ",\n";
-        out << "    \"enableGpuResident\": " << (m_experimentCase.requestedFlags.enableGpuResident ? "true" : "false") << ",\n";
-        out << "    \"enableSegmentGroupSleep\": " << (m_experimentCase.requestedFlags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
-        out << "    \"enableSegmentGroupIntegratedState\": " << (m_experimentCase.requestedFlags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
-        out << "    \"enableExternalStateArray\": " << (m_experimentCase.requestedFlags.enableExternalStateArray ? "true" : "false") << ",\n";
-        out << "    \"enableSharedPointOwnership\": " << (m_experimentCase.requestedFlags.enableSharedPointOwnership ? "true" : "false") << ",\n";
-        out << "    \"enableDirectionalResponsibility\": " << (m_experimentCase.requestedFlags.enableDirectionalResponsibility ? "true" : "false") << ",\n";
-        out << "    \"enableStaticCertificate\": " << (m_experimentCase.requestedFlags.enableStaticCertificate ? "true" : "false") << ",\n";
-        out << "    \"enablePredictiveWake\": " << (m_experimentCase.requestedFlags.enablePredictiveWake ? "true" : "false") << ",\n";
-        out << "    \"enableVelocityRecovery\": " << (m_experimentCase.requestedFlags.enableVelocityRecovery ? "true" : "false") << ",\n";
-        out << "    \"enableRepair\": " << (m_experimentCase.requestedFlags.enableRepair ? "true" : "false") << ",\n";
-        out << "    \"enableGpuCompaction\": " << (m_experimentCase.requestedFlags.enableGpuCompaction ? "true" : "false") << ",\n";
-        out << "    \"enableActiveSet\": " << (m_experimentCase.requestedFlags.enableActiveSet ? "true" : "false") << ",\n";
-        out << "    \"enableStrandSleep\": " << (m_experimentCase.requestedFlags.enableStrandSleep ? "true" : "false") << ",\n";
-        out << "    \"enableBlockSleep\": " << (m_experimentCase.requestedFlags.enableBlockSleep ? "true" : "false") << ",\n";
-        out << "    \"enableSleepHysteresis\": " << (m_experimentCase.requestedFlags.enableSleepHysteresis ? "true" : "false") << ",\n";
-        out << "    \"enableStaticCache\": " << (m_experimentCase.requestedFlags.enableStaticCache ? "true" : "false") << "\n";
-        out << "  },\n";
-        out << "  \"applied_flags\": {\n";
-        out << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.appliedFlags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
-        out << "    \"enableMicrotype\": " << (m_experimentCase.appliedFlags.enableMicrotype ? "true" : "false") << ",\n";
-        out << "    \"enableBudgetedPhysics\": " << (m_experimentCase.appliedFlags.enableBudgetedPhysics ? "true" : "false") << ",\n";
-        out << "    \"enableCertificateRender\": " << (m_experimentCase.appliedFlags.enableCertificateRender ? "true" : "false") << ",\n";
-        out << "    \"enablePerStrandEdit\": " << (m_experimentCase.appliedFlags.enablePerStrandEdit ? "true" : "false") << ",\n";
-        out << "    \"enableCBMA\": " << (m_experimentCase.appliedFlags.enableCBMA ? "true" : "false") << ",\n";
-        out << "    \"enablePhysicsIslands\": " << (m_experimentCase.appliedFlags.enablePhysicsIslands ? "true" : "false") << ",\n";
-        out << "    \"enableRodRepair\": " << (m_experimentCase.appliedFlags.enableRodRepair ? "true" : "false") << ",\n";
-        out << "    \"enableGpuResident\": " << (m_experimentCase.appliedFlags.enableGpuResident ? "true" : "false") << ",\n";
-        out << "    \"enableSegmentGroupSleep\": " << (m_experimentCase.appliedFlags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
-        out << "    \"enableSegmentGroupIntegratedState\": " << (m_experimentCase.appliedFlags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
-        out << "    \"enableExternalStateArray\": " << (m_experimentCase.appliedFlags.enableExternalStateArray ? "true" : "false") << ",\n";
-        out << "    \"enableSharedPointOwnership\": " << (m_experimentCase.appliedFlags.enableSharedPointOwnership ? "true" : "false") << ",\n";
-        out << "    \"enableDirectionalResponsibility\": " << (m_experimentCase.appliedFlags.enableDirectionalResponsibility ? "true" : "false") << ",\n";
-        out << "    \"enableStaticCertificate\": " << (m_experimentCase.appliedFlags.enableStaticCertificate ? "true" : "false") << ",\n";
-        out << "    \"enablePredictiveWake\": " << (m_experimentCase.appliedFlags.enablePredictiveWake ? "true" : "false") << ",\n";
-        out << "    \"enableVelocityRecovery\": " << (m_experimentCase.appliedFlags.enableVelocityRecovery ? "true" : "false") << ",\n";
-        out << "    \"enableRepair\": " << (m_experimentCase.appliedFlags.enableRepair ? "true" : "false") << ",\n";
-        out << "    \"enableGpuCompaction\": " << (m_experimentCase.appliedFlags.enableGpuCompaction ? "true" : "false") << ",\n";
-        out << "    \"enableActiveSet\": " << (m_experimentCase.appliedFlags.enableActiveSet ? "true" : "false") << ",\n";
-        out << "    \"enableStrandSleep\": " << (m_experimentCase.appliedFlags.enableStrandSleep ? "true" : "false") << ",\n";
-        out << "    \"enableBlockSleep\": " << (m_experimentCase.appliedFlags.enableBlockSleep ? "true" : "false") << ",\n";
-        out << "    \"enableSleepHysteresis\": " << (m_experimentCase.appliedFlags.enableSleepHysteresis ? "true" : "false") << ",\n";
-        out << "    \"enableStaticCache\": " << (m_experimentCase.appliedFlags.enableStaticCache ? "true" : "false") << "\n";
-        out << "  },\n";
-        out << "  \"microtype_ablation\": {\n";
-        out << "    \"certificate\": " << m_noveltyFlags.enableMicrotypeCertificate << ",\n";
-        out << "    \"dirtyPropagation\": " << m_noveltyFlags.enableMicrotypeDirtyPropagation << ",\n";
-        out << "    \"blockHierarchy\": " << m_noveltyFlags.enableMicrotypeBlockHierarchy << ",\n";
-        out << "    \"boundaryRepair\": " << m_noveltyFlags.enableMicrotypeBoundaryRepair << ",\n";
-        out << "    \"watchdog\": " << m_noveltyFlags.enableMicrotypeWatchdog << ",\n";
-        out << "    \"hemisphereOwnership\": " << m_noveltyFlags.enableMicrotypeHemisphereOwnership << ",\n";
-        out << "    \"indirectDispatch\": " << m_noveltyFlags.enableMicrotypeIndirectDispatch << ",\n";
-        out << "    \"groupsPerBlock\": " << m_segmentGroupsPerBlock << ",\n";
-        out << "    \"watchdogIntervalFrames\": " << m_segmentGroupWatchdogIntervalFrames << ",\n";
-        out << "    \"bits\": \"" << hairgpu::BuildMicrotypeAblationBits(m_noveltyFlags) << "\"\n";
+        out << "    \"solverIterations\": " << m_simConfig.solverIterations << "\n";
         out << "  }\n";
         out << "}\n";
         return true;
@@ -592,286 +445,242 @@ return sample;
     }
 
 
+    const char* GpuHairViewer::ExperimentRunStatusToString(ExperimentRunStatus status)
+    {
+        switch (status)
+        {
+        case ExperimentRunStatus::InProgress: return "in_progress";
+        case ExperimentRunStatus::CompleteValid: return "complete_valid";
+        case ExperimentRunStatus::CompleteInvalid: return "complete_invalid";
+        case ExperimentRunStatus::Incomplete: return "incomplete";
+        case ExperimentRunStatus::Failed: return "failed";
+        case ExperimentRunStatus::Synthetic: return "synthetic";
+        default: return "failed";
+        }
+    }
+
+    void GpuHairViewer::SetFatalExperimentFailure(uint32_t errorCode, const std::wstring& message)
+    {
+        if (m_experimentFailureCode == 0u)
+        {
+            m_experimentFailureCode = errorCode;
+            m_experimentFailureMessage = message;
+        }
+        m_experimentRunStatus = ExperimentRunStatus::Failed;
+        m_experimentCase.runStatus = ExperimentRunStatus::Failed;
+        m_noveltyTelemetry.fatalFailure = 1u;
+        m_noveltyTelemetry.fatalFailureCode = errorCode;
+        ++m_noveltyTelemetry.fatalRuntimeFailureCount;
+    }
+
+    ExperimentRunStatus GpuHairViewer::ValidateCompletedExperiment() const
+    {
+        if (!m_experimentCase.enabled) return ExperimentRunStatus::Incomplete;
+        if (m_experimentRunStatus == ExperimentRunStatus::Failed ||
+            m_experimentFailureCode != 0u || m_noveltyTelemetry.fatalRuntimeFailureCount != 0u)
+            return ExperimentRunStatus::Failed;
+        if (m_syntheticMetricCount != 0u || m_noveltyTelemetry.syntheticMetricCount != 0u)
+            return ExperimentRunStatus::Synthetic;
+        if (m_performanceSamples.size() != static_cast<size_t>(m_experimentCase.measurementFrames))
+            return ExperimentRunStatus::Incomplete;
+        const float timingCoverage = m_performanceSamples.empty() ? 0.0f :
+            static_cast<float>(m_gpuTimingValidCount) / static_cast<float>(m_performanceSamples.size());
+        const bool scenarioAssertionsPass =
+            m_scenarioAppliedEventCount >= m_experimentCase.scenarioAssertionMinAppliedEvents &&
+            m_scenarioCollisionCandidateCount >= m_experimentCase.scenarioAssertionMinCollisionCandidates &&
+            m_scenarioWakeRequestCount >= m_experimentCase.scenarioAssertionMinWakeRequests &&
+            m_scenarioRepairAttemptCount >= m_experimentCase.scenarioAssertionMinRepairs &&
+            m_scenarioStateTransitionCount >= m_experimentCase.scenarioAssertionMinTransitions;
+        const bool formalIdentityValid =
+            !m_experimentCase.caseId.empty() &&
+            m_experimentCase.methodId != ExperimentMethodId::Unknown &&
+            m_experimentCase.scenarioId != ExperimentScenarioId::Unknown &&
+            m_experimentCase.methodFlagsAcknowledged &&
+            m_experimentCase.timelineLoaded &&
+            m_experimentCase.assetFrozen &&
+            !m_experimentCase.settingsHash.empty() &&
+            !m_experimentCase.executableSha256.empty() &&
+            !m_experimentCase.shaderBundleSha256.empty() &&
+            !m_experimentCase.assetSha256.empty() &&
+            !m_experimentCase.scenarioTimelineSha256.empty();
+        const bool observedSettingsValid =
+            m_observedDriverType == D3D_DRIVER_TYPE_HARDWARE &&
+            m_actualRenderWidth == m_experimentCase.requestedWidth &&
+            m_actualRenderHeight == m_experimentCase.requestedHeight &&
+            m_asset.strands.size() == static_cast<size_t>(m_experimentCase.requestedDisplayStrandCount) &&
+            m_asset.particlesPerStrand == m_experimentCase.requestedParticlesPerGuide &&
+            m_simConfig.solverIterations == m_experimentCase.requestedSolverIterations &&
+            !m_vsyncEnabled && m_presentSyncInterval == 0u;
+        const bool runtimeQualityValid =
+            timingCoverage >= 0.99f &&
+            m_gpuTimingUnresolvedCount == 0u &&
+            m_nanStateCount == 0u && m_infiniteStateCount == 0u &&
+            m_sameFrameReadbackCount == 0u && scenarioAssertionsPass;
+        return formalIdentityValid && observedSettingsValid && runtimeQualityValid
+            ? ExperimentRunStatus::CompleteValid
+            : ExperimentRunStatus::CompleteInvalid;
+    }
+
     bool GpuHairViewer::ExportRuntimeReport(const std::wstring& filePath) const
     {
         const std::filesystem::path summaryPath(filePath);
-
-        std::vector<float> frameMs;
-        std::vector<float> simMs;
-        std::vector<float> gpuHairMs;
-        std::vector<float> selectedClusters;
-        std::vector<float> correctivePenetration;
-        frameMs.reserve(m_performanceSamples.size());
-        simMs.reserve(m_performanceSamples.size());
-        gpuHairMs.reserve(m_performanceSamples.size());
-        selectedClusters.reserve(m_performanceSamples.size());
-        correctivePenetration.reserve(m_performanceSamples.size());
-
-        uint64_t certificateFailures = 0u;
-        uint64_t fallbackCount = 0u;
-        uint64_t repairTasks = 0u;
-        uint64_t repairCommitted = 0u;
-        uint64_t cpuReadbacks = 0u;
-        float vramMb = 0.0f;
-        float bandwidthMbFrame = 0.0f;
-        uint64_t totalSegmentGroups = 0u;
-        uint64_t staticCachedGroups = 0u;
-        uint64_t staticTransformedGroups = 0u;
-        uint64_t dynamicGroups = 0u;
-        uint64_t deferredGroups = 0u;
-        uint64_t repairRequiredGroups = 0u;
-        uint64_t fallbackGroups = 0u;
-        uint64_t falseStaticCount = 0u;
-        uint64_t cacheHits = 0u;
-        uint64_t cacheMisses = 0u;
-        uint64_t cacheInvalidations = 0u;
-        uint64_t watchdogChecks = 0u;
-        uint64_t watchdogRepairs = 0u;
-        std::vector<float> staticDynamicBoundaryMeanErrors;
-        std::vector<float> staticDynamicBoundaryMaxErrors;
-        float directionCacheMemoryMb = 0.0f;
-        float fullPositionMemoryMb = 0.0f;
-        float directionCacheMemorySavingRate = 0.0f;
-        for (const PerformanceSample& s : m_performanceSamples)
-        {
-            frameMs.push_back(s.frameMilliseconds);
-            simMs.push_back(s.simulationMilliseconds);
-            gpuHairMs.push_back(s.gpuHairMilliseconds);
-            selectedClusters.push_back(static_cast<float>(s.activeSetSelectedClusterCount));
-            correctivePenetration.push_back(s.correctiveAveragePenetration);
-            certificateFailures += s.certificateFailureCount;
-            fallbackCount += s.fallbackCount;
-            repairTasks += s.repairTaskCount;
-            repairCommitted += s.repairCommittedCount;
-            cpuReadbacks += s.cpuReadbackCount;
-            vramMb = std::max(vramMb, s.vramMegabytes);
-            bandwidthMbFrame = std::max(bandwidthMbFrame, s.bandwidthMegabytesPerFrame);
-            totalSegmentGroups += s.totalSegmentGroupCount;
-            staticCachedGroups += s.staticCachedGroupCount;
-            staticTransformedGroups += s.staticTransformedGroupCount;
-            dynamicGroups += s.dynamicGroupCount;
-            deferredGroups += s.deferredCorrectionGroupCount;
-            repairRequiredGroups += s.repairRequiredGroupCount;
-            fallbackGroups += s.fallbackGroupCount;
-            falseStaticCount += s.falseStaticCount;
-            cacheHits += s.cacheHitCount;
-            cacheMisses += s.cacheMissCount;
-            cacheInvalidations += s.cacheInvalidationCount;
-            watchdogChecks += s.watchdogCheckCount;
-            watchdogRepairs += s.watchdogRepairCount;
-            staticDynamicBoundaryMeanErrors.push_back(s.staticDynamicBoundaryMeanErrorMm);
-            staticDynamicBoundaryMaxErrors.push_back(s.staticDynamicBoundaryMaxErrorMm);
-            directionCacheMemoryMb = std::max(directionCacheMemoryMb, s.directionCacheMemoryMb);
-            fullPositionMemoryMb = std::max(fullPositionMemoryMb, s.fullPositionMemoryMb);
-            directionCacheMemorySavingRate = std::max(directionCacheMemorySavingRate, s.directionCacheMemorySavingRate);
-        }
-
         const std::filesystem::path baseDir = summaryPath.parent_path();
-        const std::wstring stem = summaryPath.stem().wstring();
-        std::wstring runStem = stem;
+        std::wstring runStem = summaryPath.stem().wstring();
         const std::wstring suffix = L"_summary";
-        if (runStem.size() > suffix.size() && runStem.substr(runStem.size() - suffix.size()) == suffix)
-        {
+        if (runStem.size() >= suffix.size() && runStem.substr(runStem.size() - suffix.size()) == suffix)
             runStem.resize(runStem.size() - suffix.size());
-        }
-        const std::filesystem::path perfPath = baseDir / (runStem + L"_frames.csv");
+        const std::filesystem::path frameCsvPath = baseDir / (runStem + L"_frames.csv");
         const std::filesystem::path frameJsonlPath = baseDir / (runStem + L"_frames.jsonl");
-        const std::filesystem::path experimentSettingsPath = baseDir / (runStem + L"_settings.json");
-        const std::filesystem::path planPath = baseDir / (runStem + L"_activeset_plan.json");
-        const std::filesystem::path viewerSettingsPath = baseDir / (runStem + L"_viewer_settings.ini");
-        const bool perfOk = ExportPerformanceCsv(perfPath.wstring());
+        const std::filesystem::path settingsPath = baseDir / (runStem + L"_settings.json");
+        const bool frameCsvOk = ExportPerformanceCsv(frameCsvPath.wstring());
         const bool frameJsonlOk = ExportPerformanceJsonl(frameJsonlPath.wstring());
-        const bool experimentSettingsOk = ExportExperimentSettingsJson(experimentSettingsPath.wstring());
-        const bool planOk = ExportActiveSetPlanJson(planPath.wstring());
-        const bool settingsOk = SaveSettingsToFile(viewerSettingsPath.wstring());
+        const bool settingsOk = ExportExperimentSettingsJson(settingsPath.wstring());
 
-        const float frameMax = frameMs.empty() ? 0.0f : *std::max_element(frameMs.begin(), frameMs.end());
-        const float simMax = simMs.empty() ? 0.0f : *std::max_element(simMs.begin(), simMs.end());
-        const float sixtyFpsRatio = frameMs.empty()
-            ? 0.0f
-            : static_cast<float>(std::count_if(frameMs.begin(), frameMs.end(), [](float v) { return v <= 16.67f; })) / static_cast<float>(frameMs.size());
-        const float certificateFailureRate = m_performanceSamples.empty() ? 0.0f : static_cast<float>(certificateFailures) / static_cast<float>(m_performanceSamples.size());
-        const float fallbackRate = m_performanceSamples.empty() ? 0.0f : static_cast<float>(fallbackCount) / static_cast<float>(m_performanceSamples.size());
-        const float repairSuccessRate = repairTasks > 0u ? static_cast<float>(repairCommitted) / static_cast<float>(repairTasks) : 0.0f;
-        const uint64_t staticLikeGroups = staticCachedGroups + staticTransformedGroups;
-        const float falseStaticRate =
-            staticLikeGroups > 0u
-            ? static_cast<float>(falseStaticCount) / static_cast<float>(staticLikeGroups)
-            : 0.0f;
-        const float groupStaticReuseRate =
-            totalSegmentGroups > 0u
-            ? static_cast<float>(staticLikeGroups) / static_cast<float>(totalSegmentGroups)
-            : 0.0f;
-        const float groupDynamicRate =
-            totalSegmentGroups > 0u
-            ? static_cast<float>(dynamicGroups) / static_cast<float>(totalSegmentGroups)
-            : 0.0f;
-        const float deferredCorrectionRate =
-            totalSegmentGroups > 0u
-            ? static_cast<float>(deferredGroups) / static_cast<float>(totalSegmentGroups)
-            : 0.0f;
-        const std::string assetSourceUtf8 = WideToUtf8(m_lastAssetSource);
-        const std::string importStatusUtf8 = WideToUtf8(m_lastImportStatus);
-        const std::string editStatusUtf8 = WideToUtf8(m_lastEditStackStatus);
-        const std::string perfPathUtf8 = WideToUtf8(perfPath.wstring());
-        const std::string frameJsonlPathUtf8 = WideToUtf8(frameJsonlPath.wstring());
-        const std::string experimentSettingsPathUtf8 = WideToUtf8(experimentSettingsPath.wstring());
-        const std::string planPathUtf8 = WideToUtf8(planPath.wstring());
-        const std::string viewerSettingsPathUtf8 = WideToUtf8(viewerSettingsPath.wstring());
-        hairgpu::HairEditComparisonReport editMetrics = {};
-        if (!m_baseAsset.strands.empty() && m_baseAsset.strands.size() == m_asset.strands.size())
+        std::vector<float> frameMilliseconds;
+        std::vector<float> simulationMilliseconds;
+        std::vector<float> gpuMilliseconds;
+        frameMilliseconds.reserve(m_performanceSamples.size());
+        simulationMilliseconds.reserve(m_performanceSamples.size());
+        gpuMilliseconds.reserve(m_performanceSamples.size());
+        uint64_t collisionCandidates = 0u, collisionMisses = 0u;
+        uint64_t repairAttempts = 0u, repairSuccesses = 0u;
+        uint64_t falseStatic = 0u, staticGroups = 0u;
+        uint64_t stateTransitions = 0u, stateOscillations = 0u;
+        uint64_t unavailableMetrics = 0u, syntheticMetrics = 0u;
+        bool collisionGroundTruthAvailable = !m_performanceSamples.empty();
+        bool repairVerificationAvailable = !m_performanceSamples.empty();
+        bool falseStaticGroundTruthAvailable = !m_performanceSamples.empty();
+        for (const PerformanceSample& sample : m_performanceSamples)
         {
-            editMetrics = hairgpu::CompareHairEditRegion(m_baseAsset, m_asset, 16u);
+            frameMilliseconds.push_back(sample.frameMilliseconds);
+            simulationMilliseconds.push_back(sample.simulationMilliseconds);
+            if ((sample.availabilityMask & hairgpu::HairTelemetryAvailability_GpuTiming) != 0ull)
+                gpuMilliseconds.push_back(sample.gpuHairMilliseconds);
+            collisionCandidates += sample.collisionCandidateCount;
+            collisionMisses += sample.collisionMissCount;
+            repairAttempts += sample.repairAttemptCount;
+            repairSuccesses += sample.repairSuccessCount;
+            falseStatic += sample.falseStaticCount;
+            staticGroups += sample.staticCachedGroupCount + sample.staticTransformedGroupCount;
+            stateTransitions += sample.stateTransitionCount;
+            stateOscillations += sample.stateOscillationCount;
+            unavailableMetrics += sample.unavailableMetricCount;
+            syntheticMetrics += sample.syntheticMetricCount;
+            collisionGroundTruthAvailable = collisionGroundTruthAvailable &&
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_CollisionGroundTruth) != 0ull;
+            repairVerificationAvailable = repairVerificationAvailable &&
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_RepairVerification) != 0ull;
+            falseStaticGroundTruthAvailable = falseStaticGroundTruthAvailable &&
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_BoundaryComparison) != 0ull;
         }
-
-        std::ostringstream json;
-        json << std::fixed << std::setprecision(6);
-        json << "{\n";
-        json << "  \"run_name\": \"" << JsonEscape(WideToUtf8(runStem)) << "\",\n";
-        json << "  \"case_id\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
-        json << "  \"variant\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
-        json << "  \"scenario\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenario)) << "\",\n";
-        json << "  \"seed\": " << m_experimentCase.seed << ",\n";
-        json << "  \"warmup_frames\": " << m_experimentCase.warmupFrames << ",\n";
-        json << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
-        json << "  \"settings_hash\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
-        json << "  \"phase\": \"phase1_pre_novelty_final_adjustment\",\n";
-        json << "  \"novelty_mapping_version\": \"final5_v1\",\n";
-        json << "  \"top_level_novelty_mask\": " << hairgpu::BuildTopLevelNoveltyMask(m_noveltyFlags) << ",\n";
-        json << "  \"top_level_novelty_bits\": \"" << hairgpu::BuildTopLevelNoveltyBits(m_noveltyFlags) << "\",\n";
-        json << "  \"feature_flags\": {\n";
-        json << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
-        json << "    \"enableMicrotype\": " << (m_experimentCase.enableMicrotype ? "true" : "false") << ",\n";
-        json << "    \"enableBudgetedPhysics\": " << (m_experimentCase.enableBudgetedPhysics ? "true" : "false") << ",\n";
-        json << "    \"enableCertificateRender\": " << (m_experimentCase.enableCertificateRender ? "true" : "false") << ",\n";
-        json << "    \"enablePerStrandEdit\": " << (m_experimentCase.enablePerStrandEdit ? "true" : "false") << ",\n";
-        json << "    \"enableCBMA\": " << (m_experimentCase.enableCBMA ? "true" : "false") << ",\n";
-        json << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
-        json << "    \"enableRodRepair\": " << (m_experimentCase.enableRodRepair ? "true" : "false") << ",\n";
-        json << "    \"enableGpuResident\": " << (m_experimentCase.enableGpuResident ? "true" : "false") << "\n";
-        json << "  },\n";
-        json << "  \"asset_source\": \"" << JsonEscape(assetSourceUtf8) << "\",\n";
-        json << "  \"import_status\": \"" << JsonEscape(importStatusUtf8) << "\",\n";
-        json << "  \"edit_status\": \"" << JsonEscape(editStatusUtf8) << "\",\n";
-        json << "  \"sample_count\": " << m_performanceSamples.size() << ",\n";
-        json << "  \"avg_frame_ms\": " << ComputeAverage(frameMs) << ",\n";
-        json << "  \"p50_frame_ms\": " << ComputePercentile(frameMs, 50.0f) << ",\n";
-        json << "  \"p95_frame_ms\": " << ComputePercentile(frameMs, 95.0f) << ",\n";
-        json << "  \"p99_frame_ms\": " << ComputePercentile(frameMs, 99.0f) << ",\n";
-        json << "  \"worst_frame_ms\": " << frameMax << ",\n";
-        json << "  \"avg_simulation_ms\": " << ComputeAverage(simMs) << ",\n";
-        json << "  \"p50_simulation_ms\": " << ComputePercentile(simMs, 50.0f) << ",\n";
-        json << "  \"p95_simulation_ms\": " << ComputePercentile(simMs, 95.0f) << ",\n";
-        json << "  \"p99_simulation_ms\": " << ComputePercentile(simMs, 99.0f) << ",\n";
-        json << "  \"worst_simulation_ms\": " << simMax << ",\n";
-        json << "  \"avg_gpu_hair_ms\": " << ComputeAverage(gpuHairMs) << ",\n";
-        json << "  \"p95_gpu_hair_ms\": " << ComputePercentile(gpuHairMs, 95.0f) << ",\n";
-        json << "  \"p99_gpu_hair_ms\": " << ComputePercentile(gpuHairMs, 99.0f) << ",\n";
-        json << "  \"vram_mb\": " << vramMb << ",\n";
-        json << "  \"bandwidth_mb_frame\": " << bandwidthMbFrame << ",\n";
-        json << "  \"certificate_failure_rate\": " << certificateFailureRate << ",\n";
-        json << "  \"fallback_rate\": " << fallbackRate << ",\n";
-        json << "  \"repair_success_rate\": " << repairSuccessRate << ",\n";
-        json << "  \"cpu_readback_count\": " << cpuReadbacks << ",\n";
-        json << "  \"frame_jsonl\": \"" << JsonEscape(frameJsonlPathUtf8) << "\",\n";
-        json << "  \"settings_json\": \"" << JsonEscape(experimentSettingsPathUtf8) << "\",\n";
-        json << "  \"avg_fps\": " << ((ComputeAverage(frameMs) > 1.0e-6f) ? (1000.0f / ComputeAverage(frameMs)) : 0.0f) << ",\n";
-        json << "  \"sixty_fps_ratio\": " << sixtyFpsRatio << ",\n";
-        json << "  \"guide_count\": " << m_asset.guideStrandCount << ",\n";
-        json << "  \"follower_count\": " << m_asset.followerStrandCount << ",\n";
-        json << "  \"total_strand_count\": " << m_asset.strands.size() << ",\n";
-        json << "  \"total_particle_count\": " << m_asset.restPoints.size() << ",\n";
-        json << "  \"avg_selected_clusters\": " << ComputeAverage(selectedClusters) << ",\n";
-        json << "  \"current_selected_clusters\": " << m_activeSetPlan.summary.selectedClusterCount << ",\n";
-        json << "  \"current_selected_guides\": " << m_activeSetPlan.summary.selectedGuideCount << ",\n";
-        json << "  \"avg_penetration_per_sec\": " << ((m_elapsedSeconds > 1.0e-6f) ? (m_sparseCorrectiveReport.penetrationEventCount / m_elapsedSeconds) : 0.0f) << ",\n";
-        json << "  \"avg_penetration\": " << ComputeAverage(correctivePenetration) << ",\n";
-        json << "  \"max_penetration\": " << m_sparseCorrectiveReport.maxPenetration << ",\n";
-        json << "  \"avg_silhouette_error\": 0.000000,\n";
-        json << "  \"avg_clump_preservation\": 1.000000,\n";
-        json << "  \"avg_edit_locality\": " << hairgpu::Clamp(1.0f - m_runtimeEditState.maxGuideInfluence * 0.15f, 0.0f, 1.0f) << ",\n";
-        json << "  \"avg_boundary_naturalness\": " << hairgpu::Clamp(1.0f - m_quickEditBoundarySmoothing * 0.15f, 0.0f, 1.0f) << ",\n";
-        json << "  \"avg_edit_to_run_latency_ms\": " << ComputeAverage(simMs) << ",\n";
-        json << "  \"peak_ram_mb\": " << m_activeSetPlan.summary.estimatedMemoryMegabytes << ",\n";
-        json << "  \"exports\": {\n";
-        json << "    \"frame_csv\": { \"ok\": " << (perfOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(perfPathUtf8) << "\" },\n";
-        json << "    \"frame_jsonl\": { \"ok\": " << (frameJsonlOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(frameJsonlPathUtf8) << "\" },\n";
-        json << "    \"experiment_settings\": { \"ok\": " << (experimentSettingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(experimentSettingsPathUtf8) << "\" },\n";
-        json << "    \"active_set_json\": { \"ok\": " << (planOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(planPathUtf8) << "\" },\n";
-        json << "    \"viewer_settings\": { \"ok\": " << (settingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(viewerSettingsPathUtf8) << "\" }\n";
-        json << "  },\n";
-        json << "  \"false_static_count\": " << falseStaticCount << ",\n";
-        json << "  \"false_static_rate\": " << falseStaticRate << ",\n";
-        json << "  \"group_static_reuse_rate\": " << groupStaticReuseRate << ",\n";
-        json << "  \"group_dynamic_rate\": " << groupDynamicRate << ",\n";
-        json << "  \"deferred_correction_rate\": " << deferredCorrectionRate << ",\n";
-
-        json << "  \"total_segment_group_count\": " << totalSegmentGroups << ",\n";
-        json << "  \"static_cached_group_count\": " << staticCachedGroups << ",\n";
-        json << "  \"static_transformed_group_count\": " << staticTransformedGroups << ",\n";
-        json << "  \"dynamic_group_count\": " << dynamicGroups << ",\n";
-        json << "  \"deferred_correction_group_count\": " << deferredGroups << ",\n";
-        json << "  \"repair_required_group_count\": " << repairRequiredGroups << ",\n";
-        json << "  \"fallback_group_count\": " << fallbackGroups << ",\n";
-
-        json << "  \"cache_hit_count\": " << cacheHits << ",\n";
-        json << "  \"cache_miss_count\": " << cacheMisses << ",\n";
-        json << "  \"cache_invalidation_count\": " << cacheInvalidations << ",\n";
-
-        json << "  \"watchdog_check_count\": " << watchdogChecks << ",\n";
-        json << "  \"watchdog_repair_count\": " << watchdogRepairs << ",\n";
-
-        json << "  \"avg_static_dynamic_boundary_error_mm\": " << ComputeAverage(staticDynamicBoundaryMeanErrors) << ",\n";
-        json << "  \"max_static_dynamic_boundary_error_mm\": " << ComputePercentile(staticDynamicBoundaryMaxErrors, 100.0f) << ",\n";
-
-        json << "  \"direction_cache_memory_mb\": " << directionCacheMemoryMb << ",\n";
-        json << "  \"full_position_memory_mb\": " << fullPositionMemoryMb << ",\n";
-        json << "  \"direction_cache_memory_saving_rate\": " << directionCacheMemorySavingRate << ",\n";
-        json << "  \"status\": \"complete\",\n";
-        json << "  \"realMeasurement\": true,\n";
-        json << "  \"fatalRuntimeFailureCount\": " << m_noveltyTelemetry.fatalRuntimeFailureCount << ",\n";
-        json << "  \"gpuTimingCoverage\": " << (m_performanceSamples.empty() ? 0.0f : std::min(1.0f, static_cast<float>(m_gpuTimingValidCount) / static_cast<float>(m_performanceSamples.size()))) << ",\n";
-        json << "  \"scenarioAppliedEventCount\": " << m_scenarioAppliedEventCount << ",\n";
-        json << "  \"scenarioAssertionFailureCount\": " << m_scenarioAssertionFailureCount << ",\n";
-        json << "  \"collisionCandidateCount\": " << m_scenarioCollisionCandidateCount << ",\n";
-        json << "  \"collisionMissCount\": 0,\n";
-        json << "  \"wakeRequestGroupCount\": " << m_scenarioWakeRequestCount << ",\n";
-        json << "  \"repairAttemptCount\": " << m_scenarioRepairAttemptCount << ",\n";
-        json << "  \"repairSuccessCount\": " << m_scenarioRepairAttemptCount << ",\n";
-        json << "  \"editVersionMismatchCount\": " << m_scenarioEditInvalidationCount << ",\n";
-        json << "  \"stateTransitionCount\": " << m_scenarioStateTransitionCount << ",\n";
-        json << "  \"stateOscillationCount\": 0\n";
-        json << "}\n";
+        const ExperimentRunStatus status = ValidateCompletedExperiment();
+        const bool realMeasurement = status == ExperimentRunStatus::CompleteValid;
+        const float timingCoverage = m_performanceSamples.empty() ? 0.0f :
+            static_cast<float>(m_gpuTimingValidCount) / static_cast<float>(m_performanceSamples.size());
+        const auto nullableRate = [](uint64_t numerator, uint64_t denominator) -> float
+        {
+            return denominator > 0u ? static_cast<float>(numerator) / static_cast<float>(denominator)
+                : std::numeric_limits<float>::quiet_NaN();
+        };
+        auto writeNullable = [](std::ostream& stream, float value)
+        {
+            if (std::isfinite(value)) stream << value;
+            else stream << "null";
+        };
 
         std::ofstream out(summaryPath);
-        if (!out)
-        {
-            return false;
-        }
-        if (summaryPath.extension() == L".json")
-        {
-            out << json.str();
-        }
-        else
-        {
-            out << "HairGPU Viewer Runtime Report\n";
-            out << "=============================\n";
-            out << "assetSource=" << assetSourceUtf8 << "\n";
-            out << "importStatus=" << importStatusUtf8 << "\n";
-            out << "editStatus=" << editStatusUtf8 << "\n";
-            out << "guides=" << m_asset.guideStrandCount;
-            out << " followers=" << m_asset.followerStrandCount;
-            out << " totalStrands=" << m_asset.strands.size();
-            out << " particles=" << m_asset.restPoints.size() << "\n";
-            out << "frame.avgMs=" << ComputeAverage(frameMs);
-            out << " frame.p95Ms=" << ComputePercentile(frameMs, 95.0f);
-            out << " frame.p99Ms=" << ComputePercentile(frameMs, 99.0f);
-            out << " frame.maxMs=" << frameMax << "\n";
-            out << "sim.avgMs=" << ComputeAverage(simMs);
-            out << " sim.p95Ms=" << ComputePercentile(simMs, 95.0f);
-            out << " sim.maxMs=" << simMax << "\n";
-            out << json.str();
-        }
+        if (!out) return false;
+        out << std::fixed << std::setprecision(9);
+        out << "{\n";
+        out << "  \"status\": \"" << ExperimentRunStatusToString(status) << "\",\n";
+        out << "  \"validationStatus\": \"" << ExperimentRunStatusToString(status) << "\",\n";
+        out << "  \"realMeasurement\": " << (realMeasurement ? "true" : "false") << ",\n";
+        out << "  \"caseId\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
+        out << "  \"case_id\": \"" << JsonEscape(WideToUtf8(m_experimentCase.caseId)) << "\",\n";
+        out << "  \"variant\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"requestedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"appliedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"observedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+        out << "  \"scenario\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenario)) << "\",\n";
+        out << "  \"seed\": " << m_experimentCase.seed << ",\n";
+        out << "  \"repetitionIndex\": " << m_experimentCase.repetitionIndex << ",\n";
+        out << "  \"warmup_frames\": " << m_experimentCase.warmupFrames << ",\n";
+        out << "  \"measurement_frames\": " << m_experimentCase.measurementFrames << ",\n";
+        out << "  \"sample_count\": " << m_performanceSamples.size() << ",\n";
+        out << "  \"settingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
+        out << "  \"commitSha\": \"" << JsonEscape(WideToUtf8(m_experimentCase.commitSha)) << "\",\n";
+        out << "  \"executableSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.executableSha256)) << "\",\n";
+        out << "  \"shaderBundleSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.shaderBundleSha256)) << "\",\n";
+        out << "  \"assetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\",\n";
+        out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
+        out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
+        out << "  \"methodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
+        out << "  \"methodFlagsMatched\": " << (m_experimentCase.methodFlagsAcknowledged ? "true" : "false") << ",\n";
+        out << "  \"assetFrozen\": " << (m_experimentCase.assetFrozen ? "true" : "false") << ",\n";
+        out << "  \"actualAdapterType\": \"" << (m_observedDriverType == D3D_DRIVER_TYPE_HARDWARE ? "hardware" : "non_hardware") << "\",\n";
+        out << "  \"gpuName\": \"" << JsonEscape(WideToUtf8(m_observedGpuName)) << "\",\n";
+        out << "  \"actualRenderWidth\": " << m_actualRenderWidth << ",\n";
+        out << "  \"actualRenderHeight\": " << m_actualRenderHeight << ",\n";
+        out << "  \"actualDisplayStrandCount\": " << m_asset.strands.size() << ",\n";
+        out << "  \"gpuTimingResolvedFrameCount\": " << m_gpuTimingValidCount << ",\n";
+        out << "  \"gpuTimingUnresolvedFrameCount\": " << m_gpuTimingUnresolvedCount << ",\n";
+        out << "  \"gpuTimingCoverage\": " << timingCoverage << ",\n";
+        out << "  \"fatalRuntimeFailureCount\": " << m_noveltyTelemetry.fatalRuntimeFailureCount << ",\n";
+        out << "  \"fatalFailureCode\": " << m_experimentFailureCode << ",\n";
+        out << "  \"fatalFailureMessage\": \"" << JsonEscape(WideToUtf8(m_experimentFailureMessage)) << "\",\n";
+        out << "  \"unavailableMetricCount\": " << unavailableMetrics + m_unavailableMetricCount << ",\n";
+        out << "  \"syntheticMetricCount\": " << syntheticMetrics + m_syntheticMetricCount << ",\n";
+        out << "  \"fullCpuGroupUploadCount\": " << m_fullCpuGroupUploadCount << ",\n";
+        out << "  \"sameFrameReadbackCount\": " << m_sameFrameReadbackCount << ",\n";
+        out << "  \"nanStateCount\": " << m_nanStateCount << ",\n";
+        out << "  \"infiniteStateCount\": " << m_infiniteStateCount << ",\n";
+        out << "  \"scenarioAppliedEventCount\": " << m_scenarioAppliedEventCount << ",\n";
+        out << "  \"scenarioAssertionFailureCount\": " << m_scenarioAssertionFailureCount << ",\n";
+        out << "  \"collisionCandidateCount\": " << collisionCandidates << ",\n";
+        out << "  \"collisionMissCount\": ";
+        if (collisionGroundTruthAvailable) out << collisionMisses; else out << "null";
+        out << ",\n";
+        out << "  \"collisionMissRate\": ";
+        writeNullable(out, collisionGroundTruthAvailable
+            ? nullableRate(collisionMisses, collisionCandidates)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"wakeRequestGroupCount\": " << m_scenarioWakeRequestCount << ",\n";
+        out << "  \"repairAttemptCount\": " << repairAttempts << ",\n";
+        out << "  \"repairSuccessCount\": ";
+        if (repairVerificationAvailable) out << repairSuccesses; else out << "null";
+        out << ",\n";
+        out << "  \"repairSuccessRate\": ";
+        writeNullable(out, repairVerificationAvailable
+            ? nullableRate(repairSuccesses, repairAttempts)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"falseStaticCount\": ";
+        if (falseStaticGroundTruthAvailable) out << falseStatic; else out << "null";
+        out << ",\n";
+        out << "  \"falseStaticRate\": ";
+        writeNullable(out, falseStaticGroundTruthAvailable
+            ? nullableRate(falseStatic, staticGroups)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"stateTransitionCount\": " << stateTransitions << ",\n";
+        out << "  \"stateOscillationCount\": " << stateOscillations << ",\n";
+        out << "  \"avg_frame_ms\": " << ComputeAverage(frameMilliseconds) << ",\n";
+        out << "  \"p50_frame_ms\": " << ComputePercentile(frameMilliseconds, 50.0f) << ",\n";
+        out << "  \"p95_frame_ms\": " << ComputePercentile(frameMilliseconds, 95.0f) << ",\n";
+        out << "  \"p99_frame_ms\": " << ComputePercentile(frameMilliseconds, 99.0f) << ",\n";
+        out << "  \"p999_frame_ms\": " << ComputePercentile(frameMilliseconds, 99.9f) << ",\n";
+        out << "  \"worst_frame_ms\": " << (frameMilliseconds.empty() ? 0.0f : *std::max_element(frameMilliseconds.begin(), frameMilliseconds.end())) << ",\n";
+        out << "  \"avg_simulation_ms\": " << ComputeAverage(simulationMilliseconds) << ",\n";
+        out << "  \"avg_gpu_hair_ms\": " << ComputeAverage(gpuMilliseconds) << ",\n";
+        out << "  \"exports\": {\n";
+        out << "    \"frameCsv\": " << (frameCsvOk ? "true" : "false") << ",\n";
+        out << "    \"frameJsonl\": " << (frameJsonlOk ? "true" : "false") << ",\n";
+        out << "    \"settingsJson\": " << (settingsOk ? "true" : "false") << "\n";
+        out << "  },\n";
+        out << "  \"canonicalResultSha256\": \"\",\n";
+        out << "  \"validationReasons\": []\n";
+        out << "}\n";
         return true;
     }
 

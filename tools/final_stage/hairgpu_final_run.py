@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import math
+import threading
 import hashlib
 import json
 import os
@@ -109,19 +112,245 @@ def collect_hardware_probe(profile_name: str = "", phase: str = "") -> dict[str,
     return payload
 
 
-def validate_required_outputs(summary_json: Path, frame_csv: Path, frame_jsonl: Path, settings_json: Path, run_name: str) -> None:
+
+def sha256_tree(paths: list[Path]) -> str:
+    digest = hashlib.sha256()
+    files: list[Path] = []
+    for root in paths:
+        root = Path(root)
+        if root.is_file():
+            files.append(root)
+        elif root.exists():
+            files.extend(path for path in root.rglob("*") if path.is_file())
+    for path in sorted(files, key=lambda item: item.as_posix().lower()):
+        digest.update(path.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8-sig") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Invalid JSONL at {path}:{line_number}: {exc}") from exc
+            if not isinstance(value, dict):
+                raise RuntimeError(f"JSONL row {line_number} is not an object")
+            rows.append(value)
+    return rows
+
+
+def _metric(row: dict[str, Any], *keys: str, default=None):
+    for key in keys:
+        if key in row and row[key] is not None:
+            return row[key]
+    return default
+
+
+def _is_finite_number(value: Any) -> bool:
+    if value in (None, ""):
+        return True
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return math.isfinite(float(value))
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return True
+
+
+class HardwareSampler:
+    """Collect one hardware sample per second without blocking the viewer."""
+
+    def __init__(self, profile_name: str, interval_seconds: float = 1.0):
+        self.profile_name = profile_name
+        self.interval_seconds = max(float(interval_seconds), 1.0)
+        self.samples: list[dict[str, Any]] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, name="hairgpu-hardware-sampler", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> list[dict[str, Any]]:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(self.interval_seconds * 2.0, 2.0))
+        return list(self.samples)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            sample = collect_hardware_probe(self.profile_name, "sample")
+            sample["sampleTimeUnix"] = time.time()
+            self.samples.append(sample)
+            self._stop.wait(self.interval_seconds)
+
+
+def write_hardware_timeseries(path: Path, samples: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    headers = [
+        "sampleTimeUnix", "gpuName", "driverVersion", "temperatureC",
+        "graphicsClockMHz", "memoryClockMHz", "powerDrawW", "powerLimitW",
+        "activePowerScheme",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=headers)
+        writer.writeheader()
+        for sample in samples:
+            gpu = sample.get("gpu", {}) if isinstance(sample.get("gpu"), dict) else {}
+            power = sample.get("power", {}) if isinstance(sample.get("power"), dict) else {}
+            writer.writerow({
+                "sampleTimeUnix": sample.get("sampleTimeUnix"),
+                "gpuName": gpu.get("name"),
+                "driverVersion": gpu.get("driverVersion"),
+                "temperatureC": gpu.get("temperatureC"),
+                "graphicsClockMHz": gpu.get("graphicsClockMHz"),
+                "memoryClockMHz": gpu.get("memoryClockMHz"),
+                "powerDrawW": gpu.get("powerDrawW"),
+                "powerLimitW": gpu.get("powerLimitW"),
+                "activePowerScheme": power.get("activeScheme"),
+            })
+
+def validate_required_outputs(
+    summary_json: Path,
+    frame_csv: Path,
+    frame_jsonl: Path,
+    settings_json: Path,
+    run_name: str,
+    *,
+    case: dict[str, Any] | None = None,
+    environment_json: Path | None = None,
+) -> dict[str, Any]:
+    """Validate one run and emit a machine-readable validity decision."""
     for path in (summary_json, frame_csv, frame_jsonl, settings_json):
         wait_for_file(path, 10)
+
     summary = json.loads(summary_json.read_text(encoding="utf-8-sig"))
     settings = json.loads(settings_json.read_text(encoding="utf-8-sig"))
-    if summary.get("status") != "complete":
-        raise RuntimeError(f"Summary status is not complete for {run_name}")
-    if not settings.get("observed"):
-        raise RuntimeError(f"Observed settings are missing for {run_name}")
-    frame_count = sum(1 for line in frame_jsonl.read_text(encoding="utf-8-sig").splitlines() if line.strip())
-    expected = int(summary.get("measurement_frames", 0))
-    if expected and frame_count < expected:
-        raise RuntimeError(f"Only {frame_count}/{expected} JSONL frames were emitted for {run_name}")
+    rows = _read_jsonl(frame_jsonl)
+    issues: list[dict[str, Any]] = []
+
+    def issue(code: str, message: str, *, expected=None, observed=None) -> None:
+        issues.append({
+            "severity": "error",
+            "code": code,
+            "message": message,
+            "expected": expected,
+            "observed": observed,
+        })
+
+    status = str(summary.get("validationStatus") or summary.get("status") or "").lower()
+    if status not in {"complete_valid", "complete"}:
+        issue("status", "Run status is not complete_valid.", expected="complete_valid", observed=status)
+    if not bool(summary.get("realMeasurement", False)):
+        issue("real_measurement", "Run is not marked as a real hardware measurement.", expected=True, observed=summary.get("realMeasurement"))
+    if int(summary.get("fatalRuntimeFailureCount") or 0) != 0:
+        issue("fatal_runtime_failure", "Fatal runtime failures were reported.", expected=0, observed=summary.get("fatalRuntimeFailureCount"))
+    if int(summary.get("syntheticMetricCount") or 0) != 0:
+        issue("synthetic_metrics", "Synthetic metrics are forbidden in formal evidence.", expected=0, observed=summary.get("syntheticMetricCount"))
+
+    observed_settings = settings.get("observed")
+    if not isinstance(observed_settings, dict) or not observed_settings:
+        issue("observed_settings", "Observed settings are missing from settings JSON.")
+
+    expected_frames = int(summary.get("measurement_frames") or summary.get("measurementFrames") or (case or {}).get("measurement_frames") or 0)
+    if expected_frames and len(rows) != expected_frames:
+        issue("frame_count", "Measured JSONL row count is not exact.", expected=expected_frames, observed=len(rows))
+
+    source_indices: list[int] = []
+    resolved_count = 0
+    for index, row in enumerate(rows):
+        source = _metric(row, "sourceFrameIndex", "source_frame_index")
+        if source is None:
+            issue("source_frame_missing", f"Frame row {index} has no source-frame identity.")
+        else:
+            source_indices.append(int(source))
+        resolved = bool(_metric(row, "gpuTimingResolved", "gpu_timing_resolved", default=False))
+        availability = int(_metric(row, "availabilityMask", "availability_mask", default=0) or 0)
+        if resolved or (availability & (1 << 2)) != 0:
+            resolved_count += 1
+        for key, value in row.items():
+            if not _is_finite_number(value):
+                issue("non_finite_metric", f"Frame row {index} contains a non-finite value for {key}.", observed=value)
+                break
+        if int(_metric(row, "syntheticMetricCount", "synthetic_metric_count", default=0) or 0) != 0:
+            issue("frame_synthetic_metric", f"Frame row {index} contains synthetic metrics.")
+        if int(_metric(row, "fatalFailure", "fatal_failure", default=0) or 0) != 0:
+            issue("frame_fatal_failure", f"Frame row {index} reports a fatal runtime failure.")
+
+    if source_indices:
+        expected_sequence = list(range(source_indices[0], source_indices[0] + len(source_indices)))
+        if source_indices != expected_sequence:
+            issue("frame_sequence", "Source frame indices are missing, duplicated, or reordered.")
+        if len(set(source_indices)) != len(source_indices):
+            issue("duplicate_source_frame", "Duplicate source frame indices were emitted.")
+
+    coverage = resolved_count / len(rows) if rows else 0.0
+    minimum_coverage = float((case or {}).get("minimum_gpu_timing_coverage", 0.99))
+    if coverage < minimum_coverage:
+        issue("gpu_timing_coverage", "GPU timing coverage is below the formal threshold.", expected=minimum_coverage, observed=coverage)
+
+    if case:
+        expected_case = str(case.get("case_id", ""))
+        observed_case = str(summary.get("caseId") or summary.get("case_id") or "")
+        if expected_case and expected_case != observed_case:
+            issue("case_identity", "Case identity does not match.", expected=expected_case, observed=observed_case)
+        expected_method = str(case.get("method", ""))
+        observed_method = str(summary.get("appliedMethodCode") or summary.get("variant") or "")
+        if expected_method and observed_method and expected_method != observed_method:
+            issue("method_identity", "Applied method does not match requested method.", expected=expected_method, observed=observed_method)
+        expected_hash = str(case.get("settings_hash") or canonical_json_sha256(case))
+        observed_hash = str(summary.get("settingsSha256") or summary.get("settings_hash") or "")
+        if observed_hash and observed_hash.lower() != expected_hash.lower():
+            issue("settings_hash", "Settings hash does not match the case snapshot.", expected=expected_hash, observed=observed_hash)
+
+    environment = {}
+    if environment_json and Path(environment_json).exists():
+        environment = json.loads(Path(environment_json).read_text(encoding="utf-8-sig"))
+    canonical_payload = {
+        "summary": summary,
+        "settings": settings,
+        "frames": rows,
+        "environment": environment,
+    }
+    canonical_result_sha256 = canonical_json_sha256(canonical_payload)
+    validation_status = "complete_valid" if not issues else "complete_invalid"
+    validation = {
+        "runName": run_name,
+        "status": validation_status,
+        "isValid": not issues,
+        "realMeasurement": bool(summary.get("realMeasurement", False)),
+        "frameCount": len(rows),
+        "expectedFrameCount": expected_frames,
+        "gpuTimingResolvedFrameCount": resolved_count,
+        "gpuTimingCoverage": coverage,
+        "canonicalResultSha256": canonical_result_sha256,
+        "issues": issues,
+    }
+    validation_path = summary_json.parent / f"{run_name}_validation.json"
+    write_json(validation_path, validation)
+
+    summary["validationStatus"] = validation_status
+    summary["status"] = validation_status
+    summary["gpuTimingCoverage"] = coverage
+    summary["canonicalResultSha256"] = canonical_result_sha256
+    summary["validationReasons"] = issues
+    write_json(summary_json, summary)
+
+    if issues:
+        codes = ", ".join(item["code"] for item in issues[:8])
+        raise RuntimeError(f"Run '{run_name}' failed formal validation: {codes}")
+    return validation
 
 
 def _env_token(name: str) -> str:
@@ -166,6 +395,9 @@ def _write_case_snapshot(telemetry_dir: Path, run_name: str, case: dict[str, Any
     snapshot["commitSha"] = commit_sha
     snapshot["viewerExecutable"] = str(viewer_exe)
     snapshot["executableSha256"] = sha256_file(viewer_exe)
+    repo_root = Path(__file__).resolve().parents[2]
+    shader_roots = [repo_root / "shaders", repo_root / "apps" / "dx11_viewer" / "shaders"]
+    snapshot["shaderBundleSha256"] = sha256_tree(shader_roots)
 
     timeline = _resolve_case_path(case.get("scenario_timeline"))
     if timeline and timeline.exists():
@@ -227,6 +459,7 @@ def run_viewer(
         env["HAIRGPU_SCENARIO_TIMELINE_SHA256"] = str(snapshot_payload.get("scenarioTimelineSha256", ""))
         env["HAIRGPU_ASSET_MANIFEST_SHA256"] = str(snapshot_payload.get("assetManifestSha256", ""))
         env["HAIRGPU_ASSET_SHA256"] = str(snapshot_payload.get("assetSha256", ""))
+        env["HAIRGPU_SHADER_BUNDLE_SHA256"] = str(snapshot_payload.get("shaderBundleSha256", ""))
         env["HAIRGPU_ASSET_FROZEN"] = "1" if snapshot_payload.get("assetFrozen") else "0"
         env["HAIRGPU_APPLIED_METHOD_SETTINGS_SHA256"] = str(snapshot_payload.get("appliedMethodSettingsSha256", ""))
         assertions = dict(case.get("scenario_assertions", {}))
@@ -295,10 +528,13 @@ def run_viewer(
     environment_json = telemetry_dir / f"{run_name}_environment.json"
     environment_payload = {"start": collect_hardware_probe(str((case or {}).get("hardware_profile", "")), "start")}
     write_json(environment_json, environment_payload)
+    hardware_sampler = HardwareSampler(str((case or {}).get("hardware_profile", "")), 1.0)
+    hardware_sampler.start()
     process = subprocess.Popen([str(viewer_exe)], env=env)
     try:
         process.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
+        hardware_sampler.stop()
         process.terminate()
         try:
             process.wait(timeout=10)
@@ -312,9 +548,15 @@ def run_viewer(
     frame_csv = telemetry_dir / f"{run_name}_frames.csv"
     frame_jsonl = telemetry_dir / f"{run_name}_frames.jsonl"
     settings_json = telemetry_dir / f"{run_name}_settings.json"
+    hardware_samples = hardware_sampler.stop()
+    environment_payload["samples"] = hardware_samples
     environment_payload["end"] = collect_hardware_probe(str((case or {}).get("hardware_profile", "")), "end")
     write_json(environment_json, environment_payload)
-    validate_required_outputs(summary_json, frame_csv, frame_jsonl, settings_json, run_name)
+    write_hardware_timeseries(telemetry_dir / f"{run_name}_hardware_timeseries.csv", hardware_samples)
+    validate_required_outputs(
+        summary_json, frame_csv, frame_jsonl, settings_json, run_name,
+        case=case, environment_json=environment_json,
+    )
     return summary_json, frame_csv, frame_jsonl, settings_json, environment_json
 
 
@@ -360,7 +602,7 @@ def main() -> int:
     parser.add_argument("--frame-csv")
     parser.add_argument("--frame-jsonl")
     parser.add_argument("--settings-json")
-    parser.add_argument("--timeout-seconds", type=int, default=120)
+    parser.add_argument("--timeout-seconds", type=int, default=None)
     parser.add_argument("--config-json")
     parser.add_argument("--output-dir")
     parser.add_argument("--artifact", action="append", default=[])
@@ -378,7 +620,7 @@ def main() -> int:
     operator_name = args.operator or config.get("operator", "")
     notes = args.notes or config.get("notes", "")
     runtime_source = args.runtime_source or config.get("runtime_source", "dx11_viewer")
-    timeout_seconds = int(args.timeout_seconds or config.get("timeout_seconds", 120))
+    timeout_seconds = int(args.timeout_seconds if args.timeout_seconds is not None else config.get("timeout_seconds", 900))
     if not experiment_name or not run_name:
         raise SystemExit("--experiment and --run-name are required unless provided in --config-json")
 
@@ -413,6 +655,13 @@ def main() -> int:
             raise
 
     environment_json = locals().get("environment_json")
+    validation_json = telemetry_dir / f"{run_name}_validation.json"
+    if frame_jsonl and settings_json:
+        validate_required_outputs(
+            Path(summary_json), Path(frame_csv), Path(frame_jsonl), Path(settings_json), run_name,
+            case=config.get("case") if isinstance(config.get("case"), dict) else config,
+            environment_json=Path(environment_json) if environment_json else None,
+        )
 
     metadata = RuntimeRunMetadata(
         experiment_name=experiment_name,
@@ -424,7 +673,11 @@ def main() -> int:
         operator_name=operator_name,
         notes=notes,
     )
-    run_id = db.import_runtime_run(metadata, summary_json, frame_csv, frame_jsonl_path=frame_jsonl, settings_json_path=settings_json)
+    run_id = db.import_runtime_run(
+        metadata, summary_json, frame_csv,
+        frame_jsonl_path=frame_jsonl, settings_json_path=settings_json,
+        environment_json_path=environment_json, validation_json_path=validation_json,
+    )
 
     output_dir_value = args.output_dir or config.get("output_dir")
     if output_dir_value:
