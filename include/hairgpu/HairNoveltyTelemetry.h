@@ -5,8 +5,6 @@
 
 namespace hairgpu
 {
-
-    // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
     enum HairNoveltyTelemetryAvailabilityBits : uint64_t
     {
         HairTelemetryAvailability_None = 0ull,
@@ -21,17 +19,21 @@ namespace hairgpu
         HairTelemetryAvailability_RepairVerification = 1ull << 8u,
         HairTelemetryAvailability_BoundaryComparison = 1ull << 9u,
         HairTelemetryAvailability_DeterminismHash = 1ull << 10u,
-        HairTelemetryAvailability_AdapterIdentity = 1ull << 11u
+        HairTelemetryAvailability_AdapterIdentity = 1ull << 11u,
+
+        // 01-Safe v3.1: these are intentionally independent. False-static
+        // evidence must not be inferred from collision or boundary evidence.
+        HairTelemetryAvailability_FalseStaticGroundTruth = 1ull << 12u,
+        HairTelemetryAvailability_PerformanceEnvironment = 1ull << 13u,
+        HairTelemetryAvailability_ResultIntegrity = 1ull << 14u
     };
+
     struct HairNoveltyFrameTelemetry
     {
         uint32_t frameIndex = 0u;
         uint32_t measuredFrameIndex = 0u;
         uint32_t topLevelNoveltyMask = 0u;
 
-        // Delayed evidence identity and availability. sourceFrameIndex is the
-        // simulation/render frame that produced this record, not the frame on
-        // which the CPU resolved the asynchronous query.
         uint32_t sourceFrameIndex = 0u;
         uint64_t availabilityMask = HairTelemetryAvailability_None;
         uint64_t metricAvailabilityMask = HairTelemetryAvailability_None;
@@ -68,11 +70,7 @@ namespace hairgpu
         uint32_t floatFallbackRequestCount = 0u;
         uint32_t rejectPayloadCount = 0u;
 
-        // -----------------------------------------------------------------
-        // 01: Segment-Group Certified Strand Data Type
-        // -----------------------------------------------------------------
-
-        // State population.
+        // 01: Segment-Group Certified Strand Data Type.
         uint32_t totalSegmentGroupCount = 0u;
         uint32_t staticCachedGroupCount = 0u;
         uint32_t staticTransformedGroupCount = 0u;
@@ -81,35 +79,29 @@ namespace hairgpu
         uint32_t repairRequiredGroupCount = 0u;
         uint32_t fallbackGroupCount = 0u;
 
-        // Dirty hierarchy.
         uint32_t totalSegmentGroupBlockCount = 0u;
         uint32_t dirtyBlockCount = 0u;
         uint32_t dirtyGroupCount = 0u;
 
-        // Cache certificate results.
         uint32_t certificateValidGroupCount = 0u;
         uint32_t certificateInvalidGroupCount = 0u;
-
         uint32_t parentVersionMismatchCount = 0u;
         uint32_t colliderVersionMismatchCount = 0u;
         uint32_t editVersionMismatchCount = 0u;
         uint32_t topologyVersionMismatchCount = 0u;
 
-        // Static reuse quality.
         uint32_t staticReuseAttemptCount = 0u;
         uint32_t falseStaticCount = 0u;
-        float falseStaticRate = 0.0f;
+        float falseStaticRate = std::numeric_limits<float>::quiet_NaN();
 
         uint32_t cacheHitCount = 0u;
         uint32_t cacheMissCount = 0u;
         uint32_t cacheInvalidationCount = 0u;
 
-        // Shared endpoint and hemisphere ownership.
         uint32_t sharedPointConflictCount = 0u;
         uint32_t hemisphereParentResolveCount = 0u;
         uint32_t hemisphereChildResolveCount = 0u;
 
-        // Predictive wake and recovery quality.
         uint32_t wakeRequestGroupCount = 0u;
         uint32_t predictiveWakeEvaluatedCount = 0u;
         uint32_t predictiveWakeTruePositiveCount = 0u;
@@ -121,8 +113,9 @@ namespace hairgpu
         float wakePositionErrorMaxMm = 0.0f;
         float wakeVelocityErrorMean = 0.0f;
         float wakeVelocityErrorMax = 0.0f;
+        float predictiveWakePrecision = std::numeric_limits<float>::quiet_NaN();
+        float predictiveWakeRecall = std::numeric_limits<float>::quiet_NaN();
 
-        // Repair quality.
         uint32_t repairAttemptCount = 0u;
         uint32_t repairSuccessCount = 0u;
         uint32_t repairVerifiedCount = 0u;
@@ -131,41 +124,38 @@ namespace hairgpu
         uint32_t repairRecurrenceCount = 0u;
         uint32_t repairLatencyFrameSum = 0u;
         uint32_t repairLatencyFrameMax = 0u;
-        float repairSuccessRate = 0.0f;
+        float repairExecutionSuccessRate = std::numeric_limits<float>::quiet_NaN();
+        float repairVerifiedSuccessRate = std::numeric_limits<float>::quiet_NaN();
 
-        // State stability.
+        // Compatibility alias. New reports must use repairVerifiedSuccessRate.
+        float repairSuccessRate = std::numeric_limits<float>::quiet_NaN();
+
         uint32_t stateTransitionCount = 0u;
         uint32_t stateOscillationCount = 0u;
         uint32_t staticLifetimeFrameSum = 0u;
         uint32_t staticLifetimeFrameMax = 0u;
+        float stateOscillationRate = std::numeric_limits<float>::quiet_NaN();
 
-        // Collision-ground-truth checks.
         uint32_t collisionCandidateCount = 0u;
         uint32_t collisionMissCount = 0u;
         uint32_t penetrationEventCount = 0u;
-        float collisionMissRate = 0.0f;
+        float collisionMissRate = std::numeric_limits<float>::quiet_NaN();
         float meanPenetrationMm = 0.0f;
 
-        // GPU compaction.
         uint32_t dynamicCompactionInputCount = 0u;
         uint32_t dynamicCompactionOutputCount = 0u;
         uint32_t repairCompactionOutputCount = 0u;
 
-        // Watchdog.
         uint32_t watchdogCheckCount = 0u;
         uint32_t watchdogRepairCount = 0u;
 
-        // Static/Dynamic boundary.
         float staticDynamicBoundaryMeanErrorMm = 0.0f;
         float staticDynamicBoundaryMaxErrorMm = 0.0f;
 
-        // Memory.
         float directionCacheMemoryMb = 0.0f;
         float fullPositionMemoryMb = 0.0f;
-        float directionCacheMemorySavingRate = 0.0f;
+        float directionCacheMemorySavingRate = std::numeric_limits<float>::quiet_NaN();
 
-        // GPU pass timings. All fields must come from delayed timestamp-query
-        // readback and must not force same-frame CPU/GPU synchronization.
         float blockClassificationGpuMilliseconds = 0.0f;
         float groupClassificationGpuMilliseconds = 0.0f;
         float predictiveWakeGpuMilliseconds = 0.0f;
@@ -224,33 +214,62 @@ namespace hairgpu
         uint32_t delayedTelemetryReadCount = 0u;
     };
 
+    inline bool HasTelemetryMetric(const HairNoveltyFrameTelemetry& telemetry, uint64_t bit)
+    {
+        return (telemetry.metricAvailabilityMask & bit) != 0ull;
+    }
+
+    inline float SafeTelemetryRate(uint32_t numerator, uint32_t denominator, bool available)
+    {
+        return available && denominator > 0u
+            ? static_cast<float>(numerator) / static_cast<float>(denominator)
+            : std::numeric_limits<float>::quiet_NaN();
+    }
+
     inline void FinalizeNoveltyTelemetryRates(HairNoveltyFrameTelemetry& telemetry)
     {
-        const float unavailable = std::numeric_limits<float>::quiet_NaN();
         const uint32_t staticGroupCount =
             telemetry.staticCachedGroupCount + telemetry.staticTransformedGroupCount;
-        telemetry.falseStaticRate =
-            (telemetry.metricAvailabilityMask & HairTelemetryAvailability_CollisionGroundTruth) != 0ull && staticGroupCount > 0u
-            ? static_cast<float>(telemetry.falseStaticCount) / static_cast<float>(staticGroupCount)
-            : unavailable;
 
-        telemetry.repairSuccessRate =
-            (telemetry.metricAvailabilityMask & HairTelemetryAvailability_RepairVerification) != 0ull &&
-            telemetry.repairAttemptCount > 0u
-            ? static_cast<float>(telemetry.repairVerifiedCount) /
-                static_cast<float>(telemetry.repairAttemptCount)
-            : unavailable;
+        telemetry.falseStaticRate = SafeTelemetryRate(
+            telemetry.falseStaticCount,
+            staticGroupCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_FalseStaticGroundTruth));
 
-        telemetry.collisionMissRate =
-            (telemetry.metricAvailabilityMask & HairTelemetryAvailability_CollisionGroundTruth) != 0ull &&
-            telemetry.collisionCandidateCount > 0u
-            ? static_cast<float>(telemetry.collisionMissCount) /
-                static_cast<float>(telemetry.collisionCandidateCount)
-            : unavailable;
+        telemetry.repairExecutionSuccessRate = SafeTelemetryRate(
+            telemetry.repairSuccessCount,
+            telemetry.repairAttemptCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_RepairVerification));
+
+        telemetry.repairVerifiedSuccessRate = SafeTelemetryRate(
+            telemetry.repairVerifiedCount,
+            telemetry.repairAttemptCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_RepairVerification));
+        telemetry.repairSuccessRate = telemetry.repairVerifiedSuccessRate;
+
+        telemetry.predictiveWakePrecision = SafeTelemetryRate(
+            telemetry.predictiveWakeTruePositiveCount,
+            telemetry.predictiveWakeTruePositiveCount + telemetry.predictiveWakeFalsePositiveCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_WakeGroundTruth));
+
+        telemetry.predictiveWakeRecall = SafeTelemetryRate(
+            telemetry.predictiveWakeTruePositiveCount,
+            telemetry.predictiveWakeTruePositiveCount + telemetry.predictiveWakeFalseNegativeCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_WakeGroundTruth));
+
+        telemetry.collisionMissRate = SafeTelemetryRate(
+            telemetry.collisionMissCount,
+            telemetry.collisionCandidateCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_CollisionGroundTruth));
+
+        telemetry.stateOscillationRate = SafeTelemetryRate(
+            telemetry.stateOscillationCount,
+            telemetry.stateTransitionCount,
+            HasTelemetryMetric(telemetry, HairTelemetryAvailability_Scenario));
 
         telemetry.directionCacheMemorySavingRate = telemetry.fullPositionMemoryMb > 0.0f
             ? 1.0f - telemetry.directionCacheMemoryMb / telemetry.fullPositionMemoryMb
-            : 0.0f;
+            : std::numeric_limits<float>::quiet_NaN();
     }
 
     inline HairNoveltyFrameTelemetry MakeZeroNoveltyTelemetry()
