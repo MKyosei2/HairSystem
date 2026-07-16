@@ -1,0 +1,77 @@
+name: Diagnose experiment source patch
+
+on:
+  pull_request:
+    branches:
+      - Novelty
+    paths:
+      - ".github/workflows/diagnose-experiment-source-patch.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Diagnose patch anchors
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import base64
+          import gzip
+          import importlib.util
+          import os
+          import traceback
+
+          repo = Path.cwd()
+          parts = sorted(Path("tools/tmp").glob("patcher.py.gz.b64.part*"))
+          encoded = "".join(path.read_text(encoding="ascii") for path in parts)
+          patcher_path = Path(os.environ["RUNNER_TEMP"]) / "apply_experiment_runtime_patch.py"
+          patcher_path.write_bytes(gzip.decompress(base64.b64decode(encoded)))
+          spec = importlib.util.spec_from_file_location("hairgpu_patch", patcher_path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+          patchers = {
+              "GpuHairViewer.h": module.patch_header,
+              "01_window_device_and_ui_setup.inl": module.patch_part01,
+              "02_resource_creation_and_shader_loading.inl": module.patch_part02,
+              "03_simulation_reset_and_frame_step.inl": module.patch_part03,
+              "06_render_mesh_and_visibility_recovery.inl": module.patch_part06,
+              "10_phase1_telemetry_csv_jsonl_summary.inl": module.patch_part10,
+              "11_experiment_env_and_performance_sample.inl": module.patch_part11,
+              "HairNoveltyTelemetry.h": module.patch_telemetry,
+              "hairgpu_final_run.py": module.patch_final_run,
+              "hairgpu_safe_runtime_suite.py": module.patch_safe_suite,
+          }
+          report = []
+          try:
+              for name, patch in patchers.items():
+                  path = repo / module.PREFERRED_PATHS[name]
+                  report.append(f"BEGIN {name} {path}")
+                  modified = patch(module.read_text(path))
+                  report.append(f"OK {name} chars={len(modified)}")
+          except Exception:
+              report.append("FAILURE")
+              report.append(traceback.format_exc())
+              Path("PATCH_DIAGNOSTIC.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+              print("\n".join(report))
+              raise
+          Path("PATCH_DIAGNOSTIC.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          '@ | Set-Content "$env:RUNNER_TEMP\diagnose.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\diagnose.py"
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Patch-Diagnostic
+          path: PATCH_DIAGNOSTIC.txt
+          if-no-files-found: error
+          retention-days: 1
