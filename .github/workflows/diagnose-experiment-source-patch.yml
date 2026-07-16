@@ -40,6 +40,20 @@ jobs:
           assert spec.loader is not None
           spec.loader.exec_module(module)
 
+          original_replace_once = module.replace_once
+          def replace_once_compat(text: str, old: str, new: str, label: str) -> str:
+              if label == "CSV measured headers" and text.count(old) == 0:
+                  old = "microtypeWatchdogInterval\\n\";\n"
+                  new = (
+                      "microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,"
+                      "sourceFrameIndex,availabilityMask,fatalFailure,fatalFailureCode,"
+                      "scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,"
+                      "collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,"
+                      "stateTransitionCount,stateOscillationCount\\n\";\n"
+                  )
+              return original_replace_once(text, old, new, label)
+          module.replace_once = replace_once_compat
+
           def patch_part10_compat(text: str) -> str:
               if module.MARKER in text:
                   return text
