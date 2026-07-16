@@ -56,7 +56,13 @@ jobs:
               for name, patch in patchers.items():
                   path = repo / module.PREFERRED_PATHS[name]
                   report.append(f"BEGIN {name} {path}")
-                  modified = patch(module.read_text(path))
+                  source = module.read_text(path)
+                  if name == "02_resource_creation_and_shader_loading.inl":
+                      source = source.replace(
+                          "disjoint.Frequency > 0ull)",
+                          "disjoint.Frequency > 0)",
+                      )
+                  modified = patch(source)
                   report.append(f"OK {name} chars={len(modified)}")
           except Exception:
               report.append("FAILURE")
