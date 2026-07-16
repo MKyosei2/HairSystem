@@ -1,0 +1,153 @@
+name: Export modified experiment sources
+
+on:
+  push:
+    branches:
+      - agent/export-modified-experiment-sources
+    paths:
+      - ".github/workflows/export-modified-experiment-sources.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout temporary branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rebuild patcher
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import base64
+          import gzip
+
+          parts = sorted(Path("tools/tmp").glob("patcher.py.gz.b64.part*"))
+          if len(parts) != 6:
+              raise SystemExit(f"expected 6 payload parts, found {len(parts)}")
+          encoded = "".join(path.read_text(encoding="ascii") for path in parts)
+          payload = gzip.decompress(base64.b64decode(encoded))
+          output = Path("$env:RUNNER_TEMP") / "apply_experiment_runtime_patch.py"
+          output.write_bytes(payload)
+          print(output)
+          '@ | Set-Content "$env:RUNNER_TEMP\rebuild_patcher.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\rebuild_patcher.py"
+
+      - name: Patch exactly ten source files
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import importlib.util
+          import py_compile
+
+          repo = Path.cwd()
+          patcher_path = Path("$env:RUNNER_TEMP") / "apply_experiment_runtime_patch.py"
+          spec = importlib.util.spec_from_file_location("hairgpu_patch", patcher_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("unable to load patcher")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+
+          patchers = {
+              "GpuHairViewer.h": module.patch_header,
+              "01_window_device_and_ui_setup.inl": module.patch_part01,
+              "02_resource_creation_and_shader_loading.inl": module.patch_part02,
+              "03_simulation_reset_and_frame_step.inl": module.patch_part03,
+              "06_render_mesh_and_visibility_recovery.inl": module.patch_part06,
+              "10_phase1_telemetry_csv_jsonl_summary.inl": module.patch_part10,
+              "11_experiment_env_and_performance_sample.inl": module.patch_part11,
+              "HairNoveltyTelemetry.h": module.patch_telemetry,
+              "hairgpu_final_run.py": module.patch_final_run,
+              "hairgpu_safe_runtime_suite.py": module.patch_safe_suite,
+          }
+
+          for name, patch in patchers.items():
+              path = repo / module.PREFERRED_PATHS[name]
+              source = module.read_text(path)
+              modified = patch(source)
+              module.write_text(path, modified)
+              print(f"patched: {path}")
+
+          py_compile.compile(str(repo / module.PREFERRED_PATHS["hairgpu_final_run.py"]), doraise=True)
+          py_compile.compile(str(repo / module.PREFERRED_PATHS["hairgpu_safe_runtime_suite.py"]), doraise=True)
+          '@ | Set-Content "$env:RUNNER_TEMP\apply_ten.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\apply_ten.py"
+
+      - name: Package exactly ten modified files
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+          import hashlib
+          import json
+
+          paths = [
+              "apps/dx11_viewer/src/GpuHairViewer.h",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "include/hairgpu/HairNoveltyTelemetry.h",
+              "tools/final_stage/hairgpu_final_run.py",
+              "tools/final_stage/hairgpu_safe_runtime_suite.py",
+          ]
+          missing = [path for path in paths if not Path(path).is_file()]
+          if missing:
+              raise SystemExit(f"missing files: {missing}")
+
+          marker = "HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1"
+          marker_hits = {
+              path: marker in Path(path).read_text(encoding="utf-8")
+              for path in paths
+          }
+          if not all(marker_hits.values()):
+              raise SystemExit(f"patch marker missing: {marker_hits}")
+
+          manifest = {
+              "fileCount": len(paths),
+              "files": [
+                  {
+                      "path": path,
+                      "sizeBytes": Path(path).stat().st_size,
+                      "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+                  }
+                  for path in paths
+              ],
+          }
+          Path("MODIFIED_FILES_MANIFEST.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          output = Path("HairSystem_10_Modified_Source_Files.zip")
+          with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+              for path in paths:
+                  archive.write(path, path)
+          with ZipFile(output) as archive:
+              if archive.namelist() != paths:
+                  raise SystemExit("archive member order or contents mismatch")
+          print(output.resolve())
+          '@ | Set-Content "$env:RUNNER_TEMP\package_ten.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\package_ten.py"
+
+      - name: Upload modified source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-10-Modified-Source-Files
+          path: |
+            HairSystem_10_Modified_Source_Files.zip
+            MODIFIED_FILES_MANIFEST.json
+          if-no-files-found: error
+          retention-days: 1
