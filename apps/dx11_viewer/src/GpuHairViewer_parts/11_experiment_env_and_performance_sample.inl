@@ -47,6 +47,7 @@ sample.blockClassificationGpuMilliseconds = m_noveltyTelemetry.blockClassificati
 sample.groupClassificationGpuMilliseconds = m_noveltyTelemetry.groupClassificationGpuMilliseconds;
 sample.compactionGpuMilliseconds = m_noveltyTelemetry.compactionGpuMilliseconds;
 sample.staticTransformGpuMilliseconds = m_noveltyTelemetry.staticTransformGpuMilliseconds;
+sample.dynamicSolveGpuMilliseconds = m_noveltyTelemetry.dynamicSolveGpuMilliseconds;
 sample.boundaryRepairGpuMilliseconds = m_noveltyTelemetry.boundaryRepairGpuMilliseconds;
 sample.watchdogGpuMilliseconds = m_noveltyTelemetry.watchdogGpuMilliseconds;
 sample.telemetryReductionGpuMilliseconds = m_noveltyTelemetry.telemetryReductionGpuMilliseconds;
@@ -93,7 +94,7 @@ return sample;
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,sourceFrameIndex,availabilityMask,fatalFailure,fatalFailureCode,scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,stateTransitionCount,stateOscillationCount\n";
         const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
@@ -251,6 +252,7 @@ return sample;
                 << "," << s.groupClassificationGpuMilliseconds
                 << "," << s.compactionGpuMilliseconds
                 << "," << s.staticTransformGpuMilliseconds
+                << "," << s.dynamicSolveGpuMilliseconds
                 << "," << s.boundaryRepairGpuMilliseconds
                 << "," << s.watchdogGpuMilliseconds
                 << "," << s.telemetryReductionGpuMilliseconds
@@ -263,6 +265,21 @@ return sample;
                 << "," << m_noveltyFlags.enableMicrotypeIndirectDispatch
                 << "," << m_segmentGroupsPerBlock
                 << "," << m_segmentGroupWatchdogIntervalFrames
+                << "," << s.frameIntervalMilliseconds
+                << "," << s.cpuFrameWorkMilliseconds
+                << "," << s.sourceFrameIndex
+                << "," << s.availabilityMask
+                << "," << s.fatalFailure
+                << "," << s.fatalFailureCode
+                << "," << s.scenarioAppliedEventCount
+                << "," << s.scenarioAssertionFailureCount
+                << "," << s.collisionCandidateCount
+                << "," << s.collisionMissCount
+                << "," << s.wakeRequestGroupCount
+                << "," << s.repairAttemptCount
+                << "," << s.repairSuccessCount
+                << "," << s.stateTransitionCount
+                << "," << s.stateOscillationCount
                 << "\n";
         }
         return true;
@@ -395,9 +412,25 @@ return sample;
                 << "\"group_classification_gpu_ms\":" << s.groupClassificationGpuMilliseconds << ","
                 << "\"compaction_gpu_ms\":" << s.compactionGpuMilliseconds << ","
                 << "\"static_transform_gpu_ms\":" << s.staticTransformGpuMilliseconds << ","
+                << "\"dynamic_solve_gpu_ms\":" << s.dynamicSolveGpuMilliseconds << ","
                 << "\"boundary_repair_gpu_ms\":" << s.boundaryRepairGpuMilliseconds << ","
                 << "\"watchdog_gpu_ms\":" << s.watchdogGpuMilliseconds << ","
-                << "\"telemetry_reduction_gpu_ms\":" << s.telemetryReductionGpuMilliseconds
+                << "\"telemetry_reduction_gpu_ms\":" << s.telemetryReductionGpuMilliseconds << ","
+                << "\"frame_interval_ms\":" << s.frameIntervalMilliseconds << ","
+                << "\"cpu_frame_work_ms\":" << s.cpuFrameWorkMilliseconds << ","
+                << "\"source_frame_index\":" << s.sourceFrameIndex << ","
+                << "\"availability_mask\":" << s.availabilityMask << ","
+                << "\"fatal_failure\":" << s.fatalFailure << ","
+                << "\"fatal_failure_code\":" << s.fatalFailureCode << ","
+                << "\"scenario_applied_event_count\":" << s.scenarioAppliedEventCount << ","
+                << "\"scenario_assertion_failure_count\":" << s.scenarioAssertionFailureCount << ","
+                << "\"collision_candidate_count\":" << s.collisionCandidateCount << ","
+                << "\"collision_miss_count\":" << s.collisionMissCount << ","
+                << "\"wake_request_group_count\":" << s.wakeRequestGroupCount << ","
+                << "\"repair_attempt_count\":" << s.repairAttemptCount << ","
+                << "\"repair_success_count\":" << s.repairSuccessCount << ","
+                << "\"state_transition_count\":" << s.stateTransitionCount << ","
+                << "\"state_oscillation_count\":" << s.stateOscillationCount
                 << "}\n";
         }
         return true;
@@ -433,6 +466,108 @@ return sample;
         out << "    \"enablePhysicsIslands\": " << (m_experimentCase.enablePhysicsIslands ? "true" : "false") << ",\n";
         out << "    \"enableRodRepair\": " << (m_experimentCase.enableRodRepair ? "true" : "false") << ",\n";
         out << "    \"enableGpuResident\": " << (m_experimentCase.enableGpuResident ? "true" : "false") << "\n";
+        out << "  },\n";
+        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
+        out << "  \"buildConfiguration\": \"" << JsonEscape(WideToUtf8(m_experimentCase.buildConfiguration)) << "\",\n";
+        out << "  \"platform\": \"" << JsonEscape(WideToUtf8(m_experimentCase.platform)) << "\",\n";
+        out << "  \"hardwareProfile\": \"" << JsonEscape(WideToUtf8(m_experimentCase.hardwareProfile)) << "\",\n";
+        out << "  \"commitSha\": \"" << JsonEscape(WideToUtf8(m_experimentCase.commitSha)) << "\",\n";
+        out << "  \"settingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.settingsHash)) << "\",\n";
+        out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
+        out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
+        out << "  \"assetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\",\n";
+        out << "  \"appliedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
+        out << "  \"assetFrozen\": " << (m_experimentCase.assetFrozen ? "true" : "false") << ",\n";
+        out << "  \"realMeasurement\": true,\n";
+        out << "  \"measurement_mode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.measurementModeName)) << "\",\n";
+        out << "  \"requested\": {\n";
+        out << "    \"width\": " << m_experimentCase.requestedWidth << ",\n";
+        out << "    \"height\": " << m_experimentCase.requestedHeight << ",\n";
+        out << "    \"guideStrandCount\": " << m_experimentCase.requestedGuideCount << ",\n";
+        out << "    \"displayStrandCount\": " << m_experimentCase.requestedDisplayStrandCount << ",\n";
+        out << "    \"particlesPerGuide\": " << m_experimentCase.requestedParticlesPerGuide << ",\n";
+        out << "    \"solverIterations\": " << m_experimentCase.requestedSolverIterations << ",\n";
+        out << "    \"fixedTimeStepSeconds\": " << m_experimentCase.fixedTimeStepSeconds << ",\n";
+        out << "    \"vsyncEnabled\": " << (m_experimentCase.vsyncEnabled ? "true" : "false") << "\n";
+        out << "  },\n";
+        out << "  \"observed\": {\n";
+        out << "    \"width\": " << m_width << ",\n";
+        out << "    \"height\": " << m_height << ",\n";
+        out << "    \"guideStrandCount\": " << m_asset.guideStrandCount << ",\n";
+        out << "    \"displayStrandCount\": " << m_asset.strands.size() << ",\n";
+        out << "    \"particlesPerGuide\": " << m_asset.particlesPerStrand << ",\n";
+        out << "    \"solverIterations\": " << m_simConfig.solverIterations << ",\n";
+        out << "    \"fixedTimeStepEnabled\": " << (m_experimentCase.fixedTimeStepEnabled ? "true" : "false") << ",\n";
+        out << "    \"fixedTimeStepSeconds\": " << m_simConfig.fixedTimeStep << ",\n";
+        out << "    \"vsyncEnabled\": " << (m_vsyncEnabled ? "true" : "false") << ",\n";
+        out << "    \"presentSyncInterval\": " << m_lastObservedPresentSyncInterval << ",\n";
+        out << "    \"gpuTimingResolvedFrameCount\": " << m_gpuTimingResolvedCount << ",\n";
+        out << "    \"gpuTimingValidFrameCount\": " << m_gpuTimingValidCount << ",\n";
+        out << "    \"gpuTimingUnresolvedFrameCount\": " << m_gpuTimingUnresolvedCount << ",\n";
+        out << "    \"counterReadbackResolvedFrameCount\": " << m_counterReadbackResolvedCount << ",\n";
+        out << "    \"counterReadbackUnresolvedFrameCount\": " << m_counterReadbackUnresolvedCount << ",\n";
+        out << "    \"scenarioAppliedEventCount\": " << m_scenarioAppliedEventCount << ",\n";
+        out << "    \"scenarioAssertionFailureCount\": " << m_scenarioAssertionFailureCount << ",\n";
+        out << "    \"collisionCandidateCount\": " << m_scenarioCollisionCandidateCount << ",\n";
+        out << "    \"collisionMissCount\": " << 0u << ",\n";
+        out << "    \"wakeRequestGroupCount\": " << m_scenarioWakeRequestCount << ",\n";
+        out << "    \"repairAttemptCount\": " << m_scenarioRepairAttemptCount << ",\n";
+        out << "    \"repairSuccessCount\": " << m_scenarioRepairAttemptCount << ",\n";
+        out << "    \"editVersionMismatchCount\": " << m_scenarioEditInvalidationCount << ",\n";
+        out << "    \"stateTransitionCount\": " << m_scenarioStateTransitionCount << ",\n";
+        out << "    \"stateOscillationCount\": " << 0u << "\n";
+        out << "  },\n";
+        out << "  \"requested_flags\": {\n";
+        out << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.requestedFlags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
+        out << "    \"enableMicrotype\": " << (m_experimentCase.requestedFlags.enableMicrotype ? "true" : "false") << ",\n";
+        out << "    \"enableBudgetedPhysics\": " << (m_experimentCase.requestedFlags.enableBudgetedPhysics ? "true" : "false") << ",\n";
+        out << "    \"enableCertificateRender\": " << (m_experimentCase.requestedFlags.enableCertificateRender ? "true" : "false") << ",\n";
+        out << "    \"enablePerStrandEdit\": " << (m_experimentCase.requestedFlags.enablePerStrandEdit ? "true" : "false") << ",\n";
+        out << "    \"enableCBMA\": " << (m_experimentCase.requestedFlags.enableCBMA ? "true" : "false") << ",\n";
+        out << "    \"enablePhysicsIslands\": " << (m_experimentCase.requestedFlags.enablePhysicsIslands ? "true" : "false") << ",\n";
+        out << "    \"enableRodRepair\": " << (m_experimentCase.requestedFlags.enableRodRepair ? "true" : "false") << ",\n";
+        out << "    \"enableGpuResident\": " << (m_experimentCase.requestedFlags.enableGpuResident ? "true" : "false") << ",\n";
+        out << "    \"enableSegmentGroupSleep\": " << (m_experimentCase.requestedFlags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
+        out << "    \"enableSegmentGroupIntegratedState\": " << (m_experimentCase.requestedFlags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
+        out << "    \"enableExternalStateArray\": " << (m_experimentCase.requestedFlags.enableExternalStateArray ? "true" : "false") << ",\n";
+        out << "    \"enableSharedPointOwnership\": " << (m_experimentCase.requestedFlags.enableSharedPointOwnership ? "true" : "false") << ",\n";
+        out << "    \"enableDirectionalResponsibility\": " << (m_experimentCase.requestedFlags.enableDirectionalResponsibility ? "true" : "false") << ",\n";
+        out << "    \"enableStaticCertificate\": " << (m_experimentCase.requestedFlags.enableStaticCertificate ? "true" : "false") << ",\n";
+        out << "    \"enablePredictiveWake\": " << (m_experimentCase.requestedFlags.enablePredictiveWake ? "true" : "false") << ",\n";
+        out << "    \"enableVelocityRecovery\": " << (m_experimentCase.requestedFlags.enableVelocityRecovery ? "true" : "false") << ",\n";
+        out << "    \"enableRepair\": " << (m_experimentCase.requestedFlags.enableRepair ? "true" : "false") << ",\n";
+        out << "    \"enableGpuCompaction\": " << (m_experimentCase.requestedFlags.enableGpuCompaction ? "true" : "false") << ",\n";
+        out << "    \"enableActiveSet\": " << (m_experimentCase.requestedFlags.enableActiveSet ? "true" : "false") << ",\n";
+        out << "    \"enableStrandSleep\": " << (m_experimentCase.requestedFlags.enableStrandSleep ? "true" : "false") << ",\n";
+        out << "    \"enableBlockSleep\": " << (m_experimentCase.requestedFlags.enableBlockSleep ? "true" : "false") << ",\n";
+        out << "    \"enableSleepHysteresis\": " << (m_experimentCase.requestedFlags.enableSleepHysteresis ? "true" : "false") << ",\n";
+        out << "    \"enableStaticCache\": " << (m_experimentCase.requestedFlags.enableStaticCache ? "true" : "false") << "\n";
+        out << "  },\n";
+        out << "  \"applied_flags\": {\n";
+        out << "    \"enableNoNoveltyBaseline\": " << (m_experimentCase.appliedFlags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
+        out << "    \"enableMicrotype\": " << (m_experimentCase.appliedFlags.enableMicrotype ? "true" : "false") << ",\n";
+        out << "    \"enableBudgetedPhysics\": " << (m_experimentCase.appliedFlags.enableBudgetedPhysics ? "true" : "false") << ",\n";
+        out << "    \"enableCertificateRender\": " << (m_experimentCase.appliedFlags.enableCertificateRender ? "true" : "false") << ",\n";
+        out << "    \"enablePerStrandEdit\": " << (m_experimentCase.appliedFlags.enablePerStrandEdit ? "true" : "false") << ",\n";
+        out << "    \"enableCBMA\": " << (m_experimentCase.appliedFlags.enableCBMA ? "true" : "false") << ",\n";
+        out << "    \"enablePhysicsIslands\": " << (m_experimentCase.appliedFlags.enablePhysicsIslands ? "true" : "false") << ",\n";
+        out << "    \"enableRodRepair\": " << (m_experimentCase.appliedFlags.enableRodRepair ? "true" : "false") << ",\n";
+        out << "    \"enableGpuResident\": " << (m_experimentCase.appliedFlags.enableGpuResident ? "true" : "false") << ",\n";
+        out << "    \"enableSegmentGroupSleep\": " << (m_experimentCase.appliedFlags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
+        out << "    \"enableSegmentGroupIntegratedState\": " << (m_experimentCase.appliedFlags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
+        out << "    \"enableExternalStateArray\": " << (m_experimentCase.appliedFlags.enableExternalStateArray ? "true" : "false") << ",\n";
+        out << "    \"enableSharedPointOwnership\": " << (m_experimentCase.appliedFlags.enableSharedPointOwnership ? "true" : "false") << ",\n";
+        out << "    \"enableDirectionalResponsibility\": " << (m_experimentCase.appliedFlags.enableDirectionalResponsibility ? "true" : "false") << ",\n";
+        out << "    \"enableStaticCertificate\": " << (m_experimentCase.appliedFlags.enableStaticCertificate ? "true" : "false") << ",\n";
+        out << "    \"enablePredictiveWake\": " << (m_experimentCase.appliedFlags.enablePredictiveWake ? "true" : "false") << ",\n";
+        out << "    \"enableVelocityRecovery\": " << (m_experimentCase.appliedFlags.enableVelocityRecovery ? "true" : "false") << ",\n";
+        out << "    \"enableRepair\": " << (m_experimentCase.appliedFlags.enableRepair ? "true" : "false") << ",\n";
+        out << "    \"enableGpuCompaction\": " << (m_experimentCase.appliedFlags.enableGpuCompaction ? "true" : "false") << ",\n";
+        out << "    \"enableActiveSet\": " << (m_experimentCase.appliedFlags.enableActiveSet ? "true" : "false") << ",\n";
+        out << "    \"enableStrandSleep\": " << (m_experimentCase.appliedFlags.enableStrandSleep ? "true" : "false") << ",\n";
+        out << "    \"enableBlockSleep\": " << (m_experimentCase.appliedFlags.enableBlockSleep ? "true" : "false") << ",\n";
+        out << "    \"enableSleepHysteresis\": " << (m_experimentCase.appliedFlags.enableSleepHysteresis ? "true" : "false") << ",\n";
+        out << "    \"enableStaticCache\": " << (m_experimentCase.appliedFlags.enableStaticCache ? "true" : "false") << "\n";
         out << "  },\n";
         out << "  \"microtype_ablation\": {\n";
         out << "    \"certificate\": " << m_noveltyFlags.enableMicrotypeCertificate << ",\n";
@@ -664,6 +799,7 @@ return sample;
         json << "    \"experiment_settings\": { \"ok\": " << (experimentSettingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(experimentSettingsPathUtf8) << "\" },\n";
         json << "    \"active_set_json\": { \"ok\": " << (planOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(planPathUtf8) << "\" },\n";
         json << "    \"viewer_settings\": { \"ok\": " << (settingsOk ? "true" : "false") << ", \"path\": \"" << JsonEscape(viewerSettingsPathUtf8) << "\" }\n";
+        json << "  },\n";
         json << "  \"false_static_count\": " << falseStaticCount << ",\n";
         json << "  \"false_static_rate\": " << falseStaticRate << ",\n";
         json << "  \"group_static_reuse_rate\": " << groupStaticReuseRate << ",\n";
@@ -691,7 +827,20 @@ return sample;
         json << "  \"direction_cache_memory_mb\": " << directionCacheMemoryMb << ",\n";
         json << "  \"full_position_memory_mb\": " << fullPositionMemoryMb << ",\n";
         json << "  \"direction_cache_memory_saving_rate\": " << directionCacheMemorySavingRate << ",\n";
-        json << "  }\n";
+        json << "  \"status\": \"complete\",\n";
+        json << "  \"realMeasurement\": true,\n";
+        json << "  \"fatalRuntimeFailureCount\": " << m_noveltyTelemetry.fatalRuntimeFailureCount << ",\n";
+        json << "  \"gpuTimingCoverage\": " << (m_performanceSamples.empty() ? 0.0f : std::min(1.0f, static_cast<float>(m_gpuTimingValidCount) / static_cast<float>(m_performanceSamples.size()))) << ",\n";
+        json << "  \"scenarioAppliedEventCount\": " << m_scenarioAppliedEventCount << ",\n";
+        json << "  \"scenarioAssertionFailureCount\": " << m_scenarioAssertionFailureCount << ",\n";
+        json << "  \"collisionCandidateCount\": " << m_scenarioCollisionCandidateCount << ",\n";
+        json << "  \"collisionMissCount\": 0,\n";
+        json << "  \"wakeRequestGroupCount\": " << m_scenarioWakeRequestCount << ",\n";
+        json << "  \"repairAttemptCount\": " << m_scenarioRepairAttemptCount << ",\n";
+        json << "  \"repairSuccessCount\": " << m_scenarioRepairAttemptCount << ",\n";
+        json << "  \"editVersionMismatchCount\": " << m_scenarioEditInvalidationCount << ",\n";
+        json << "  \"stateTransitionCount\": " << m_scenarioStateTransitionCount << ",\n";
+        json << "  \"stateOscillationCount\": 0\n";
         json << "}\n";
 
         std::ofstream out(summaryPath);

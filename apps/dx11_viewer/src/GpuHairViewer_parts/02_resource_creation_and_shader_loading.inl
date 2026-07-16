@@ -46,12 +46,27 @@
     int GpuHairViewer::Run()
     {
         MSG msg = {};
-        LoadExperimentCaseFromEnvironment();
+        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1: configuration was loaded before initialization.
         m_globalFrameIndex = 0u;
         m_measuredFrameIndex = 0u;
         while (m_running)
         {
-            ResolveGpuTimingFrame(m_gpuTimingFrames[m_gpuTimingWriteIndex]);
+            for (GpuTimingFrame& pendingTiming : m_gpuTimingFrames)
+            {
+                if (pendingTiming.issued)
+                {
+                    ++pendingTiming.ageFrames;
+                    ResolveGpuTimingFrame(pendingTiming);
+                }
+            }
+            for (CounterReadbackFrame& pendingCounter : m_counterReadbackFrames)
+            {
+                if (pendingCounter.issued)
+                {
+                    ++pendingCounter.ageFrames;
+                    ResolveCounterReadback(pendingCounter);
+                }
+            }
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
             {
                 if (msg.message == WM_QUIT)
@@ -69,6 +84,7 @@
             const float dt = static_cast<float>(now.QuadPart - m_lastTick.QuadPart) / static_cast<float>(m_qpcFrequency.QuadPart);
             m_lastTick = now;
             m_lastFrameSeconds = dt;
+            m_lastFrameIntervalMilliseconds = dt * 1000.0f;
             const float instantFps = (dt > 1.0e-6f) ? (1.0f / dt) : 0.0f;
             m_smoothedFps = (m_smoothedFps <= 0.0f) ? instantFps : (m_smoothedFps * 0.92f + instantFps * 0.08f);
             m_statsUpdateAccumulator += dt;
@@ -87,6 +103,10 @@
                 m_context->End(gpuFrame.simStart.Get());
 
                 gpuFrame.issued = true;
+                gpuFrame.resolved = false;
+                gpuFrame.sourceFrameIndex = m_globalFrameIndex;
+                gpuFrame.ageFrames = 0u;
+                gpuFrame.passIssued.fill(0u);
                 m_activeGpuTimingFrameIndex = static_cast<int32_t>(m_gpuTimingWriteIndex);
             }
 
@@ -94,16 +114,27 @@
 
             LARGE_INTEGER simBegin = {};
             LARGE_INTEGER simEnd = {};
+            LARGE_INTEGER frameWorkBegin = {};
+            QueryPerformanceCounter(&frameWorkBegin);
             QueryPerformanceCounter(&simBegin);
 
             if (!m_paused)
             {
-                m_accumulator += std::min(dt, 0.1f);
-                while (m_accumulator >= m_simConfig.fixedTimeStep)
+                if (IsExperimentModeEnabled())
                 {
-                    StepSimulation(m_simConfig.fixedTimeStep);
-                    m_accumulator -= m_simConfig.fixedTimeStep;
+                    // Exactly one deterministic simulation tick per captured render frame.
+                    ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
                     m_elapsedSeconds += m_simConfig.fixedTimeStep;
+                }
+                else
+                {
+                    m_accumulator += std::min(dt, 0.1f);
+                    while (m_accumulator >= m_simConfig.fixedTimeStep)
+                    {
+                        ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
+                        m_accumulator -= m_simConfig.fixedTimeStep;
+                        m_elapsedSeconds += m_simConfig.fixedTimeStep;
+                    }
                 }
             }
 
@@ -124,6 +155,11 @@
                 }
             }
 
+            UpdateCamera();
+            Render();
+            LARGE_INTEGER frameWorkEnd = {};
+            QueryPerformanceCounter(&frameWorkEnd);
+            m_lastCpuFrameWorkMilliseconds = static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
             PerformanceSample sample = BuildPerformanceSample(dt, instantFps);
             if (ShouldCaptureCurrentFrame())
             {
@@ -134,9 +170,6 @@
                     m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
                 }
             }
-
-            UpdateCamera();
-            Render();
             ++m_globalFrameIndex;
             if (ShouldAutoExitAfterCurrentFrame())
             {
@@ -153,6 +186,8 @@
                 m_statsUpdateAccumulator = 0.0f;
             }
         }
+
+        DrainGpuTimingAndCounterReadbacks();
 
         const std::wstring autoTelemetry = GetEnvironmentVariableString(L"HAIRGPU_AUTO_TELEMETRY");
         if (!autoTelemetry.empty() && autoTelemetry != L"0" && autoTelemetry != L"false" && autoTelemetry != L"FALSE")
@@ -993,6 +1028,14 @@
             {
                 return false;
             }
+            for (size_t passIndex = 0u; passIndex < kGpuPassCount; ++passIndex)
+            {
+                if (!createQuery(D3D11_QUERY_TIMESTAMP, frame.passStart[passIndex]) ||
+                    !createQuery(D3D11_QUERY_TIMESTAMP, frame.passEnd[passIndex]))
+                {
+                    return false;
+                }
+            }
         }
         m_gpuTimingWriteIndex = 0u;
         m_activeGpuTimingFrameIndex = -1;
@@ -1017,8 +1060,20 @@
         UINT64 frameEnd = 0ull;
         D3D11_QUERY_DATA_PIPELINE_STATISTICS hairStats = {};
         D3D11_QUERY_DATA_PIPELINE_STATISTICS debugStats = {};
+        std::array<UINT64, kGpuPassCount> passStarts = {};
+        std::array<UINT64, kGpuPassCount> passEnds = {};
+        std::array<float, kGpuPassCount> passMilliseconds = {};
 
         const UINT flags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
+        for (size_t passIndex = 0u; passIndex < kGpuPassCount; ++passIndex)
+        {
+            if (frame.passIssued[passIndex] != 0u &&
+                (m_context->GetData(frame.passStart[passIndex].Get(), &passStarts[passIndex], sizeof(UINT64), flags) != S_OK ||
+                 m_context->GetData(frame.passEnd[passIndex].Get(), &passEnds[passIndex], sizeof(UINT64), flags) != S_OK))
+            {
+                return;
+            }
+        }
         if (m_context->GetData(frame.disjoint.Get(), &disjoint, sizeof(disjoint), flags) != S_OK ||
             m_context->GetData(frame.frameStart.Get(), &frameStart, sizeof(frameStart), flags) != S_OK ||
             m_context->GetData(frame.simStart.Get(), &simStart, sizeof(simStart), flags) != S_OK ||
@@ -1034,17 +1089,51 @@
             return;
         }
 
-        if (!disjoint.Disjoint && disjoint.Frequency > 0ull)
+        const bool timingValid = !disjoint.Disjoint && disjoint.Frequency > 0;
+        if (timingValid)
         {
             const double invFreqMs = 1000.0 / static_cast<double>(disjoint.Frequency);
             m_lastGpuFrameMilliseconds = static_cast<float>(static_cast<double>(frameEnd - frameStart) * invFreqMs);
             m_lastGpuSimulationMilliseconds = static_cast<float>(static_cast<double>(simEnd - simStart) * invFreqMs);
             m_lastGpuHairDrawMilliseconds = static_cast<float>(static_cast<double>(hairEnd - hairStart) * invFreqMs);
             m_lastGpuDebugDrawMilliseconds = static_cast<float>(static_cast<double>(debugEnd - debugStart) * invFreqMs);
+            for (size_t passIndex = 0u; passIndex < kGpuPassCount; ++passIndex)
+            {
+                if (frame.passIssued[passIndex] != 0u && passEnds[passIndex] >= passStarts[passIndex])
+                {
+                    passMilliseconds[passIndex] = static_cast<float>(static_cast<double>(passEnds[passIndex] - passStarts[passIndex]) * invFreqMs);
+                }
+            }
         }
+        if (timingValid)
+        {
+            for (PerformanceSample& sample : m_performanceSamples)
+            {
+                if (sample.globalFrameIndex == frame.sourceFrameIndex)
+                {
+                    sample.sourceFrameIndex = frame.sourceFrameIndex;
+                    sample.gpuHairMilliseconds = m_lastGpuSimulationMilliseconds + m_lastGpuHairDrawMilliseconds;
+                sample.blockClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BlockClassification)];
+                sample.groupClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::GroupClassification)];
+                sample.compactionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Compaction)];
+                sample.staticTransformGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::StaticTransform)];
+                sample.dynamicSolveGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::DynamicSolve)];
+                sample.boundaryRepairGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BoundaryRepair)];
+                sample.watchdogGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Watchdog)];
+                sample.telemetryReductionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::TelemetryReduction)];
+                    sample.availabilityMask |= hairgpu::HairTelemetryAvailability_GpuTiming;
+                    ++m_gpuTimingValidCount;
+                    break;
+                }
+            }
+        }
+        frame.resolved = true;
+        ++m_gpuTimingResolvedCount;
         m_lastHairPipelineStats = hairStats;
         m_lastDebugPipelineStats = debugStats;
         frame.issued = false;
+        frame.ageFrames = 0u;
+        frame.passIssued.fill(0u);
     }
 
     bool GpuHairViewer::CreateRenderResources()

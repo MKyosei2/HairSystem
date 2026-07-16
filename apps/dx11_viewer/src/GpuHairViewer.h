@@ -263,6 +263,8 @@ namespace hairgpu::viewer
         {
             float elapsedSeconds = 0.0f;
             float frameMilliseconds = 0.0f;
+            float frameIntervalMilliseconds = 0.0f;
+            float cpuFrameWorkMilliseconds = 0.0f;
             float simulationMilliseconds = 0.0f;
             float fps = 0.0f;
             uint32_t guideCount = 0;
@@ -290,6 +292,19 @@ namespace hairgpu::viewer
             float correctiveAverageLengthErrorAfter = 0.0f;
             uint32_t globalFrameIndex = 0u;
             uint32_t measuredFrameIndex = 0u;
+            uint32_t sourceFrameIndex = 0u;
+            uint32_t availabilityMask = 0u;
+            uint32_t fatalFailure = 0u;
+            uint32_t fatalFailureCode = 0u;
+            uint32_t scenarioAppliedEventCount = 0u;
+            uint32_t scenarioAssertionFailureCount = 0u;
+            uint32_t collisionCandidateCount = 0u;
+            uint32_t collisionMissCount = 0u;
+            uint32_t wakeRequestGroupCount = 0u;
+            uint32_t repairAttemptCount = 0u;
+            uint32_t repairSuccessCount = 0u;
+            uint32_t stateTransitionCount = 0u;
+            uint32_t stateOscillationCount = 0u;
 
             uint32_t topLevelNoveltyMask = 0u;
             uint32_t overflowCount = 0u;
@@ -349,6 +364,30 @@ namespace hairgpu::viewer
             uint32_t dispatchIndirectCount = 0u;
             uint32_t drawIndirectCount = 0u;
             uint32_t delayedTelemetryReadCount = 0u;
+            uint32_t totalSegmentGroupBlockCount = 0u;
+            uint32_t dirtyBlockCount = 0u;
+            uint32_t dirtyGroupCount = 0u;
+            uint32_t certificateValidGroupCount = 0u;
+            uint32_t certificateInvalidGroupCount = 0u;
+            uint32_t parentVersionMismatchCount = 0u;
+            uint32_t colliderVersionMismatchCount = 0u;
+            uint32_t editVersionMismatchCount = 0u;
+            uint32_t topologyVersionMismatchCount = 0u;
+            uint32_t staticReuseAttemptCount = 0u;
+            uint32_t sharedPointConflictCount = 0u;
+            uint32_t hemisphereParentResolveCount = 0u;
+            uint32_t hemisphereChildResolveCount = 0u;
+            uint32_t dynamicCompactionInputCount = 0u;
+            uint32_t dynamicCompactionOutputCount = 0u;
+            uint32_t repairCompactionOutputCount = 0u;
+            float blockClassificationGpuMilliseconds = 0.0f;
+            float groupClassificationGpuMilliseconds = 0.0f;
+            float compactionGpuMilliseconds = 0.0f;
+            float staticTransformGpuMilliseconds = 0.0f;
+            float dynamicSolveGpuMilliseconds = 0.0f;
+            float boundaryRepairGpuMilliseconds = 0.0f;
+            float watchdogGpuMilliseconds = 0.0f;
+            float telemetryReductionGpuMilliseconds = 0.0f;
             uint32_t warmupFrames = 0u;
             uint32_t measurementFrames = 0u;
             uint32_t seed = 0u;
@@ -378,16 +417,23 @@ namespace hairgpu::viewer
             float maxPenetrationMm = 0.0f;
         };
 
-        struct ExperimentCaseConfig
+        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
+        enum class MeasurementMode : uint32_t
         {
-            bool enabled = false;
-            bool autoExitAfterCapture = false;
-            std::wstring caseId;
-            std::wstring variant;
-            std::wstring scenario;
-            uint32_t seed = 0u;
-            uint32_t warmupFrames = 0u;
-            uint32_t measurementFrames = 0u;
+            Performance = 0u,
+            Quality = 1u,
+            Determinism = 2u,
+            Robustness = 3u
+        };
+
+        enum class SegmentGroupStateStorage : uint32_t
+        {
+            IntegratedRecord = 0u,
+            ExternalArray = 1u
+        };
+
+        struct ExperimentMethodFlags
+        {
             bool enableNoNoveltyBaseline = false;
             bool enableMicrotype = false;
             bool enableBudgetedPhysics = false;
@@ -397,7 +443,80 @@ namespace hairgpu::viewer
             bool enablePhysicsIslands = false;
             bool enableRodRepair = false;
             bool enableGpuResident = false;
+            bool enableSegmentGroupSleep = false;
+            bool enableSegmentGroupIntegratedState = true;
+            bool enableExternalStateArray = false;
+            bool enableSharedPointOwnership = true;
+            bool enableDirectionalResponsibility = true;
+            bool enableStaticCertificate = true;
+            bool enablePredictiveWake = true;
+            bool enableVelocityRecovery = true;
+            bool enableRepair = true;
+            bool enableGpuCompaction = true;
+            bool enableActiveSet = true;
+            bool enableStrandSleep = false;
+            bool enableBlockSleep = false;
+            bool enableSleepHysteresis = true;
+            bool enableStaticCache = true;
+            SegmentGroupStateStorage stateStorage = SegmentGroupStateStorage::IntegratedRecord;
+        };
+
+        struct ExperimentCaseConfig
+        {
+            bool enabled = false;
+            bool autoExitAfterCapture = false;
+            bool fixedTimeStepEnabled = true;
+            bool vsyncEnabled = false;
+            std::wstring caseId;
+            std::wstring variant;
+            std::wstring scenario;
+            std::wstring measurementModeName = L"performance";
+            std::wstring caseJsonPath;
+            std::wstring scenarioTimelinePath;
+            std::wstring assetManifestPath;
             std::wstring settingsHash;
+            std::wstring executableSha256;
+            std::wstring commitSha;
+            std::wstring buildConfiguration = L"Release";
+            std::wstring platform = L"x64";
+            std::wstring hardwareProfile;
+            std::wstring scenarioTimelineSha256;
+            std::wstring assetManifestSha256;
+            std::wstring assetSha256;
+            std::wstring appliedMethodSettingsSha256;
+            bool assetFrozen = false;
+            uint32_t seed = 0u;
+            uint32_t repetitionIndex = 0u;
+            uint32_t warmupFrames = 0u;
+            uint32_t measurementFrames = 0u;
+            uint32_t requestedWidth = 1600u;
+            uint32_t requestedHeight = 900u;
+            uint32_t requestedGuideCount = 6000u;
+            uint32_t requestedDisplayStrandCount = 0u;
+            uint32_t requestedParticlesPerGuide = 128u;
+            uint32_t requestedSolverIterations = 12u;
+            uint32_t presentSyncInterval = 0u;
+            uint32_t gpuTimestampDelayFrames = 4u;
+            uint32_t scenarioAssertionMinAppliedEvents = 0u;
+            uint32_t scenarioAssertionMinCollisionCandidates = 0u;
+            uint32_t scenarioAssertionMinWakeRequests = 0u;
+            uint32_t scenarioAssertionMinRepairs = 0u;
+            uint32_t scenarioAssertionMinTransitions = 0u;
+            float fixedTimeStepSeconds = 1.0f / 120.0f;
+            MeasurementMode measurementMode = MeasurementMode::Performance;
+            ExperimentMethodFlags requestedFlags = {};
+            ExperimentMethodFlags appliedFlags = {};
+
+            // Compatibility mirrors retained for existing exporters.
+            bool enableNoNoveltyBaseline = false;
+            bool enableMicrotype = false;
+            bool enableBudgetedPhysics = false;
+            bool enableCertificateRender = false;
+            bool enablePerStrandEdit = false;
+            bool enableCBMA = false;
+            bool enablePhysicsIslands = false;
+            bool enableRodRepair = false;
+            bool enableGpuResident = false;
         };
 
         struct Float4
@@ -798,6 +917,20 @@ namespace hairgpu::viewer
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
         };
 
+        enum class GpuPassId : uint32_t
+        {
+            BlockClassification = 0u,
+            GroupClassification,
+            Compaction,
+            StaticTransform,
+            DynamicSolve,
+            BoundaryRepair,
+            Watchdog,
+            TelemetryReduction,
+            Count
+        };
+        static constexpr size_t kGpuPassCount = static_cast<size_t>(GpuPassId::Count);
+
         struct GpuTimingFrame
         {
             Microsoft::WRL::ComPtr<ID3D11Query> disjoint;
@@ -811,7 +944,22 @@ namespace hairgpu::viewer
             Microsoft::WRL::ComPtr<ID3D11Query> frameEnd;
             Microsoft::WRL::ComPtr<ID3D11Query> hairPipelineStats;
             Microsoft::WRL::ComPtr<ID3D11Query> debugPipelineStats;
+            std::array<Microsoft::WRL::ComPtr<ID3D11Query>, kGpuPassCount> passStart = {};
+            std::array<Microsoft::WRL::ComPtr<ID3D11Query>, kGpuPassCount> passEnd = {};
+            std::array<uint8_t, kGpuPassCount> passIssued = {};
+            uint32_t sourceFrameIndex = 0u;
+            uint32_t ageFrames = 0u;
             bool issued = false;
+            bool resolved = false;
+        };
+
+        struct CounterReadbackFrame
+        {
+            Microsoft::WRL::ComPtr<ID3D11Buffer> staging;
+            uint32_t sourceFrameIndex = 0u;
+            uint32_t ageFrames = 0u;
+            bool issued = false;
+            bool resolved = false;
         };
 
         bool CreateWindowAndDevice(HINSTANCE instance, int showCommand);
@@ -837,6 +985,9 @@ namespace hairgpu::viewer
         void ApplyPreset(int presetIndex);
         void ResetSimulation();
         void StepSingleFrame();
+        void ExecuteExperimentSimulationTick(float dt);
+        void ApplyScenarioForTick(uint32_t tickIndex, float dt);
+        uint64_t ComputeColliderStateHash() const;
         void StepSimulation(float dt);
         void ResetNoveltyTelemetryForFrame();
         bool BuildSegmentGroupRuntimeTopology();
@@ -886,6 +1037,12 @@ namespace hairgpu::viewer
         void UpdateRenderStatistics();
         bool CreateGpuTimingQueries();
         void ResolveGpuTimingFrame(GpuTimingFrame& frame);
+        void BeginGpuPassTiming(GpuPassId pass);
+        void EndGpuPassTiming(GpuPassId pass);
+        void QueueCounterReadback(uint32_t sourceFrameIndex);
+        void ResolveCounterReadback(CounterReadbackFrame& frame);
+        void DrainGpuTimingAndCounterReadbacks();
+        void PatchSampleFromResolvedGpuTiming(uint32_t sourceFrameIndex);
         bool SaveSettingsToFile(const std::wstring& filePath) const;
         bool LoadSettingsFromFile(const std::wstring& filePath);
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
@@ -894,7 +1051,8 @@ namespace hairgpu::viewer
         bool ExportExperimentSettingsJson(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
-        void LoadExperimentCaseFromEnvironment();
+        bool LoadExperimentCaseFromEnvironment();
+        void ApplyExperimentConfigBeforeAssetCreation();
         bool IsExperimentModeEnabled() const;
         bool ShouldCaptureCurrentFrame() const;
         bool ShouldAutoExitAfterCurrentFrame() const;
@@ -979,6 +1137,10 @@ namespace hairgpu::viewer
         HWND m_hwnd = nullptr;
         UINT m_width = 1600;
         UINT m_height = 900;
+        bool m_vsyncEnabled = true;
+        UINT m_presentSyncInterval = 1u;
+        UINT m_lastObservedPresentSyncInterval = 1u;
+        HRESULT m_lastPresentResult = S_OK;
         bool m_running = true;
         bool m_paused = false;
         bool m_dragging = false;
@@ -1107,6 +1269,8 @@ namespace hairgpu::viewer
         float m_scalpHairBlend = 0.70f;
         float m_smoothedFps = 0.0f;
         float m_lastFrameSeconds = 0.0f;
+        float m_lastFrameIntervalMilliseconds = 0.0f;
+        float m_lastCpuFrameWorkMilliseconds = 0.0f;
         float m_lastSimulationStepMilliseconds = 0.0f;
         float m_statsUpdateAccumulator = 0.0f;
         hairgpu::HairAsset m_asset;
@@ -1299,9 +1463,27 @@ namespace hairgpu::viewer
         uint32_t m_runtimeFollowerUpdatePhase = 0u;
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastHairPipelineStats = {};
         D3D11_QUERY_DATA_PIPELINE_STATISTICS m_lastDebugPipelineStats = {};
-        std::array<GpuTimingFrame, 3> m_gpuTimingFrames = {};
+        std::array<GpuTimingFrame, 8> m_gpuTimingFrames = {};
+        std::array<CounterReadbackFrame, 8> m_counterReadbackFrames = {};
+        uint32_t m_counterReadbackWriteIndex = 0u;
         uint32_t m_gpuTimingWriteIndex = 0u;
         int32_t m_activeGpuTimingFrameIndex = -1;
+        uint32_t m_simulationTickIndex = 0u;
+        uint32_t m_scenarioAppliedEventCount = 0u;
+        uint32_t m_scenarioAssertionFailureCount = 0u;
+        uint32_t m_scenarioCollisionCandidateCount = 0u;
+        uint32_t m_scenarioWakeRequestCount = 0u;
+        uint32_t m_scenarioRepairAttemptCount = 0u;
+        uint32_t m_scenarioEditInvalidationCount = 0u;
+        uint32_t m_scenarioStateTransitionCount = 0u;
+        uint64_t m_lastColliderStateHash = 0ull;
+        Vec3 m_scenarioBaseSphereCenter = { 0.0f, 1.66f, 0.0f };
+        bool m_scenarioBaseCaptured = false;
+        uint32_t m_gpuTimingResolvedCount = 0u;
+        uint32_t m_gpuTimingValidCount = 0u;
+        uint32_t m_gpuTimingUnresolvedCount = 0u;
+        uint32_t m_counterReadbackResolvedCount = 0u;
+        uint32_t m_counterReadbackUnresolvedCount = 0u;
 
         RenderMode m_renderMode = RenderMode::StrandRibbon;
         InteractionMode m_interactionMode = InteractionMode::Edit;

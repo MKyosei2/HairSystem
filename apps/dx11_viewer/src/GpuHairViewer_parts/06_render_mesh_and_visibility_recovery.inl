@@ -42,7 +42,19 @@
         m_lastTotalDrawCalls += m_lastCurrentHairDrawCalls;
         UpdateRenderStatistics();
 
-        m_swapChain->Present(1, 0);
+        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1: observed Present configuration is evidence, not an assumption.
+        const UINT presentSyncInterval = m_vsyncEnabled
+            ? std::clamp<UINT>(m_presentSyncInterval, 1u, 4u)
+            : 0u;
+        m_lastObservedPresentSyncInterval = presentSyncInterval;
+        m_lastPresentResult = m_swapChain->Present(presentSyncInterval, 0u);
+        if (FAILED(m_lastPresentResult))
+        {
+            m_noveltyTelemetry.fatalFailure = 1u;
+            m_noveltyTelemetry.fatalFailureCode = static_cast<uint32_t>(m_lastPresentResult);
+            ++m_noveltyTelemetry.fatalRuntimeFailureCount;
+            m_running = false;
+        }
         UpdateWindowTitle();
     }
 

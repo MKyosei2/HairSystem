@@ -125,19 +125,23 @@ def safe_slug(value: str) -> str:
 def flatten_mapping(mapping: Any) -> dict[str, list[Any]]:
     flattened: dict[str, list[Any]] = {}
 
-    def visit(value: Any, key: str = "") -> None:
+    def visit(value: Any, key: str = "", path: str = "") -> None:
         if isinstance(value, dict):
             for child_key, child_value in value.items():
-                visit(child_value, str(child_key))
+                child = str(child_key)
+                child_path = f"{path}.{child}" if path else child
+                visit(child_value, child, child_path)
             return
         if isinstance(value, list):
             for child_value in value:
-                if isinstance(child_value, dict):
-                    visit(child_value, key)
+                visit(child_value, key, path)
             return
-        token = normalize_key(key)
-        if token:
-            flattened.setdefault(token, []).append(value)
+        parts = [part for part in path.split(".") if part]
+        candidates = [key, path] + [".".join(parts[index:]) for index in range(len(parts))]
+        for candidate in candidates:
+            token = normalize_key(candidate)
+            if token:
+                flattened.setdefault(token, []).append(value)
 
     visit(mapping)
     return flattened
@@ -296,12 +300,15 @@ def absolutize_and_hash_run_paths(config_dir: Path, config: dict[str, Any], runs
             value = run.get(key)
             if value in (None, ""):
                 continue
+            if key == "scenario_timeline" and str(value).startswith("builtin:"):
+                continue
             path = Path(str(value))
             if not path.is_absolute():
                 run[key] = str((config_dir / path).resolve())
-        timeline = Path(str(run.get("scenario_timeline", "")))
+        timeline_value = str(run.get("scenario_timeline", ""))
+        timeline = Path(timeline_value)
         manifest = Path(str(run.get("asset_manifest", "")))
-        run["scenario_timeline_sha256"] = sha256_file(timeline) if timeline.exists() else ""
+        run["scenario_timeline_sha256"] = sha256_bytes(timeline_value.encode("utf-8")) if timeline_value.startswith("builtin:") else (sha256_file(timeline) if timeline.exists() else "")
         run["asset_manifest_sha256"] = sha256_file(manifest) if manifest.exists() else ""
         run["method_settings_sha256"] = canonical_json_sha256(run.get("method_settings", {}))
         run["settings_hash"] = canonical_json_sha256(stable_run_signature(run, suite_version, source_commit))
@@ -313,6 +320,7 @@ def expand_matrix(config: dict[str, Any], config_path: Path | None = None) -> tu
     methods = config.get("methods", [])
     scenarios = config.get("scenarios", [])
     seeds = config.get("seeds", [])
+    repetitions_per_seed = max(1, int(config.get("repetitions_per_seed", 1)))
     method_by_code = {str(item.get("code", "")): item for item in methods}
     scenario_by_code = {str(item.get("code", "")): item for item in scenarios}
     runs: list[dict[str, Any]] = []
@@ -339,30 +347,36 @@ def expand_matrix(config: dict[str, Any], config_path: Path | None = None) -> tu
                 if not method_code:
                     raise ValueError("Every method requires a non-empty code.")
                 for seed in seeds:
-                    case_index += 1
-                    run = deep_merge(defaults, method.get("settings", {}))
-                    run.update(
-                        {
-                            "experiment": config.get("experiment_name", "runtime_suite"),
-                            "run_role": "primary",
-                            "method": method_code,
-                            "variant": method_code,
-                            "method_label": method.get("label", method_code),
-                            "method_settings": copy.deepcopy(method.get("settings", {})),
-                            "scenario": scenario_code,
-                            "scenario_category": scenario.get("category", ""),
-                            "scenario_timeline": scenario.get("timeline", ""),
-                            "seed": int(seed),
-                            "repeat_index": 0,
-                        }
-                    )
-                    case_id = (
-                        f"case_{case_index:05d}_{safe_slug(scenario_code)}_"
-                        f"{safe_slug(method_code)}_seed{int(seed)}"
-                    )
-                    run["case_id"] = case_id
-                    run["run_name"] = case_id
-                    runs.append(run)
+                    for repeat_index in range(1, repetitions_per_seed + 1):
+                        case_index += 1
+                        run = deep_merge(defaults, method.get("settings", {}))
+                        run.update(
+                            {
+                                "experiment": config.get("experiment_name", "runtime_suite"),
+                                "run_role": "primary",
+                                "method": method_code,
+                                "variant": method_code,
+                                "method_label": method.get("label", method_code),
+                                "method_settings": copy.deepcopy(method.get("settings", {})),
+                                "scenario": scenario_code,
+                                "scenario_category": scenario.get("category", ""),
+                                "scenario_timeline": scenario.get("timeline", ""),
+                                "scenario_assertions": deep_merge(
+                                    copy.deepcopy(scenario.get("assertions", {})),
+                                    copy.deepcopy(scenario.get("assertions_by_method", {}).get(method_code, {})),
+                                ),
+                                "measurement_mode": scenario.get("measurement_mode", defaults.get("measurement_mode", "performance")),
+                                "seed": int(seed),
+                                "repeat_index": repeat_index,
+                            }
+                        )
+                        case_id = (
+                            f"case_{case_index:05d}_{safe_slug(scenario_code)}_"
+                            f"{safe_slug(method_code)}_seed{int(seed)}_r{repeat_index}"
+                        )
+                        run["case_id"] = case_id
+                        run["run_name"] = case_id
+                        runs.append(run)
 
         for replay_index, replay in enumerate(config.get("determinism_replays", []), start=1):
             scenario_code = str(replay.get("scenario", ""))
@@ -549,15 +563,21 @@ def validate_static_contract(
 
     for scenario in scenarios:
         scenario_code = str(scenario.get("code", ""))
-        timeline_path = resolve_path(config_dir, scenario.get("timeline"))
-        if timeline_path is None:
-            _issue(issues, "error", "missing_timeline", f"Scenario timeline is missing for {scenario_code}.")
+        timeline_value = str(scenario.get("timeline", ""))
+        if timeline_value.startswith("builtin:"):
+            pass
         else:
-            validate_timeline(timeline_path, scenario_code, preflight, defaults, issues)
+            timeline_path = resolve_path(config_dir, timeline_value)
+            if timeline_path is None:
+                if preflight.get("require_scenario_timeline", True):
+                    _issue(issues, "error", "missing_timeline", f"Scenario timeline is missing for {scenario_code}.")
+            else:
+                validate_timeline(timeline_path, scenario_code, preflight, defaults, issues)
 
     manifest_path = resolve_path(config_dir, defaults.get("asset_manifest"))
     if manifest_path is None:
-        _issue(issues, "error", "missing_asset_manifest", "run_defaults.asset_manifest is required.")
+        if preflight.get("require_frozen_asset", True):
+            _issue(issues, "error", "missing_asset_manifest", "run_defaults.asset_manifest is required.")
     else:
         validate_asset_manifest(manifest_path, config_dir, preflight, issues)
 
@@ -572,7 +592,7 @@ def validate_static_contract(
             _issue(issues, "error", "invalid_hardware_profiles", f"Cannot parse hardware profiles: {exc}")
 
     primary_runs = [run for run in runs if run.get("run_role", "primary") == "primary"]
-    expected_primary_count = len(methods) * len(scenarios) * len(seeds)
+    expected_primary_count = len(methods) * len(scenarios) * len(seeds) * max(1, int(config.get("repetitions_per_seed", 1)))
     if len(primary_runs) != expected_primary_count:
         _issue(
             issues,
@@ -616,6 +636,11 @@ def validate_static_contract(
         profile = str(run.get("hardware_profile", ""))
         if hardware_profiles and profile not in hardware_profiles:
             _issue(issues, "error", "unknown_hardware_profile", f"Unknown hardware profile: {profile}", case_id)
+        elif hardware_profiles:
+            contract = hardware_profiles.get(profile, {})
+            for required_key in ("temperatureC", "graphicsClockMHz", "memoryClockMHz", "power"):
+                if required_key not in contract:
+                    _issue(issues, "error", "incomplete_hardware_profile", f"Hardware profile {profile} is missing {required_key}.", case_id)
 
     for replay in config.get("determinism_replays", []):
         if int(replay.get("repetitions", 0)) < 2:
@@ -684,10 +709,12 @@ def load_run_evidence(config_path: Path, config: dict[str, Any], run: dict[str, 
     frame_path = resolve_path(config_dir, run.get("frame_csv")) or telemetry_root / f"{run_name}_frames.csv"
     settings_path = resolve_path(config_dir, run.get("settings_json")) or telemetry_root / f"{run_name}_settings.json"
     case_path = telemetry_root / f"{run_name}_case.json"
+    environment_path = telemetry_root / f"{run_name}_environment.json"
 
     summary = read_json(summary_path) if summary_path.exists() else {}
     settings = read_json(settings_path) if settings_path.exists() else {}
     case_snapshot = read_json(case_path) if case_path.exists() else {}
+    environment = read_json(environment_path) if environment_path.exists() else {}
     rows: list[dict[str, str]] = []
     frame_ms: list[float] = []
     headers: set[str] = set()
@@ -695,7 +722,7 @@ def load_run_evidence(config_path: Path, config: dict[str, Any], run: dict[str, 
     if frame_path.exists():
         rows, frame_ms, headers, invalid_frame_count = read_frame_csv(frame_path)
 
-    runtime_combined = deep_merge(settings, summary)
+    runtime_combined = deep_merge(environment, deep_merge(settings, summary))
     combined = deep_merge(case_snapshot, runtime_combined)
     evidence: dict[str, Any] = {
         "case_id": run.get("case_id", ""),
@@ -712,6 +739,8 @@ def load_run_evidence(config_path: Path, config: dict[str, Any], run: dict[str, 
         "frame_path": str(frame_path),
         "settings_path": str(settings_path),
         "case_path": str(case_path),
+        "environment_path": str(environment_path),
+        "environment_exists": environment_path.exists(),
         "summary_exists": summary_path.exists(),
         "frame_exists": frame_path.exists(),
         "settings_exists": settings_path.exists(),
@@ -745,6 +774,34 @@ def load_run_evidence(config_path: Path, config: dict[str, Any], run: dict[str, 
     return evidence
 
 
+
+def validate_scenario_assertions(run: dict[str, Any], combined: dict[str, Any]) -> list[tuple[str, str]]:
+    failures: list[tuple[str, str]] = []
+    assertions = dict(run.get("scenario_assertions", {}))
+    for metric, rule in assertions.items():
+        observed = get_any(combined, metric, default=None)
+        if observed is None:
+            failures.append(("missing_scenario_metric", f"Scenario assertion metric is missing: {metric}"))
+            continue
+        if isinstance(rule, dict):
+            minimum = rule.get("min")
+            maximum = rule.get("max")
+            equals = rule.get("equals")
+        else:
+            minimum, maximum, equals = rule, None, None
+        try:
+            value = float(observed)
+            if minimum is not None and value < float(minimum):
+                failures.append(("scenario_assertion_failed", f"{metric}={value} is below {minimum}"))
+            if maximum is not None and value > float(maximum):
+                failures.append(("scenario_assertion_failed", f"{metric}={value} exceeds {maximum}"))
+            if equals is not None and not values_equivalent(equals, observed):
+                failures.append(("scenario_assertion_failed", f"{metric}={observed!r} does not equal {equals!r}"))
+        except (TypeError, ValueError):
+            failures.append(("scenario_assertion_non_numeric", f"{metric} is not numeric: {observed!r}"))
+    return failures
+
+
 def validate_run_evidence(
     config: dict[str, Any],
     run: dict[str, Any],
@@ -767,6 +824,8 @@ def validate_run_evidence(
         issue("error", "missing_frames", "Frame CSV is missing.")
     if not evidence.get("settings_exists"):
         issue("error", "missing_settings", "Settings JSON is missing.")
+    if preflight.get("require_hardware_fields") and not evidence.get("environment_exists"):
+        issue("error", "missing_environment", "Hardware environment JSON is missing.")
 
     status_text = " ".join(
         str(get_any(combined, key, default="")) for key in ("status", "measurementStatus", "realFpsAvailable")
@@ -847,6 +906,8 @@ def validate_run_evidence(
         "settingsSha256": str(run.get("settings_hash", "")),
     }
     for key, expected in expected_hashes.items():
+        if not expected:
+            continue
         observed = str(get_any(runtime_combined, key, default=""))
         if not is_sha256(observed) or observed.lower() != expected.lower():
             issue("error", "identity_hash_mismatch", f"{key} does not match the requested run signature.")
@@ -913,6 +974,18 @@ def validate_run_evidence(
     ):
         issue("error", "unordered_tail_percentiles", "p95, p99, and p99.9 are not monotonically ordered.")
 
+    for code, message in validate_scenario_assertions(run, combined):
+        issue("error", code, message)
+
+    observed_present = int(get_any(runtime_combined, "presentSyncInterval", default=-1) or 0)
+    expected_present = 0 if not bool(run.get("vsync", False)) else int(run.get("present_sync_interval", 1))
+    if observed_present != expected_present:
+        issue("error", "present_interval_mismatch", f"Observed Present interval is {observed_present}, expected {expected_present}.")
+    timing_coverage = float(get_any(runtime_combined, "gpuTimingCoverage", default=0.0) or 0.0)
+    minimum_coverage = float(preflight.get("minimum_gpu_timing_coverage", 0.99))
+    if timing_coverage < minimum_coverage:
+        issue("error", "gpu_timing_coverage", f"GPU timing coverage is {timing_coverage:.6f}, below {minimum_coverage:.6f}.")
+
     fatal_count = int(get_any(combined, "fatalRuntimeFailureCount", "forcedStopCount", default=0) or 0)
     if preflight.get("require_no_fatal_runtime_failure", True) and fatal_count > 0:
         issue("error", "fatal_runtime_failure", f"Runtime recorded {fatal_count} fatal failures.")
@@ -938,6 +1011,21 @@ def build_matched_pairs(
         for item in evidences
         if item.get("valid") and item.get("derived") and item.get("run_role", "primary") == "primary"
     ]
+    grouped_repeats: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for item in valid:
+        key = (item["scenario"], item["seed"], item["asset"], item["hardware_profile"], item["method"])
+        grouped_repeats.setdefault(key, []).append(item)
+    collapsed_valid: list[dict[str, Any]] = []
+    for items in grouped_repeats.values():
+        representative = copy.deepcopy(items[0])
+        metric_names_for_repeat = set().union(*(entry.get("derived", {}).keys() for entry in items))
+        representative["derived"] = {
+            name: statistics.fmean(float(entry["derived"][name]) for entry in items if name in entry.get("derived", {}))
+            for name in metric_names_for_repeat
+        }
+        representative["repeat_count"] = len(items)
+        collapsed_valid.append(representative)
+    valid = collapsed_valid
     lookup = {
         (item["scenario"], item["seed"], item["asset"], item["hardware_profile"], item["method"]): item
         for item in valid

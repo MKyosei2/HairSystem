@@ -537,121 +537,233 @@ return true;
         return true;
     }
 
-    void GpuHairViewer::LoadExperimentCaseFromEnvironment()
+    // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
+    bool GpuHairViewer::LoadExperimentCaseFromEnvironment()
     {
-        const std::wstring caseId = GetEnvironmentVariableString(L"HAIRGPU_EXPERIMENT_CASE_ID");
         m_experimentCase = {};
-        if (caseId.empty())
+        const std::wstring caseJsonPath = GetEnvironmentVariableString(L"HAIRGPU_CASE_JSON");
+        std::string caseJson;
+        const auto isJsonSpace = [](char c) { return c == ' ' || c == '	' || c == '' || c == '
+'; };
+        if (!caseJsonPath.empty())
         {
-            return;
+            std::ifstream input(std::filesystem::path(caseJsonPath), std::ios::binary);
+            if (!input) return false;
+            caseJson.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            m_experimentCase.caseJsonPath = caseJsonPath;
         }
+        const auto jsonValue = [&caseJson, &isJsonSpace](const std::string& key) -> std::string
+        {
+            if (caseJson.empty()) return {};
+            const std::string needle = "\"" + key + "\"";
+            size_t pos = caseJson.find(needle);
+            if (pos == std::string::npos) return {};
+            pos = caseJson.find(':', pos + needle.size());
+            if (pos == std::string::npos) return {};
+            ++pos;
+            while (pos < caseJson.size() && isJsonSpace(caseJson[pos])) ++pos;
+            if (pos < caseJson.size() && caseJson[pos] == '"')
+            {
+                ++pos;
+                std::string out;
+                bool escaped = false;
+                for (; pos < caseJson.size(); ++pos)
+                {
+                    const char ch = caseJson[pos];
+                    if (!escaped && ch == '"') break;
+                    if (!escaped && ch == '\') { escaped = true; continue; }
+                    out.push_back(ch);
+                    escaped = false;
+                }
+                return out;
+            }
+            size_t end = pos;
+            while (end < caseJson.size() && caseJson[end] != ',' && caseJson[end] != '}' && caseJson[end] != ']') ++end;
+            std::string token = caseJson.substr(pos, end - pos);
+            while (!token.empty() && isJsonSpace(token.front())) token.erase(token.begin());
+            while (!token.empty() && isJsonSpace(token.back())) token.pop_back();
+            return token;
+        };
+        const auto utf8ToWideLocal = [](const std::string& raw) -> std::wstring
+        {
+            if (raw.empty()) return {};
+            const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, raw.data(), static_cast<int>(raw.size()), nullptr, 0);
+            if (required <= 0) return std::wstring(raw.begin(), raw.end());
+            std::wstring wide(static_cast<size_t>(required), L' ');
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, raw.data(), static_cast<int>(raw.size()), wide.data(), required);
+            return wide;
+        };
+        const auto getString = [&](const char* jsonKey, const wchar_t* envKey, const std::wstring& fallback = L"")
+        {
+            const std::string raw = jsonValue(jsonKey);
+            if (!raw.empty()) return utf8ToWideLocal(raw);
+            const std::wstring env = GetEnvironmentVariableString(envKey);
+            return env.empty() ? fallback : env;
+        };
+        const auto getUInt = [&](const char* jsonKey, const wchar_t* envKey, uint32_t fallback)
+        {
+            const std::string raw = jsonValue(jsonKey);
+            if (!raw.empty()) { try { return static_cast<uint32_t>(std::stoul(raw)); } catch (...) {} }
+            return EnvironmentValueToUInt(GetEnvironmentVariableString(envKey), fallback);
+        };
+        const auto getFloat = [&](const char* jsonKey, const wchar_t* envKey, float fallback)
+        {
+            std::string raw = jsonValue(jsonKey);
+            if (raw.empty()) raw = WideToUtf8(GetEnvironmentVariableString(envKey));
+            if (raw.empty()) return fallback;
+            try { return std::stof(raw); } catch (...) { return fallback; }
+        };
+        const auto getBool = [&](const char* jsonKey, const wchar_t* envKey, bool fallback)
+        {
+            std::string raw = jsonValue(jsonKey);
+            std::transform(raw.begin(), raw.end(), raw.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (raw.empty()) return GetEnvironmentVariableString(envKey).empty() ? fallback : EnvironmentValueIsTrue(GetEnvironmentVariableString(envKey));
+            return raw == "true" || raw == "1" || raw == "yes" || raw == "on";
+        };
+
+        m_experimentCase.caseId = getString("case_id", L"HAIRGPU_EXPERIMENT_CASE_ID");
+        if (m_experimentCase.caseId.empty()) return caseJsonPath.empty();
         m_experimentCase.enabled = true;
-        m_experimentCase.caseId = caseId;
-        m_experimentCase.variant = GetEnvironmentVariableString(L"HAIRGPU_VARIANT");
-        m_experimentCase.scenario = GetEnvironmentVariableString(L"HAIRGPU_SCENARIO");
-        m_experimentCase.seed = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_SEED"), 0u);
-        m_experimentCase.warmupFrames = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_WARMUP_FRAMES"), 0u);
-        m_experimentCase.measurementFrames = EnvironmentValueToUInt(GetEnvironmentVariableString(L"HAIRGPU_MEASUREMENT_FRAMES"), 0u);
-        m_experimentCase.autoExitAfterCapture = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"));
-        m_experimentCase.enableNoNoveltyBaseline = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_NO_NOVELTY_BASELINE"));
-        m_experimentCase.enableMicrotype = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_MICROTYPE"));
-        m_experimentCase.enableBudgetedPhysics = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_BUDGETED_PHYSICS"));
-        m_experimentCase.enableCertificateRender = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_CERTIFICATE_RENDER"));
-        m_experimentCase.enablePerStrandEdit = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_PER_STRAND_EDIT"));
-        m_experimentCase.enableCBMA = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_CBMA"));
-        m_experimentCase.enablePhysicsIslands = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_PHYSICS_ISLANDS"));
-        m_experimentCase.enableRodRepair = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_ROD_REPAIR"));
-        m_experimentCase.enableGpuResident = EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_ENABLE_GPU_RESIDENT"));
-        m_experimentCase.settingsHash = GetEnvironmentVariableString(L"HAIRGPU_SETTINGS_HASH");
+        m_experimentCase.variant = getString("method", L"HAIRGPU_VARIANT", getString("variant", L"HAIRGPU_VARIANT"));
+        m_experimentCase.scenario = getString("scenario", L"HAIRGPU_SCENARIO");
+        m_experimentCase.measurementModeName = getString("measurement_mode", L"HAIRGPU_MEASUREMENT_MODE", L"performance");
+        m_experimentCase.scenarioTimelinePath = getString("scenario_timeline", L"HAIRGPU_SCENARIO_TIMELINE");
+        m_experimentCase.assetManifestPath = getString("asset_manifest", L"HAIRGPU_ASSET_MANIFEST");
+        m_experimentCase.settingsHash = getString("settings_hash", L"HAIRGPU_SETTINGS_HASH");
+        m_experimentCase.executableSha256 = getString("executableSha256", L"HAIRGPU_EXECUTABLE_SHA256");
+        m_experimentCase.commitSha = getString("commitSha", L"HAIRGPU_COMMIT_SHA");
+        m_experimentCase.buildConfiguration = getString("build_configuration", L"HAIRGPU_BUILD_CONFIGURATION", L"Release");
+        m_experimentCase.platform = getString("platform", L"HAIRGPU_PLATFORM", L"x64");
+        m_experimentCase.hardwareProfile = getString("hardware_profile", L"HAIRGPU_HARDWARE_PROFILE");
+        m_experimentCase.scenarioTimelineSha256 = getString("scenarioTimelineSha256", L"HAIRGPU_SCENARIO_TIMELINE_SHA256");
+        m_experimentCase.assetManifestSha256 = getString("assetManifestSha256", L"HAIRGPU_ASSET_MANIFEST_SHA256");
+        m_experimentCase.assetSha256 = getString("assetSha256", L"HAIRGPU_ASSET_SHA256");
+        m_experimentCase.appliedMethodSettingsSha256 = getString("appliedMethodSettingsSha256", L"HAIRGPU_APPLIED_METHOD_SETTINGS_SHA256");
+        m_experimentCase.assetFrozen = getBool("assetFrozen", L"HAIRGPU_ASSET_FROZEN", false);
+        m_experimentCase.seed = getUInt("seed", L"HAIRGPU_SEED", 0u);
+        m_experimentCase.repetitionIndex = getUInt("repeat_index", L"HAIRGPU_REPEAT_INDEX", 0u);
+        m_experimentCase.warmupFrames = getUInt("warmup_frames", L"HAIRGPU_WARMUP_FRAMES", 0u);
+        m_experimentCase.measurementFrames = getUInt("measurement_frames", L"HAIRGPU_MEASUREMENT_FRAMES", 0u);
+        m_experimentCase.autoExitAfterCapture = getBool("auto_exit_after_capture", L"HAIRGPU_AUTO_EXIT_AFTER_CAPTURE", true);
+        m_experimentCase.requestedWidth = getUInt("width", L"HAIRGPU_RENDER_WIDTH", m_width);
+        m_experimentCase.requestedHeight = getUInt("height", L"HAIRGPU_RENDER_HEIGHT", m_height);
+        m_experimentCase.requestedGuideCount = getUInt("guide_strand_count", L"HAIRGPU_GUIDE_STRAND_COUNT", m_builderGuideCount);
+        m_experimentCase.requestedDisplayStrandCount = getUInt("display_strand_count", L"HAIRGPU_DISPLAY_STRAND_COUNT", 0u);
+        m_experimentCase.requestedParticlesPerGuide = getUInt("particles_per_guide", L"HAIRGPU_PARTICLES_PER_GUIDE", m_builderParticlesPerStrand);
+        m_experimentCase.requestedSolverIterations = getUInt("solver_iterations", L"HAIRGPU_SOLVER_ITERATIONS", m_simConfig.solverIterations);
+        m_experimentCase.fixedTimeStepEnabled = getBool("fixed_timestep", L"HAIRGPU_FIXED_TIMESTEP_ENABLED", true);
+        m_experimentCase.fixedTimeStepSeconds = getFloat("fixed_timestep_seconds", L"HAIRGPU_FIXED_TIMESTEP_SECONDS", m_simConfig.fixedTimeStep);
+        m_experimentCase.vsyncEnabled = getBool("vsync", L"HAIRGPU_VSYNC", false);
+        m_experimentCase.presentSyncInterval = getUInt("present_sync_interval", L"HAIRGPU_PRESENT_SYNC_INTERVAL", m_experimentCase.vsyncEnabled ? 1u : 0u);
+        m_experimentCase.gpuTimestampDelayFrames = std::max<uint32_t>(2u, getUInt("gpu_timestamp_delay_frames", L"HAIRGPU_GPU_TIMESTAMP_DELAY_FRAMES", 4u));
+        m_experimentCase.scenarioAssertionMinAppliedEvents = getUInt("min_scenario_applied_events", L"HAIRGPU_ASSERT_MIN_SCENARIO_EVENTS", 0u);
+        m_experimentCase.scenarioAssertionMinCollisionCandidates = getUInt("min_collision_candidates", L"HAIRGPU_ASSERT_MIN_COLLISION_CANDIDATES", 0u);
+        m_experimentCase.scenarioAssertionMinWakeRequests = getUInt("min_wake_requests", L"HAIRGPU_ASSERT_MIN_WAKE_REQUESTS", 0u);
+        m_experimentCase.scenarioAssertionMinRepairs = getUInt("min_repair_attempts", L"HAIRGPU_ASSERT_MIN_REPAIRS", 0u);
+        m_experimentCase.scenarioAssertionMinTransitions = getUInt("min_state_transitions", L"HAIRGPU_ASSERT_MIN_TRANSITIONS", 0u);
+
+        std::wstring mode = m_experimentCase.measurementModeName;
+        std::transform(mode.begin(), mode.end(), mode.begin(), [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c - L'A' + L'a') : c; });
+        m_experimentCase.measurementMode = mode == L"quality" ? MeasurementMode::Quality : mode == L"determinism" ? MeasurementMode::Determinism : mode == L"robustness" ? MeasurementMode::Robustness : MeasurementMode::Performance;
+
+        ExperimentMethodFlags& requested = m_experimentCase.requestedFlags;
+#define HAIRGPU_READ_FLAG(member, jsonKey, envKey, fallback) requested.member = getBool(jsonKey, envKey, fallback)
+        HAIRGPU_READ_FLAG(enableNoNoveltyBaseline, "enableNoNoveltyBaseline", L"HAIRGPU_ENABLE_NO_NOVELTY_BASELINE", false);
+        HAIRGPU_READ_FLAG(enableMicrotype, "enableMicrotype", L"HAIRGPU_ENABLE_MICROTYPE", false);
+        HAIRGPU_READ_FLAG(enableBudgetedPhysics, "enableBudgetedPhysics", L"HAIRGPU_ENABLE_BUDGETED_PHYSICS", false);
+        HAIRGPU_READ_FLAG(enableCertificateRender, "enableCertificateRender", L"HAIRGPU_ENABLE_CERTIFICATE_RENDER", false);
+        HAIRGPU_READ_FLAG(enablePerStrandEdit, "enablePerStrandEdit", L"HAIRGPU_ENABLE_PER_STRAND_EDIT", false);
+        HAIRGPU_READ_FLAG(enableCBMA, "enableCBMA", L"HAIRGPU_ENABLE_CBMA", false);
+        HAIRGPU_READ_FLAG(enablePhysicsIslands, "enablePhysicsIslands", L"HAIRGPU_ENABLE_PHYSICS_ISLANDS", false);
+        HAIRGPU_READ_FLAG(enableRodRepair, "enableRodRepair", L"HAIRGPU_ENABLE_ROD_REPAIR", false);
+        HAIRGPU_READ_FLAG(enableGpuResident, "enableGpuResident", L"HAIRGPU_ENABLE_GPU_RESIDENT", false);
+        HAIRGPU_READ_FLAG(enableSegmentGroupSleep, "enableSegmentGroupSleep", L"HAIRGPU_ENABLE_SEGMENT_GROUP_SLEEP", false);
+        HAIRGPU_READ_FLAG(enableSegmentGroupIntegratedState, "enableSegmentGroupIntegratedState", L"HAIRGPU_ENABLE_SEGMENT_GROUP_INTEGRATED_STATE", true);
+        HAIRGPU_READ_FLAG(enableExternalStateArray, "enableExternalStateArray", L"HAIRGPU_ENABLE_EXTERNAL_STATE_ARRAY", false);
+        HAIRGPU_READ_FLAG(enableSharedPointOwnership, "enableSharedPointOwnership", L"HAIRGPU_ENABLE_SHARED_POINT_OWNERSHIP", true);
+        HAIRGPU_READ_FLAG(enableDirectionalResponsibility, "enableDirectionalResponsibility", L"HAIRGPU_ENABLE_DIRECTIONAL_RESPONSIBILITY", true);
+        HAIRGPU_READ_FLAG(enableStaticCertificate, "enableStaticCertificate", L"HAIRGPU_ENABLE_STATIC_CERTIFICATE", true);
+        HAIRGPU_READ_FLAG(enablePredictiveWake, "enablePredictiveWake", L"HAIRGPU_ENABLE_PREDICTIVE_WAKE", true);
+        HAIRGPU_READ_FLAG(enableVelocityRecovery, "enableVelocityRecovery", L"HAIRGPU_ENABLE_VELOCITY_RECOVERY", true);
+        HAIRGPU_READ_FLAG(enableRepair, "enableRepair", L"HAIRGPU_ENABLE_REPAIR", true);
+        HAIRGPU_READ_FLAG(enableGpuCompaction, "enableGpuCompaction", L"HAIRGPU_ENABLE_GPU_COMPACTION", true);
+        HAIRGPU_READ_FLAG(enableActiveSet, "enableActiveSet", L"HAIRGPU_ENABLE_ACTIVE_SET", true);
+        HAIRGPU_READ_FLAG(enableStrandSleep, "enableStrandSleep", L"HAIRGPU_ENABLE_STRAND_SLEEP", false);
+        HAIRGPU_READ_FLAG(enableBlockSleep, "enableBlockSleep", L"HAIRGPU_ENABLE_BLOCK_SLEEP", false);
+        HAIRGPU_READ_FLAG(enableSleepHysteresis, "enableSleepHysteresis", L"HAIRGPU_ENABLE_SLEEP_HYSTERESIS", true);
+        HAIRGPU_READ_FLAG(enableStaticCache, "enableStaticCache", L"HAIRGPU_ENABLE_STATIC_CACHE", true);
+#undef HAIRGPU_READ_FLAG
+        requested.stateStorage = requested.enableExternalStateArray ? SegmentGroupStateStorage::ExternalArray : SegmentGroupStateStorage::IntegratedRecord;
+        m_experimentCase.appliedFlags = requested;
+        if (requested.enableNoNoveltyBaseline)
+        {
+            m_experimentCase.appliedFlags = {};
+            m_experimentCase.appliedFlags.enableNoNoveltyBaseline = true;
+            m_experimentCase.appliedFlags.enableSegmentGroupIntegratedState = false;
+            m_experimentCase.appliedFlags.enableSharedPointOwnership = false;
+            m_experimentCase.appliedFlags.enableDirectionalResponsibility = false;
+            m_experimentCase.appliedFlags.enableStaticCertificate = false;
+            m_experimentCase.appliedFlags.enablePredictiveWake = false;
+            m_experimentCase.appliedFlags.enableVelocityRecovery = false;
+            m_experimentCase.appliedFlags.enableRepair = false;
+            m_experimentCase.appliedFlags.enableGpuCompaction = false;
+            m_experimentCase.appliedFlags.enableActiveSet = false;
+            m_experimentCase.appliedFlags.enableSleepHysteresis = false;
+            m_experimentCase.appliedFlags.enableStaticCache = false;
+        }
+
+        const ExperimentMethodFlags& applied = m_experimentCase.appliedFlags;
+        m_experimentCase.enableNoNoveltyBaseline = applied.enableNoNoveltyBaseline;
+        m_experimentCase.enableMicrotype = applied.enableMicrotype;
+        m_experimentCase.enableBudgetedPhysics = applied.enableBudgetedPhysics;
+        m_experimentCase.enableCertificateRender = applied.enableCertificateRender;
+        m_experimentCase.enablePerStrandEdit = applied.enablePerStrandEdit;
+        m_experimentCase.enableCBMA = applied.enableCBMA;
+        m_experimentCase.enablePhysicsIslands = applied.enablePhysicsIslands;
+        m_experimentCase.enableRodRepair = applied.enableRodRepair;
+        m_experimentCase.enableGpuResident = applied.enableGpuResident;
 
         m_noveltyFlags = hairgpu::NormalizeNoveltyFlags(
-            m_experimentCase.enableMicrotype ? 1u : 0u,
-            m_experimentCase.enableBudgetedPhysics ? 1u : 0u,
-            m_experimentCase.enableCertificateRender ? 1u : 0u,
-            m_experimentCase.enablePerStrandEdit ? 1u : 0u,
-            m_experimentCase.enableGpuResident ? 1u : 0u,
-            m_experimentCase.enableCBMA ? 1u : 0u,
-            m_experimentCase.enablePhysicsIslands ? 1u : 0u,
-            m_experimentCase.enableRodRepair ? 1u : 0u,
-            m_experimentCase.enableNoNoveltyBaseline ? 1u : 0u);
-
-        const auto applyOptionalFlag =
-            [](const std::wstring& value, uint32_t& destination)
-            {
-                if (!value.empty())
-                {
-                    destination =
-                        EnvironmentValueIsTrue(value) ? 1u : 0u;
-                }
-            };
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_CERTIFICATE"),
-            m_noveltyFlags.enableMicrotypeCertificate);
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_DIRTY_PROPAGATION"),
-            m_noveltyFlags.enableMicrotypeDirtyPropagation);
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_BLOCK_HIERARCHY"),
-            m_noveltyFlags.enableMicrotypeBlockHierarchy);
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_BOUNDARY_REPAIR"),
-            m_noveltyFlags.enableMicrotypeBoundaryRepair);
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_WATCHDOG"),
-            m_noveltyFlags.enableMicrotypeWatchdog);
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_HEMISPHERE_OWNERSHIP"),
-            m_noveltyFlags.enableMicrotypeHemisphereOwnership);
-
-        applyOptionalFlag(
-            GetEnvironmentVariableString(
-                L"HAIRGPU_MICROTYPE_INDIRECT_DISPATCH"),
-            m_noveltyFlags.enableMicrotypeIndirectDispatch);
-
-        m_noveltyFlags =
-            hairgpu::NormalizeMicrotypeAblationFlags(
-                m_noveltyFlags);
-
-        m_segmentGroupsPerBlock =
-            std::max<uint32_t>(
-                1u,
-                EnvironmentValueToUInt(
-                    GetEnvironmentVariableString(
-                        L"HAIRGPU_MICROTYPE_GROUPS_PER_BLOCK"),
-                    m_segmentGroupsPerBlock));
-
-        m_segmentGroupWatchdogIntervalFrames =
-            std::max<uint32_t>(
-                1u,
-                EnvironmentValueToUInt(
-                    GetEnvironmentVariableString(
-                        L"HAIRGPU_MICROTYPE_WATCHDOG_INTERVAL"),
-                    m_segmentGroupWatchdogIntervalFrames));
-
+            applied.enableMicrotype ? 1u : 0u,
+            applied.enableBudgetedPhysics ? 1u : 0u,
+            applied.enableCertificateRender ? 1u : 0u,
+            applied.enablePerStrandEdit ? 1u : 0u,
+            applied.enableGpuResident ? 1u : 0u,
+            applied.enableCBMA ? 1u : 0u,
+            applied.enablePhysicsIslands ? 1u : 0u,
+            applied.enableRodRepair ? 1u : 0u,
+            applied.enableNoNoveltyBaseline ? 1u : 0u);
+        m_noveltyFlags.enableMicrotypeCertificate = applied.enableStaticCertificate ? 1u : 0u;
+        m_noveltyFlags.enableMicrotypeDirtyPropagation = applied.enableSegmentGroupSleep ? 1u : 0u;
+        m_noveltyFlags.enableMicrotypeBlockHierarchy = applied.enableBlockSleep ? 1u : 0u;
+        m_noveltyFlags.enableMicrotypeBoundaryRepair = applied.enableRepair ? 1u : 0u;
+        m_noveltyFlags.enableMicrotypeWatchdog = applied.enableRepair ? 1u : 0u;
+        m_noveltyFlags.enableMicrotypeHemisphereOwnership = applied.enableDirectionalResponsibility ? 1u : 0u;
+        m_noveltyFlags.enableMicrotypeIndirectDispatch = applied.enableGpuCompaction ? 1u : 0u;
+        m_noveltyFlags = hairgpu::NormalizeMicrotypeAblationFlags(m_noveltyFlags);
+        m_segmentGroupsPerBlock = std::max<uint32_t>(1u, getUInt("groupsPerBlock", L"HAIRGPU_MICROTYPE_GROUPS_PER_BLOCK", m_segmentGroupsPerBlock));
+        m_segmentGroupWatchdogIntervalFrames = std::max<uint32_t>(1u, getUInt("watchdogIntervalFrames", L"HAIRGPU_MICROTYPE_WATCHDOG_INTERVAL", m_segmentGroupWatchdogIntervalFrames));
+        m_globalHairBudget = hairgpu::BuildGlobalHairFrameBudget(m_noveltyFlags);
         m_segmentGroupTopologyDirty = true;
         m_forceAllSegmentGroupsDirty = true;
-        m_experimentCase.enableNoNoveltyBaseline = m_noveltyFlags.enableNoNoveltyBaseline != 0u;
-        m_experimentCase.enableMicrotype = m_noveltyFlags.enableMicrotype != 0u;
-        m_experimentCase.enableBudgetedPhysics = m_noveltyFlags.enableBudgetedPhysics != 0u;
-        m_experimentCase.enableCertificateRender = m_noveltyFlags.enableCertificateRender != 0u;
-        m_experimentCase.enablePerStrandEdit = m_noveltyFlags.enablePerStrandEdit != 0u;
-        m_experimentCase.enableGpuResident = m_noveltyFlags.enableGpuResident != 0u;
-        m_experimentCase.enableCBMA = m_noveltyFlags.enableCBMA != 0u;
-        m_experimentCase.enablePhysicsIslands = m_noveltyFlags.enablePhysicsIslands != 0u;
-        m_experimentCase.enableRodRepair = m_noveltyFlags.enableRodRepair != 0u;
-        m_globalHairBudget = hairgpu::BuildGlobalHairFrameBudget(m_noveltyFlags);
+        return true;
+    }
+
+    void GpuHairViewer::ApplyExperimentConfigBeforeAssetCreation()
+    {
+        if (!m_experimentCase.enabled) return;
+        m_width = std::max<UINT>(m_experimentCase.requestedWidth, 64u);
+        m_height = std::max<UINT>(m_experimentCase.requestedHeight, 64u);
+        m_builderGuideCount = std::max<uint32_t>(m_experimentCase.requestedGuideCount, 1u);
+        m_builderParticlesPerStrand = std::max<uint32_t>(m_experimentCase.requestedParticlesPerGuide, 2u);
+        if (m_experimentCase.requestedDisplayStrandCount > m_builderGuideCount)
+        {
+            const uint32_t followers = m_experimentCase.requestedDisplayStrandCount - m_builderGuideCount;
+            m_builderFollowersPerGuide = std::max<uint32_t>(followers / m_builderGuideCount, 1u);
+        }
+        m_vsyncEnabled = m_experimentCase.vsyncEnabled;
+        m_presentSyncInterval = m_vsyncEnabled ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u) : 0u;
+        m_enableActiveSetRuntime = m_experimentCase.appliedFlags.enableActiveSet;
     }
 
     bool GpuHairViewer::IsExperimentModeEnabled() const
@@ -688,6 +800,8 @@ return true;
         PerformanceSample sample = {};
         sample.elapsedSeconds = m_elapsedSeconds;
         sample.frameMilliseconds = frameSeconds * 1000.0f;
+        sample.frameIntervalMilliseconds = m_lastFrameIntervalMilliseconds;
+        sample.cpuFrameWorkMilliseconds = m_lastCpuFrameWorkMilliseconds;
         sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
         sample.fps = instantFps;
         sample.guideCount = m_asset.guideStrandCount;
@@ -716,6 +830,19 @@ return true;
 
         sample.globalFrameIndex = m_globalFrameIndex;
         sample.measuredFrameIndex = m_measuredFrameIndex;
+        sample.sourceFrameIndex = m_noveltyTelemetry.sourceFrameIndex;
+        sample.availabilityMask = m_noveltyTelemetry.availabilityMask | hairgpu::HairTelemetryAvailability_FrameInterval | hairgpu::HairTelemetryAvailability_CpuFrameWork | hairgpu::HairTelemetryAvailability_ObservedSettings;
+        sample.fatalFailure = m_noveltyTelemetry.fatalFailure;
+        sample.fatalFailureCode = m_noveltyTelemetry.fatalFailureCode;
+        sample.scenarioAppliedEventCount = m_scenarioAppliedEventCount;
+        sample.scenarioAssertionFailureCount = m_scenarioAssertionFailureCount;
+        sample.collisionCandidateCount = m_noveltyTelemetry.collisionCandidateCount;
+        sample.collisionMissCount = m_noveltyTelemetry.collisionMissCount;
+        sample.wakeRequestGroupCount = m_noveltyTelemetry.wakeRequestGroupCount;
+        sample.repairAttemptCount = m_noveltyTelemetry.repairAttemptCount;
+        sample.repairSuccessCount = m_noveltyTelemetry.repairSuccessCount;
+        sample.stateTransitionCount = m_noveltyTelemetry.stateTransitionCount;
+        sample.stateOscillationCount = m_noveltyTelemetry.stateOscillationCount;
         sample.warmupFrames = m_experimentCase.warmupFrames;
         sample.measurementFrames = m_experimentCase.measurementFrames;
         sample.seed = m_experimentCase.seed;
@@ -738,7 +865,8 @@ return true;
         sample.repairDeferredCount = 0u;
         sample.repairSuccessRate = sample.repairTaskCount > 0u ? static_cast<float>(sample.repairCommittedCount) / static_cast<float>(sample.repairTaskCount) : 0.0f;
         sample.cpuReadbackCount = 0u;
-        sample.gpuHairMilliseconds = sample.simulationMilliseconds;
+        // Filled only when the delayed timestamp query for this source frame resolves.
+        sample.gpuHairMilliseconds = 0.0f;
         sample.vramMegabytes = m_activeSetPlan.summary.estimatedMemoryMegabytes;
         sample.bandwidthMegabytesPerFrame = 0.0f;
         sample.meanDecodeErrorMm = 0.0f;

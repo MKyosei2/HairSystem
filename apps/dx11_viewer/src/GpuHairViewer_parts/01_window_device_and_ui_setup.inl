@@ -626,6 +626,16 @@
         icc.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
         InitCommonControlsEx(&icc);
 
+        // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1: configuration must be resolved before window, asset,
+        // GPU buffers, and shaders are created.
+        if (!LoadExperimentCaseFromEnvironment())
+        {
+            ShowStartupDialog(nullptr, L"Hair GPU Viewer Experiment Configuration Failure",
+                L"HAIRGPU_CASE_JSON or experiment environment values are invalid.");
+            return false;
+        }
+        ApplyExperimentConfigBeforeAssetCreation();
+
         const float initialSegmentLength = SegmentLengthForParticleCount(m_builderParticlesPerStrand);
         m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, initialSegmentLength);
         // Avoid double wig styling in viewer; sample/import paths already shape the asset.
@@ -680,6 +690,19 @@
         m_showColliderDebug = false;
         m_enableSelfCollision = false;
         m_enableGridSelfCollision = false;
+
+        if (m_experimentCase.enabled)
+        {
+            m_simConfig.solverIterations = std::max<uint32_t>(m_experimentCase.requestedSolverIterations, 1u);
+            if (m_experimentCase.fixedTimeStepEnabled && m_experimentCase.fixedTimeStepSeconds > 0.0f)
+            {
+                m_simConfig.fixedTimeStep = m_experimentCase.fixedTimeStepSeconds;
+            }
+            m_vsyncEnabled = m_experimentCase.vsyncEnabled;
+            m_presentSyncInterval = m_vsyncEnabled
+                ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u)
+                : 0u;
+        }
 
         m_colliders.spheres.push_back({ { 0.0f, 1.66f, 0.0f }, 0.215f });
         m_colliders.capsules.push_back({ { -0.19f, 1.36f, 0.02f }, 0.11f, { -0.42f, 1.15f, 0.04f }, 0.08f });

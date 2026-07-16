@@ -66,6 +66,64 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def collect_hardware_probe(profile_name: str = "", phase: str = "") -> dict[str, Any]:
+    """Collect hardware/thermal/power evidence without an extra source module."""
+    import platform
+    payload: dict[str, Any] = {
+        "profile": profile_name,
+        "phase": phase,
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python": platform.python_version(),
+        "timestampUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "gpu": {},
+        "power": {},
+    }
+    if sys.platform == "win32":
+        try:
+            command = [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version,temperature.gpu,clocks.current.graphics,clocks.current.memory,power.draw,power.limit",
+                "--format=csv,noheader,nounits",
+            ]
+            line = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False).stdout.strip().splitlines()[0]
+            fields = [item.strip() for item in line.split(",")]
+            if len(fields) >= 7:
+                payload["gpu"] = {
+                    "name": fields[0],
+                    "driverVersion": fields[1],
+                    "temperatureC": float(fields[2]),
+                    "graphicsClockMHz": float(fields[3]),
+                    "memoryClockMHz": float(fields[4]),
+                    "powerDrawW": float(fields[5]),
+                    "powerLimitW": float(fields[6]),
+                }
+        except Exception as exc:
+            payload["gpuProbeError"] = str(exc)
+        try:
+            power = subprocess.run(["powercfg", "/GETACTIVESCHEME"], capture_output=True, text=True, timeout=10, check=False)
+            payload["power"]["activeScheme"] = power.stdout.strip() or power.stderr.strip()
+        except Exception as exc:
+            payload["powerProbeError"] = str(exc)
+    return payload
+
+
+def validate_required_outputs(summary_json: Path, frame_csv: Path, frame_jsonl: Path, settings_json: Path, run_name: str) -> None:
+    for path in (summary_json, frame_csv, frame_jsonl, settings_json):
+        wait_for_file(path, 10)
+    summary = json.loads(summary_json.read_text(encoding="utf-8-sig"))
+    settings = json.loads(settings_json.read_text(encoding="utf-8-sig"))
+    if summary.get("status") != "complete":
+        raise RuntimeError(f"Summary status is not complete for {run_name}")
+    if not settings.get("observed"):
+        raise RuntimeError(f"Observed settings are missing for {run_name}")
+    frame_count = sum(1 for line in frame_jsonl.read_text(encoding="utf-8-sig").splitlines() if line.strip())
+    expected = int(summary.get("measurement_frames", 0))
+    if expected and frame_count < expected:
+        raise RuntimeError(f"Only {frame_count}/{expected} JSONL frames were emitted for {run_name}")
+
+
 def _env_token(name: str) -> str:
     step1 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
     return re.sub(r"[^A-Za-z0-9]+", "_", step1).strip("_").upper()
@@ -95,6 +153,17 @@ def _write_case_snapshot(telemetry_dir: Path, run_name: str, case: dict[str, Any
     snapshot = dict(case)
     snapshot.setdefault("run_name", run_name)
     snapshot.setdefault("settings_hash", canonical_json_sha256(case))
+    method_settings = dict(case.get("method_settings", {}))
+    snapshot["appliedMethodSettingsSha256"] = canonical_json_sha256(method_settings)
+    snapshot["method_settings_sha256"] = snapshot["appliedMethodSettingsSha256"]
+    commit_sha = str(case.get("commitSha") or case.get("commit_sha") or "")
+    if not commit_sha:
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            commit_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+        except Exception:
+            commit_sha = ""
+    snapshot["commitSha"] = commit_sha
     snapshot["viewerExecutable"] = str(viewer_exe)
     snapshot["executableSha256"] = sha256_file(viewer_exe)
 
@@ -110,6 +179,7 @@ def _write_case_snapshot(telemetry_dir: Path, run_name: str, case: dict[str, Any
         try:
             manifest = json.loads(asset_manifest.read_text(encoding="utf-8-sig"))
             snapshot.setdefault("assetSha256", manifest.get("sourceAssetSha256", ""))
+            snapshot["assetFrozen"] = str(manifest.get("freezeStatus", "")) == "FROZEN"
         except Exception:
             pass
 
@@ -124,7 +194,7 @@ def run_viewer(
     run_name: str,
     timeout_seconds: int,
     case: dict[str, Any] | None = None,
-) -> tuple[Path, Path, Path | None, Path | None]:
+) -> tuple[Path, Path, Path, Path, Path]:
     viewer_exe = Path(viewer_exe).resolve()
     if not viewer_exe.exists():
         raise FileNotFoundError(f"Viewer executable does not exist: {viewer_exe}")
@@ -147,6 +217,30 @@ def run_viewer(
         env["HAIRGPU_AUTO_EXIT_AFTER_CAPTURE"] = "1"
         env["HAIRGPU_SETTINGS_HASH"] = str(case.get("settings_hash") or canonical_json_sha256(case))
         env["HAIRGPU_EXECUTABLE_SHA256"] = sha256_file(viewer_exe)
+        env["HAIRGPU_COMMIT_SHA"] = str(case_snapshot_path and json.loads(case_snapshot_path.read_text(encoding="utf-8-sig")).get("commitSha", ""))
+        env["HAIRGPU_BUILD_CONFIGURATION"] = str(case.get("build_configuration", "Release"))
+        env["HAIRGPU_PLATFORM"] = str(case.get("platform", "x64"))
+        env["HAIRGPU_HARDWARE_PROFILE"] = str(case.get("hardware_profile", ""))
+        env["HAIRGPU_MEASUREMENT_MODE"] = str(case.get("measurement_mode", "performance"))
+        env["HAIRGPU_REPEAT_INDEX"] = str(case.get("repeat_index", 0))
+        snapshot_payload = json.loads(case_snapshot_path.read_text(encoding="utf-8-sig"))
+        env["HAIRGPU_SCENARIO_TIMELINE_SHA256"] = str(snapshot_payload.get("scenarioTimelineSha256", ""))
+        env["HAIRGPU_ASSET_MANIFEST_SHA256"] = str(snapshot_payload.get("assetManifestSha256", ""))
+        env["HAIRGPU_ASSET_SHA256"] = str(snapshot_payload.get("assetSha256", ""))
+        env["HAIRGPU_ASSET_FROZEN"] = "1" if snapshot_payload.get("assetFrozen") else "0"
+        env["HAIRGPU_APPLIED_METHOD_SETTINGS_SHA256"] = str(snapshot_payload.get("appliedMethodSettingsSha256", ""))
+        assertions = dict(case.get("scenario_assertions", {}))
+        assertion_env = {
+            "scenarioAppliedEventCount": "HAIRGPU_ASSERT_MIN_SCENARIO_EVENTS",
+            "collisionCandidateCount": "HAIRGPU_ASSERT_MIN_COLLISION_CANDIDATES",
+            "wakeRequestGroupCount": "HAIRGPU_ASSERT_MIN_WAKE_REQUESTS",
+            "repairAttemptCount": "HAIRGPU_ASSERT_MIN_REPAIRS",
+            "stateTransitionCount": "HAIRGPU_ASSERT_MIN_TRANSITIONS",
+        }
+        for metric, env_name in assertion_env.items():
+            rule = assertions.get(metric)
+            if isinstance(rule, dict) and rule.get("min") is not None:
+                env[env_name] = str(rule["min"])
 
         direct_flags = {
             "enableNoNoveltyBaseline": "HAIRGPU_ENABLE_NO_NOVELTY_BASELINE",
@@ -198,6 +292,9 @@ def run_viewer(
         _set_if_present(env, "HAIRGPU_SOLVER_ITERATIONS", case.get("solver_iterations"))
         _set_if_present(env, "HAIRGPU_GPU_TIMESTAMP_DELAY_FRAMES", case.get("gpu_timestamp_delay_frames"))
 
+    environment_json = telemetry_dir / f"{run_name}_environment.json"
+    environment_payload = {"start": collect_hardware_probe(str((case or {}).get("hardware_profile", "")), "start")}
+    write_json(environment_json, environment_payload)
     process = subprocess.Popen([str(viewer_exe)], env=env)
     try:
         process.wait(timeout=timeout_seconds)
@@ -215,17 +312,10 @@ def run_viewer(
     frame_csv = telemetry_dir / f"{run_name}_frames.csv"
     frame_jsonl = telemetry_dir / f"{run_name}_frames.jsonl"
     settings_json = telemetry_dir / f"{run_name}_settings.json"
-    wait_for_file(summary_json, 10)
-    wait_for_file(frame_csv, 10)
-    try:
-        wait_for_file(frame_jsonl, 10)
-    except TimeoutError:
-        frame_jsonl = None
-    try:
-        wait_for_file(settings_json, 10)
-    except TimeoutError:
-        settings_json = None
-    return summary_json, frame_csv, frame_jsonl, settings_json
+    environment_payload["end"] = collect_hardware_probe(str((case or {}).get("hardware_profile", "")), "end")
+    write_json(environment_json, environment_payload)
+    validate_required_outputs(summary_json, frame_csv, frame_jsonl, settings_json, run_name)
+    return summary_json, frame_csv, frame_jsonl, settings_json, environment_json
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -315,7 +405,14 @@ def main() -> int:
             print("Viewer launch is Windows-only. Use existing telemetry on this platform.", file=sys.stderr)
             return 2
         case_config = config.get("case") if isinstance(config.get("case"), dict) else config
-        summary_json, frame_csv, frame_jsonl, settings_json = run_viewer(Path(viewer_exe_value), telemetry_dir, run_name, timeout_seconds, case_config)
+        try:
+            summary_json, frame_csv, frame_jsonl, settings_json, environment_json = run_viewer(Path(viewer_exe_value), telemetry_dir, run_name, timeout_seconds, case_config)
+        except Exception as exc:
+            error_path = telemetry_dir / f"{run_name}_error.json"
+            write_json(error_path, {"runName": run_name, "status": "failed", "errorType": type(exc).__name__, "message": str(exc)})
+            raise
+
+    environment_json = locals().get("environment_json")
 
     metadata = RuntimeRunMetadata(
         experiment_name=experiment_name,
@@ -333,7 +430,7 @@ def main() -> int:
     if output_dir_value:
         output_dir = Path(output_dir_value)
         harvested = []
-        for source, label in ((summary_json, "summary_json"), (frame_csv, "frame_csv"), (frame_jsonl, "frame_jsonl"), (settings_json, "settings_json")):
+        for source, label in ((summary_json, "summary_json"), (frame_csv, "frame_csv"), (frame_jsonl, "frame_jsonl"), (settings_json, "settings_json"), (environment_json, "environment_json")):
             if source and Path(source).exists():
                 record = copy_artifact(Path(source), output_dir / run_name)
                 record["label"] = label
@@ -357,6 +454,8 @@ def main() -> int:
                 "frameSha256": sha256_file(frame_csv),
                 "frameJsonlSha256": sha256_file(frame_jsonl) if frame_jsonl and Path(frame_jsonl).exists() else None,
                 "settingsSha256": sha256_file(settings_json) if settings_json and Path(settings_json).exists() else None,
+                "environmentJson": str(environment_json) if environment_json else None,
+                "environmentSha256": sha256_file(environment_json) if environment_json and Path(environment_json).exists() else None,
             },
             "artifacts": harvested,
             "configSnapshot": config or None,

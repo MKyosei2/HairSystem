@@ -4,11 +4,39 @@
 
 namespace hairgpu
 {
+
+    // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1
+    enum HairNoveltyTelemetryAvailabilityBits : uint32_t
+    {
+        HairTelemetryAvailability_None = 0u,
+        HairTelemetryAvailability_FrameInterval = 1u << 0u,
+        HairTelemetryAvailability_CpuFrameWork = 1u << 1u,
+        HairTelemetryAvailability_GpuTiming = 1u << 2u,
+        HairTelemetryAvailability_GpuCounters = 1u << 3u,
+        HairTelemetryAvailability_Scenario = 1u << 4u,
+        HairTelemetryAvailability_ObservedSettings = 1u << 5u
+    };
     struct HairNoveltyFrameTelemetry
     {
         uint32_t frameIndex = 0u;
         uint32_t measuredFrameIndex = 0u;
         uint32_t topLevelNoveltyMask = 0u;
+
+        // Delayed evidence identity and availability. sourceFrameIndex is the
+        // simulation/render frame that produced this record, not the frame on
+        // which the CPU resolved the asynchronous query.
+        uint32_t sourceFrameIndex = 0u;
+        uint32_t availabilityMask = HairTelemetryAvailability_None;
+        uint32_t fatalFailure = 0u;
+        uint32_t fatalFailureCode = 0u;
+        uint32_t fatalRuntimeFailureCount = 0u;
+        uint32_t scenarioAppliedEventCount = 0u;
+        uint32_t scenarioAssertionFailureCount = 0u;
+        uint32_t gpuTimingResolvedFrameCount = 0u;
+        uint32_t gpuTimingValidFrameCount = 0u;
+        uint32_t gpuTimingUnresolvedFrameCount = 0u;
+        uint32_t counterReadbackResolvedFrameCount = 0u;
+        uint32_t counterReadbackUnresolvedFrameCount = 0u;
 
         uint32_t cpuReadbackCount = 0u;
         uint32_t overflowCount = 0u;

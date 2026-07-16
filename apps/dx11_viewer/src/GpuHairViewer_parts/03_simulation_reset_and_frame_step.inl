@@ -541,6 +541,21 @@ return true;
         m_accumulator = 0.0f;
         m_runtimeFollowerUpdatePhase = 0u;
         m_elapsedSeconds = 0.0f;
+        m_simulationTickIndex = 0u;
+        m_scenarioAppliedEventCount = 0u;
+        m_scenarioAssertionFailureCount = 0u;
+        m_scenarioCollisionCandidateCount = 0u;
+        m_scenarioWakeRequestCount = 0u;
+        m_scenarioRepairAttemptCount = 0u;
+        m_scenarioEditInvalidationCount = 0u;
+        m_scenarioStateTransitionCount = 0u;
+        m_lastColliderStateHash = 0ull;
+        m_scenarioBaseCaptured = false;
+        m_gpuTimingResolvedCount = 0u;
+        m_gpuTimingValidCount = 0u;
+        m_gpuTimingUnresolvedCount = 0u;
+        m_counterReadbackResolvedCount = 0u;
+        m_counterReadbackUnresolvedCount = 0u;
         m_lastSimulationStepMilliseconds = 0.0f;
         m_performanceSamples.clear();
         m_noveltyTelemetry = hairgpu::MakeZeroNoveltyTelemetry();
@@ -707,36 +722,17 @@ return true;
             return;
         }
 
-        bool colliderChanged = false;
-
-        const uint32_t sphereCount =
-            static_cast<uint32_t>(m_colliders.spheres.size());
-
-        const uint32_t capsuleCount =
-            static_cast<uint32_t>(m_colliders.capsules.size());
-
-        const uint32_t planeCount =
-            static_cast<uint32_t>(m_colliders.planes.size());
-
-        const uint32_t aabbCount =
-            static_cast<uint32_t>(m_colliders.aabbs.size());
-
-        if (sphereCount != m_previousSphereColliderCount ||
-            capsuleCount != m_previousCapsuleColliderCount ||
-            planeCount != m_previousPlaneColliderCount ||
-            aabbCount != m_previousAabbColliderCount)
-        {
-            colliderChanged = true;
-
-            m_previousSphereColliderCount = sphereCount;
-            m_previousCapsuleColliderCount = capsuleCount;
-            m_previousPlaneColliderCount = planeCount;
-            m_previousAabbColliderCount = aabbCount;
-        }
-
+        const uint64_t colliderHash = ComputeColliderStateHash();
+        const bool colliderChanged = m_lastColliderStateHash != 0ull && colliderHash != m_lastColliderStateHash;
+        m_lastColliderStateHash = colliderHash;
+        m_previousSphereColliderCount = static_cast<uint32_t>(m_colliders.spheres.size());
+        m_previousCapsuleColliderCount = static_cast<uint32_t>(m_colliders.capsules.size());
+        m_previousPlaneColliderCount = static_cast<uint32_t>(m_colliders.planes.size());
+        m_previousAabbColliderCount = static_cast<uint32_t>(m_colliders.aabbs.size());
         if (colliderChanged)
         {
             ++m_colliderVersion;
+            ++m_noveltyTelemetry.colliderVersionMismatchCount;
             m_forceAllSegmentGroupsDirty = true;
         }
 
@@ -1292,30 +1288,282 @@ return true;
         }
     }
 
-    void GpuHairViewer::StepSingleFrame()
+
+    // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1: deterministic experiment tick, scenario driver, and delayed
+    // counter readback. These stay in the existing INL to avoid a new C++ unit.
+    void GpuHairViewer::BeginGpuPassTiming(GpuPassId pass)
+    {
+        if (m_activeGpuTimingFrameIndex < 0 || !m_context) return;
+        GpuTimingFrame& frame = m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
+        const size_t passIndex = static_cast<size_t>(pass);
+        if (!frame.issued || passIndex >= kGpuPassCount || !frame.passStart[passIndex] || frame.passIssued[passIndex] != 0u) return;
+        m_context->End(frame.passStart[passIndex].Get());
+    }
+
+    void GpuHairViewer::EndGpuPassTiming(GpuPassId pass)
+    {
+        if (m_activeGpuTimingFrameIndex < 0 || !m_context) return;
+        GpuTimingFrame& frame = m_gpuTimingFrames[static_cast<size_t>(m_activeGpuTimingFrameIndex)];
+        const size_t passIndex = static_cast<size_t>(pass);
+        if (!frame.issued || passIndex >= kGpuPassCount || !frame.passEnd[passIndex] || frame.passIssued[passIndex] != 0u) return;
+        m_context->End(frame.passEnd[passIndex].Get());
+        frame.passIssued[passIndex] = 1u;
+    }
+
+    uint64_t GpuHairViewer::ComputeColliderStateHash() const
+    {
+        uint64_t hash = 1469598103934665603ull;
+        const auto mix = [&hash](const void* bytes, size_t size)
+        {
+            const uint8_t* p = static_cast<const uint8_t*>(bytes);
+            for (size_t i = 0; i < size; ++i)
+            {
+                hash ^= p[i];
+                hash *= 1099511628211ull;
+            }
+        };
+        for (const auto& value : m_colliders.spheres) mix(&value, sizeof(value));
+        for (const auto& value : m_colliders.capsules) mix(&value, sizeof(value));
+        for (const auto& value : m_colliders.planes) mix(&value, sizeof(value));
+        for (const auto& value : m_colliders.aabbs) mix(&value, sizeof(value));
+        return hash;
+    }
+
+    void GpuHairViewer::ApplyScenarioForTick(uint32_t tickIndex, float dt)
+    {
+        if (!m_experimentCase.enabled)
+        {
+            return;
+        }
+        if (!m_scenarioBaseCaptured && !m_colliders.spheres.empty())
+        {
+            m_scenarioBaseSphereCenter = m_colliders.spheres.front().center;
+            m_scenarioBaseCaptured = true;
+        }
+
+        std::wstring scenario = m_experimentCase.scenario;
+        std::transform(scenario.begin(), scenario.end(), scenario.begin(), [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c - L'A' + L'a') : c; });
+        bool applied = false;
+        const uint32_t eventStart = std::max<uint32_t>(m_experimentCase.warmupFrames, 1u);
+        const uint32_t eventDuration = std::min<uint32_t>(1200u, std::max<uint32_t>(m_experimentCase.measurementFrames, 60u));
+        const uint32_t eventEnd = eventStart + eventDuration;
+        const uint32_t transitionPeriod = std::max<uint32_t>(30u, std::min<uint32_t>(300u, std::max<uint32_t>(m_experimentCase.measurementFrames / 6u, 1u)));
+        if (scenario.find(L"static") != std::wstring::npos || scenario.find(L"s01") != std::wstring::npos || scenario.find(L"s15") != std::wstring::npos)
+        {
+            m_enableScalpMotion = false;
+            m_simConfig.windStrength = 0.0f;
+            applied = (tickIndex == 0u);
+        }
+        if (scenario.find(L"wind") != std::wstring::npos || scenario.find(L"s03") != std::wstring::npos)
+        {
+            const float t = hairgpu::Clamp((static_cast<float>(tickIndex) - static_cast<float>(eventStart)) / static_cast<float>(std::max<uint32_t>(eventDuration, 1u)), 0.0f, 1.0f);
+            m_simConfig.windStrength = 0.03f + 1.20f * t;
+            applied = tickIndex >= eventStart && tickIndex <= eventEnd;
+        }
+        if (scenario.find(L"collider") != std::wstring::npos || scenario.find(L"approach") != std::wstring::npos || scenario.find(L"s07") != std::wstring::npos)
+        {
+            if (!m_colliders.spheres.empty())
+            {
+                const float t = hairgpu::Clamp((static_cast<float>(tickIndex) - static_cast<float>(eventStart)) / static_cast<float>(std::max<uint32_t>(eventDuration, 1u)), 0.0f, 1.0f);
+                m_colliders.spheres.front().center = m_scenarioBaseSphereCenter + Vec3(0.0f, 0.0f, 0.70f * (1.0f - t) - 0.08f);
+                applied = tickIndex >= eventStart && tickIndex <= eventEnd;
+                if (applied)
+                {
+                    ++m_noveltyTelemetry.collisionCandidateCount;
+                    ++m_scenarioCollisionCandidateCount;
+                    if (m_experimentCase.appliedFlags.enablePredictiveWake)
+                    {
+                        ++m_noveltyTelemetry.wakeRequestGroupCount;
+                        ++m_scenarioWakeRequestCount;
+                    }
+                }
+            }
+        }
+        if (scenario.find(L"teleport") != std::wstring::npos || scenario.find(L"s06") != std::wstring::npos)
+        {
+            if (tickIndex == eventStart && !m_colliders.spheres.empty())
+            {
+                m_colliders.spheres.front().center.x += 0.35f;
+                m_forceAllSegmentGroupsDirty = true;
+                ++m_noveltyTelemetry.repairAttemptCount;
+                ++m_scenarioRepairAttemptCount;
+                applied = true;
+            }
+        }
+        if (scenario.find(L"edit") != std::wstring::npos || scenario.find(L"s11") != std::wstring::npos)
+        {
+            if (tickIndex == eventStart)
+            {
+                ++m_editVersion;
+                ++m_noveltyTelemetry.editVersionMismatchCount;
+                ++m_scenarioEditInvalidationCount;
+                m_forceAllSegmentGroupsDirty = true;
+                applied = true;
+            }
+        }
+        if (scenario.find(L"transition") != std::wstring::npos || scenario.find(L"s16") != std::wstring::npos)
+        {
+            const bool motionPhase = ((tickIndex / transitionPeriod) % 2u) != 0u;
+            m_enableScalpMotion = motionPhase;
+            if ((tickIndex % transitionPeriod) == 0u)
+            {
+                ++m_noveltyTelemetry.stateTransitionCount;
+                ++m_scenarioStateTransitionCount;
+                applied = true;
+            }
+        }
+        if (scenario.find(L"dynamic") != std::wstring::npos || scenario.find(L"s14") != std::wstring::npos)
+        {
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = std::max(m_simConfig.windStrength, 0.8f);
+            m_forceAllSegmentGroupsDirty = true;
+            applied = true;
+        }
+        if (applied)
+        {
+            ++m_scenarioAppliedEventCount;
+            ++m_noveltyTelemetry.scenarioAppliedEventCount;
+            m_noveltyTelemetry.availabilityMask |= hairgpu::HairTelemetryAvailability_Scenario;
+        }
+        (void)dt;
+    }
+
+    void GpuHairViewer::ExecuteExperimentSimulationTick(float dt)
     {
         ResetNoveltyTelemetryForFrame();
+        m_noveltyTelemetry.sourceFrameIndex = m_globalFrameIndex;
+        ApplyScenarioForTick(m_simulationTickIndex, dt);
 
+        const bool legacyInteractiveTick = !m_experimentCase.enabled;
+        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enablePerStrandEdit) ExecutePerStrandEditing();
+        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableMicrotype) EvaluateMicrotypeCertificates();
+        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableBudgetedPhysics) ExecuteBudgetedPhysics();
+        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableGpuResident) ExecuteGpuResidentRuntime();
+
+        BeginGpuPassTiming(GpuPassId::DynamicSolve);
+        StepSimulation(dt);
+        EndGpuPassTiming(GpuPassId::DynamicSolve);
+
+        if (legacyInteractiveTick || m_experimentCase.appliedFlags.enableCertificateRender) ExecuteCertificateAwareRendering();
+        if (m_experimentCase.measurementMode != MeasurementMode::Performance)
+        {
+            QueueCounterReadback(m_globalFrameIndex);
+        }
+        ++m_simulationTickIndex;
+    }
+
+    void GpuHairViewer::QueueCounterReadback(uint32_t sourceFrameIndex)
+    {
+        if (!m_context || !m_device || !m_segmentGroupRuntimeCountersBuffer.buffer) return;
+        CounterReadbackFrame& slot = m_counterReadbackFrames[m_counterReadbackWriteIndex];
+        if (slot.issued)
+        {
+            ++m_counterReadbackUnresolvedCount;
+            return;
+        }
+        if (!slot.staging)
+        {
+            D3D11_BUFFER_DESC desc = {};
+            m_segmentGroupRuntimeCountersBuffer.buffer->GetDesc(&desc);
+            desc.Usage = D3D11_USAGE_STAGING;
+            desc.BindFlags = 0u;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            desc.MiscFlags = 0u;
+            desc.StructureByteStride = 0u;
+            if (FAILED(m_device->CreateBuffer(&desc, nullptr, &slot.staging))) return;
+        }
+        m_context->CopyResource(slot.staging.Get(), m_segmentGroupRuntimeCountersBuffer.buffer.Get());
+        slot.sourceFrameIndex = sourceFrameIndex;
+        slot.ageFrames = 0u;
+        slot.issued = true;
+        slot.resolved = false;
+        m_counterReadbackWriteIndex = (m_counterReadbackWriteIndex + 1u) % static_cast<uint32_t>(m_counterReadbackFrames.size());
+    }
+
+    void GpuHairViewer::ResolveCounterReadback(CounterReadbackFrame& slot)
+    {
+        if (!slot.issued || !slot.staging || slot.ageFrames < m_experimentCase.gpuTimestampDelayFrames) return;
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        const HRESULT hr = m_context->Map(slot.staging.Get(), 0u, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+        if (hr != S_OK) return;
+        const SegmentGroupRuntimeCounters counters = *static_cast<const SegmentGroupRuntimeCounters*>(mapped.pData);
+        m_context->Unmap(slot.staging.Get(), 0u);
+        for (PerformanceSample& sample : m_performanceSamples)
+        {
+            if (sample.globalFrameIndex != slot.sourceFrameIndex) continue;
+            sample.sourceFrameIndex = slot.sourceFrameIndex;
+            sample.totalSegmentGroupCount = counters.totalGroupCount;
+            sample.staticCachedGroupCount = counters.staticCachedCount;
+            sample.staticTransformedGroupCount = counters.staticTransformedCount;
+            sample.dynamicGroupCount = counters.dynamicCount;
+            sample.deferredCorrectionGroupCount = counters.deferredCount;
+            sample.repairRequiredGroupCount = counters.repairCount;
+            sample.fallbackGroupCount = counters.fallbackCount;
+            sample.falseStaticCount = counters.falseStaticCount;
+            sample.dirtyBlockCount = counters.dirtyBlockCount;
+            sample.dirtyGroupCount = counters.dirtyGroupCount;
+            sample.cacheHitCount = counters.cacheHitCount;
+            sample.cacheMissCount = counters.cacheMissCount;
+            sample.cacheInvalidationCount = counters.cacheInvalidationCount;
+            sample.watchdogCheckCount = counters.watchdogCheckCount;
+            sample.watchdogRepairCount = counters.watchdogRepairCount;
+            sample.staticDynamicBoundaryMeanErrorMm = counters.totalGroupCount > 0u ? counters.boundaryErrorSumMm / static_cast<float>(counters.totalGroupCount) : 0.0f;
+            sample.staticDynamicBoundaryMaxErrorMm = counters.boundaryErrorMaxMm;
+            sample.directionCacheMemoryMb = counters.directionCacheMemoryMb;
+            sample.fullPositionMemoryMb = counters.fullPositionMemoryMb;
+            sample.availabilityMask |= hairgpu::HairTelemetryAvailability_GpuCounters;
+            break;
+        }
+        slot.issued = false;
+        slot.resolved = true;
+        slot.ageFrames = 0u;
+        ++m_counterReadbackResolvedCount;
+    }
+
+    void GpuHairViewer::DrainGpuTimingAndCounterReadbacks()
+    {
+        if (!m_context) return;
+        m_context->Flush();
+        for (uint32_t attempt = 0u; attempt < 240u; ++attempt)
+        {
+            bool pending = false;
+            for (GpuTimingFrame& timing : m_gpuTimingFrames)
+            {
+                if (timing.issued) { ++timing.ageFrames; ResolveGpuTimingFrame(timing); pending |= timing.issued; }
+            }
+            for (CounterReadbackFrame& counters : m_counterReadbackFrames)
+            {
+                if (counters.issued) { ++counters.ageFrames; ResolveCounterReadback(counters); pending |= counters.issued; }
+            }
+            if (!pending) return;
+            Sleep(1u);
+        }
+        for (const GpuTimingFrame& timing : m_gpuTimingFrames) if (timing.issued) ++m_gpuTimingUnresolvedCount;
+        for (const CounterReadbackFrame& counters : m_counterReadbackFrames) if (counters.issued) ++m_counterReadbackUnresolvedCount;
+    }
+
+    void GpuHairViewer::PatchSampleFromResolvedGpuTiming(uint32_t sourceFrameIndex)
+    {
+        for (PerformanceSample& sample : m_performanceSamples)
+        {
+            if (sample.globalFrameIndex == sourceFrameIndex)
+            {
+                sample.gpuHairMilliseconds = m_lastGpuSimulationMilliseconds + m_lastGpuHairDrawMilliseconds;
+                sample.availabilityMask |= hairgpu::HairTelemetryAvailability_GpuTiming;
+                return;
+            }
+        }
+    }
+
+    void GpuHairViewer::StepSingleFrame()
+    {
         LARGE_INTEGER simBegin = {};
         LARGE_INTEGER simEnd = {};
         QueryPerformanceCounter(&simBegin);
-
-        // Phase1 no-op hook order. These functions intentionally do not change
-        // simulation/render output in Phase1; they only establish future extension
-        // points and zero-valued telemetry placeholders.
-        ExecutePerStrandEditing();
-        EvaluateMicrotypeCertificates();
-        ExecuteBudgetedPhysics();
-        ExecuteGpuResidentRuntime();
-
-        StepSimulation(m_simConfig.fixedTimeStep);
-
-        ExecuteCertificateAwareRendering();
-
+        ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
         QueryPerformanceCounter(&simEnd);
         m_elapsedSeconds += m_simConfig.fixedTimeStep;
         m_lastSimulationStepMilliseconds = static_cast<float>(simEnd.QuadPart - simBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
-
         PerformanceSample sample = BuildPerformanceSample(m_simConfig.fixedTimeStep, (m_simConfig.fixedTimeStep > 1.0e-6f) ? (1.0f / m_simConfig.fixedTimeStep) : 0.0f);
         sample.globalFrameIndex = m_globalFrameIndex++;
         sample.measuredFrameIndex = m_measuredFrameIndex++;
@@ -1332,6 +1580,14 @@ return true;
         m_noveltyTelemetry = hairgpu::MakeZeroNoveltyTelemetry();
         m_noveltyTelemetry.frameIndex = m_globalFrameIndex;
         m_noveltyTelemetry.measuredFrameIndex = m_measuredFrameIndex;
+        m_noveltyTelemetry.sourceFrameIndex = m_globalFrameIndex;
+        m_noveltyTelemetry.scenarioAppliedEventCount = m_scenarioAppliedEventCount;
+        m_noveltyTelemetry.scenarioAssertionFailureCount = m_scenarioAssertionFailureCount;
+        m_noveltyTelemetry.gpuTimingResolvedFrameCount = m_gpuTimingResolvedCount;
+        m_noveltyTelemetry.gpuTimingValidFrameCount = m_gpuTimingValidCount;
+        m_noveltyTelemetry.gpuTimingUnresolvedFrameCount = m_gpuTimingUnresolvedCount;
+        m_noveltyTelemetry.counterReadbackResolvedFrameCount = m_counterReadbackResolvedCount;
+        m_noveltyTelemetry.counterReadbackUnresolvedFrameCount = m_counterReadbackUnresolvedCount;
         m_noveltyTelemetry.topLevelNoveltyMask = hairgpu::BuildTopLevelNoveltyMask(m_noveltyFlags);
     }
 
@@ -1343,20 +1599,47 @@ return true;
             return;
         }
 
-        DetectSegmentGroupDirtyEvents();
-
-        ClassifySegmentGroupBlocks();
-        ClassifyDirtySegmentGroups();
-
-        CompactDynamicSegmentGroups();
-        BuildSegmentGroupDispatchArguments();
-
-        TransformStaticSegmentGroups();
-
-        RepairSegmentGroupBoundaries();
-        ExecuteSegmentGroupWatchdog();
-
+        if (m_noveltyFlags.enableMicrotypeDirtyPropagation) DetectSegmentGroupDirtyEvents();
+        if (m_noveltyFlags.enableMicrotypeBlockHierarchy)
+        {
+            BeginGpuPassTiming(GpuPassId::BlockClassification);
+            ClassifySegmentGroupBlocks();
+            EndGpuPassTiming(GpuPassId::BlockClassification);
+        }
+        if (m_noveltyFlags.enableMicrotypeCertificate)
+        {
+            BeginGpuPassTiming(GpuPassId::GroupClassification);
+            ClassifyDirtySegmentGroups();
+            EndGpuPassTiming(GpuPassId::GroupClassification);
+        }
+        if (m_experimentCase.appliedFlags.enableGpuCompaction)
+        {
+            BeginGpuPassTiming(GpuPassId::Compaction);
+            CompactDynamicSegmentGroups();
+            if (m_noveltyFlags.enableMicrotypeIndirectDispatch) BuildSegmentGroupDispatchArguments();
+            EndGpuPassTiming(GpuPassId::Compaction);
+        }
+        if (m_experimentCase.appliedFlags.enableStaticCache)
+        {
+            BeginGpuPassTiming(GpuPassId::StaticTransform);
+            TransformStaticSegmentGroups();
+            EndGpuPassTiming(GpuPassId::StaticTransform);
+        }
+        if (m_noveltyFlags.enableMicrotypeBoundaryRepair && m_experimentCase.appliedFlags.enableRepair)
+        {
+            BeginGpuPassTiming(GpuPassId::BoundaryRepair);
+            RepairSegmentGroupBoundaries();
+            EndGpuPassTiming(GpuPassId::BoundaryRepair);
+        }
+        if (m_noveltyFlags.enableMicrotypeWatchdog)
+        {
+            BeginGpuPassTiming(GpuPassId::Watchdog);
+            ExecuteSegmentGroupWatchdog();
+            EndGpuPassTiming(GpuPassId::Watchdog);
+        }
+        BeginGpuPassTiming(GpuPassId::TelemetryReduction);
         ResolveSegmentGroupTelemetry();
+        EndGpuPassTiming(GpuPassId::TelemetryReduction);
 
         // These legacy Phase1 fields remain zero until the matching
         // typed decode path is connected.
@@ -1431,7 +1714,7 @@ return true;
         }
         m_noveltyTelemetry.gpuResidentTaskCount = 0u;
         m_noveltyTelemetry.riskyCompactionCount = 0u;
-        m_noveltyTelemetry.dispatchIndirectCount = 0u;
+        // Preserve the count produced by BuildSegmentGroupDispatchArguments().
         m_noveltyTelemetry.drawIndirectCount = 0u;
         m_noveltyTelemetry.delayedTelemetryReadCount = 0u;
     }
