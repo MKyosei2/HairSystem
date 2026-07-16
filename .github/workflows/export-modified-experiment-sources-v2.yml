@@ -1,0 +1,200 @@
+name: Export modified experiment sources v2
+
+on:
+  pull_request:
+    branches:
+      - Novelty
+    paths:
+      - ".github/workflows/export-modified-experiment-sources-v2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply verified patch to ten files
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import base64
+          import gzip
+          import importlib.util
+          import os
+          import py_compile
+
+          repo = Path.cwd()
+          parts = sorted(Path("tools/tmp").glob("patcher.py.gz.b64.part*"))
+          if len(parts) != 6:
+              raise SystemExit(f"expected 6 patch payloads, got {len(parts)}")
+          encoded = "".join(path.read_text(encoding="ascii") for path in parts)
+          patcher_path = Path(os.environ["RUNNER_TEMP"]) / "apply_experiment_runtime_patch.py"
+          patcher_path.write_bytes(gzip.decompress(base64.b64decode(encoded)))
+          spec = importlib.util.spec_from_file_location("hairgpu_patch", patcher_path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+
+          original_replace_once = module.replace_once
+          def replace_once_compat(text: str, old: str, new: str, label: str) -> str:
+              if label == "CSV measured headers" and text.count(old) == 0:
+                  old = "microtypeWatchdogInterval\\n\";\n"
+                  new = (
+                      "microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,"
+                      "sourceFrameIndex,availabilityMask,fatalFailure,fatalFailureCode,"
+                      "scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,"
+                      "collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,"
+                      "stateTransitionCount,stateOscillationCount\\n\";\n"
+                  )
+              return original_replace_once(text, old, new, label)
+          module.replace_once = replace_once_compat
+
+          def patch_part10_compat(text: str) -> str:
+              if module.MARKER in text:
+                  return text
+              pattern = r'''    void GpuHairViewer::LoadExperimentCaseFromEnvironment\(\)\n    \{.*?\n    \}\n\n    bool GpuHairViewer::IsExperimentModeEnabled\(\) const'''
+              text = module.replace_regex_once(
+                  text,
+                  pattern,
+                  module._case_loader_cpp() + "    bool GpuHairViewer::IsExperimentModeEnabled() const",
+                  "Case JSON loader",
+              )
+              text = module.replace_once(
+                  text,
+                  "        sample.frameMilliseconds = frameSeconds * 1000.0f;\n        sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;\n",
+                  "        sample.frameMilliseconds = frameSeconds * 1000.0f;\n"
+                  "        sample.frameIntervalMilliseconds = m_lastFrameIntervalMilliseconds;\n"
+                  "        sample.cpuFrameWorkMilliseconds = m_lastCpuFrameWorkMilliseconds;\n"
+                  "        sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;\n",
+                  "sample CPU timings",
+              )
+              text = module.insert_after_once(
+                  text,
+                  "        sample.measuredFrameIndex = m_measuredFrameIndex;\n",
+                  "        sample.sourceFrameIndex = m_noveltyTelemetry.sourceFrameIndex;\n"
+                  "        sample.availabilityMask = m_noveltyTelemetry.availabilityMask | hairgpu::HairTelemetryAvailability_FrameInterval | hairgpu::HairTelemetryAvailability_CpuFrameWork | hairgpu::HairTelemetryAvailability_ObservedSettings;\n"
+                  "        sample.fatalFailure = m_noveltyTelemetry.fatalFailure;\n"
+                  "        sample.fatalFailureCode = m_noveltyTelemetry.fatalFailureCode;\n"
+                  "        sample.scenarioAppliedEventCount = m_scenarioAppliedEventCount;\n"
+                  "        sample.scenarioAssertionFailureCount = m_scenarioAssertionFailureCount;\n"
+                  "        sample.collisionCandidateCount = m_noveltyTelemetry.collisionCandidateCount;\n"
+                  "        sample.collisionMissCount = m_noveltyTelemetry.collisionMissCount;\n"
+                  "        sample.wakeRequestGroupCount = m_noveltyTelemetry.wakeRequestGroupCount;\n"
+                  "        sample.repairAttemptCount = m_noveltyTelemetry.repairAttemptCount;\n"
+                  "        sample.repairSuccessCount = m_noveltyTelemetry.repairSuccessCount;\n"
+                  "        sample.stateTransitionCount = m_noveltyTelemetry.stateTransitionCount;\n"
+                  "        sample.stateOscillationCount = m_noveltyTelemetry.stateOscillationCount;\n",
+                  "sample evidence identity",
+              )
+              return module.replace_once(
+                  text,
+                  "        sample.cpuReadbackCount = 0u;\n        sample.gpuHairMilliseconds = sample.simulationMilliseconds;\n",
+                  "        sample.cpuReadbackCount = 0u;\n        // Filled only when the delayed timestamp query for this source frame resolves.\n        sample.gpuHairMilliseconds = 0.0f;\n",
+                  "delayed GPU sample",
+              )
+
+          def patch_part11_compat(text: str) -> str:
+              text = module.insert_after_once(
+                  text,
+                  "sample.staticTransformGpuMilliseconds = m_noveltyTelemetry.staticTransformGpuMilliseconds;\n",
+                  "sample.dynamicSolveGpuMilliseconds = m_noveltyTelemetry.dynamicSolveGpuMilliseconds;\n",
+                  "sample dynamic solve timing",
+              )
+              return module.patch_part11(text)
+
+          patchers = {
+              "GpuHairViewer.h": module.patch_header,
+              "01_window_device_and_ui_setup.inl": module.patch_part01,
+              "02_resource_creation_and_shader_loading.inl": module.patch_part02,
+              "03_simulation_reset_and_frame_step.inl": module.patch_part03,
+              "06_render_mesh_and_visibility_recovery.inl": module.patch_part06,
+              "10_phase1_telemetry_csv_jsonl_summary.inl": patch_part10_compat,
+              "11_experiment_env_and_performance_sample.inl": patch_part11_compat,
+              "HairNoveltyTelemetry.h": module.patch_telemetry,
+              "hairgpu_final_run.py": module.patch_final_run,
+              "hairgpu_safe_runtime_suite.py": module.patch_safe_suite,
+          }
+
+          for name, patch in patchers.items():
+              path = repo / module.PREFERRED_PATHS[name]
+              source = module.read_text(path)
+              if name == "02_resource_creation_and_shader_loading.inl":
+                  source = source.replace("disjoint.Frequency > 0ull)", "disjoint.Frequency > 0)")
+              module.write_text(path, patch(source))
+              print(f"patched: {path}")
+
+          py_compile.compile(str(repo / module.PREFERRED_PATHS["hairgpu_final_run.py"]), doraise=True)
+          py_compile.compile(str(repo / module.PREFERRED_PATHS["hairgpu_safe_runtime_suite.py"]), doraise=True)
+          '@ | Set-Content "$env:RUNNER_TEMP\apply_verified_patch.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\apply_verified_patch.py"
+
+      - name: Package exactly ten modified files
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+          import hashlib
+          import json
+
+          paths = [
+              "apps/dx11_viewer/src/GpuHairViewer.h",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "include/hairgpu/HairNoveltyTelemetry.h",
+              "tools/final_stage/hairgpu_final_run.py",
+              "tools/final_stage/hairgpu_safe_runtime_suite.py",
+          ]
+          if len(paths) != 10 or len(set(paths)) != 10:
+              raise SystemExit("source path count must be exactly ten")
+          if any(not Path(path).is_file() for path in paths):
+              raise SystemExit("one or more modified files are missing")
+
+          manifest = {
+              "fileCount": 10,
+              "files": [
+                  {
+                      "path": path,
+                      "sizeBytes": Path(path).stat().st_size,
+                      "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+                  }
+                  for path in paths
+              ],
+          }
+          Path("MODIFIED_FILES_MANIFEST.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          output = Path("HairSystem_10_Modified_Source_Files.zip")
+          with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+              for path in paths:
+                  archive.write(path, path)
+          with ZipFile(output) as archive:
+              members = archive.namelist()
+              if members != paths or len(members) != 10:
+                  raise SystemExit(f"unexpected archive members: {members}")
+          print(output.resolve())
+          '@ | Set-Content "$env:RUNNER_TEMP\package_ten.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\package_ten.py"
+
+      - name: Upload final source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-10-Modified-Source-Files-v2
+          path: |
+            HairSystem_10_Modified_Source_Files.zip
+            MODIFIED_FILES_MANIFEST.json
+          if-no-files-found: error
+          retention-days: 1
