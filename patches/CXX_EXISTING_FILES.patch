@@ -1,0 +1,278 @@
+diff --git a/apps/dx11_viewer/src/GpuHairViewer.h b/apps/dx11_viewer/src/GpuHairViewer.h
+--- a/apps/dx11_viewer/src/GpuHairViewer.h
++++ b/apps/dx11_viewer/src/GpuHairViewer.h
+@@ -2,6 +2,25 @@
+             uint32_t collisionMissCount = 0u;
+             uint32_t wakeRequestGroupCount = 0u;
+             uint32_t repairAttemptCount = 0u;
+-            uint32_t repairSuccessCount = 0u;
++            uint32_t repairSuccessCount = 0u; // execution success
++            uint32_t repairVerifiedCount = 0u;
++            uint32_t repairUnverifiedCount = 0u;
++            uint32_t repairFailureCount = 0u;
++            uint32_t repairRecurrenceCount = 0u;
++            float repairExecutionSuccessRate = std::numeric_limits<float>::quiet_NaN();
++            float repairVerifiedSuccessRate = std::numeric_limits<float>::quiet_NaN();
++            float repairRecurrenceRate = std::numeric_limits<float>::quiet_NaN();
++            uint32_t predictiveWakeTruePositiveCount = 0u;
++            uint32_t predictiveWakeFalsePositiveCount = 0u;
++            uint32_t predictiveWakeFalseNegativeCount = 0u;
++            uint32_t wakeDelayFrameMax = 0u;
++            float predictiveWakePrecision = std::numeric_limits<float>::quiet_NaN();
++            float predictiveWakeRecall = std::numeric_limits<float>::quiet_NaN();
+             uint32_t stateTransitionCount = 0u;
+             uint32_t stateOscillationCount = 0u;
++            float stateOscillationRate = std::numeric_limits<float>::quiet_NaN();
++            uint32_t collisionGroundTruthAvailable = 0u;
++            uint32_t wakeGroundTruthAvailable = 0u;
++            uint32_t repairVerificationAvailable = 0u;
++            uint32_t boundaryComparisonAvailable = 0u;
++            uint32_t falseStaticGroundTruthAvailable = 0u;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer.h b/apps/dx11_viewer/src/GpuHairViewer.h
+--- a/apps/dx11_viewer/src/GpuHairViewer.h
++++ b/apps/dx11_viewer/src/GpuHairViewer.h
+@@ -1,7 +1,28 @@
+             std::wstring assetSha256;
+             std::wstring appliedMethodSettingsSha256;
+             std::wstring shaderBundleSha256;
++            std::wstring observedShaderBytecodeSha256;
+             std::wstring canonicalResultSha256;
+             std::wstring observedGpuName;
++            std::wstring requestedMethodCode;
++            std::wstring appliedMethodCode;
++            std::wstring observedMethodCode;
++            std::wstring stateSequenceSha256;
++            std::wstring compactionSequenceSha256;
++            std::wstring decisionSequenceSha256;
++            std::wstring finalPositionSha256;
+             bool assetFrozen = false;
++            bool observedReleaseBuild = false;
++            bool observedDebugLayerEnabled = false;
++            bool observedGpuValidationEnabled = false;
++            bool observedVsyncEnabled = false;
++            uint32_t observedPresentSyncInterval = 0u;
++            uint32_t observedSolverIterations = 0u;
++            uint32_t observedGroupsPerBlock = 0u;
++            SegmentGroupStateStorage observedStateStorage = SegmentGroupStateStorage::IntegratedRecord;
++            std::array<float, 3> experimentRootTranslation = { 0.0f, 0.0f, 0.0f };
++            std::array<float, 3> experimentRootRotation = { 0.0f, 0.0f, 0.0f };
++            bool forceAllDynamic = false;
++            bool forceAllStatic = false;
++            uint32_t injectedRepairCount = 0u;
+             uint32_t seed = 0u;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer.h b/apps/dx11_viewer/src/GpuHairViewer.h
+--- a/apps/dx11_viewer/src/GpuHairViewer.h
++++ b/apps/dx11_viewer/src/GpuHairViewer.h
+@@ -1,5 +1,6 @@
+             MeasurementMode measurementMode = MeasurementMode::Performance;
+             ExperimentMethodFlags requestedFlags = {};
+             ExperimentMethodFlags appliedFlags = {};
++            ExperimentMethodFlags observedFlags = {};
+ 
+             // Compatibility mirrors retained for existing exporters.
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+@@ -1,4 +1,7 @@
+         m_experimentCase.requestedWidth = envUInt(L"HAIRGPU_RENDER_WIDTH", root.UInt({ "width", "render_width" }, 1920u));
+         m_experimentCase.requestedHeight = envUInt(L"HAIRGPU_RENDER_HEIGHT", root.UInt({ "height", "render_height" }, 1080u));
+-        m_experimentCase.requestedGuideCount = envUInt(L"HAIRGPU_GUIDE_COUNT", root.UInt({ "guide_count", "guide_strand_count" }, 6250u));
++        const uint32_t caseGuideCount = root.UInt({ "guide_count", "guide_strand_count" }, 6250u);
++        m_experimentCase.requestedGuideCount = envUInt(
++            L"HAIRGPU_GUIDE_STRAND_COUNT",
++            envUInt(L"HAIRGPU_GUIDE_COUNT", caseGuideCount));
+         m_experimentCase.requestedDisplayStrandCount = envUInt(L"HAIRGPU_DISPLAY_STRAND_COUNT", root.UInt({ "display_strand_count" }, 100000u));
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+@@ -1,4 +1,7 @@
+         m_experimentCase.appliedMethodSettingsSha256 = FormalUtf8ToWide(root.String({ "appliedMethodSettingsSha256", "method_settings_sha256" }));
+         m_experimentCase.assetFrozen = envBool(L"HAIRGPU_ASSET_FROZEN", root.Boolean({ "assetFrozen" }, false));
++        m_experimentCase.requestedMethodCode = m_experimentCase.variant;
++        m_experimentCase.appliedMethodCode.clear();
++        m_experimentCase.observedMethodCode.clear();
+ 
+         m_experimentCase.scenarioAssertionMinAppliedEvents = assertions->UInt({ "min_applied_events" }, 0u);
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+@@ -1,7 +1,14 @@
+-        const std::string stateStorageText = methodSettings->String({ "state_storage", "stateStorage" });
++        const std::string stateStorageText = settings->String({ "state_storage", "stateStorage" });
+         if (stateStorageText == "external") flags.stateStorage = SegmentGroupStateStorage::ExternalArray;
+         else if (stateStorageText == "integrated") flags.stateStorage = SegmentGroupStateStorage::IntegratedRecord;
+         m_experimentCase.requestedFlags = flags;
+         m_experimentCase.appliedFlags = flags;
+         m_experimentCase.methodFlagsAcknowledged = ValidateExperimentMethodFlags();
+         if (!m_experimentCase.methodFlagsAcknowledged && m_experimentCase.strictValidationEnabled) return false;
++        if (m_experimentCase.methodFlagsAcknowledged)
++        {
++            m_experimentCase.appliedMethodCode = m_experimentCase.variant;
++            m_experimentCase.observedFlags = flags;
++            m_experimentCase.observedStateStorage = flags.stateStorage;
++            m_experimentCase.observedMethodCode = m_experimentCase.variant;
++        }
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+@@ -1,15 +1,23 @@
+             case ScenarioEventType::SetRootTranslation:
++                m_experimentCase.experimentRootTranslation = { event.value[0], event.value[1], event.value[2] };
++                ++m_parentVersion;
++                m_forceAllSegmentGroupsDirty = true;
++                break;
+             case ScenarioEventType::SetRootRotation:
+-                m_enableScalpMotion = true;
++                m_experimentCase.experimentRootRotation = { event.value[0], event.value[1], event.value[2] };
++                ++m_parentVersion;
+                 m_forceAllSegmentGroupsDirty = true;
+                 break;
+             case ScenarioEventType::TeleportRoot:
+                 m_scalpCenter = m_scalpCenter + Vec3(event.value[0], event.value[1], event.value[2]);
++                ++m_parentVersion;
+                 m_forceAllSegmentGroupsDirty = true;
+-                ++m_scenarioWakeRequestCount;
+                 break;
+             case ScenarioEventType::SetColliderTransform:
+                 if (event.targetIndex < m_colliders.spheres.size())
++                {
+                     m_colliders.spheres[event.targetIndex].center = Vec3(event.value[0], event.value[1], event.value[2]);
+-                ++m_scenarioCollisionCandidateCount;
++                    ++m_colliderVersion;
++                    m_forceAllSegmentGroupsDirty = true;
++                }
+                 break;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+@@ -1,12 +1,15 @@
+             case ScenarioEventType::InjectRepairStorm:
+-                ++m_scenarioRepairAttemptCount;
++                ++m_experimentCase.injectedRepairCount;
+                 m_forceAllSegmentGroupsDirty = true;
+                 break;
+             case ScenarioEventType::ForceAllDynamic:
+-                m_enableScalpMotion = true;
++                m_experimentCase.forceAllDynamic = true;
++                m_experimentCase.forceAllStatic = false;
+                 m_forceAllSegmentGroupsDirty = true;
+                 break;
+             case ScenarioEventType::ForceAllStatic:
+-                m_enableScalpMotion = false;
++                m_experimentCase.forceAllStatic = true;
++                m_experimentCase.forceAllDynamic = false;
+                 m_simConfig.windStrength = 0.0f;
++                m_forceAllSegmentGroupsDirty = true;
+                 break;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+@@ -1,4 +1,13 @@
+         m_vsyncEnabled = m_experimentCase.vsyncEnabled;
+         m_presentSyncInterval = m_vsyncEnabled ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u) : 0u;
+         m_enableActiveSetRuntime = m_experimentCase.appliedFlags.enableActiveSet;
++        m_experimentCase.observedVsyncEnabled = m_vsyncEnabled;
++        m_experimentCase.observedPresentSyncInterval = m_presentSyncInterval;
++        m_experimentCase.observedSolverIterations = m_simConfig.solverIterations;
++        m_experimentCase.observedGroupsPerBlock = m_segmentGroupsPerBlock;
++#if defined(_DEBUG)
++        m_experimentCase.observedReleaseBuild = false;
++#else
++        m_experimentCase.observedReleaseBuild = true;
++#endif
+     }
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+@@ -1,3 +1,17 @@
+ sample.falseStaticCount = m_noveltyTelemetry.falseStaticCount;
+ sample.falseStaticRate = m_noveltyTelemetry.falseStaticRate;
++sample.repairSuccessCount = m_noveltyTelemetry.repairSuccessCount;
++sample.repairVerifiedCount = m_noveltyTelemetry.repairVerifiedCount;
++sample.repairUnverifiedCount = m_noveltyTelemetry.repairUnverifiedCount;
++sample.repairFailureCount = m_noveltyTelemetry.repairFailureCount;
++sample.repairRecurrenceCount = m_noveltyTelemetry.repairRecurrenceCount;
++sample.repairExecutionSuccessRate = m_noveltyTelemetry.repairExecutionSuccessRate;
++sample.repairVerifiedSuccessRate = m_noveltyTelemetry.repairVerifiedSuccessRate;
++sample.predictiveWakeTruePositiveCount = m_noveltyTelemetry.predictiveWakeTruePositiveCount;
++sample.predictiveWakeFalsePositiveCount = m_noveltyTelemetry.predictiveWakeFalsePositiveCount;
++sample.predictiveWakeFalseNegativeCount = m_noveltyTelemetry.predictiveWakeFalseNegativeCount;
++sample.wakeDelayFrameMax = m_noveltyTelemetry.wakeDelayFrameMax;
++sample.predictiveWakePrecision = m_noveltyTelemetry.predictiveWakePrecision;
++sample.predictiveWakeRecall = m_noveltyTelemetry.predictiveWakeRecall;
++sample.stateOscillationRate = m_noveltyTelemetry.stateOscillationRate;
+ sample.cacheHitCount = m_noveltyTelemetry.cacheHitCount;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+@@ -1,2 +1,2 @@
+             falseStaticGroundTruthAvailable = falseStaticGroundTruthAvailable &&
+-                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_BoundaryComparison) != 0ull;
++                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_FalseStaticGroundTruth) != 0ull;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+@@ -1,3 +1,3 @@
+-        out << "  \"requestedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+-        out << "  \"appliedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
+-        out << "  \"observedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\",\n";
++        out << "  \"requestedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.requestedMethodCode)) << "\",\n";
++        out << "  \"appliedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodCode)) << "\",\n";
++        out << "  \"observedMethodCode\": \"" << JsonEscape(WideToUtf8(m_experimentCase.observedMethodCode)) << "\",\n";
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl
+@@ -1,3 +1,4 @@
+         writeFlags("requested", requested, true);
+         writeFlags("applied", applied, true);
+-        out << "  \"observed\": {\n";
++        writeFlags("observed", m_experimentCase.observedFlags, true);
++        out << "  \"hardwareObserved\": {\n";
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
+@@ -1,4 +1,8 @@
+         UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+     #if defined(_DEBUG)
+         flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
++        m_experimentCase.observedReleaseBuild = false;
++    #else
++        flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
++        m_experimentCase.observedReleaseBuild = true;
+     #endif
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl
+@@ -4,4 +4,18 @@
+                 p.y += std::sin(phase) * 0.0025f;
+                 p.x += std::cos(phase * 0.7f) * 0.0015f;
+             }
++            if (m_experimentCase.enabled)
++            {
++                const Vec3 translation(
++                    m_experimentCase.experimentRootTranslation[0],
++                    m_experimentCase.experimentRootTranslation[1],
++                    m_experimentCase.experimentRootTranslation[2]);
++                const Vec3 rotation(
++                    m_experimentCase.experimentRootRotation[0],
++                    m_experimentCase.experimentRootRotation[1],
++                    m_experimentCase.experimentRootRotation[2]);
++                const Mat4 transform = Multiply(Translation(translation),
++                    Multiply(RotationZ(rotation.z), Multiply(RotationY(rotation.y), RotationX(rotation.x))));
++                p = TransformPoint(transform, p);
++            }
+             m_animatedScalpParticles[i].x = p.x;
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl
+@@ -1,5 +1,10 @@
+         m_experimentCase.observedRenderWidth = m_actualRenderWidth;
+         m_experimentCase.observedRenderHeight = m_actualRenderHeight;
+         m_experimentCase.observedDisplayStrandCount = static_cast<uint32_t>(m_asset.strands.size());
++        m_experimentCase.observedVsyncEnabled = m_vsyncEnabled;
++        m_experimentCase.observedPresentSyncInterval = m_presentSyncInterval;
++        m_experimentCase.observedSolverIterations = m_simConfig.solverIterations;
++        m_experimentCase.observedGroupsPerBlock = m_segmentGroupsPerBlock;
++        m_experimentCase.observedStateStorage = m_experimentCase.observedFlags.stateStorage;
+ 
+         const int fullWidth = kUiPanelWidth - kUiMargin * 2;

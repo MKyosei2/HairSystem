@@ -54,6 +54,17 @@ namespace hairgpu
         uint32_t nanStateCount = 0u;
         uint32_t infiniteStateCount = 0u;
         uint32_t determinismMismatchCount = 0u;
+
+        // Number of measured frames carrying each formal evidence class.
+        // These counters let the validator distinguish "measured zero" from
+        // "the metric was never available" without inventing proxy values.
+        uint32_t collisionGroundTruthFrameCount = 0u;
+        uint32_t wakeGroundTruthFrameCount = 0u;
+        uint32_t repairVerificationFrameCount = 0u;
+        uint32_t boundaryComparisonFrameCount = 0u;
+        uint32_t falseStaticGroundTruthFrameCount = 0u;
+        uint32_t performanceEnvironmentFrameCount = 0u;
+        uint32_t resultIntegrityFrameCount = 0u;
         float frameBudgetOverrunRate = 0.0f;
 
         uint32_t cpuReadbackCount = 0u;
