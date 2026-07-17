@@ -47,7 +47,7 @@ for /f %%T in ('%PYTHON_CMD% -c "import datetime; print(datetime.datetime.now().
 set "SESSION_DIR=%ROOT%\profile_results\PRENOVELTY_SESSION_!SESSION_ID!"
 set "SESSION_RUNS=!SESSION_DIR!\run_directories.txt"
 mkdir "!SESSION_DIR!" >nul 2>nul
-break > "!SESSION_RUNS!"
+type nul > "!SESSION_RUNS!"
 
 (
     echo session_id=!SESSION_ID!
