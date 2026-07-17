@@ -208,7 +208,7 @@ def expand_run_matrix(config: dict[str, Any], base_dir: Path) -> list[dict[str, 
                             "method_settings": dict(method.get("settings", {})),
                             "scenario": scenario_code,
                             "scenario_timeline": scenario.get("timeline", ""),
-                            "scenario_assertions": dict(
+                            "assertions": dict(
                                 scenario.get("assertions", {})
                             ),
                             "measurement_mode": scenario.get(
@@ -227,7 +227,15 @@ def expand_run_matrix(config: dict[str, Any], base_dir: Path) -> list[dict[str, 
                     )
                     by_method = scenario.get("assertions_by_method", {})
                     if isinstance(by_method, dict) and method_code in by_method:
-                        run["scenario_assertions"].update(by_method[method_code])
+                        run["assertions"].update(by_method[method_code])
+                    assertions = run.get("assertions")
+                    if not isinstance(assertions, dict) or not assertions:
+                        raise ValueError(f"{case_id}: formal run requires scenario assertions")
+                    minimum_events = int(assertions.get(
+                        "min_applied_events", assertions.get("minAppliedEvents", 0)
+                    ))
+                    if minimum_events < 1:
+                        raise ValueError(f"{case_id}: min_applied_events must be at least 1")
                     run_telemetry_dir = (
                         resolve_path(base_dir, run.get("telemetry_dir"))
                         or telemetry_dir

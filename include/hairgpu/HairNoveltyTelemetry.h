@@ -274,6 +274,7 @@ namespace hairgpu
 
             // Finalization can be called more than once for one source frame.
             // Keep the last fully-populated value rather than double-counting.
+            bool appended = false;
             if (!m_rows.empty() && m_rows.back().sourceFrameIndex == row.sourceFrameIndex)
             {
                 m_rows.back() = row;
@@ -281,6 +282,15 @@ namespace hairgpu
             else
             {
                 m_rows.push_back(row);
+                appended = true;
+            }
+
+            // Persist a complete atomic snapshot periodically. A crash can lose
+            // at most kCheckpointRows - 1 newly recorded frames instead of the
+            // whole formal run.
+            if (appended && m_rows.size() - m_lastFlushedRowCount >= kCheckpointRows)
+            {
+                Flush();
             }
         }
 
@@ -313,7 +323,8 @@ namespace hairgpu
 
         void Flush() noexcept
         {
-            if (m_outputPath.empty() || m_rows.empty())
+            if (m_outputPath.empty() || m_rows.empty() ||
+                m_lastFlushedRowCount == m_rows.size())
             {
                 return;
             }
@@ -355,6 +366,10 @@ namespace hairgpu
                 {
                     std::filesystem::remove(temporary, error);
                 }
+                else
+                {
+                    m_lastFlushedRowCount = m_rows.size();
+                }
             }
             catch (...)
             {
@@ -362,9 +377,11 @@ namespace hairgpu
             }
         }
 
+        static constexpr size_t kCheckpointRows = 120u;
         bool m_initialized = false;
         std::filesystem::path m_outputPath;
         std::vector<HairFormalEvidenceRow> m_rows;
+        size_t m_lastFlushedRowCount = 0u;
     };
 
     inline HairFormalEvidenceRecorder& GetHairFormalEvidenceRecorder()

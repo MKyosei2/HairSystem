@@ -796,17 +796,50 @@ return true;
 
         ExperimentMethodId ParseExperimentMethodId(const std::wstring& value)
         {
-            if (value == L"B0_FullDynamic") return ExperimentMethodId::B0_FullDynamic;
-            if (value == L"B1_StrandSleep") return ExperimentMethodId::B1_StrandSleep;
-            if (value == L"B2_BlockSleep") return ExperimentMethodId::B2_BlockSleep;
-            if (value == L"B3_SegmentThresholdSleep") return ExperimentMethodId::B3_SegmentThresholdSleep;
-            if (value == L"B4_SegmentHysteresisSleep") return ExperimentMethodId::B4_SegmentHysteresisSleep;
-            if (value == L"B5_SegmentCache") return ExperimentMethodId::B5_SegmentCache;
-            if (value == L"B6_SegmentGpuCompaction") return ExperimentMethodId::B6_SegmentGpuCompaction;
-            if (value == L"B7_ActiveSetOnly") return ExperimentMethodId::B7_ActiveSetOnly;
-            if (value == L"B8_ExternalStateArray") return ExperimentMethodId::B8_ExternalStateArray;
-            if (value == L"P_IntegratedSegmentGroup") return ExperimentMethodId::P_IntegratedSegmentGroup;
+            std::wstring normalized = value;
+            std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+
+            if (normalized == L"b0" || normalized == L"b0_fulldynamic") return ExperimentMethodId::B0_FullDynamic;
+            if (normalized == L"b1" || normalized == L"b1_strandsleep") return ExperimentMethodId::B1_StrandSleep;
+            if (normalized == L"b2" || normalized == L"b2_blocksleep") return ExperimentMethodId::B2_BlockSleep;
+            if (normalized == L"b3" || normalized == L"b3_segmentthresholdsleep") return ExperimentMethodId::B3_SegmentThresholdSleep;
+            if (normalized == L"b4" || normalized == L"b4_segmenthysteresissleep") return ExperimentMethodId::B4_SegmentHysteresisSleep;
+            if (normalized == L"b5" || normalized == L"b5_segmentcache") return ExperimentMethodId::B5_SegmentCache;
+            if (normalized == L"b6" || normalized == L"b6_segmentgpucompaction") return ExperimentMethodId::B6_SegmentGpuCompaction;
+            if (normalized == L"b7" || normalized == L"b7_activesetonly") return ExperimentMethodId::B7_ActiveSetOnly;
+            if (normalized == L"b8" || normalized == L"b8_externalstatearray") return ExperimentMethodId::B8_ExternalStateArray;
+            if (normalized == L"p" || normalized == L"p_integratedsegmentgroup") return ExperimentMethodId::P_IntegratedSegmentGroup;
             return ExperimentMethodId::Unknown;
+        }
+
+        bool ExperimentMethodFlagsEqual(const ExperimentMethodFlags& lhs, const ExperimentMethodFlags& rhs)
+        {
+            return lhs.enableNoNoveltyBaseline == rhs.enableNoNoveltyBaseline &&
+                lhs.enableMicrotype == rhs.enableMicrotype &&
+                lhs.enableBudgetedPhysics == rhs.enableBudgetedPhysics &&
+                lhs.enableCertificateRender == rhs.enableCertificateRender &&
+                lhs.enablePerStrandEdit == rhs.enablePerStrandEdit &&
+                lhs.enableCBMA == rhs.enableCBMA &&
+                lhs.enablePhysicsIslands == rhs.enablePhysicsIslands &&
+                lhs.enableRodRepair == rhs.enableRodRepair &&
+                lhs.enableGpuResident == rhs.enableGpuResident &&
+                lhs.enableSegmentGroupSleep == rhs.enableSegmentGroupSleep &&
+                lhs.enableSegmentGroupIntegratedState == rhs.enableSegmentGroupIntegratedState &&
+                lhs.enableExternalStateArray == rhs.enableExternalStateArray &&
+                lhs.enableSharedPointOwnership == rhs.enableSharedPointOwnership &&
+                lhs.enableDirectionalResponsibility == rhs.enableDirectionalResponsibility &&
+                lhs.enableStaticCertificate == rhs.enableStaticCertificate &&
+                lhs.enablePredictiveWake == rhs.enablePredictiveWake &&
+                lhs.enableVelocityRecovery == rhs.enableVelocityRecovery &&
+                lhs.enableRepair == rhs.enableRepair &&
+                lhs.enableGpuCompaction == rhs.enableGpuCompaction &&
+                lhs.enableActiveSet == rhs.enableActiveSet &&
+                lhs.enableStrandSleep == rhs.enableStrandSleep &&
+                lhs.enableBlockSleep == rhs.enableBlockSleep &&
+                lhs.enableSleepHysteresis == rhs.enableSleepHysteresis &&
+                lhs.enableStaticCache == rhs.enableStaticCache &&
+                lhs.stateStorage == rhs.stateStorage;
         }
 
         ExperimentScenarioId ParseExperimentScenarioId(const std::wstring& value)
@@ -867,9 +900,17 @@ return true;
         }
 
         const FormalJsonValue* settings = root.FindAny({ "method_settings", "methodSettings" });
-        if (!settings || settings->type != FormalJsonValue::Type::Object) settings = &root;
-        const FormalJsonValue* assertions = root.Find("assertions");
-        if (!assertions || assertions->type != FormalJsonValue::Type::Object) assertions = &root;
+        if (!settings || settings->type != FormalJsonValue::Type::Object)
+        {
+            m_experimentFailureMessage = L"Formal case is missing a method_settings object.";
+            return false;
+        }
+        const FormalJsonValue* assertions = root.FindAny({ "assertions", "scenario_assertions" });
+        if (!assertions || assertions->type != FormalJsonValue::Type::Object)
+        {
+            m_experimentFailureMessage = L"Formal case is missing a scenario assertions object.";
+            return false;
+        }
 
         auto envText = [](const wchar_t* name, const std::wstring& fallback) -> std::wstring
         {
@@ -946,14 +987,26 @@ return true;
         m_experimentCase.assetManifestSha256 = envText(L"HAIRGPU_ASSET_MANIFEST_SHA256", FormalUtf8ToWide(root.String({ "assetManifestSha256" })));
         m_experimentCase.assetSha256 = envText(L"HAIRGPU_ASSET_SHA256", FormalUtf8ToWide(root.String({ "assetSha256" })));
         m_experimentCase.shaderBundleSha256 = envText(L"HAIRGPU_SHADER_BUNDLE_SHA256", FormalUtf8ToWide(root.String({ "shaderBundleSha256" })));
-        m_experimentCase.appliedMethodSettingsSha256 = FormalUtf8ToWide(root.String({ "appliedMethodSettingsSha256", "method_settings_sha256" }));
+        m_experimentCase.requestedMethodSettingsSha256 = envText(
+            L"HAIRGPU_REQUESTED_METHOD_SETTINGS_SHA256",
+            FormalUtf8ToWide(root.String({ "requestedMethodSettingsSha256", "requested_method_settings_sha256", "method_settings_sha256" })));
+        m_experimentCase.appliedMethodSettingsSha256 = envText(
+            L"HAIRGPU_APPLIED_METHOD_SETTINGS_SHA256",
+            FormalUtf8ToWide(root.String({ "appliedMethodSettingsSha256", "applied_method_settings_sha256", "method_settings_sha256" })));
+        if (m_experimentCase.appliedMethodSettingsSha256.empty())
+            m_experimentCase.appliedMethodSettingsSha256 = m_experimentCase.requestedMethodSettingsSha256;
         m_experimentCase.assetFrozen = envBool(L"HAIRGPU_ASSET_FROZEN", root.Boolean({ "assetFrozen" }, false));
 
-        m_experimentCase.scenarioAssertionMinAppliedEvents = assertions->UInt({ "min_applied_events" }, 0u);
-        m_experimentCase.scenarioAssertionMinCollisionCandidates = assertions->UInt({ "min_collision_candidates" }, 0u);
-        m_experimentCase.scenarioAssertionMinWakeRequests = assertions->UInt({ "min_wake_requests" }, 0u);
-        m_experimentCase.scenarioAssertionMinRepairs = assertions->UInt({ "min_repairs" }, 0u);
-        m_experimentCase.scenarioAssertionMinTransitions = assertions->UInt({ "min_state_transitions" }, 0u);
+        m_experimentCase.scenarioAssertionMinAppliedEvents = std::max<uint32_t>(1u,
+            assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u));
+        m_experimentCase.scenarioAssertionMinCollisionCandidates = assertions->UInt(
+            { "min_collision_candidates", "minCollisionCandidates" }, 0u);
+        m_experimentCase.scenarioAssertionMinWakeRequests = assertions->UInt(
+            { "min_wake_requests", "minWakeRequests" }, 0u);
+        m_experimentCase.scenarioAssertionMinRepairs = assertions->UInt(
+            { "min_repairs", "minRepairs" }, 0u);
+        m_experimentCase.scenarioAssertionMinTransitions = assertions->UInt(
+            { "min_state_transitions", "minTransitions" }, 0u);
 
         // Do not inherit the member default initializers here.  Every formal
         // method starts from an explicit all-disabled state so that B0--B8 and
@@ -1048,6 +1101,9 @@ return true;
         flags.enableBudgetedPhysics = settingBool({ "enable_budgeted_physics", "enableBudgetedPhysics" }, L"HAIRGPU_ENABLE_BUDGETED_PHYSICS", flags.enableBudgetedPhysics);
         flags.enableCertificateRender = settingBool({ "enable_certificate_render", "enableCertificateRender" }, L"HAIRGPU_ENABLE_CERTIFICATE_RENDER", flags.enableCertificateRender);
         flags.enablePerStrandEdit = settingBool({ "enable_per_strand_edit", "enablePerStrandEdit" }, L"HAIRGPU_ENABLE_PER_STRAND_EDIT", flags.enablePerStrandEdit);
+        flags.enableCBMA = settingBool({ "enable_cbma", "enableCBMA" }, L"HAIRGPU_ENABLE_CBMA", flags.enableCBMA);
+        flags.enablePhysicsIslands = settingBool({ "enable_physics_islands", "enablePhysicsIslands" }, L"HAIRGPU_ENABLE_PHYSICS_ISLANDS", flags.enablePhysicsIslands);
+        flags.enableRodRepair = settingBool({ "enable_rod_repair", "enableRodRepair" }, L"HAIRGPU_ENABLE_ROD_REPAIR", flags.enableRodRepair);
         flags.enableGpuResident = settingBool({ "enable_gpu_resident", "enableGpuResident" }, L"HAIRGPU_ENABLE_GPU_RESIDENT", flags.enableGpuResident);
         flags.enableSegmentGroupSleep = settingBool({ "enable_segment_group_sleep", "enableSegmentGroupSleep" }, L"HAIRGPU_ENABLE_SEGMENT_GROUP_SLEEP", flags.enableSegmentGroupSleep);
         flags.enableSegmentGroupIntegratedState = settingBool({ "enable_segment_group_integrated_state", "enableSegmentGroupIntegratedState" }, L"HAIRGPU_ENABLE_SEGMENT_GROUP_INTEGRATED_STATE", flags.enableSegmentGroupIntegratedState);
@@ -1064,9 +1120,13 @@ return true;
         flags.enableBlockSleep = settingBool({ "enable_block_sleep", "enableBlockSleep" }, L"HAIRGPU_ENABLE_BLOCK_SLEEP", flags.enableBlockSleep);
         flags.enableSleepHysteresis = settingBool({ "enable_sleep_hysteresis", "enableSleepHysteresis" }, L"HAIRGPU_ENABLE_SLEEP_HYSTERESIS", flags.enableSleepHysteresis);
         flags.enableStaticCache = settingBool({ "enable_static_cache", "enableStaticCache" }, L"HAIRGPU_ENABLE_STATIC_CACHE", flags.enableStaticCache);
-        const std::string stateStorageText = methodSettings->String({ "state_storage", "stateStorage" });
-        if (stateStorageText == "external") flags.stateStorage = SegmentGroupStateStorage::ExternalArray;
-        else if (stateStorageText == "integrated") flags.stateStorage = SegmentGroupStateStorage::IntegratedRecord;
+        std::string stateStorageText = settings->String({ "state_storage", "stateStorage" });
+        std::transform(stateStorageText.begin(), stateStorageText.end(), stateStorageText.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (stateStorageText == "external" || stateStorageText == "externalarray")
+            flags.stateStorage = SegmentGroupStateStorage::ExternalArray;
+        else if (stateStorageText == "integrated" || stateStorageText == "integratedrecord")
+            flags.stateStorage = SegmentGroupStateStorage::IntegratedRecord;
         m_experimentCase.requestedFlags = flags;
         m_experimentCase.appliedFlags = flags;
         m_experimentCase.methodFlagsAcknowledged = ValidateExperimentMethodFlags();
@@ -1096,6 +1156,28 @@ return true;
         m_noveltyFlags.enableMicrotypeHemisphereOwnership = flags.enableDirectionalResponsibility ? 1u : 0u;
         m_noveltyFlags.enableMicrotypeIndirectDispatch = flags.enableGpuCompaction ? 1u : 0u;
         m_noveltyFlags = hairgpu::NormalizeMicrotypeAblationFlags(m_noveltyFlags);
+
+        ExperimentMethodFlags observedFlags = flags;
+        observedFlags.enableNoNoveltyBaseline = m_noveltyFlags.enableNoNoveltyBaseline != 0u;
+        observedFlags.enableMicrotype = m_noveltyFlags.enableMicrotype != 0u;
+        observedFlags.enableBudgetedPhysics = m_noveltyFlags.enableBudgetedPhysics != 0u;
+        observedFlags.enableCertificateRender = m_noveltyFlags.enableCertificateRender != 0u;
+        observedFlags.enablePerStrandEdit = m_noveltyFlags.enablePerStrandEdit != 0u;
+        observedFlags.enableCBMA = m_noveltyFlags.enableCBMA != 0u;
+        observedFlags.enablePhysicsIslands = m_noveltyFlags.enablePhysicsIslands != 0u;
+        observedFlags.enableRodRepair = m_noveltyFlags.enableRodRepair != 0u;
+        observedFlags.enableGpuResident = m_noveltyFlags.enableGpuResident != 0u;
+        observedFlags.enableStaticCertificate = m_noveltyFlags.enableMicrotypeCertificate != 0u;
+        observedFlags.enableDirectionalResponsibility = m_noveltyFlags.enableMicrotypeHemisphereOwnership != 0u;
+        observedFlags.enableGpuCompaction = m_noveltyFlags.enableMicrotypeIndirectDispatch != 0u;
+        observedFlags.enableRepair = m_noveltyFlags.enableMicrotypeBoundaryRepair != 0u;
+        m_experimentCase.observedFlags = observedFlags;
+        if (m_experimentCase.methodFlagsAcknowledged &&
+            ExperimentMethodFlagsEqual(m_experimentCase.appliedFlags, m_experimentCase.observedFlags))
+        {
+            m_experimentCase.observedMethodSettingsSha256 = m_experimentCase.appliedMethodSettingsSha256;
+        }
+
         m_segmentGroupsPerBlock = std::max<uint32_t>(1u, settings->UInt({ "groupsPerBlock", "groups_per_block" }, m_segmentGroupsPerBlock));
         m_segmentGroupWatchdogIntervalFrames = std::max<uint32_t>(1u, settings->UInt({ "watchdogIntervalFrames", "watchdog_interval_frames" }, m_segmentGroupWatchdogIntervalFrames));
         m_globalHairBudget = hairgpu::BuildGlobalHairFrameBudget(m_noveltyFlags);

@@ -94,7 +94,7 @@ return sample;
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,sourceFrameIndex,availabilityMask,fatalFailure,fatalFailureCode,scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,stateTransitionCount,stateOscillationCount\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,sourceFrameIndex,availabilityMask,metricAvailabilityMask,unavailableMetricCount,syntheticMetricCount,sameFrameReadbackCount,nanStateCount,infiniteStateCount,fatalFailure,fatalFailureCode,scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,stateTransitionCount,stateOscillationCount\n";
         const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
@@ -269,6 +269,12 @@ return sample;
                 << "," << s.cpuFrameWorkMilliseconds
                 << "," << s.sourceFrameIndex
                 << "," << s.availabilityMask
+                << "," << s.metricAvailabilityMask
+                << "," << s.unavailableMetricCount
+                << "," << s.syntheticMetricCount
+                << "," << s.sameFrameReadbackCount
+                << "," << s.nanStateCount
+                << "," << s.infiniteStateCount
                 << "," << s.fatalFailure
                 << "," << s.fatalFailureCode
                 << "," << s.scenarioAppliedEventCount
@@ -332,7 +338,7 @@ return sample;
             out << "\"dynamicGroupCount\":" << sample.dynamicGroupCount << ",";
             out << "\"repairRequiredGroupCount\":" << sample.repairRequiredGroupCount << ",";
             out << "\"falseStaticCount\":";
-            if ((sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_BoundaryComparison) != 0ull)
+            if ((sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_FalseStaticGroundTruth) != 0ull)
                 out << sample.falseStaticCount;
             else out << "null";
             out << ",";
@@ -402,26 +408,77 @@ return sample;
         out << "  \"assetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\",\n";
         out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
         out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
+        out << "  \"requestedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.requestedMethodSettingsSha256)) << "\",\n";
+        out << "  \"appliedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
+        out << "  \"observedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.observedMethodSettingsSha256)) << "\",\n";
         out << "  \"methodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
         out << "  \"methodFlagsMatched\": " << (m_experimentCase.methodFlagsAcknowledged ? "true" : "false") << ",\n";
         out << "  \"realMeasurement\": " << (realMeasurement ? "true" : "false") << ",\n";
+        const ExperimentMethodFlags& observedFlags = m_experimentCase.observedFlags;
         auto writeFlags = [&out](const char* name, const ExperimentMethodFlags& flags, bool comma)
         {
-            out << "  \"" << name << "\": {\n";
-            out << "    \"enableNoNoveltyBaseline\": " << (flags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
-            out << "    \"enableSegmentGroupSleep\": " << (flags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
-            out << "    \"enableSegmentGroupIntegratedState\": " << (flags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
-            out << "    \"enableExternalStateArray\": " << (flags.enableExternalStateArray ? "true" : "false") << ",\n";
-            out << "    \"enablePredictiveWake\": " << (flags.enablePredictiveWake ? "true" : "false") << ",\n";
-            out << "    \"enableVelocityRecovery\": " << (flags.enableVelocityRecovery ? "true" : "false") << ",\n";
-            out << "    \"enableRepair\": " << (flags.enableRepair ? "true" : "false") << ",\n";
-            out << "    \"enableGpuCompaction\": " << (flags.enableGpuCompaction ? "true" : "false") << ",\n";
-            out << "    \"enableActiveSet\": " << (flags.enableActiveSet ? "true" : "false") << "\n";
-            out << "  }" << (comma ? "," : "") << "\n";
+            out << "  \"" << name << "\": {
+";
+            out << "    \"enableNoNoveltyBaseline\": " << (flags.enableNoNoveltyBaseline ? "true" : "false") << ",
+";
+            out << "    \"enableMicrotype\": " << (flags.enableMicrotype ? "true" : "false") << ",
+";
+            out << "    \"enableBudgetedPhysics\": " << (flags.enableBudgetedPhysics ? "true" : "false") << ",
+";
+            out << "    \"enableCertificateRender\": " << (flags.enableCertificateRender ? "true" : "false") << ",
+";
+            out << "    \"enablePerStrandEdit\": " << (flags.enablePerStrandEdit ? "true" : "false") << ",
+";
+            out << "    \"enableCBMA\": " << (flags.enableCBMA ? "true" : "false") << ",
+";
+            out << "    \"enablePhysicsIslands\": " << (flags.enablePhysicsIslands ? "true" : "false") << ",
+";
+            out << "    \"enableRodRepair\": " << (flags.enableRodRepair ? "true" : "false") << ",
+";
+            out << "    \"enableGpuResident\": " << (flags.enableGpuResident ? "true" : "false") << ",
+";
+            out << "    \"enableSegmentGroupSleep\": " << (flags.enableSegmentGroupSleep ? "true" : "false") << ",
+";
+            out << "    \"enableSegmentGroupIntegratedState\": " << (flags.enableSegmentGroupIntegratedState ? "true" : "false") << ",
+";
+            out << "    \"enableExternalStateArray\": " << (flags.enableExternalStateArray ? "true" : "false") << ",
+";
+            out << "    \"enableSharedPointOwnership\": " << (flags.enableSharedPointOwnership ? "true" : "false") << ",
+";
+            out << "    \"enableDirectionalResponsibility\": " << (flags.enableDirectionalResponsibility ? "true" : "false") << ",
+";
+            out << "    \"enableStaticCertificate\": " << (flags.enableStaticCertificate ? "true" : "false") << ",
+";
+            out << "    \"enablePredictiveWake\": " << (flags.enablePredictiveWake ? "true" : "false") << ",
+";
+            out << "    \"enableVelocityRecovery\": " << (flags.enableVelocityRecovery ? "true" : "false") << ",
+";
+            out << "    \"enableRepair\": " << (flags.enableRepair ? "true" : "false") << ",
+";
+            out << "    \"enableGpuCompaction\": " << (flags.enableGpuCompaction ? "true" : "false") << ",
+";
+            out << "    \"enableActiveSet\": " << (flags.enableActiveSet ? "true" : "false") << ",
+";
+            out << "    \"enableStrandSleep\": " << (flags.enableStrandSleep ? "true" : "false") << ",
+";
+            out << "    \"enableBlockSleep\": " << (flags.enableBlockSleep ? "true" : "false") << ",
+";
+            out << "    \"enableSleepHysteresis\": " << (flags.enableSleepHysteresis ? "true" : "false") << ",
+";
+            out << "    \"enableStaticCache\": " << (flags.enableStaticCache ? "true" : "false") << ",
+";
+            out << "    \"stateStorage\": \""
+                << (flags.stateStorage == SegmentGroupStateStorage::IntegratedRecord ? "IntegratedRecord" : "ExternalArray")
+                << "\"
+";
+            out << "  }" << (comma ? "," : "") << "
+";
         };
         writeFlags("requested", requested, true);
         writeFlags("applied", applied, true);
-        out << "  \"observed\": {\n";
+        writeFlags("observedFlags", observedFlags, true);
+        out << "  \"observed\": {
+";
         out << "    \"adapterType\": \"" << (m_observedDriverType == D3D_DRIVER_TYPE_HARDWARE ? "hardware" : "non_hardware") << "\",\n";
         out << "    \"gpuName\": \"" << JsonEscape(WideToUtf8(m_observedGpuName)) << "\",\n";
         out << "    \"gpuVendorId\": " << m_observedGpuVendorId << ",\n";
@@ -432,7 +489,9 @@ return sample;
         out << "    \"displayStrandCount\": " << m_asset.strands.size() << ",\n";
         out << "    \"guideCount\": " << m_asset.guideStrandCount << ",\n";
         out << "    \"particlesPerGuide\": " << m_asset.particlesPerStrand << ",\n";
-        out << "    \"solverIterations\": " << m_simConfig.solverIterations << "\n";
+        out << "    \"solverIterations\": " << m_simConfig.solverIterations << ",\n";
+        out << "    \"vsync\": " << (m_vsyncEnabled ? "true" : "false") << ",\n";
+        out << "    \"presentSyncInterval\": " << m_lastObservedPresentSyncInterval << "\n";
         out << "  }\n";
         out << "}\n";
         return true;
@@ -502,15 +561,19 @@ return sample;
             !m_experimentCase.executableSha256.empty() &&
             !m_experimentCase.shaderBundleSha256.empty() &&
             !m_experimentCase.assetSha256.empty() &&
-            !m_experimentCase.scenarioTimelineSha256.empty();
+            !m_experimentCase.scenarioTimelineSha256.empty() &&
+            !m_experimentCase.requestedMethodSettingsSha256.empty() &&
+            m_experimentCase.requestedMethodSettingsSha256 == m_experimentCase.appliedMethodSettingsSha256 &&
+            m_experimentCase.appliedMethodSettingsSha256 == m_experimentCase.observedMethodSettingsSha256;
         const bool observedSettingsValid =
             m_observedDriverType == D3D_DRIVER_TYPE_HARDWARE &&
             m_actualRenderWidth == m_experimentCase.requestedWidth &&
             m_actualRenderHeight == m_experimentCase.requestedHeight &&
             m_asset.strands.size() == static_cast<size_t>(m_experimentCase.requestedDisplayStrandCount) &&
+            m_asset.guideStrandCount == m_experimentCase.requestedGuideCount &&
             m_asset.particlesPerStrand == m_experimentCase.requestedParticlesPerGuide &&
             m_simConfig.solverIterations == m_experimentCase.requestedSolverIterations &&
-            !m_vsyncEnabled && m_presentSyncInterval == 0u;
+            !m_vsyncEnabled && m_lastObservedPresentSyncInterval == 0u;
         const bool runtimeQualityValid =
             timingCoverage >= 0.99f &&
             m_gpuTimingUnresolvedCount == 0u &&
@@ -571,7 +634,7 @@ return sample;
             repairVerificationAvailable = repairVerificationAvailable &&
                 (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_RepairVerification) != 0ull;
             falseStaticGroundTruthAvailable = falseStaticGroundTruthAvailable &&
-                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_BoundaryComparison) != 0ull;
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_FalseStaticGroundTruth) != 0ull;
         }
         const ExperimentRunStatus status = ValidateCompletedExperiment();
         const bool realMeasurement = status == ExperimentRunStatus::CompleteValid;
@@ -614,6 +677,9 @@ return sample;
         out << "  \"assetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\",\n";
         out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
         out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
+        out << "  \"requestedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.requestedMethodSettingsSha256)) << "\",\n";
+        out << "  \"appliedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
+        out << "  \"observedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.observedMethodSettingsSha256)) << "\",\n";
         out << "  \"methodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.appliedMethodSettingsSha256)) << "\",\n";
         out << "  \"methodFlagsMatched\": " << (m_experimentCase.methodFlagsAcknowledged ? "true" : "false") << ",\n";
         out << "  \"assetFrozen\": " << (m_experimentCase.assetFrozen ? "true" : "false") << ",\n";

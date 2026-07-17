@@ -565,7 +565,9 @@ namespace hairgpu::viewer
             std::wstring scenarioTimelineSha256;
             std::wstring assetManifestSha256;
             std::wstring assetSha256;
+            std::wstring requestedMethodSettingsSha256;
             std::wstring appliedMethodSettingsSha256;
+            std::wstring observedMethodSettingsSha256;
             std::wstring shaderBundleSha256;
             std::wstring canonicalResultSha256;
             std::wstring observedGpuName;
@@ -579,6 +581,11 @@ namespace hairgpu::viewer
             uint32_t observedRenderWidth = 0u;
             uint32_t observedRenderHeight = 0u;
             uint32_t observedDisplayStrandCount = 0u;
+            uint32_t observedGuideCount = 0u;
+            uint32_t observedParticlesPerGuide = 0u;
+            uint32_t observedSolverIterations = 0u;
+            bool observedVsyncEnabled = true;
+            uint32_t observedPresentSyncInterval = 1u;
             uint32_t requestedGuideCount = 6000u;
             uint32_t requestedDisplayStrandCount = 0u;
             uint32_t requestedParticlesPerGuide = 128u;
@@ -594,6 +601,7 @@ namespace hairgpu::viewer
             MeasurementMode measurementMode = MeasurementMode::Performance;
             ExperimentMethodFlags requestedFlags = {};
             ExperimentMethodFlags appliedFlags = {};
+            ExperimentMethodFlags observedFlags = {};
 
             // Compatibility mirrors retained for existing exporters.
             bool enableNoNoveltyBaseline = false;

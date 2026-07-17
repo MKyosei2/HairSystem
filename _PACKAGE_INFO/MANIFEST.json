@@ -1,0 +1,78 @@
+{
+  "packageName": "HairSystem formal-test P0/P1 modified complete files",
+  "createdAtUtc": "2026-07-17T10:07:51.404239+00:00",
+  "repository": "MKyosei2/HairSystem",
+  "branch": "Novelty",
+  "requestedFixItems": 5,
+  "actualSourceFiles": 6,
+  "reasonForSixFiles": "The method parser, method-settings loader, and scenario assertion loader are implemented in 10_phase1_telemetry_csv_jsonl_summary.inl, while output and validation are implemented in 11_experiment_env_and_performance_sample.inl.",
+  "validation": {
+    "beforeBlobShaVerified": true,
+    "pythonSyntaxCompiled": true,
+    "windowsReleaseBuildExecuted": false,
+    "hlslCompileExecuted": false,
+    "viewerRuntimeExecuted": false
+  },
+  "files": [
+    {
+      "path": "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl",
+      "beforeGitBlobSha1": "b25ac19fbac04903b22eedfdc3f076ea48357bec",
+      "afterGitBlobSha1": "bca20298ae4d0936a83cc69368b43809684198dc",
+      "afterSha256": "bc4f733740c064c7e75884b79df5ac9bee4ab9f2569066a1a742c14cabe91ce2",
+      "sizeBytes": 83296,
+      "lineCount": 1469,
+      "addedLines": 104,
+      "deletedLines": 22
+    },
+    {
+      "path": "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+      "beforeGitBlobSha1": "1507c3cb39861a9cf47ba829b5cc82e0edccd322",
+      "afterGitBlobSha1": "eb4988c74fea4be701364af234a09750c9d5d622",
+      "afterSha256": "10ccc6850ee1ea9da4191842000a4ea05050cec8c2b520d19e9e2c408706e2f9",
+      "sizeBytes": 58375,
+      "lineCount": 914,
+      "addedLines": 84,
+      "deletedLines": 18
+    },
+    {
+      "path": "apps/dx11_viewer/src/GpuHairViewer.h",
+      "beforeGitBlobSha1": "04ed87797b7a103c211e6331c4a473cca8989d50",
+      "afterGitBlobSha1": "0504f4496e68a79e5284ebb6f55f4e741123570b",
+      "afterSha256": "7cff387f9c2af406612bf934782c3654cef5d51e891bfa52dad801b2cb69dec7",
+      "sizeBytes": 82989,
+      "lineCount": 1903,
+      "addedLines": 8,
+      "deletedLines": 0
+    },
+    {
+      "path": "tools/final_stage/hairgpu_runtime_suite.py",
+      "beforeGitBlobSha1": "84f94f8df7e10f5c82638c032d1242ce4d61cd96",
+      "afterGitBlobSha1": "553105367f9beb7e101643e04f54abab807c0fd4",
+      "afterSha256": "c057d16dc7a9fed4a42527f07c989a9cd20d1fe4af321303b7ba2f3ea3621feb",
+      "sizeBytes": 43702,
+      "lineCount": 1152,
+      "addedLines": 10,
+      "deletedLines": 2
+    },
+    {
+      "path": "tools/final_stage/hairgpu_final_run.py",
+      "beforeGitBlobSha1": "f28cf4b1c65f90b1c26954004915adb7937eff9c",
+      "afterGitBlobSha1": "ed551e44659fcbf78b4043333eb4f4d4bee401c5",
+      "afterSha256": "66fcab2e1f6eda0b2042635cd331161bcc15f52cfdc0388aece085fea64a84e0",
+      "sizeBytes": 80916,
+      "lineCount": 1598,
+      "addedLines": 132,
+      "deletedLines": 96
+    },
+    {
+      "path": "include/hairgpu/HairNoveltyTelemetry.h",
+      "beforeGitBlobSha1": "a68b4cfd10aba3068892d3128d5a0ac283aefab3",
+      "afterGitBlobSha1": "6deddefe1ed034e339a9f7716189f0bf590f947f",
+      "afterSha256": "4a86da5f907d36a9dd3c2e8b5c6274628e594b093b7d8cf8cf23dcfd92a8111b",
+      "sizeBytes": 18941,
+      "lineCount": 457,
+      "addedLines": 18,
+      "deletedLines": 1
+    }
+  ]
+}

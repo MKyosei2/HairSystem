@@ -65,14 +65,17 @@ RUNTIME_SETTING_KEYS = (
     "renderWidth", "renderHeight", "displayStrandCount", "guideCount",
     "particlesPerGuide", "solverIterations", "vsync", "presentSyncInterval",
 )
-# These are the feature flags exported by the current viewer.  The validator
-# also accepts a future full flag set, but never treats unexported flags as if
-# they had been independently observed.
-APPLIED_METHOD_EVIDENCE_KEYS = (
-    "enableNoNoveltyBaseline", "enableSegmentGroupSleep",
-    "enableSegmentGroupIntegratedState", "enableExternalStateArray",
-    "enablePredictiveWake", "enableVelocityRecovery", "enableRepair",
-    "enableGpuCompaction", "enableActiveSet",
+# Formal runs require the complete requested/applied/observed flag set.
+# A viewer acknowledgement is supplemental evidence, never a substitute.
+APPLIED_METHOD_EVIDENCE_KEYS = METHOD_FLAG_KEYS
+
+REQUIRED_FRAME_COLUMNS = (
+    "caseId", "variant", "scenario", "seed", "sourceFrameIndex",
+    "globalFrameIndex", "measuredFrameIndex", "frameMilliseconds",
+    "gpuHairMilliseconds", "totalStrandCount", "availabilityMask",
+    "metricAvailabilityMask", "unavailableMetricCount", "syntheticMetricCount",
+    "sameFrameReadbackCount", "nanStateCount", "infiniteStateCount",
+    "fatalFailure", "fatalFailureCode",
 )
 
 _BASE_SAFE_FLAGS: dict[str, Any] = {
@@ -354,6 +357,50 @@ def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
         return [{key: _parse_csv_scalar(value or "") for key, value in row.items()} for row in reader]
 
 
+def _frame_values_equal(left: Any, right: Any) -> bool:
+    left_number = _optional_float(left)
+    right_number = _optional_float(right)
+    if left_number is not None and right_number is not None:
+        return math.isclose(left_number, right_number, rel_tol=1.0e-6, abs_tol=1.0e-6)
+    if isinstance(left, bool) or isinstance(right, bool):
+        return _as_bool(left) == _as_bool(right)
+    return str(left) == str(right)
+
+
+def _validate_frame_schema_and_parity(
+    jsonl_rows: list[dict[str, Any]], csv_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    required = set(REQUIRED_FRAME_COLUMNS)
+    json_keys = set(jsonl_rows[0]) if jsonl_rows else set()
+    csv_keys = set(csv_rows[0]) if csv_rows else set()
+    missing_json = sorted(required - json_keys)
+    missing_csv = sorted(required - csv_keys)
+    if missing_json:
+        issues.append(_issue(
+            "E_JSONL_SCHEMA_MISSING", "JSONL frame schema is incomplete.",
+            expected=sorted(required), observed=sorted(json_keys),
+        ))
+    if missing_csv:
+        issues.append(_issue(
+            "E_CSV_SCHEMA_MISSING", "CSV frame schema is incomplete.",
+            expected=sorted(required), observed=sorted(csv_keys),
+        ))
+    if len(jsonl_rows) != len(csv_rows) or missing_json or missing_csv:
+        return issues
+    for index, (json_row, csv_row) in enumerate(zip(jsonl_rows, csv_rows)):
+        for key in REQUIRED_FRAME_COLUMNS:
+            if not _frame_values_equal(json_row.get(key), csv_row.get(key)):
+                issues.append(_issue(
+                    "E_FRAME_FORMAT_MISMATCH",
+                    f"CSV/JSONL mismatch at frame {index}: {key}",
+                    expected=json_row.get(key), observed=csv_row.get(key),
+                ))
+                if len(issues) >= 32:
+                    return issues
+    return issues
+
+
 def _merge_frame_rows(jsonl_rows: list[dict[str, Any]], csv_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if len(jsonl_rows) != len(csv_rows):
         return list(jsonl_rows)
@@ -587,6 +634,17 @@ def validate_case_contract(case: Mapping[str, Any], viewer_exe: Path | None = No
     for key in ("case_id", "method", "scenario", "seed", "asset_manifest", "scenario_timeline"):
         if normalized.get(key) in (None, ""):
             issues.append(_issue("E_CONFIG_REQUIRED", f"Required formal case field is missing: {key}"))
+    assertions = normalized.get("assertions", normalized.get("scenario_assertions"))
+    if not isinstance(assertions, dict) or not assertions:
+        issues.append(_issue("E_SCENARIO_ASSERTIONS", "Formal scenario assertions are required."))
+    else:
+        minimum_events = _required_int(assertions.get("min_applied_events", assertions.get("minAppliedEvents")))
+        if minimum_events < 1:
+            issues.append(_issue(
+                "E_SCENARIO_ASSERTION_EVENTS",
+                "Formal scenario assertions must require at least one applied event.",
+                expected=1, observed=minimum_events,
+            ))
     method = normalize_method_code(str(normalized.get("method", "")))
     if method not in FORMAL_METHOD_CODES:
         issues.append(_issue("E_METHOD_UNKNOWN", "Formal method must be B0-B8 or P.", expected=sorted(FORMAL_METHOD_CODES), observed=method))
@@ -800,126 +858,104 @@ def _compare_settings(settings: dict[str, Any], case: Mapping[str, Any]) -> tupl
     issues: list[dict[str, Any]] = []
     requested = dict(settings.get("requested", {})) if isinstance(settings.get("requested"), dict) else {}
     applied = dict(settings.get("applied", {})) if isinstance(settings.get("applied"), dict) else {}
+    observed_flags = dict(settings.get("observedFlags", {})) if isinstance(settings.get("observedFlags"), dict) else {}
     observed = dict(settings.get("observed", {})) if isinstance(settings.get("observed"), dict) else {}
 
-    expected_flags = dict(case.get("method_settings", {}))
-    unexported_flags: list[str] = []
-    applied_mismatches: list[str] = []
-    for key in METHOD_FLAG_KEYS:
-        if key not in expected_flags:
-            continue
-        requested.setdefault(key, expected_flags[key])
-        if key not in applied:
-            unexported_flags.append(key)
-            continue
-        if not _settings_match(expected_flags[key], applied[key]):
-            applied_mismatches.append(key)
-            issues.append(_issue(
-                "E_APPLIED_SETTING_MISMATCH",
-                f"Applied feature flag mismatch: {key}",
-                expected=expected_flags[key],
-                observed=applied[key],
-            ))
-
-    exported_evidence_missing = [
-        key for key in APPLIED_METHOD_EVIDENCE_KEYS if key not in applied
-    ]
-    if exported_evidence_missing:
-        issues.append(_issue(
-            "E_APPLIED_EVIDENCE_INCOMPLETE",
-            "The viewer did not export its required applied-method evidence subset.",
-            expected=list(APPLIED_METHOD_EVIDENCE_KEYS),
-            observed=sorted(applied),
-        ))
+    expected_settings = dict(case.get("method_settings", {}))
+    expected_flags = {key: expected_settings.get(key) for key in METHOD_FLAG_KEYS}
+    for evidence_name, evidence in (
+        ("requested", requested), ("applied", applied), ("observed", observed_flags)
+    ):
+        for key in METHOD_FLAG_KEYS:
+            if key not in expected_settings:
+                issues.append(_issue(
+                    "E_EXPECTED_FLAG_MISSING",
+                    f"Formal method preset lacks required flag: {key}",
+                ))
+                continue
+            if key not in evidence:
+                issues.append(_issue(
+                    f"E_{evidence_name.upper()}_FLAG_MISSING",
+                    f"{evidence_name.capitalize()} method flag is missing: {key}",
+                ))
+                continue
+            if not _settings_match(expected_flags[key], evidence[key]):
+                issues.append(_issue(
+                    f"E_{evidence_name.upper()}_SETTING_MISMATCH",
+                    f"{evidence_name.capitalize()} feature flag mismatch: {key}",
+                    expected=expected_flags[key], observed=evidence[key],
+                ))
 
     runtime_expected = _expected_runtime_settings(case)
     for key, expected in runtime_expected.items():
-        requested.setdefault(key, expected)
         if key not in observed:
-            issues.append(_issue("E_OBSERVED_SETTING_MISSING", f"Observed runtime setting is missing: {key}"))
-            continue
-        if not _settings_match(expected, observed[key]):
+            issues.append(_issue(
+                "E_OBSERVED_SETTING_MISSING",
+                f"Observed runtime setting is missing: {key}",
+            ))
+        elif not _settings_match(expected, observed[key]):
             issues.append(_issue(
                 "E_OBSERVED_SETTING_MISMATCH",
                 f"Observed runtime setting mismatch: {key}",
-                expected=expected,
-                observed=observed[key],
+                expected=expected, observed=observed[key],
             ))
-        if key in applied and not _settings_match(expected, applied[key]):
+
+    expected_hash = canonical_json_sha256(expected_settings)
+    hash_fields = {
+        "requested": str(settings.get("requestedMethodSettingsSha256") or ""),
+        "applied": str(settings.get("appliedMethodSettingsSha256") or settings.get("methodSettingsSha256") or ""),
+        "observed": str(settings.get("observedMethodSettingsSha256") or ""),
+    }
+    for name, value in hash_fields.items():
+        if not value:
             issues.append(_issue(
-                "E_APPLIED_RUNTIME_MISMATCH",
-                f"Applied runtime setting mismatch: {key}",
-                expected=expected,
-                observed=applied[key],
+                f"E_{name.upper()}_METHOD_HASH_MISSING",
+                f"{name.capitalize()} method-settings hash is missing.",
+            ))
+        elif value.lower() != expected_hash.lower():
+            issues.append(_issue(
+                f"E_{name.upper()}_METHOD_HASH_MISMATCH",
+                f"{name.capitalize()} method-settings hash mismatch.",
+                expected=expected_hash, observed=value,
             ))
 
     requested_method = normalize_method_code(str(case.get("method", "")))
     applied_method = derive_method_code(applied)
-    full_applied_coverage = all(key in applied for key in METHOD_FLAG_KEYS)
-    viewer_acknowledged = _as_bool(settings.get("methodFlagsMatched"))
-    method_evidence = "full_applied_feature_flags"
-
-    # Older viewer builds export a verified nine-flag subset.  When that subset
-    # is internally consistent but cannot distinguish B1-B5, the viewer's own
-    # all-flags acknowledgement is retained as explicit provenance.  This is
-    # not mislabeled as independent observation.
-    if applied_method == "UNKNOWN":
-        if (
-            not full_applied_coverage
-            and viewer_acknowledged
-            and not exported_evidence_missing
-            and not applied_mismatches
-        ):
-            applied_method = requested_method
-            method_evidence = "viewer_acknowledged_plus_exported_subset"
-        else:
-            issues.append(_issue(
-                "E_APPLIED_METHOD_UNPROVEN",
-                "Applied feature flags do not uniquely identify a formal method.",
-            ))
-    elif applied_method != requested_method:
+    observed_method = derive_method_code(observed_flags)
+    if applied_method != requested_method:
         issues.append(_issue(
             "E_APPLIED_METHOD_MISMATCH",
             "Applied method differs from requested method.",
-            expected=requested_method,
-            observed=applied_method,
+            expected=requested_method, observed=applied_method,
         ))
-
-    observed_flags = {key: observed[key] for key in METHOD_FLAG_KEYS if key in observed}
-    observed_method = derive_method_code(observed_flags) if observed_flags else applied_method
-    if observed_method == "UNKNOWN":
-        if method_evidence == "viewer_acknowledged_plus_exported_subset":
-            observed_method = requested_method
-        else:
-            issues.append(_issue(
-                "E_OBSERVED_METHOD_UNPROVEN",
-                "Observed execution path cannot be identified from runtime evidence.",
-            ))
-    elif observed_method != requested_method:
+    if observed_method != requested_method:
         issues.append(_issue(
             "E_OBSERVED_METHOD_MISMATCH",
             "Observed method differs from requested method.",
-            expected=requested_method,
-            observed=observed_method,
+            expected=requested_method, observed=observed_method,
+        ))
+    if not _as_bool(settings.get("methodFlagsMatched")):
+        issues.append(_issue(
+            "E_VIEWER_METHOD_ACKNOWLEDGEMENT",
+            "Viewer did not acknowledge the complete method flag set.",
         ))
 
     normalized = dict(settings)
     normalized.update({
         "requested": requested,
         "applied": applied,
+        "observedFlags": observed_flags,
         "observed": observed,
         "requestedMethodCode": requested_method,
         "appliedMethodCode": applied_method,
         "observedMethodCode": observed_method,
         "methodFlagsMatched": not any(
-            item["code"].startswith(("E_APPLIED", "E_OBSERVED")) for item in issues
+            item["code"].startswith(("E_REQUESTED", "E_APPLIED", "E_OBSERVED", "E_VIEWER"))
+            for item in issues
         ),
-        "methodCodeEvidence": method_evidence,
-        "unexportedAppliedFlags": unexported_flags,
-        "evidenceWarnings": ([
-            "Some applied flags are not serialized by this viewer build; "
-            "the all-flags viewer acknowledgement was required."
-        ] if method_evidence == "viewer_acknowledged_plus_exported_subset" else []),
+        "methodCodeEvidence": "full_requested_applied_observed_flags",
+        "unexportedAppliedFlags": [],
+        "evidenceWarnings": [],
     })
     return issues, normalized
 
@@ -1166,9 +1202,9 @@ def validate_required_outputs(
     csv_rows = _read_csv_rows(Path(frame_csv))
     evidence_path = Path(summary_json).parent / f"{run_name}_formal_evidence.jsonl"
     evidence_rows = _read_jsonl(evidence_path) if evidence_path.is_file() else []
-    rows = _merge_formal_evidence(_merge_frame_rows(json_rows, csv_rows), evidence_rows)
     issues: list[dict[str, Any]] = []
-    integrity_issues: list[dict[str, Any]] = []
+    integrity_issues: list[dict[str, Any]] = _validate_frame_schema_and_parity(json_rows, csv_rows)
+    rows = _merge_formal_evidence(_merge_frame_rows(json_rows, csv_rows), evidence_rows)
 
     expected_frames = _required_int(normalized.get("measurement_frames"), _required_int(summary.get("measurement_frames", summary.get("measurementFrames"))))
     if len(json_rows) != expected_frames:
