@@ -1,7 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <limits>
+#include <string>
+#include <system_error>
+#include <vector>
 
 namespace hairgpu
 {
@@ -56,8 +62,7 @@ namespace hairgpu
         uint32_t determinismMismatchCount = 0u;
 
         // Number of measured frames carrying each formal evidence class.
-        // These counters let the validator distinguish "measured zero" from
-        // "the metric was never available" without inventing proxy values.
+        // These counters distinguish a measured zero from unavailable data.
         uint32_t collisionGroundTruthFrameCount = 0u;
         uint32_t wakeGroundTruthFrameCount = 0u;
         uint32_t repairVerificationFrameCount = 0u;
@@ -225,6 +230,149 @@ namespace hairgpu
         uint32_t delayedTelemetryReadCount = 0u;
     };
 
+    // Formal evidence is recorded independently of the legacy frame exporter.
+    // This preserves verified-repair and recurrence counters without inventing
+    // proxy values and without changing the runtime representation.
+    struct HairFormalEvidenceRow
+    {
+        uint32_t sourceFrameIndex = 0u;
+        uint32_t measuredFrameIndex = 0u;
+        uint64_t availabilityMask = 0ull;
+        uint64_t metricAvailabilityMask = 0ull;
+        uint32_t falseStaticCount = 0u;
+        uint32_t staticCachedGroupCount = 0u;
+        uint32_t staticTransformedGroupCount = 0u;
+        uint32_t repairAttemptCount = 0u;
+        uint32_t repairSuccessCount = 0u;
+        uint32_t repairVerifiedCount = 0u;
+        uint32_t repairRecurrenceCount = 0u;
+    };
+
+    class HairFormalEvidenceRecorder
+    {
+    public:
+        void Record(const HairNoveltyFrameTelemetry& telemetry)
+        {
+            InitializeOutputPath();
+            if (m_outputPath.empty())
+            {
+                return;
+            }
+
+            HairFormalEvidenceRow row = {};
+            row.sourceFrameIndex = telemetry.sourceFrameIndex;
+            row.measuredFrameIndex = telemetry.measuredFrameIndex;
+            row.availabilityMask = telemetry.availabilityMask;
+            row.metricAvailabilityMask = telemetry.metricAvailabilityMask;
+            row.falseStaticCount = telemetry.falseStaticCount;
+            row.staticCachedGroupCount = telemetry.staticCachedGroupCount;
+            row.staticTransformedGroupCount = telemetry.staticTransformedGroupCount;
+            row.repairAttemptCount = telemetry.repairAttemptCount;
+            row.repairSuccessCount = telemetry.repairSuccessCount;
+            row.repairVerifiedCount = telemetry.repairVerifiedCount;
+            row.repairRecurrenceCount = telemetry.repairRecurrenceCount;
+
+            // Finalization can be called more than once for one source frame.
+            // Keep the last fully-populated value rather than double-counting.
+            if (!m_rows.empty() && m_rows.back().sourceFrameIndex == row.sourceFrameIndex)
+            {
+                m_rows.back() = row;
+            }
+            else
+            {
+                m_rows.push_back(row);
+            }
+        }
+
+        ~HairFormalEvidenceRecorder() noexcept
+        {
+            Flush();
+        }
+
+    private:
+        void InitializeOutputPath()
+        {
+            if (m_initialized)
+            {
+                return;
+            }
+            m_initialized = true;
+
+            const char* enabled = std::getenv("HAIRGPU_AUTO_TELEMETRY");
+            const char* directory = std::getenv("HAIRGPU_TELEMETRY_DIR");
+            const char* runName = std::getenv("HAIRGPU_TELEMETRY_RUN_NAME");
+            if (!enabled || enabled[0] == '\0' || enabled[0] == '0' ||
+                !directory || directory[0] == '\0' || !runName || runName[0] == '\0')
+            {
+                return;
+            }
+            m_outputPath = std::filesystem::path(directory) /
+                (std::string(runName) + "_formal_evidence.jsonl");
+            m_rows.reserve(8192u);
+        }
+
+        void Flush() noexcept
+        {
+            if (m_outputPath.empty() || m_rows.empty())
+            {
+                return;
+            }
+            try
+            {
+                std::filesystem::create_directories(m_outputPath.parent_path());
+                const std::filesystem::path temporary = m_outputPath.string() + ".tmp";
+                std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+                if (!out)
+                {
+                    return;
+                }
+                for (const HairFormalEvidenceRow& row : m_rows)
+                {
+                    out << "{\"sourceFrameIndex\":" << row.sourceFrameIndex
+                        << ",\"measuredFrameIndex\":" << row.measuredFrameIndex
+                        << ",\"availabilityMask\":" << row.availabilityMask
+                        << ",\"metricAvailabilityMask\":" << row.metricAvailabilityMask
+                        << ",\"falseStaticCount\":" << row.falseStaticCount
+                        << ",\"staticCachedGroupCount\":" << row.staticCachedGroupCount
+                        << ",\"staticTransformedGroupCount\":" << row.staticTransformedGroupCount
+                        << ",\"repairAttemptCount\":" << row.repairAttemptCount
+                        << ",\"repairSuccessCount\":" << row.repairSuccessCount
+                        << ",\"repairVerifiedCount\":" << row.repairVerifiedCount
+                        << ",\"repairRecurrenceCount\":" << row.repairRecurrenceCount
+                        << "}\n";
+                }
+                out.flush();
+                if (!out)
+                {
+                    return;
+                }
+                out.close();
+                std::error_code error;
+                std::filesystem::remove(m_outputPath, error);
+                error.clear();
+                std::filesystem::rename(temporary, m_outputPath, error);
+                if (error)
+                {
+                    std::filesystem::remove(temporary, error);
+                }
+            }
+            catch (...)
+            {
+                // Evidence export failure is detected by the Python validator.
+            }
+        }
+
+        bool m_initialized = false;
+        std::filesystem::path m_outputPath;
+        std::vector<HairFormalEvidenceRow> m_rows;
+    };
+
+    inline HairFormalEvidenceRecorder& GetHairFormalEvidenceRecorder()
+    {
+        static HairFormalEvidenceRecorder recorder;
+        return recorder;
+    }
+
     inline bool HasTelemetryMetric(const HairNoveltyFrameTelemetry& telemetry, uint64_t bit)
     {
         return (telemetry.metricAvailabilityMask & bit) != 0ull;
@@ -281,6 +429,8 @@ namespace hairgpu
         telemetry.directionCacheMemorySavingRate = telemetry.fullPositionMemoryMb > 0.0f
             ? 1.0f - telemetry.directionCacheMemoryMb / telemetry.fullPositionMemoryMb
             : std::numeric_limits<float>::quiet_NaN();
+
+        GetHairFormalEvidenceRecorder().Record(telemetry);
     }
 
     inline HairNoveltyFrameTelemetry MakeZeroNoveltyTelemetry()

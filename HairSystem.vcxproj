@@ -64,11 +64,19 @@
 
 if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
 
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+if not exist "$(ProjectDir)apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl" (
 
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F"
+  echo ERROR: required formal shader is missing: HairSegmentGroupRuntime.hlsl
 
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F"
+  exit /b 1
+
+)
+
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSegmentGroupRuntime.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F" || exit /b 1
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F" || exit /b 1
 
 )
 
@@ -102,11 +110,19 @@ exit /b 0</Command>
 
 if not exist "$(OutDir)shaders" mkdir "$(OutDir)shaders"
 
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+if not exist "$(ProjectDir)apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl" (
 
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F"
+  echo ERROR: required formal shader is missing: HairSegmentGroupRuntime.hlsl
 
-  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F"
+  exit /b 1
+
+)
+
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSegmentGroupRuntime.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F" || exit /b 1
+
+  if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)shaders\%%F" || exit /b 1
 
 )
 
@@ -185,6 +201,7 @@ exit /b 0</Command>
     <None Include="apps\dx11_viewer\shaders\HairLine.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairParticle.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairRibbon.hlsl" />
+    <None Include="apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairSim.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairStrandInstanced.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairTube.hlsl" />
