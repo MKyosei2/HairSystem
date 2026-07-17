@@ -794,86 +794,87 @@ return true;
             return wide;
         }
 
-        ExperimentMethodId ParseExperimentMethodId(const std::wstring& value)
-        {
-            std::wstring normalized = value;
-            std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+    }
 
-            if (normalized == L"b0" || normalized == L"b0_fulldynamic") return ExperimentMethodId::B0_FullDynamic;
-            if (normalized == L"b1" || normalized == L"b1_strandsleep") return ExperimentMethodId::B1_StrandSleep;
-            if (normalized == L"b2" || normalized == L"b2_blocksleep") return ExperimentMethodId::B2_BlockSleep;
-            if (normalized == L"b3" || normalized == L"b3_segmentthresholdsleep") return ExperimentMethodId::B3_SegmentThresholdSleep;
-            if (normalized == L"b4" || normalized == L"b4_segmenthysteresissleep") return ExperimentMethodId::B4_SegmentHysteresisSleep;
-            if (normalized == L"b5" || normalized == L"b5_segmentcache") return ExperimentMethodId::B5_SegmentCache;
-            if (normalized == L"b6" || normalized == L"b6_segmentgpucompaction") return ExperimentMethodId::B6_SegmentGpuCompaction;
-            if (normalized == L"b7" || normalized == L"b7_activesetonly") return ExperimentMethodId::B7_ActiveSetOnly;
-            if (normalized == L"b8" || normalized == L"b8_externalstatearray") return ExperimentMethodId::B8_ExternalStateArray;
-            if (normalized == L"p" || normalized == L"p_integratedsegmentgroup") return ExperimentMethodId::P_IntegratedSegmentGroup;
-            return ExperimentMethodId::Unknown;
-        }
+    GpuHairViewer::ExperimentMethodId GpuHairViewer::ParseExperimentMethodId(const std::wstring& value)
+    {
+        std::wstring normalized = value;
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+            [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
 
-        bool ExperimentMethodFlagsEqual(const ExperimentMethodFlags& lhs, const ExperimentMethodFlags& rhs)
-        {
-            return lhs.enableNoNoveltyBaseline == rhs.enableNoNoveltyBaseline &&
-                lhs.enableMicrotype == rhs.enableMicrotype &&
-                lhs.enableBudgetedPhysics == rhs.enableBudgetedPhysics &&
-                lhs.enableCertificateRender == rhs.enableCertificateRender &&
-                lhs.enablePerStrandEdit == rhs.enablePerStrandEdit &&
-                lhs.enableCBMA == rhs.enableCBMA &&
-                lhs.enablePhysicsIslands == rhs.enablePhysicsIslands &&
-                lhs.enableRodRepair == rhs.enableRodRepair &&
-                lhs.enableGpuResident == rhs.enableGpuResident &&
-                lhs.enableSegmentGroupSleep == rhs.enableSegmentGroupSleep &&
-                lhs.enableSegmentGroupIntegratedState == rhs.enableSegmentGroupIntegratedState &&
-                lhs.enableExternalStateArray == rhs.enableExternalStateArray &&
-                lhs.enableSharedPointOwnership == rhs.enableSharedPointOwnership &&
-                lhs.enableDirectionalResponsibility == rhs.enableDirectionalResponsibility &&
-                lhs.enableStaticCertificate == rhs.enableStaticCertificate &&
-                lhs.enablePredictiveWake == rhs.enablePredictiveWake &&
-                lhs.enableVelocityRecovery == rhs.enableVelocityRecovery &&
-                lhs.enableRepair == rhs.enableRepair &&
-                lhs.enableGpuCompaction == rhs.enableGpuCompaction &&
-                lhs.enableActiveSet == rhs.enableActiveSet &&
-                lhs.enableStrandSleep == rhs.enableStrandSleep &&
-                lhs.enableBlockSleep == rhs.enableBlockSleep &&
-                lhs.enableSleepHysteresis == rhs.enableSleepHysteresis &&
-                lhs.enableStaticCache == rhs.enableStaticCache &&
-                lhs.stateStorage == rhs.stateStorage;
-        }
+        if (normalized == L"b0" || normalized == L"b0_fulldynamic") return ExperimentMethodId::B0_FullDynamic;
+        if (normalized == L"b1" || normalized == L"b1_strandsleep") return ExperimentMethodId::B1_StrandSleep;
+        if (normalized == L"b2" || normalized == L"b2_blocksleep") return ExperimentMethodId::B2_BlockSleep;
+        if (normalized == L"b3" || normalized == L"b3_segmentthresholdsleep") return ExperimentMethodId::B3_SegmentThresholdSleep;
+        if (normalized == L"b4" || normalized == L"b4_segmenthysteresissleep") return ExperimentMethodId::B4_SegmentHysteresisSleep;
+        if (normalized == L"b5" || normalized == L"b5_segmentcache") return ExperimentMethodId::B5_SegmentCache;
+        if (normalized == L"b6" || normalized == L"b6_segmentgpucompaction") return ExperimentMethodId::B6_SegmentGpuCompaction;
+        if (normalized == L"b7" || normalized == L"b7_activesetonly") return ExperimentMethodId::B7_ActiveSetOnly;
+        if (normalized == L"b8" || normalized == L"b8_externalstatearray") return ExperimentMethodId::B8_ExternalStateArray;
+        if (normalized == L"p" || normalized == L"p_integratedsegmentgroup") return ExperimentMethodId::P_IntegratedSegmentGroup;
+        return ExperimentMethodId::Unknown;
+    }
 
-        ExperimentScenarioId ParseExperimentScenarioId(const std::wstring& value)
-        {
-            static const std::array<std::pair<const wchar_t*, ExperimentScenarioId>, 18> values = {{
-                { L"S01_Idle", ExperimentScenarioId::S01_Idle }, { L"S02_Breathing", ExperimentScenarioId::S02_Breathing },
-                { L"S03_Walk", ExperimentScenarioId::S03_Walk }, { L"S04_SuddenStop", ExperimentScenarioId::S04_SuddenStop },
-                { L"S05_HeadRotation", ExperimentScenarioId::S05_HeadRotation }, { L"S06_Teleport", ExperimentScenarioId::S06_Teleport },
-                { L"S07_ColliderApproach", ExperimentScenarioId::S07_ColliderApproach },
-                { L"S08_StaticDynamicBoundaryContact", ExperimentScenarioId::S08_StaticDynamicBoundaryContact },
-                { L"S09_StrongWind", ExperimentScenarioId::S09_StrongWind }, { L"S10_WindStop", ExperimentScenarioId::S10_WindStop },
-                { L"S11_LocalEdit", ExperimentScenarioId::S11_LocalEdit }, { L"S12_FalseStaticTrap", ExperimentScenarioId::S12_FalseStaticTrap },
-                { L"S13_RepairStorm", ExperimentScenarioId::S13_RepairStorm }, { L"S14_AllDynamic", ExperimentScenarioId::S14_AllDynamic },
-                { L"S15_AllStatic", ExperimentScenarioId::S15_AllStatic }, { L"S16_StateThrashing", ExperimentScenarioId::S16_StateThrashing },
-                { L"S17_CloseCamera100k", ExperimentScenarioId::S17_CloseCamera100k }, { L"S18_FarCamera100k", ExperimentScenarioId::S18_FarCamera100k }
-            }};
-            for (const auto& entry : values) if (value == entry.first) return entry.second;
-            return ExperimentScenarioId::Unknown;
-        }
+    bool GpuHairViewer::ExperimentMethodFlagsEqual(const ExperimentMethodFlags& lhs, const ExperimentMethodFlags& rhs)
+    {
+        return lhs.enableNoNoveltyBaseline == rhs.enableNoNoveltyBaseline &&
+            lhs.enableMicrotype == rhs.enableMicrotype &&
+            lhs.enableBudgetedPhysics == rhs.enableBudgetedPhysics &&
+            lhs.enableCertificateRender == rhs.enableCertificateRender &&
+            lhs.enablePerStrandEdit == rhs.enablePerStrandEdit &&
+            lhs.enableCBMA == rhs.enableCBMA &&
+            lhs.enablePhysicsIslands == rhs.enablePhysicsIslands &&
+            lhs.enableRodRepair == rhs.enableRodRepair &&
+            lhs.enableGpuResident == rhs.enableGpuResident &&
+            lhs.enableSegmentGroupSleep == rhs.enableSegmentGroupSleep &&
+            lhs.enableSegmentGroupIntegratedState == rhs.enableSegmentGroupIntegratedState &&
+            lhs.enableExternalStateArray == rhs.enableExternalStateArray &&
+            lhs.enableSharedPointOwnership == rhs.enableSharedPointOwnership &&
+            lhs.enableDirectionalResponsibility == rhs.enableDirectionalResponsibility &&
+            lhs.enableStaticCertificate == rhs.enableStaticCertificate &&
+            lhs.enablePredictiveWake == rhs.enablePredictiveWake &&
+            lhs.enableVelocityRecovery == rhs.enableVelocityRecovery &&
+            lhs.enableRepair == rhs.enableRepair &&
+            lhs.enableGpuCompaction == rhs.enableGpuCompaction &&
+            lhs.enableActiveSet == rhs.enableActiveSet &&
+            lhs.enableStrandSleep == rhs.enableStrandSleep &&
+            lhs.enableBlockSleep == rhs.enableBlockSleep &&
+            lhs.enableSleepHysteresis == rhs.enableSleepHysteresis &&
+            lhs.enableStaticCache == rhs.enableStaticCache &&
+            lhs.stateStorage == rhs.stateStorage;
+    }
 
-        ScenarioEventType ParseScenarioEventType(const std::string& value)
-        {
-            if (value == "set_wind") return ScenarioEventType::SetWind;
-            if (value == "set_root_translation") return ScenarioEventType::SetRootTranslation;
-            if (value == "set_root_rotation") return ScenarioEventType::SetRootRotation;
-            if (value == "teleport_root") return ScenarioEventType::TeleportRoot;
-            if (value == "set_collider_transform") return ScenarioEventType::SetColliderTransform;
-            if (value == "inject_local_edit") return ScenarioEventType::InjectLocalEdit;
-            if (value == "inject_repair_storm") return ScenarioEventType::InjectRepairStorm;
-            if (value == "force_all_dynamic") return ScenarioEventType::ForceAllDynamic;
-            if (value == "force_all_static") return ScenarioEventType::ForceAllStatic;
-            if (value == "set_camera_distance") return ScenarioEventType::SetCameraDistance;
-            return ScenarioEventType::Unknown;
-        }
+    GpuHairViewer::ExperimentScenarioId GpuHairViewer::ParseExperimentScenarioId(const std::wstring& value)
+    {
+        static const std::array<std::pair<const wchar_t*, ExperimentScenarioId>, 18> values = {{
+            { L"S01_Idle", ExperimentScenarioId::S01_Idle }, { L"S02_Breathing", ExperimentScenarioId::S02_Breathing },
+            { L"S03_Walk", ExperimentScenarioId::S03_Walk }, { L"S04_SuddenStop", ExperimentScenarioId::S04_SuddenStop },
+            { L"S05_HeadRotation", ExperimentScenarioId::S05_HeadRotation }, { L"S06_Teleport", ExperimentScenarioId::S06_Teleport },
+            { L"S07_ColliderApproach", ExperimentScenarioId::S07_ColliderApproach },
+            { L"S08_StaticDynamicBoundaryContact", ExperimentScenarioId::S08_StaticDynamicBoundaryContact },
+            { L"S09_StrongWind", ExperimentScenarioId::S09_StrongWind }, { L"S10_WindStop", ExperimentScenarioId::S10_WindStop },
+            { L"S11_LocalEdit", ExperimentScenarioId::S11_LocalEdit }, { L"S12_FalseStaticTrap", ExperimentScenarioId::S12_FalseStaticTrap },
+            { L"S13_RepairStorm", ExperimentScenarioId::S13_RepairStorm }, { L"S14_AllDynamic", ExperimentScenarioId::S14_AllDynamic },
+            { L"S15_AllStatic", ExperimentScenarioId::S15_AllStatic }, { L"S16_StateThrashing", ExperimentScenarioId::S16_StateThrashing },
+            { L"S17_CloseCamera100k", ExperimentScenarioId::S17_CloseCamera100k }, { L"S18_FarCamera100k", ExperimentScenarioId::S18_FarCamera100k }
+        }};
+        for (const auto& entry : values) if (value == entry.first) return entry.second;
+        return ExperimentScenarioId::Unknown;
+    }
+
+    GpuHairViewer::ScenarioEventType GpuHairViewer::ParseScenarioEventType(const std::string& value)
+    {
+        if (value == "set_wind") return ScenarioEventType::SetWind;
+        if (value == "set_root_translation") return ScenarioEventType::SetRootTranslation;
+        if (value == "set_root_rotation") return ScenarioEventType::SetRootRotation;
+        if (value == "teleport_root") return ScenarioEventType::TeleportRoot;
+        if (value == "set_collider_transform") return ScenarioEventType::SetColliderTransform;
+        if (value == "inject_local_edit") return ScenarioEventType::InjectLocalEdit;
+        if (value == "inject_repair_storm") return ScenarioEventType::InjectRepairStorm;
+        if (value == "force_all_dynamic") return ScenarioEventType::ForceAllDynamic;
+        if (value == "force_all_static") return ScenarioEventType::ForceAllStatic;
+        if (value == "set_camera_distance") return ScenarioEventType::SetCameraDistance;
+        return ScenarioEventType::Unknown;
     }
 
     // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V2
@@ -888,9 +889,9 @@ return true;
 
         std::ifstream input(std::filesystem::path(caseJsonPath), std::ios::binary);
         if (!input) return false;
-        const std::string caseJson(
-            std::istreambuf_iterator<char>(input),
-            std::istreambuf_iterator<char>());
+        const std::string caseJson{
+            std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{}};
         FormalJsonValue root;
         std::string parseError;
         if (!FormalJsonParser(caseJson).Parse(root, parseError) || root.type != FormalJsonValue::Type::Object)
@@ -1242,7 +1243,9 @@ return true;
         if (m_experimentCase.scenarioTimelinePath.empty()) return false;
         std::ifstream input(std::filesystem::path(m_experimentCase.scenarioTimelinePath), std::ios::binary);
         if (!input) return false;
-        const std::string text(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        const std::string text{
+            std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{}};
         FormalJsonValue root;
         std::string error;
         if (!FormalJsonParser(text).Parse(root, error) || root.type != FormalJsonValue::Type::Object) return false;

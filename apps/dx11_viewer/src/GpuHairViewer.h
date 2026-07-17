@@ -1197,6 +1197,10 @@ namespace hairgpu::viewer
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
         bool LoadExperimentCaseFromEnvironment();
+        static ExperimentMethodId ParseExperimentMethodId(const std::wstring& value);
+        static ExperimentScenarioId ParseExperimentScenarioId(const std::wstring& value);
+        static ScenarioEventType ParseScenarioEventType(const std::string& value);
+        static bool ExperimentMethodFlagsEqual(const ExperimentMethodFlags& lhs, const ExperimentMethodFlags& rhs);
         bool ValidateExperimentMethodFlags() const;
         ExperimentRunStatus ValidateCompletedExperiment() const;
         void SetFatalExperimentFailure(uint32_t errorCode, const std::wstring& message);

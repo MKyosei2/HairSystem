@@ -1,4 +1,33 @@
-﻿  GpuHairViewer.cpp
+﻿  AppMain.cpp
+  GpuHairViewer.cpp
+  ActiveSet.cpp
+  Adaptive.cpp
+  AssetIO.cpp
+  Authoring.cpp
+  Binding.cpp
+  BoneAnimation.cpp
+  Broadphase.cpp
+  Cards.cpp
+  Collision.cpp
+  DccInterop.cpp
+  GlobalHairBudget.cpp
+  GuideCache.cpp
+  HairCache.cpp
+  HairMath.cpp
+  HairNoveltyFlags.cpp
+  HairNoveltyTelemetry.cpp
+  HybridRuntime.cpp
+  Lod.cpp
+  MeshIO.cpp
+  Metrics.cpp
+  Pipeline.cpp
+  ReducedModel.cpp
+  RenderData.cpp
+  SampleAsset.cpp
+  TemporalModel.cpp
+  UsdExport.cpp
+  Validation.cpp
+  Wig.cpp
 C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18): warning C4244: '=': 'const wchar_t' から 'char' への変換です。データが失われる可能性があります。
   (ソース ファイル 'apps/dx11_viewer/src/GpuHairViewer.cpp' をコンパイルしています)
       C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18):
@@ -61,6 +90,8 @@ C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.3520
           1 個のファイルをコピーしました。
           1 個のファイルをコピーしました。
           1 個のファイルをコピーしました。
-  [HairGPU Step0] Complete policy-safe profile_results created at: C:\Users\kyose\source\repos\HairSystem\profile_results\20260625_084105_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
-  [HairGPU Step0] CreatedAt: 2026-06-25 08:41:05
+          1 個のファイルをコピーしました。
+          1 個のファイルをコピーしました。
+  [HairGPU Step0] Complete policy-safe profile_results created at: C:\Users\kyose\source\repos\HairSystem\profile_results\20260717_213639_STEP0_COMPLETE_POLICY_SAFE_HairSystem_Debug_x64
+  [HairGPU Step0] CreatedAt: 2026-07-17 21:36:39
   [HairGPU Step0] Real FPS requires HairSystem.exe to be allowed by Windows policy.

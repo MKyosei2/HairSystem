@@ -75,9 +75,9 @@ return true;
                 lastResult = HRESULT_FROM_WIN32(ERROR_READ_FAULT);
                 continue;
             }
-            const std::string source(
-                std::istreambuf_iterator<char>(input),
-                std::istreambuf_iterator<char>());
+            const std::string source{
+                std::istreambuf_iterator<char>{input},
+                std::istreambuf_iterator<char>{}};
             shaderBlob.Reset();
             errorBlob.Reset();
             compiledPath = candidate;

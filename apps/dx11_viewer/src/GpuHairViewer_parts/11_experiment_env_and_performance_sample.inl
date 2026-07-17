@@ -417,68 +417,40 @@ return sample;
         const ExperimentMethodFlags& observedFlags = m_experimentCase.observedFlags;
         auto writeFlags = [&out](const char* name, const ExperimentMethodFlags& flags, bool comma)
         {
-            out << "  \"" << name << "\": {
-";
-            out << "    \"enableNoNoveltyBaseline\": " << (flags.enableNoNoveltyBaseline ? "true" : "false") << ",
-";
-            out << "    \"enableMicrotype\": " << (flags.enableMicrotype ? "true" : "false") << ",
-";
-            out << "    \"enableBudgetedPhysics\": " << (flags.enableBudgetedPhysics ? "true" : "false") << ",
-";
-            out << "    \"enableCertificateRender\": " << (flags.enableCertificateRender ? "true" : "false") << ",
-";
-            out << "    \"enablePerStrandEdit\": " << (flags.enablePerStrandEdit ? "true" : "false") << ",
-";
-            out << "    \"enableCBMA\": " << (flags.enableCBMA ? "true" : "false") << ",
-";
-            out << "    \"enablePhysicsIslands\": " << (flags.enablePhysicsIslands ? "true" : "false") << ",
-";
-            out << "    \"enableRodRepair\": " << (flags.enableRodRepair ? "true" : "false") << ",
-";
-            out << "    \"enableGpuResident\": " << (flags.enableGpuResident ? "true" : "false") << ",
-";
-            out << "    \"enableSegmentGroupSleep\": " << (flags.enableSegmentGroupSleep ? "true" : "false") << ",
-";
-            out << "    \"enableSegmentGroupIntegratedState\": " << (flags.enableSegmentGroupIntegratedState ? "true" : "false") << ",
-";
-            out << "    \"enableExternalStateArray\": " << (flags.enableExternalStateArray ? "true" : "false") << ",
-";
-            out << "    \"enableSharedPointOwnership\": " << (flags.enableSharedPointOwnership ? "true" : "false") << ",
-";
-            out << "    \"enableDirectionalResponsibility\": " << (flags.enableDirectionalResponsibility ? "true" : "false") << ",
-";
-            out << "    \"enableStaticCertificate\": " << (flags.enableStaticCertificate ? "true" : "false") << ",
-";
-            out << "    \"enablePredictiveWake\": " << (flags.enablePredictiveWake ? "true" : "false") << ",
-";
-            out << "    \"enableVelocityRecovery\": " << (flags.enableVelocityRecovery ? "true" : "false") << ",
-";
-            out << "    \"enableRepair\": " << (flags.enableRepair ? "true" : "false") << ",
-";
-            out << "    \"enableGpuCompaction\": " << (flags.enableGpuCompaction ? "true" : "false") << ",
-";
-            out << "    \"enableActiveSet\": " << (flags.enableActiveSet ? "true" : "false") << ",
-";
-            out << "    \"enableStrandSleep\": " << (flags.enableStrandSleep ? "true" : "false") << ",
-";
-            out << "    \"enableBlockSleep\": " << (flags.enableBlockSleep ? "true" : "false") << ",
-";
-            out << "    \"enableSleepHysteresis\": " << (flags.enableSleepHysteresis ? "true" : "false") << ",
-";
-            out << "    \"enableStaticCache\": " << (flags.enableStaticCache ? "true" : "false") << ",
-";
+            out << "  \"" << name << "\": {\n";
+            out << "    \"enableNoNoveltyBaseline\": " << (flags.enableNoNoveltyBaseline ? "true" : "false") << ",\n";
+            out << "    \"enableMicrotype\": " << (flags.enableMicrotype ? "true" : "false") << ",\n";
+            out << "    \"enableBudgetedPhysics\": " << (flags.enableBudgetedPhysics ? "true" : "false") << ",\n";
+            out << "    \"enableCertificateRender\": " << (flags.enableCertificateRender ? "true" : "false") << ",\n";
+            out << "    \"enablePerStrandEdit\": " << (flags.enablePerStrandEdit ? "true" : "false") << ",\n";
+            out << "    \"enableCBMA\": " << (flags.enableCBMA ? "true" : "false") << ",\n";
+            out << "    \"enablePhysicsIslands\": " << (flags.enablePhysicsIslands ? "true" : "false") << ",\n";
+            out << "    \"enableRodRepair\": " << (flags.enableRodRepair ? "true" : "false") << ",\n";
+            out << "    \"enableGpuResident\": " << (flags.enableGpuResident ? "true" : "false") << ",\n";
+            out << "    \"enableSegmentGroupSleep\": " << (flags.enableSegmentGroupSleep ? "true" : "false") << ",\n";
+            out << "    \"enableSegmentGroupIntegratedState\": " << (flags.enableSegmentGroupIntegratedState ? "true" : "false") << ",\n";
+            out << "    \"enableExternalStateArray\": " << (flags.enableExternalStateArray ? "true" : "false") << ",\n";
+            out << "    \"enableSharedPointOwnership\": " << (flags.enableSharedPointOwnership ? "true" : "false") << ",\n";
+            out << "    \"enableDirectionalResponsibility\": " << (flags.enableDirectionalResponsibility ? "true" : "false") << ",\n";
+            out << "    \"enableStaticCertificate\": " << (flags.enableStaticCertificate ? "true" : "false") << ",\n";
+            out << "    \"enablePredictiveWake\": " << (flags.enablePredictiveWake ? "true" : "false") << ",\n";
+            out << "    \"enableVelocityRecovery\": " << (flags.enableVelocityRecovery ? "true" : "false") << ",\n";
+            out << "    \"enableRepair\": " << (flags.enableRepair ? "true" : "false") << ",\n";
+            out << "    \"enableGpuCompaction\": " << (flags.enableGpuCompaction ? "true" : "false") << ",\n";
+            out << "    \"enableActiveSet\": " << (flags.enableActiveSet ? "true" : "false") << ",\n";
+            out << "    \"enableStrandSleep\": " << (flags.enableStrandSleep ? "true" : "false") << ",\n";
+            out << "    \"enableBlockSleep\": " << (flags.enableBlockSleep ? "true" : "false") << ",\n";
+            out << "    \"enableSleepHysteresis\": " << (flags.enableSleepHysteresis ? "true" : "false") << ",\n";
+            out << "    \"enableStaticCache\": " << (flags.enableStaticCache ? "true" : "false") << ",\n";
             out << "    \"stateStorage\": \""
                 << (flags.stateStorage == SegmentGroupStateStorage::IntegratedRecord ? "IntegratedRecord" : "ExternalArray")
-                << "\"
-";
-            out << "  }" << (comma ? "," : "") << "
-";
+                << "\"\n";
+            out << "  }" << (comma ? "," : "") << "\n";
         };
         writeFlags("requested", requested, true);
         writeFlags("applied", applied, true);
         writeFlags("observedFlags", observedFlags, true);
-        out << "  \"observed\": {
-";
+        out << "  \"observed\": {\n";
         out << "    \"adapterType\": \"" << (m_observedDriverType == D3D_DRIVER_TYPE_HARDWARE ? "hardware" : "non_hardware") << "\",\n";
         out << "    \"gpuName\": \"" << JsonEscape(WideToUtf8(m_observedGpuName)) << "\",\n";
         out << "    \"gpuVendorId\": " << m_observedGpuVendorId << ",\n";
@@ -532,7 +504,7 @@ return sample;
         ++m_noveltyTelemetry.fatalRuntimeFailureCount;
     }
 
-    ExperimentRunStatus GpuHairViewer::ValidateCompletedExperiment() const
+    GpuHairViewer::ExperimentRunStatus GpuHairViewer::ValidateCompletedExperiment() const
     {
         if (!m_experimentCase.enabled) return ExperimentRunStatus::Incomplete;
         if (m_experimentRunStatus == ExperimentRunStatus::Failed ||
