@@ -586,8 +586,8 @@ namespace hairgpu::viewer
             uint32_t observedSolverIterations = 0u;
             bool observedVsyncEnabled = true;
             uint32_t observedPresentSyncInterval = 1u;
-            uint32_t requestedGuideCount = 6000u;
-            uint32_t requestedDisplayStrandCount = 0u;
+            uint32_t requestedGuideCount = 4000u;
+            uint32_t requestedDisplayStrandCount = 100000u;
             uint32_t requestedParticlesPerGuide = 128u;
             uint32_t requestedSolverIterations = 12u;
             uint32_t presentSyncInterval = 0u;
@@ -1364,9 +1364,9 @@ namespace hairgpu::viewer
         float m_runtimeAngularBendStiffness = 0.35f;
         float m_runtimeAngularBendDamping = 0.08f;
         uint32_t m_sortedBroadphasePaddedCount = 1u;
-        uint32_t m_builderGuideCount = 6000;
-        uint32_t m_builderFollowersPerGuide = 16;
-        uint32_t m_builderParticlesPerStrand = 128;
+        uint32_t m_builderGuideCount = 4000u;
+        uint32_t m_builderFollowersPerGuide = 24u;
+        uint32_t m_builderParticlesPerStrand = 128u;
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";

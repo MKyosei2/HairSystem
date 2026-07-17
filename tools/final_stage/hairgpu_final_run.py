@@ -526,7 +526,7 @@ def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
     result.setdefault("fixed_timestep_seconds", 1.0 / 60.0)
     result.setdefault("warmup_frames", 600)
     result.setdefault("measurement_frames", 6000)
-    result.setdefault("guide_strand_count", 3000)
+    result.setdefault("guide_strand_count", 4000)
     result.setdefault("display_strand_count", 100000)
     result.setdefault("particles_per_guide", 24)
     result.setdefault("solver_iterations", 6)
@@ -663,10 +663,41 @@ def validate_case_contract(case: Mapping[str, Any], viewer_exe: Path | None = No
     if _required_int(normalized.get("measurement_frames")) < 6000:
         issues.append(_issue("E_MEASUREMENT_FRAMES", "Measurement must be at least 6000 frames."))
     guide_count = _required_int(normalized.get("guide_strand_count"))
+    display_count = _required_int(normalized.get("display_strand_count"))
     if not 2000 <= guide_count <= 5000:
         issues.append(_issue("E_GUIDE_COUNT", "Guide count must be 2000-5000.", observed=guide_count))
-    if _required_int(normalized.get("display_strand_count")) != 100000:
-        issues.append(_issue("E_DISPLAY_STRANDS", "Formal evaluation requires exactly 100000 displayed strands."))
+    if display_count != 100000:
+        issues.append(_issue(
+            "E_DISPLAY_STRANDS",
+            "Formal evaluation requires exactly 100000 displayed strands.",
+            expected=100000,
+            observed=display_count,
+        ))
+    if guide_count > 0 and display_count >= guide_count:
+        remainder = display_count % guide_count
+        if remainder != 0:
+            issues.append(_issue(
+                "E_STRAND_COUNT_NOT_DIVISIBLE",
+                "Display strand count must be exactly divisible by guide count so every guide owns the same follower count.",
+                expected={"displayStrandCount": display_count, "validGuideCountExample": 4000},
+                observed={"guideCount": guide_count, "remainder": remainder},
+            ))
+        else:
+            followers_per_guide = display_count // guide_count - 1
+            if followers_per_guide > 64:
+                issues.append(_issue(
+                    "E_FOLLOWERS_PER_GUIDE_LIMIT",
+                    "Followers per guide exceeds the Viewer-supported limit.",
+                    expected="<=64",
+                    observed=followers_per_guide,
+                ))
+    else:
+        issues.append(_issue(
+            "E_STRAND_COUNT_RELATION",
+            "Display strand count must be at least the guide count and guide count must be positive.",
+            expected={"guideCount": ">0", "displayStrandCount": ">=guideCount"},
+            observed={"guideCount": guide_count, "displayStrandCount": display_count},
+        ))
     particles = _required_int(normalized.get("particles_per_guide"))
     if not 16 <= particles <= 24:
         issues.append(_issue("E_POINTS_PER_GUIDE", "Particles per guide must be 16-24.", observed=particles))
@@ -1540,12 +1571,22 @@ def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_sec
 def _self_test() -> None:
     assert derive_method_code({key: METHOD_PRESETS["P"][key] for key in METHOD_FLAG_KEYS}) == "P"
     assert derive_method_code({key: METHOD_PRESETS["B8"][key] for key in METHOD_FLAG_KEYS}) == "B8"
-    case = _normalize_case({"method": "P", "width": 1920, "height": 1080, "display_strand_count": 100000, "guide_strand_count": 3000, "particles_per_guide": 24, "solver_iterations": 6, "vsync": False, "present_sync_interval": 0})
+    case = _normalize_case({"method": "P", "width": 1920, "height": 1080, "display_strand_count": 100000, "guide_strand_count": 4000, "particles_per_guide": 24, "solver_iterations": 6, "vsync": False, "present_sync_interval": 0})
     requested = dict(METHOD_PRESETS["P"])
     applied = {key: requested[key] for key in METHOD_FLAG_KEYS}
-    observed = dict(applied)
-    observed.update(_expected_runtime_settings(case))
-    issues, evidence = _compare_settings({"requested": requested, "applied": applied, "observed": observed}, case)
+    observed_flags = dict(applied)
+    observed = _expected_runtime_settings(case)
+    expected_hash = canonical_json_sha256(requested)
+    issues, evidence = _compare_settings({
+        "requested": requested,
+        "applied": applied,
+        "observedFlags": observed_flags,
+        "observed": observed,
+        "requestedMethodSettingsSha256": expected_hash,
+        "appliedMethodSettingsSha256": expected_hash,
+        "observedMethodSettingsSha256": expected_hash,
+        "methodFlagsMatched": True,
+    }, case)
     assert not issues, issues
     assert evidence["observedMethodCode"] == "P"
     rows = [{

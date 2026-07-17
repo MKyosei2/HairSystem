@@ -962,10 +962,37 @@ return true;
         m_experimentCase.measurementFrames = envUInt(L"HAIRGPU_MEASUREMENT_FRAMES", root.UInt({ "measurement_frames", "measurementFrames" }, 6000u));
         m_experimentCase.requestedWidth = envUInt(L"HAIRGPU_RENDER_WIDTH", root.UInt({ "width", "render_width" }, 1920u));
         m_experimentCase.requestedHeight = envUInt(L"HAIRGPU_RENDER_HEIGHT", root.UInt({ "height", "render_height" }, 1080u));
-        m_experimentCase.requestedGuideCount = envUInt(L"HAIRGPU_GUIDE_COUNT", root.UInt({ "guide_count", "guide_strand_count" }, 6250u));
+        m_experimentCase.requestedGuideCount = envUInt(L"HAIRGPU_GUIDE_COUNT", root.UInt({ "guide_count", "guide_strand_count" }, 4000u));
         m_experimentCase.requestedDisplayStrandCount = envUInt(L"HAIRGPU_DISPLAY_STRAND_COUNT", root.UInt({ "display_strand_count" }, 100000u));
         m_experimentCase.requestedParticlesPerGuide = envUInt(L"HAIRGPU_PARTICLES_PER_GUIDE", root.UInt({ "particles_per_guide", "particles_per_strand" }, 128u));
         m_experimentCase.requestedSolverIterations = envUInt(L"HAIRGPU_SOLVER_ITERATIONS", root.UInt({ "solver_iterations" }, 12u));
+
+        // Formal 100k contract: all guides must own the same follower count.
+        // The canonical layout is 4,000 guides + 96,000 followers
+        // (24 followers per guide) = exactly 100,000 displayed strands.
+        if (m_experimentCase.requestedDisplayStrandCount != 100000u)
+        {
+            m_experimentFailureMessage = L"Formal evaluation requires exactly 100,000 displayed strands.";
+            return false;
+        }
+        if (m_experimentCase.requestedGuideCount == 0u ||
+            m_experimentCase.requestedDisplayStrandCount < m_experimentCase.requestedGuideCount)
+        {
+            m_experimentFailureMessage = L"Display strand count must be at least the positive guide count.";
+            return false;
+        }
+        if ((m_experimentCase.requestedDisplayStrandCount % m_experimentCase.requestedGuideCount) != 0u)
+        {
+            m_experimentFailureMessage = L"Display strand count must be exactly divisible by guide count.";
+            return false;
+        }
+        const uint32_t requestedFollowersPerGuide =
+            m_experimentCase.requestedDisplayStrandCount / m_experimentCase.requestedGuideCount - 1u;
+        if (requestedFollowersPerGuide > 64u)
+        {
+            m_experimentFailureMessage = L"Followers per guide exceeds the Viewer-supported limit of 64.";
+            return false;
+        }
         m_experimentCase.fixedTimeStepSeconds = envFloat(L"HAIRGPU_FIXED_TIMESTEP_SECONDS", root.Float({ "fixed_timestep_seconds" }, 1.0f / 60.0f));
         m_experimentCase.fixedTimeStepEnabled = true;
         m_experimentCase.vsyncEnabled = envBool(L"HAIRGPU_VSYNC", root.Boolean({ "vsync" }, false));
@@ -1342,13 +1369,19 @@ return true;
         if (!m_experimentCase.enabled) return;
         m_width = std::max<UINT>(m_experimentCase.requestedWidth, 64u);
         m_height = std::max<UINT>(m_experimentCase.requestedHeight, 64u);
-        m_builderGuideCount = std::max<uint32_t>(m_experimentCase.requestedGuideCount, 1u);
-        m_builderParticlesPerStrand = std::max<uint32_t>(m_experimentCase.requestedParticlesPerGuide, 2u);
-        if (m_experimentCase.requestedDisplayStrandCount > m_builderGuideCount)
+        const uint32_t requestedGuides = m_experimentCase.requestedGuideCount;
+        const uint32_t requestedDisplayStrands = m_experimentCase.requestedDisplayStrandCount;
+        if (requestedGuides == 0u ||
+            requestedDisplayStrands < requestedGuides ||
+            (requestedDisplayStrands % requestedGuides) != 0u)
         {
-            const uint32_t followers = m_experimentCase.requestedDisplayStrandCount - m_builderGuideCount;
-            m_builderFollowersPerGuide = std::max<uint32_t>(followers / m_builderGuideCount, 1u);
+            SetFatalExperimentFailure(1501u, L"Invalid exact-strand asset configuration reached asset creation.");
+            return;
         }
+
+        m_builderGuideCount = requestedGuides;
+        m_builderFollowersPerGuide = requestedDisplayStrands / requestedGuides - 1u;
+        m_builderParticlesPerStrand = std::max<uint32_t>(m_experimentCase.requestedParticlesPerGuide, 2u);
         m_vsyncEnabled = m_experimentCase.vsyncEnabled;
         m_presentSyncInterval = m_vsyncEnabled ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u) : 0u;
         m_enableActiveSetRuntime = m_experimentCase.appliedFlags.enableActiveSet;
