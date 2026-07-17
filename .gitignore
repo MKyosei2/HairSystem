@@ -8,6 +8,16 @@ cmake-build-*/
 
 # Temporary checks / generated reports
 build_check/
+profile_results/
+runtime_telemetry/
+out/
+*.sqlite
+*.sqlite3
+*.xlsx
+*_frames.csv
+*_frames.jsonl
+*_summary.json
+*.before_freeze
 *.log
 *.tlog
 *.obj
