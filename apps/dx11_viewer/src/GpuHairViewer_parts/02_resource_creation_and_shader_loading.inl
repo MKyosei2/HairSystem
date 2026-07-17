@@ -92,7 +92,12 @@
             GpuTimingFrame& gpuFrame = m_gpuTimingFrames[m_gpuTimingWriteIndex];
             m_activeGpuTimingFrameIndex = -1;
 
+            // Formal measurements keep per-frame timing coverage. Interactive development
+            // samples once every 16 frames to avoid query pressure while retaining diagnostics.
+            const bool shouldIssueGpuTiming =
+                IsExperimentModeEnabled() || ((m_globalFrameIndex % 16u) == 0u);
             const bool canIssueGpuTiming =
+                shouldIssueGpuTiming &&
                 gpuFrame.disjoint &&
                 !gpuFrame.issued;
 
@@ -128,12 +133,14 @@
                 }
                 else
                 {
-                    m_accumulator += std::min(dt, 0.1f);
-                    while (m_accumulator >= m_simConfig.fixedTimeStep)
+                    // Never enter a catch-up spiral on a workload this large. Interactive
+                    // development performs at most one fixed simulation step per render frame.
+                    m_accumulator += std::min(dt, m_simConfig.fixedTimeStep);
+                    if (m_accumulator >= m_simConfig.fixedTimeStep)
                     {
                         ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
-                        m_accumulator -= m_simConfig.fixedTimeStep;
                         m_elapsedSeconds += m_simConfig.fixedTimeStep;
+                        m_accumulator = 0.0f;
                     }
                 }
             }
@@ -183,6 +190,7 @@
             if (m_statsUpdateAccumulator >= 0.2f)
             {
                 UpdateStatsLabel();
+                UpdateWindowTitle();
                 m_statsUpdateAccumulator = 0.0f;
             }
         }
@@ -533,12 +541,14 @@
         m_gridCellIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(zeroCellIndices.size()), zeroCellIndices.data(), true);
 
         const UINT hashBucketCount = std::max<UINT>(m_simConfig.selfCollisionHashBucketCount, 1u);
+        const UINT totalGuideParticles = std::max<UINT>(m_asset.guideStrandCount * m_asset.particlesPerStrand, 1u);
         std::vector<uint32_t> zeroHashHeads(hashBucketCount, 0xFFFFFFFFu);
-        std::vector<uint32_t> zeroParticleNext(std::max<UINT>(totalParticles, 1u), 0xFFFFFFFFu);
+        // Self collision is guide-only; allocating a chain slot for every follower point
+        // wastes roughly 49 MiB at the fixed 100k x 128 configuration.
+        std::vector<uint32_t> zeroParticleNext(totalGuideParticles, 0xFFFFFFFFu);
         m_gridHashHeadsBuffer = CreateStructuredBuffer(sizeof(uint32_t), hashBucketCount, zeroHashHeads.data(), true);
         m_gridParticleNextBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(zeroParticleNext.size()), zeroParticleNext.data(), true);
 
-        const UINT totalGuideParticles = std::max<UINT>(m_asset.guideStrandCount * m_asset.particlesPerStrand, 1u);
         m_sortedBroadphasePaddedCount = NextPowerOfTwo(totalGuideParticles);
         std::vector<uint32_t> invalidSortedKeys(m_sortedBroadphasePaddedCount, 0xFFFFFFFFu);
         std::vector<uint32_t> invalidSortedIndices(m_sortedBroadphasePaddedCount, 0xFFFFFFFFu);

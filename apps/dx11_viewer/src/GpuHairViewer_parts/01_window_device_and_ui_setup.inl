@@ -637,13 +637,71 @@
         ApplyExperimentConfigBeforeAssetCreation();
 
         const float initialSegmentLength = SegmentLengthForParticleCount(m_builderParticlesPerStrand);
-        m_asset = BuildSampleHybridHairAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand, initialSegmentLength);
-        // Avoid double wig styling in viewer; sample/import paths already shape the asset.
-        EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
-        m_lastAssetSource = L"Sample Hybrid";
-        if (m_lastImportStatus.empty())
+
+        // The formal 100k asset is expensive to procedurally rebuild. Reuse the existing
+        // Hair binary I/O path and cache only topology-identical assets. This changes no
+        // simulation, novelty, or strand-count semantics.
+        wchar_t assetCacheModulePath[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
+        const std::filesystem::path assetCacheDirectory =
+            std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
+        const std::wstring assetCacheFileName =
+            L"sample_hybrid_cache_v1_g" + std::to_wstring(m_builderGuideCount) +
+            L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
+            L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
+        const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
+
+        const uint64_t expectedCachedStrands =
+            static_cast<uint64_t>(m_builderGuideCount) *
+            static_cast<uint64_t>(m_builderFollowersPerGuide + 1u);
+        const uint64_t expectedCachedPoints =
+            expectedCachedStrands * static_cast<uint64_t>(m_builderParticlesPerStrand);
+
+        hairgpu::HairAsset cachedAsset = {};
+        std::string assetCacheError;
+        bool loadedCachedAsset = false;
+        std::error_code assetCacheEc;
+        if (std::filesystem::exists(assetCachePath, assetCacheEc) && !assetCacheEc &&
+            hairgpu::LoadHairAssetFromHairBinary(assetCachePath, cachedAsset, assetCacheError))
         {
-            m_lastImportStatus = L"Sample asset active";
+            loadedCachedAsset =
+                cachedAsset.guideStrandCount == m_builderGuideCount &&
+                cachedAsset.followerStrandCount == m_builderGuideCount * m_builderFollowersPerGuide &&
+                cachedAsset.particlesPerStrand == m_builderParticlesPerStrand &&
+                cachedAsset.strands.size() == expectedCachedStrands &&
+                cachedAsset.restPoints.size() == expectedCachedPoints &&
+                cachedAsset.pointWidths.size() == expectedCachedPoints &&
+                cachedAsset.rootBindings.size() == expectedCachedStrands &&
+                cachedAsset.followData.size() == expectedCachedStrands;
+        }
+
+        if (loadedCachedAsset)
+        {
+            m_asset = std::move(cachedAsset);
+            m_lastAssetSource = L"Sample Hybrid Binary Cache";
+            m_lastImportStatus = L"Validated binary asset cache loaded";
+        }
+        else
+        {
+            m_asset = BuildSampleHybridHairAsset(
+                m_builderGuideCount,
+                m_builderFollowersPerGuide,
+                m_builderParticlesPerStrand,
+                initialSegmentLength);
+            // Avoid double wig styling in viewer; sample/import paths already shape the asset.
+            EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
+            m_lastAssetSource = L"Sample Hybrid (cache rebuilt)";
+            if (m_lastImportStatus.empty())
+            {
+                m_lastImportStatus = L"Sample asset active";
+            }
+
+            std::filesystem::create_directories(assetCacheDirectory, assetCacheEc);
+            if (!assetCacheEc)
+            {
+                std::string saveCacheError;
+                hairgpu::SaveHairAssetToHairBinary(assetCachePath, m_asset, saveCacheError);
+            }
         }
         m_activeSetBudget.maxActiveClusters = 6u;
         m_activeSetBudget.maxActiveGuides = 256u;
@@ -690,6 +748,7 @@
         m_showColliderDebug = false;
         m_enableSelfCollision = false;
         m_enableGridSelfCollision = false;
+        m_selfCollisionBroadphaseMode = 1u; // Spatial hash; bitonic mode is comparison-only.
 
         if (m_experimentCase.enabled)
         {

@@ -1361,7 +1361,7 @@ namespace hairgpu::viewer
         float m_selfCollisionRadius = 0.012f;
         float m_selfCollisionStiffness = 0.35f;
         bool m_enableGridSelfCollision = true;
-        uint32_t m_selfCollisionBroadphaseMode = 0u;
+        uint32_t m_selfCollisionBroadphaseMode = 1u; // Spatial hash runtime default.
         bool m_enableRuntimeAngularBend = true;
         float m_runtimeAngularBendRadians = 0.18f;
         float m_runtimeAngularBendCompliance = 5.0e-6f;
@@ -1637,7 +1637,7 @@ namespace hairgpu::viewer
         bool m_lastVisibilityUsedInitialPoseFallback = false;
         uint32_t m_visibilityReadbackFailureCount = 0u;
         uint32_t m_visibilityRecoveryCount = 0u;
-        CpuReadbackMode m_cpuReadbackMode = CpuReadbackMode::OnDemandVisibility;
+        CpuReadbackMode m_cpuReadbackMode = CpuReadbackMode::Off;
         bool m_visibilityRecoveryPending = true;
         uint32_t m_consecutiveInvisibleFrames = 0u;
         uint32_t m_framesSinceVisibilityCheck = 0u;

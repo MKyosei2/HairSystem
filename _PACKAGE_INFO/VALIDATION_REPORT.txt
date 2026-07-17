@@ -1,0 +1,37 @@
+HairSystem non-novelty performance package validation
+Date: 2026-07-17
+
+Fixed workload:
+  strands=100000
+  guides=4000
+  followers_per_guide=24
+  particles_per_strand=128
+  total_particles=12800000
+
+Checks:
+  PASS: 100,000 strands: 4,000 guides
+  PASS: 100,000 strands: 24 followers/guide
+  PASS: 12,800,000 particles: 128 points/strand
+  PASS: requested display strands fixed at 100,000
+  PASS: CPU full particle readback disabled
+  PASS: Spatial hash is runtime default
+  PASS: Release build keeps PDB and /O2
+  PASS: General HLSL optimization level 3
+  PASS: Segment-group HLSL optimization level 3
+  PASS: No shader skip-optimization flag remains
+  PASS: Interactive fixed step is capped at one
+  PASS: GPU timing is throttled outside formal experiments
+  PASS: Window title is updated at statistics cadence
+  PASS: Per-render title update removed
+  PASS: Guide-only integrate dispatch
+  PASS: Full-particle integrate dispatch removed
+  PASS: Follower dispatch occurs once
+  PASS: GPU-local ping-pong preservation
+  PASS: GPU-local reset replaces CPU upload
+  PASS: Hash chain buffer is guide-particle sized
+  PASS: Validated binary asset cache implemented
+
+Not executed:
+  Windows Release x64 build
+  HLSL compilation on D3DCompiler
+  Viewer runtime benchmark on physical GPU

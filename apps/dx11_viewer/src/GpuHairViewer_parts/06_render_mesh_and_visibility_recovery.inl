@@ -55,7 +55,7 @@
             ++m_noveltyTelemetry.fatalRuntimeFailureCount;
             m_running = false;
         }
-        UpdateWindowTitle();
+        // Window title is refreshed by Run() at the UI statistics cadence.
     }
 
     void GpuHairViewer::Resize(UINT width, UINT height)
@@ -135,9 +135,9 @@
 
     bool GpuHairViewer::CompileShaderFromFile(const wchar_t* filePath, const char* entryPoint, const char* target, ID3DBlob** blobOut, std::wstring& errorText)
     {
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
     #if defined(_DEBUG)
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+        flags |= D3DCOMPILE_DEBUG;
     #endif
         ComPtr<ID3DBlob> shaderBlob;
         ComPtr<ID3DBlob> errorBlob;

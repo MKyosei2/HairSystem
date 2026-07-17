@@ -17,9 +17,11 @@ return true;
             return false;
         }
 
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
     #if defined(_DEBUG)
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+        // Keep shader symbols for diagnostics, but never disable optimizer passes on
+        // the fixed 12.8-million-particle workload.
+        flags |= D3DCOMPILE_DEBUG;
     #endif
 
         wchar_t modulePath[MAX_PATH] = {};
@@ -503,7 +505,9 @@ return true;
         constexpr uint32_t kBitonicThreadsPerGroup = 256u;
         constexpr uint32_t kMaxBitonicItems = kMaxD3D11DispatchGroupsX * kBitonicThreadsPerGroup;
 
-        uint32_t effectiveBroadphaseMode = m_selfCollisionBroadphaseMode;
+        // The sorted/bitonic path is comparison-only. Runtime self collision uses the
+        // bounded spatial-hash path to avoid hundreds of sort dispatches per iteration.
+        uint32_t effectiveBroadphaseMode = 1u;
         uint32_t effectiveSortedEntryCount = sortedEntryCount;
 
         // BitonicSortCS cannot be tiled by DispatchBaseIndex because partner = index ^ BitonicJ
@@ -641,12 +645,21 @@ return true;
                 m_context->CSSetConstantBuffers(0, 2, nullConstantBuffers);
             };
 
+        // Preserve skipped Reduced/Frozen/Cached followers in the output ping-pong buffers
+        // with GPU-local copies, then integrate only the 4,000 guide strands.
+        m_context->CopyResource(
+            m_positions[outputBufferIndex].buffer.Get(),
+            m_positions[previousBufferIndex].buffer.Get());
+        m_context->CopyResource(
+            m_previousPositions[outputBufferIndex].buffer.Get(),
+            m_previousPositions[previousBufferIndex].buffer.Get());
+
         bindCommonSrvs();
         bindPrimaryUavs();
         updateHairConstants(0u);
 
         dispatchTiled(m_rootBindCS.Get(), totalStrandCount, kHairThreadsPerGroup);
-        dispatchTiled(m_integrateCS.Get(), totalParticleCount, kHairThreadsPerGroup);
+        dispatchTiled(m_integrateCS.Get(), totalGuideParticleCount, kHairThreadsPerGroup);
 
         const uint32_t solverIterationCount = std::max<uint32_t>(m_simConfig.solverIterations, 1u);
 
@@ -715,8 +728,12 @@ return true;
                 dispatchTiled(m_selfCollisionCS.Get(), guideParticleDispatchCount, kHairThreadsPerGroup);
             }
 
-            dispatchTiled(m_followCS.Get(), followerDispatchCount, kHairThreadsPerGroup);
         }
+
+        // Followers consume only the final solved guide state. Running this inside every
+        // solver iteration produced the same final dependency but repeated 96k x 128 work.
+        bindPrimaryUavs();
+        dispatchTiled(m_followCS.Get(), followerDispatchCount, kHairThreadsPerGroup);
 
         unbindComputeState();
 
@@ -726,10 +743,12 @@ return true;
     void GpuHairViewer::ResetSimulation()
     {
         m_currentBufferIndex = 0;
-        m_context->UpdateSubresource(m_positions[0].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
-        m_context->UpdateSubresource(m_positions[1].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
-        m_context->UpdateSubresource(m_previousPositions[0].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
-        m_context->UpdateSubresource(m_previousPositions[1].buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+        // Reset the four 204.8 MiB state buffers entirely on the GPU. The immutable rest
+        // buffer already contains the exact initial pose, so CPU re-upload is redundant.
+        m_context->CopyResource(m_positions[0].buffer.Get(), m_restPositions.buffer.Get());
+        m_context->CopyResource(m_positions[1].buffer.Get(), m_restPositions.buffer.Get());
+        m_context->CopyResource(m_previousPositions[0].buffer.Get(), m_restPositions.buffer.Get());
+        m_context->CopyResource(m_previousPositions[1].buffer.Get(), m_restPositions.buffer.Get());
         if (!m_zeroDistanceLambdas.empty())
         {
             m_context->UpdateSubresource(m_distanceLambdaBuffer.buffer.Get(), 0, nullptr, m_zeroDistanceLambdas.data(), 0, 0);
@@ -745,7 +764,10 @@ return true;
         m_context->UpdateSubresource(m_gridCellIndicesBuffer.buffer.Get(), 0, nullptr, zeroCellIndices.data(), 0, 0);
         const UINT hashBucketCount = std::max<UINT>(m_simConfig.selfCollisionHashBucketCount, 1u);
         std::vector<uint32_t> zeroHashHeads(hashBucketCount, 0xFFFFFFFFu);
-        std::vector<uint32_t> zeroParticleNext(std::max<UINT>(static_cast<UINT>(m_initialParticles.size()), 1u), 0xFFFFFFFFu);
+        const UINT guideParticleCount = std::max<UINT>(
+            m_asset.guideStrandCount * m_asset.particlesPerStrand,
+            1u);
+        std::vector<uint32_t> zeroParticleNext(guideParticleCount, 0xFFFFFFFFu);
         m_context->UpdateSubresource(m_gridHashHeadsBuffer.buffer.Get(), 0, nullptr, zeroHashHeads.data(), 0, 0);
         m_context->UpdateSubresource(m_gridParticleNextBuffer.buffer.Get(), 0, nullptr, zeroParticleNext.data(), 0, 0);
         std::vector<uint32_t> invalidSortedKeys(std::max<UINT>(m_sortedBroadphasePaddedCount, 1u), 0xFFFFFFFFu);
