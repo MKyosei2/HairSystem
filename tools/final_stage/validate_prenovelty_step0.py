@@ -18,6 +18,18 @@ EXPECTED_PRESETS = (
     "06_simulation_light",
 )
 
+REQUIRED_BASELINE_FLAGS = {
+    "enableNoNoveltyBaseline": True,
+    "enableMicrotype": False,
+    "enableBudgetedPhysics": False,
+    "enableCertificateRender": False,
+    "enablePerStrandEdit": False,
+    "enableCBMA": False,
+    "enablePhysicsIslands": False,
+    "enableRodRepair": False,
+    "enableGpuResident": False,
+}
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -49,6 +61,20 @@ def _as_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _as_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    number = _as_number(value)
+    if number is not None:
+        return number != 0.0
+    return None
+
+
 def _find_one(directory: Path, pattern: str) -> Path | None:
     candidates = sorted(directory.glob(pattern), key=lambda path: path.stat().st_mtime)
     return candidates[-1] if candidates else None
@@ -68,6 +94,7 @@ def _validate_preset(preset_dir: Path, minimum_frames: int) -> dict[str, Any]:
     nan_count = 0
     infinite_count = 0
     frame_column = ""
+    observed_baseline_flags: dict[str, bool | None] = {}
     if frame_path is not None:
         try:
             with frame_path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -79,6 +106,9 @@ def _validate_preset(preset_dir: Path, minimum_frames: int) -> dict[str, Any]:
                         break
                 if not frame_column:
                     issues.append("frame_time_column_missing")
+                missing_flag_columns = sorted(set(REQUIRED_BASELINE_FLAGS) - set(headers))
+                if missing_flag_columns:
+                    issues.append("baseline_flag_columns_missing:" + ",".join(missing_flag_columns))
                 for row in reader:
                     if frame_column:
                         number = _as_number(row.get(frame_column))
@@ -87,8 +117,21 @@ def _validate_preset(preset_dir: Path, minimum_frames: int) -> dict[str, Any]:
                     fatal_count += int(_as_number(row.get("fatalFailure")) or 0)
                     nan_count += int(_as_number(row.get("nanStateCount")) or 0)
                     infinite_count += int(_as_number(row.get("infiniteStateCount")) or 0)
+                    if not observed_baseline_flags:
+                        for key in REQUIRED_BASELINE_FLAGS:
+                            if key in row:
+                                observed_baseline_flags[key] = _as_bool(row.get(key))
         except Exception as exc:
             issues.append(f"frames_csv_invalid:{exc}")
+
+    for key, expected in REQUIRED_BASELINE_FLAGS.items():
+        if key not in observed_baseline_flags:
+            continue
+        observed = observed_baseline_flags[key]
+        if observed is None:
+            issues.append(f"baseline_flag_unreadable:{key}")
+        elif observed != expected:
+            issues.append(f"baseline_flag_mismatch:{key}={observed},expected={expected}")
 
     summary: dict[str, Any] = {}
     if summary_path is not None:
@@ -134,6 +177,7 @@ def _validate_preset(preset_dir: Path, minimum_frames: int) -> dict[str, Any]:
         "fatalFailureCount": fatal_count,
         "nanStateCount": nan_count,
         "infiniteStateCount": infinite_count,
+        "observedBaselineFlags": observed_baseline_flags,
     }
 
 
@@ -163,12 +207,13 @@ def validate_run(run_dir: Path, minimum_frames: int, label: str) -> dict[str, An
         issues.append("RESULT_REAL.csv_missing")
 
     payload = {
-        "schemaVersion": "prenovelty-step0-validation-v1",
+        "schemaVersion": "prenovelty-step0-validation-v2",
         "label": label,
         "runDirectory": str(run_dir),
         "baselineMode": "B0_no_novelty_flags",
         "paperEvidenceEligible": False,
         "minimumPositiveFramesPerPreset": minimum_frames,
+        "requiredBaselineFlags": REQUIRED_BASELINE_FLAGS,
         "valid": not issues,
         "issues": issues,
         "presets": results,
@@ -184,6 +229,7 @@ def validate_run(run_dir: Path, minimum_frames: int, label: str) -> dict[str, An
         f"- Run directory: `{run_dir}`",
         f"- Status: **{'PASS' if payload['valid'] else 'FAIL'}**",
         f"- Minimum positive frames per preset: {minimum_frames}",
+        "- B0 telemetry gate: `enableNoNoveltyBaseline=1`; principal novelty flags must be `0`.",
         "- Evidence class: development baseline; the formal frozen-asset run is still required for paper evidence.",
         "",
         "| Preset | Status | Frames | Avg ms | p95 ms | p99 ms | Overrun |",
@@ -242,7 +288,7 @@ def aggregate_runs(list_path: Path, output_dir: Path) -> dict[str, Any]:
         })
 
     payload = {
-        "schemaVersion": "prenovelty-step0-session-v1",
+        "schemaVersion": "prenovelty-step0-session-v2",
         "baselineMode": "B0_no_novelty_flags",
         "paperEvidenceEligible": False,
         "runCount": len(validations),
