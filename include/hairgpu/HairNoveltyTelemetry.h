@@ -5,9 +5,16 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+#endif
 
 namespace hairgpu
 {
@@ -60,6 +67,9 @@ namespace hairgpu
         uint32_t nanStateCount = 0u;
         uint32_t infiniteStateCount = 0u;
         uint32_t determinismMismatchCount = 0u;
+        uint64_t stateSequenceHash = 0ull;
+        uint64_t compactionSequenceHash = 0ull;
+        uint64_t finalPositionHash = 0ull;
 
         // Number of measured frames carrying each formal evidence class.
         // These counters distinguish a measured zero from unavailable data.
@@ -239,13 +249,67 @@ namespace hairgpu
         uint32_t measuredFrameIndex = 0u;
         uint64_t availabilityMask = 0ull;
         uint64_t metricAvailabilityMask = 0ull;
+
         uint32_t falseStaticCount = 0u;
         uint32_t staticCachedGroupCount = 0u;
         uint32_t staticTransformedGroupCount = 0u;
+
+        uint32_t predictiveWakeEvaluatedCount = 0u;
+        uint32_t predictiveWakeTruePositiveCount = 0u;
+        uint32_t predictiveWakeFalsePositiveCount = 0u;
+        uint32_t predictiveWakeFalseNegativeCount = 0u;
+        uint32_t wakeDelayFrameMax = 0u;
+        float wakePositionErrorMeanMm = 0.0f;
+        float wakePositionErrorMaxMm = 0.0f;
+        float wakeVelocityErrorMean = 0.0f;
+        float wakeVelocityErrorMax = 0.0f;
+
+        uint32_t collisionCandidateCount = 0u;
+        uint32_t collisionMissCount = 0u;
+        uint32_t penetrationEventCount = 0u;
+        float meanPenetrationMm = 0.0f;
+        float maxPenetrationMm = 0.0f;
+
         uint32_t repairAttemptCount = 0u;
         uint32_t repairSuccessCount = 0u;
         uint32_t repairVerifiedCount = 0u;
+        uint32_t repairUnverifiedCount = 0u;
+        uint32_t repairFailureCount = 0u;
         uint32_t repairRecurrenceCount = 0u;
+        uint32_t repairLatencyFrameMax = 0u;
+
+        uint32_t sharedPointConflictCount = 0u;
+        float staticDynamicBoundaryMeanErrorMm = 0.0f;
+        float staticDynamicBoundaryMaxErrorMm = 0.0f;
+
+        uint32_t stateTransitionCount = 0u;
+        uint32_t stateOscillationCount = 0u;
+        uint32_t determinismMismatchCount = 0u;
+        uint64_t stateSequenceHash = 0ull;
+        uint64_t compactionSequenceHash = 0ull;
+        uint64_t finalPositionHash = 0ull;
+
+        uint32_t dynamicCompactionInputCount = 0u;
+        uint32_t dynamicCompactionOutputCount = 0u;
+        uint32_t repairCompactionOutputCount = 0u;
+
+        float blockClassificationGpuMilliseconds = 0.0f;
+        float groupClassificationGpuMilliseconds = 0.0f;
+        float predictiveWakeGpuMilliseconds = 0.0f;
+        float wakePropagationGpuMilliseconds = 0.0f;
+        float compactionGpuMilliseconds = 0.0f;
+        float staticTransformGpuMilliseconds = 0.0f;
+        float dynamicSolveGpuMilliseconds = 0.0f;
+        float velocityRecoveryGpuMilliseconds = 0.0f;
+        float repairSolveGpuMilliseconds = 0.0f;
+        float boundaryRepairGpuMilliseconds = 0.0f;
+        float cacheUpdateGpuMilliseconds = 0.0f;
+        float watchdogGpuMilliseconds = 0.0f;
+        float followerReconstructionGpuMilliseconds = 0.0f;
+        float renderPreparationGpuMilliseconds = 0.0f;
+        float hairDrawGpuMilliseconds = 0.0f;
+        float telemetryReductionGpuMilliseconds = 0.0f;
+        float totalHairGpuMilliseconds = 0.0f;
     };
 
     class HairFormalEvidenceRecorder
@@ -267,31 +331,80 @@ namespace hairgpu
             row.falseStaticCount = telemetry.falseStaticCount;
             row.staticCachedGroupCount = telemetry.staticCachedGroupCount;
             row.staticTransformedGroupCount = telemetry.staticTransformedGroupCount;
+            row.predictiveWakeEvaluatedCount = telemetry.predictiveWakeEvaluatedCount;
+            row.predictiveWakeTruePositiveCount = telemetry.predictiveWakeTruePositiveCount;
+            row.predictiveWakeFalsePositiveCount = telemetry.predictiveWakeFalsePositiveCount;
+            row.predictiveWakeFalseNegativeCount = telemetry.predictiveWakeFalseNegativeCount;
+            row.wakeDelayFrameMax = telemetry.wakeDelayFrameMax;
+            row.wakePositionErrorMeanMm = telemetry.wakePositionErrorMeanMm;
+            row.wakePositionErrorMaxMm = telemetry.wakePositionErrorMaxMm;
+            row.wakeVelocityErrorMean = telemetry.wakeVelocityErrorMean;
+            row.wakeVelocityErrorMax = telemetry.wakeVelocityErrorMax;
+            row.collisionCandidateCount = telemetry.collisionCandidateCount;
+            row.collisionMissCount = telemetry.collisionMissCount;
+            row.penetrationEventCount = telemetry.penetrationEventCount;
+            row.meanPenetrationMm = telemetry.meanPenetrationMm;
+            row.maxPenetrationMm = telemetry.maxPenetrationMm;
             row.repairAttemptCount = telemetry.repairAttemptCount;
             row.repairSuccessCount = telemetry.repairSuccessCount;
             row.repairVerifiedCount = telemetry.repairVerifiedCount;
+            row.repairUnverifiedCount = telemetry.repairUnverifiedCount;
+            row.repairFailureCount = telemetry.repairFailureCount;
             row.repairRecurrenceCount = telemetry.repairRecurrenceCount;
+            row.repairLatencyFrameMax = telemetry.repairLatencyFrameMax;
+            row.sharedPointConflictCount = telemetry.sharedPointConflictCount;
+            row.staticDynamicBoundaryMeanErrorMm = telemetry.staticDynamicBoundaryMeanErrorMm;
+            row.staticDynamicBoundaryMaxErrorMm = telemetry.staticDynamicBoundaryMaxErrorMm;
+            row.stateTransitionCount = telemetry.stateTransitionCount;
+            row.stateOscillationCount = telemetry.stateOscillationCount;
+            row.determinismMismatchCount = telemetry.determinismMismatchCount;
+            row.stateSequenceHash = telemetry.stateSequenceHash;
+            row.compactionSequenceHash = telemetry.compactionSequenceHash;
+            row.finalPositionHash = telemetry.finalPositionHash;
+            row.dynamicCompactionInputCount = telemetry.dynamicCompactionInputCount;
+            row.dynamicCompactionOutputCount = telemetry.dynamicCompactionOutputCount;
+            row.repairCompactionOutputCount = telemetry.repairCompactionOutputCount;
+            row.blockClassificationGpuMilliseconds = telemetry.blockClassificationGpuMilliseconds;
+            row.groupClassificationGpuMilliseconds = telemetry.groupClassificationGpuMilliseconds;
+            row.predictiveWakeGpuMilliseconds = telemetry.predictiveWakeGpuMilliseconds;
+            row.wakePropagationGpuMilliseconds = telemetry.wakePropagationGpuMilliseconds;
+            row.compactionGpuMilliseconds = telemetry.compactionGpuMilliseconds;
+            row.staticTransformGpuMilliseconds = telemetry.staticTransformGpuMilliseconds;
+            row.dynamicSolveGpuMilliseconds = telemetry.dynamicSolveGpuMilliseconds;
+            row.velocityRecoveryGpuMilliseconds = telemetry.velocityRecoveryGpuMilliseconds;
+            row.repairSolveGpuMilliseconds = telemetry.repairSolveGpuMilliseconds;
+            row.boundaryRepairGpuMilliseconds = telemetry.boundaryRepairGpuMilliseconds;
+            row.cacheUpdateGpuMilliseconds = telemetry.cacheUpdateGpuMilliseconds;
+            row.watchdogGpuMilliseconds = telemetry.watchdogGpuMilliseconds;
+            row.followerReconstructionGpuMilliseconds = telemetry.followerReconstructionGpuMilliseconds;
+            row.renderPreparationGpuMilliseconds = telemetry.renderPreparationGpuMilliseconds;
+            row.hairDrawGpuMilliseconds = telemetry.hairDrawGpuMilliseconds;
+            row.telemetryReductionGpuMilliseconds = telemetry.telemetryReductionGpuMilliseconds;
+            row.totalHairGpuMilliseconds = telemetry.totalHairGpuMilliseconds;
 
-            // Finalization can be called more than once for one source frame.
-            // Keep the last fully-populated value rather than double-counting.
+            // Finalization can be called more than once for the current frame.
+            // Keep only the newest pending representation. Already committed rows
+            // are immutable so the sidecar remains append-only and crash tolerant.
             bool appended = false;
-            if (!m_rows.empty() && m_rows.back().sourceFrameIndex == row.sourceFrameIndex)
+            if (!m_pendingRows.empty() && m_pendingRows.back().sourceFrameIndex == row.sourceFrameIndex)
             {
-                m_rows.back() = row;
+                m_pendingRows.back() = row;
             }
-            else
+            else if (!m_hasCommittedRow || row.sourceFrameIndex != m_lastCommittedSourceFrame)
             {
-                m_rows.push_back(row);
+                m_pendingRows.push_back(row);
                 appended = true;
             }
 
-            // Persist a complete atomic snapshot periodically. A crash can lose
-            // at most kCheckpointRows - 1 newly recorded frames instead of the
-            // whole formal run.
-            if (appended && m_rows.size() - m_lastFlushedRowCount >= kCheckpointRows)
+            if (appended && m_pendingRows.size() >= kCheckpointRows)
             {
                 Flush();
             }
+        }
+
+        void FlushNow() noexcept
+        {
+            Flush();
         }
 
         ~HairFormalEvidenceRecorder() noexcept
@@ -318,58 +431,119 @@ namespace hairgpu
             }
             m_outputPath = std::filesystem::path(directory) /
                 (std::string(runName) + "_formal_evidence.jsonl");
-            m_rows.reserve(8192u);
+            m_pendingRows.reserve(kCheckpointRows + 1u);
+        }
+
+        static void AppendJsonRow(std::ostringstream& out, const HairFormalEvidenceRow& row)
+        {
+            out << "{\"sourceFrameIndex\":" << row.sourceFrameIndex
+                << ",\"measuredFrameIndex\":" << row.measuredFrameIndex
+                << ",\"availabilityMask\":" << row.availabilityMask
+                << ",\"metricAvailabilityMask\":" << row.metricAvailabilityMask
+                << ",\"falseStaticCount\":" << row.falseStaticCount
+                << ",\"staticCachedGroupCount\":" << row.staticCachedGroupCount
+                << ",\"staticTransformedGroupCount\":" << row.staticTransformedGroupCount
+                << ",\"predictiveWakeEvaluatedCount\":" << row.predictiveWakeEvaluatedCount
+                << ",\"predictiveWakeTruePositiveCount\":" << row.predictiveWakeTruePositiveCount
+                << ",\"predictiveWakeFalsePositiveCount\":" << row.predictiveWakeFalsePositiveCount
+                << ",\"predictiveWakeFalseNegativeCount\":" << row.predictiveWakeFalseNegativeCount
+                << ",\"wakeDelayFrameMax\":" << row.wakeDelayFrameMax
+                << ",\"wakePositionErrorMeanMm\":" << row.wakePositionErrorMeanMm
+                << ",\"wakePositionErrorMaxMm\":" << row.wakePositionErrorMaxMm
+                << ",\"wakeVelocityErrorMean\":" << row.wakeVelocityErrorMean
+                << ",\"wakeVelocityErrorMax\":" << row.wakeVelocityErrorMax
+                << ",\"collisionCandidateCount\":" << row.collisionCandidateCount
+                << ",\"collisionMissCount\":" << row.collisionMissCount
+                << ",\"penetrationEventCount\":" << row.penetrationEventCount
+                << ",\"meanPenetrationMm\":" << row.meanPenetrationMm
+                << ",\"maxPenetrationMm\":" << row.maxPenetrationMm
+                << ",\"repairAttemptCount\":" << row.repairAttemptCount
+                << ",\"repairSuccessCount\":" << row.repairSuccessCount
+                << ",\"repairVerifiedCount\":" << row.repairVerifiedCount
+                << ",\"repairUnverifiedCount\":" << row.repairUnverifiedCount
+                << ",\"repairFailureCount\":" << row.repairFailureCount
+                << ",\"repairRecurrenceCount\":" << row.repairRecurrenceCount
+                << ",\"repairLatencyFrameMax\":" << row.repairLatencyFrameMax
+                << ",\"sharedPointConflictCount\":" << row.sharedPointConflictCount
+                << ",\"staticDynamicBoundaryMeanErrorMm\":" << row.staticDynamicBoundaryMeanErrorMm
+                << ",\"staticDynamicBoundaryMaxErrorMm\":" << row.staticDynamicBoundaryMaxErrorMm
+                << ",\"stateTransitionCount\":" << row.stateTransitionCount
+                << ",\"stateOscillationCount\":" << row.stateOscillationCount
+                << ",\"determinismMismatchCount\":" << row.determinismMismatchCount
+                << ",\"stateSequenceHash\":" << row.stateSequenceHash
+                << ",\"compactionSequenceHash\":" << row.compactionSequenceHash
+                << ",\"finalPositionHash\":" << row.finalPositionHash
+                << ",\"dynamicCompactionInputCount\":" << row.dynamicCompactionInputCount
+                << ",\"dynamicCompactionOutputCount\":" << row.dynamicCompactionOutputCount
+                << ",\"repairCompactionOutputCount\":" << row.repairCompactionOutputCount
+                << ",\"blockClassificationGpuMilliseconds\":" << row.blockClassificationGpuMilliseconds
+                << ",\"groupClassificationGpuMilliseconds\":" << row.groupClassificationGpuMilliseconds
+                << ",\"predictiveWakeGpuMilliseconds\":" << row.predictiveWakeGpuMilliseconds
+                << ",\"wakePropagationGpuMilliseconds\":" << row.wakePropagationGpuMilliseconds
+                << ",\"compactionGpuMilliseconds\":" << row.compactionGpuMilliseconds
+                << ",\"staticTransformGpuMilliseconds\":" << row.staticTransformGpuMilliseconds
+                << ",\"dynamicSolveGpuMilliseconds\":" << row.dynamicSolveGpuMilliseconds
+                << ",\"velocityRecoveryGpuMilliseconds\":" << row.velocityRecoveryGpuMilliseconds
+                << ",\"repairSolveGpuMilliseconds\":" << row.repairSolveGpuMilliseconds
+                << ",\"boundaryRepairGpuMilliseconds\":" << row.boundaryRepairGpuMilliseconds
+                << ",\"cacheUpdateGpuMilliseconds\":" << row.cacheUpdateGpuMilliseconds
+                << ",\"watchdogGpuMilliseconds\":" << row.watchdogGpuMilliseconds
+                << ",\"followerReconstructionGpuMilliseconds\":" << row.followerReconstructionGpuMilliseconds
+                << ",\"renderPreparationGpuMilliseconds\":" << row.renderPreparationGpuMilliseconds
+                << ",\"hairDrawGpuMilliseconds\":" << row.hairDrawGpuMilliseconds
+                << ",\"telemetryReductionGpuMilliseconds\":" << row.telemetryReductionGpuMilliseconds
+                << ",\"totalHairGpuMilliseconds\":" << row.totalHairGpuMilliseconds
+                << "}\n";
+        }
+
+        bool AppendDurably(const std::string& bytes) noexcept
+        {
+#if defined(_WIN32)
+            const int file = _wopen(
+                m_outputPath.c_str(),
+                _O_CREAT | _O_APPEND | _O_BINARY | _O_WRONLY,
+                _S_IREAD | _S_IWRITE);
+            if (file < 0)
+            {
+                return false;
+            }
+            const int written = _write(file, bytes.data(), static_cast<unsigned int>(bytes.size()));
+            const bool success = written == static_cast<int>(bytes.size()) && _commit(file) == 0;
+            _close(file);
+            return success;
+#else
+            std::ofstream out(m_outputPath, std::ios::binary | std::ios::app);
+            if (!out)
+            {
+                return false;
+            }
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            out.flush();
+            return static_cast<bool>(out);
+#endif
         }
 
         void Flush() noexcept
         {
-            if (m_outputPath.empty() || m_rows.empty() ||
-                m_lastFlushedRowCount == m_rows.size())
+            if (m_outputPath.empty() || m_pendingRows.empty())
             {
                 return;
             }
             try
             {
                 std::filesystem::create_directories(m_outputPath.parent_path());
-                const std::filesystem::path temporary = m_outputPath.string() + ".tmp";
-                std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-                if (!out)
+                std::ostringstream chunk;
+                for (const HairFormalEvidenceRow& row : m_pendingRows)
+                {
+                    AppendJsonRow(chunk, row);
+                }
+                if (!AppendDurably(chunk.str()))
                 {
                     return;
                 }
-                for (const HairFormalEvidenceRow& row : m_rows)
-                {
-                    out << "{\"sourceFrameIndex\":" << row.sourceFrameIndex
-                        << ",\"measuredFrameIndex\":" << row.measuredFrameIndex
-                        << ",\"availabilityMask\":" << row.availabilityMask
-                        << ",\"metricAvailabilityMask\":" << row.metricAvailabilityMask
-                        << ",\"falseStaticCount\":" << row.falseStaticCount
-                        << ",\"staticCachedGroupCount\":" << row.staticCachedGroupCount
-                        << ",\"staticTransformedGroupCount\":" << row.staticTransformedGroupCount
-                        << ",\"repairAttemptCount\":" << row.repairAttemptCount
-                        << ",\"repairSuccessCount\":" << row.repairSuccessCount
-                        << ",\"repairVerifiedCount\":" << row.repairVerifiedCount
-                        << ",\"repairRecurrenceCount\":" << row.repairRecurrenceCount
-                        << "}\n";
-                }
-                out.flush();
-                if (!out)
-                {
-                    return;
-                }
-                out.close();
-                std::error_code error;
-                std::filesystem::remove(m_outputPath, error);
-                error.clear();
-                std::filesystem::rename(temporary, m_outputPath, error);
-                if (error)
-                {
-                    std::filesystem::remove(temporary, error);
-                }
-                else
-                {
-                    m_lastFlushedRowCount = m_rows.size();
-                }
+                m_lastCommittedSourceFrame = m_pendingRows.back().sourceFrameIndex;
+                m_hasCommittedRow = true;
+                m_pendingRows.clear();
             }
             catch (...)
             {
@@ -379,9 +553,10 @@ namespace hairgpu
 
         static constexpr size_t kCheckpointRows = 120u;
         bool m_initialized = false;
+        bool m_hasCommittedRow = false;
+        uint32_t m_lastCommittedSourceFrame = 0u;
         std::filesystem::path m_outputPath;
-        std::vector<HairFormalEvidenceRow> m_rows;
-        size_t m_lastFlushedRowCount = 0u;
+        std::vector<HairFormalEvidenceRow> m_pendingRows;
     };
 
     inline HairFormalEvidenceRecorder& GetHairFormalEvidenceRecorder()

@@ -83,6 +83,41 @@ sample.riskyCompactionCount = m_noveltyTelemetry.riskyCompactionCount;
 sample.dispatchIndirectCount = m_noveltyTelemetry.dispatchIndirectCount;
 sample.drawIndirectCount = m_noveltyTelemetry.drawIndirectCount;
 sample.delayedTelemetryReadCount = m_noveltyTelemetry.delayedTelemetryReadCount;
+sample.penetrationEventCount = m_noveltyTelemetry.penetrationEventCount;
+sample.meanPenetrationMm = m_noveltyTelemetry.meanPenetrationMm;
+sample.maxPenetrationMm = m_noveltyTelemetry.maxPenetrationMm;
+sample.predictiveWakeEvaluatedCount = m_noveltyTelemetry.predictiveWakeEvaluatedCount;
+sample.predictiveWakeTruePositiveCount = m_noveltyTelemetry.predictiveWakeTruePositiveCount;
+sample.predictiveWakeFalsePositiveCount = m_noveltyTelemetry.predictiveWakeFalsePositiveCount;
+sample.predictiveWakeFalseNegativeCount = m_noveltyTelemetry.predictiveWakeFalseNegativeCount;
+sample.wakeDelayFrameSum = m_noveltyTelemetry.wakeDelayFrameSum;
+sample.wakeDelayFrameMax = m_noveltyTelemetry.wakeDelayFrameMax;
+sample.wakePositionErrorMeanMm = m_noveltyTelemetry.wakePositionErrorMeanMm;
+sample.wakePositionErrorMaxMm = m_noveltyTelemetry.wakePositionErrorMaxMm;
+sample.wakeVelocityErrorMean = m_noveltyTelemetry.wakeVelocityErrorMean;
+sample.wakeVelocityErrorMax = m_noveltyTelemetry.wakeVelocityErrorMax;
+sample.predictiveWakePrecision = m_noveltyTelemetry.predictiveWakePrecision;
+sample.predictiveWakeRecall = m_noveltyTelemetry.predictiveWakeRecall;
+sample.repairVerifiedCount = m_noveltyTelemetry.repairVerifiedCount;
+sample.repairUnverifiedCount = m_noveltyTelemetry.repairUnverifiedCount;
+sample.repairFailureCount = m_noveltyTelemetry.repairFailureCount;
+sample.repairRecurrenceCount = m_noveltyTelemetry.repairRecurrenceCount;
+sample.repairLatencyFrameSum = m_noveltyTelemetry.repairLatencyFrameSum;
+sample.repairLatencyFrameMax = m_noveltyTelemetry.repairLatencyFrameMax;
+sample.repairExecutionSuccessRate = m_noveltyTelemetry.repairExecutionSuccessRate;
+sample.repairVerifiedSuccessRate = m_noveltyTelemetry.repairVerifiedSuccessRate;
+sample.repairRecurrenceRate = (m_noveltyTelemetry.repairAttemptCount > 0u)
+    ? static_cast<float>(m_noveltyTelemetry.repairRecurrenceCount) / static_cast<float>(m_noveltyTelemetry.repairAttemptCount)
+    : std::numeric_limits<float>::quiet_NaN();
+sample.determinismMismatchCount = m_noveltyTelemetry.determinismMismatchCount;
+sample.stateSequenceHash = m_noveltyTelemetry.stateSequenceHash;
+sample.compactionSequenceHash = m_noveltyTelemetry.compactionSequenceHash;
+sample.finalPositionHash = m_noveltyTelemetry.finalPositionHash;
+sample.wakePropagationGpuMilliseconds = m_noveltyTelemetry.wakePropagationGpuMilliseconds;
+sample.followerReconstructionGpuMilliseconds = m_noveltyTelemetry.followerReconstructionGpuMilliseconds;
+sample.renderPreparationGpuMilliseconds = m_noveltyTelemetry.renderPreparationGpuMilliseconds;
+sample.hairDrawGpuMilliseconds = m_noveltyTelemetry.hairDrawGpuMilliseconds;
+sample.totalHairGpuMilliseconds = m_noveltyTelemetry.totalHairGpuMilliseconds;
 return sample;
     }
 
@@ -94,7 +129,7 @@ return sample;
             return false;
         }
 
-        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,sourceFrameIndex,availabilityMask,metricAvailabilityMask,unavailableMetricCount,syntheticMetricCount,sameFrameReadbackCount,nanStateCount,infiniteStateCount,fatalFailure,fatalFailureCode,scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,stateTransitionCount,stateOscillationCount\n";
+        out << "sampleIndex,elapsedSeconds,frameMilliseconds,simulationMilliseconds,fps,guideCount,followerCount,totalStrandCount,totalParticleCount,activeSetClusterCount,activeSetSelectedClusterCount,activeSetSelectedGuideCount,activeSetSelectedStrandCount,activeSetHighestScore,activeSetAverageSelectedScore,activeSetEvaluationMilliseconds,activeSetBudgetScale,activeSetRecommendedSolverIterations,fullTierCount,reducedTierCount,frozenTierCount,cachedTierCount,correctiveStrandCount,correctivePointCount,correctiveAveragePenetration,correctiveMaxPenetration,correctiveAverageLengthErrorBefore,correctiveAverageLengthErrorAfter,globalFrameIndex,measuredFrameIndex,warmupFrames,measurementFrames,caseId,variant,scenario,seed,settingsHash,enableNoNoveltyBaseline,enableMicrotype,enableBudgetedPhysics,enableCertificateRender,enablePerStrandEdit,enableCBMA,enablePhysicsIslands,enableRodRepair,enableGpuResident,certificateFailureCount,certificateFailureRate,fallbackCount,modeSkipCount,modeQSOnlyCount,modeDynamicCount,modeIslandCount,modeRepairCount,modeFloatFallbackCount,islandCount,islandMemberCount,islandCommitCount,islandRejectCount,repairTaskCount,repairCommittedCount,repairRejectedCount,repairDeferredCount,repairSuccessRate,cpuReadbackCount,gpuHairMilliseconds,vramMegabytes,bandwidthMegabytesPerFrame,meanDecodeErrorMm,maxPenetrationMm,phase,noveltyMappingVersion,topLevelNoveltyMask,overflowCount,budgetDropCount,deferCount,microtypeDecodedCount,safeDecodeCount,falseSafeCount,totalSegmentGroupCount,staticCachedGroupCount,staticTransformedGroupCount,dynamicGroupCount,deferredCorrectionGroupCount,repairRequiredGroupCount,fallbackGroupCount,falseStaticCount,falseStaticRate,cacheHitCount,cacheMissCount,cacheInvalidationCount,watchdogCheckCount,watchdogRepairCount,staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,directionCacheMemoryMb,fullPositionMemoryMb,directionCacheMemorySavingRate,typedRepairRequestCount,floatFallbackRequestCount,rejectPayloadCount,riskyStrandCount,repairCommitCount,repairRejectCount,repairDeferCount,islandCandidateCount,physicsFallbackCount,renderCertificateCount,renderSkipCount,renderCoarseOpacityCount,renderStrandRasterCount,renderHighQualityShadowCount,renderHighQualitySpecularCount,renderFullQualityCount,renderDroppedFullQualityCount,p95ShadowErrorBound,p95SpecularErrorBound,temporalFlickerScore,editOperationCount,editRepairTaskCount,editIslandEscalationCount,editCommitCount,editRejectCount,editPreviewFullQualityCount,editLatencyMs,gpuResidentTaskCount,riskyCompactionCount,dispatchIndirectCount,drawIndirectCount,delayedTelemetryReadCount,totalSegmentGroupBlockCount,dirtyBlockCount,dirtyGroupCount,certificateValidGroupCount,certificateInvalidGroupCount,parentVersionMismatchCount,colliderVersionMismatchCount,editVersionMismatchCount,topologyVersionMismatchCount,staticReuseAttemptCount,sharedPointConflictCount,hemisphereParentResolveCount,hemisphereChildResolveCount,dynamicCompactionInputCount,dynamicCompactionOutputCount,repairCompactionOutputCount,blockClassificationGpuMilliseconds,groupClassificationGpuMilliseconds,compactionGpuMilliseconds,staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,telemetryReductionGpuMilliseconds,microtypeCertificateEnabled,microtypeDirtyPropagationEnabled,microtypeBlockHierarchyEnabled,microtypeBoundaryRepairEnabled,microtypeWatchdogEnabled,microtypeHemisphereOwnershipEnabled,microtypeIndirectDispatchEnabled,microtypeGroupsPerBlock,microtypeWatchdogInterval,frameIntervalMilliseconds,cpuFrameWorkMilliseconds,sourceFrameIndex,availabilityMask,metricAvailabilityMask,unavailableMetricCount,syntheticMetricCount,sameFrameReadbackCount,nanStateCount,infiniteStateCount,fatalFailure,fatalFailureCode,scenarioAppliedEventCount,scenarioAssertionFailureCount,collisionCandidateCount,collisionMissCount,wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,stateTransitionCount,stateOscillationCount,penetrationEventCount,meanPenetrationMm,predictiveWakeEvaluatedCount,predictiveWakeTruePositiveCount,predictiveWakeFalsePositiveCount,predictiveWakeFalseNegativeCount,wakeDelayFrameSum,wakeDelayFrameMax,wakePositionErrorMeanMm,wakePositionErrorMaxMm,wakeVelocityErrorMean,wakeVelocityErrorMax,predictiveWakePrecision,predictiveWakeRecall,repairVerifiedCount,repairUnverifiedCount,repairFailureCount,repairRecurrenceCount,repairLatencyFrameSum,repairLatencyFrameMax,repairExecutionSuccessRate,repairVerifiedSuccessRate,repairRecurrenceRate,determinismMismatchCount,stateSequenceHash,compactionSequenceHash,finalPositionHash,wakePropagationGpuMilliseconds,followerReconstructionGpuMilliseconds,renderPreparationGpuMilliseconds,hairDrawGpuMilliseconds,totalHairGpuMilliseconds\n";
         const std::string caseId = CsvEscapeUtf8(WideToUtf8(m_experimentCase.caseId));
         const std::string variant = CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
         const std::string scenario = CsvEscapeUtf8(WideToUtf8(m_experimentCase.scenario));
@@ -286,6 +321,38 @@ return sample;
                 << "," << s.repairSuccessCount
                 << "," << s.stateTransitionCount
                 << "," << s.stateOscillationCount
+                << "," << s.penetrationEventCount
+                << "," << s.meanPenetrationMm
+                << "," << s.predictiveWakeEvaluatedCount
+                << "," << s.predictiveWakeTruePositiveCount
+                << "," << s.predictiveWakeFalsePositiveCount
+                << "," << s.predictiveWakeFalseNegativeCount
+                << "," << s.wakeDelayFrameSum
+                << "," << s.wakeDelayFrameMax
+                << "," << s.wakePositionErrorMeanMm
+                << "," << s.wakePositionErrorMaxMm
+                << "," << s.wakeVelocityErrorMean
+                << "," << s.wakeVelocityErrorMax
+                << "," << s.predictiveWakePrecision
+                << "," << s.predictiveWakeRecall
+                << "," << s.repairVerifiedCount
+                << "," << s.repairUnverifiedCount
+                << "," << s.repairFailureCount
+                << "," << s.repairRecurrenceCount
+                << "," << s.repairLatencyFrameSum
+                << "," << s.repairLatencyFrameMax
+                << "," << s.repairExecutionSuccessRate
+                << "," << s.repairVerifiedSuccessRate
+                << "," << s.repairRecurrenceRate
+                << "," << s.determinismMismatchCount
+                << "," << s.stateSequenceHash
+                << "," << s.compactionSequenceHash
+                << "," << s.finalPositionHash
+                << "," << s.wakePropagationGpuMilliseconds
+                << "," << s.followerReconstructionGpuMilliseconds
+                << "," << s.renderPreparationGpuMilliseconds
+                << "," << s.hairDrawGpuMilliseconds
+                << "," << s.totalHairGpuMilliseconds
                 << "\n";
         }
         return true;
@@ -374,6 +441,38 @@ return sample;
             out << "\"boundaryRepairGpuMilliseconds\":" << sample.boundaryRepairGpuMilliseconds << ",";
             out << "\"cacheUpdateGpuMilliseconds\":" << sample.cacheUpdateGpuMilliseconds << ",";
             out << "\"watchdogGpuMilliseconds\":" << sample.watchdogGpuMilliseconds << ",";
+            out << "\"penetrationEventCount\":" << sample.penetrationEventCount << ",";
+            out << "\"meanPenetrationMm\":" << sample.meanPenetrationMm << ",";
+            out << "\"predictiveWakeEvaluatedCount\":" << sample.predictiveWakeEvaluatedCount << ",";
+            out << "\"predictiveWakeTruePositiveCount\":" << sample.predictiveWakeTruePositiveCount << ",";
+            out << "\"predictiveWakeFalsePositiveCount\":" << sample.predictiveWakeFalsePositiveCount << ",";
+            out << "\"predictiveWakeFalseNegativeCount\":" << sample.predictiveWakeFalseNegativeCount << ",";
+            out << "\"wakeDelayFrameSum\":" << sample.wakeDelayFrameSum << ",";
+            out << "\"wakeDelayFrameMax\":" << sample.wakeDelayFrameMax << ",";
+            out << "\"wakePositionErrorMeanMm\":" << sample.wakePositionErrorMeanMm << ",";
+            out << "\"wakePositionErrorMaxMm\":" << sample.wakePositionErrorMaxMm << ",";
+            out << "\"wakeVelocityErrorMean\":" << sample.wakeVelocityErrorMean << ",";
+            out << "\"wakeVelocityErrorMax\":" << sample.wakeVelocityErrorMax << ",";
+            out << "\"predictiveWakePrecision\":"; writeNullable(sample.predictiveWakePrecision); out << ",";
+            out << "\"predictiveWakeRecall\":"; writeNullable(sample.predictiveWakeRecall); out << ",";
+            out << "\"repairVerifiedCount\":" << sample.repairVerifiedCount << ",";
+            out << "\"repairUnverifiedCount\":" << sample.repairUnverifiedCount << ",";
+            out << "\"repairFailureCount\":" << sample.repairFailureCount << ",";
+            out << "\"repairRecurrenceCount\":" << sample.repairRecurrenceCount << ",";
+            out << "\"repairLatencyFrameSum\":" << sample.repairLatencyFrameSum << ",";
+            out << "\"repairLatencyFrameMax\":" << sample.repairLatencyFrameMax << ",";
+            out << "\"repairExecutionSuccessRate\":"; writeNullable(sample.repairExecutionSuccessRate); out << ",";
+            out << "\"repairVerifiedSuccessRate\":"; writeNullable(sample.repairVerifiedSuccessRate); out << ",";
+            out << "\"repairRecurrenceRate\":"; writeNullable(sample.repairRecurrenceRate); out << ",";
+            out << "\"determinismMismatchCount\":" << sample.determinismMismatchCount << ",";
+            out << "\"stateSequenceHash\":" << sample.stateSequenceHash << ",";
+            out << "\"compactionSequenceHash\":" << sample.compactionSequenceHash << ",";
+            out << "\"finalPositionHash\":" << sample.finalPositionHash << ",";
+            out << "\"wakePropagationGpuMilliseconds\":" << sample.wakePropagationGpuMilliseconds << ",";
+            out << "\"followerReconstructionGpuMilliseconds\":" << sample.followerReconstructionGpuMilliseconds << ",";
+            out << "\"renderPreparationGpuMilliseconds\":" << sample.renderPreparationGpuMilliseconds << ",";
+            out << "\"hairDrawGpuMilliseconds\":" << sample.hairDrawGpuMilliseconds << ",";
+            out << "\"totalHairGpuMilliseconds\":" << sample.totalHairGpuMilliseconds << ",";
             out << "\"telemetryReductionGpuMilliseconds\":" << sample.telemetryReductionGpuMilliseconds;
             out << "}\n";
         }
@@ -578,12 +677,19 @@ return sample;
         simulationMilliseconds.reserve(m_performanceSamples.size());
         gpuMilliseconds.reserve(m_performanceSamples.size());
         uint64_t collisionCandidates = 0u, collisionMisses = 0u;
-        uint64_t repairAttempts = 0u, repairSuccesses = 0u;
+        uint64_t wakeTruePositive = 0u, wakeFalsePositive = 0u, wakeFalseNegative = 0u;
+        uint64_t repairAttempts = 0u, repairSuccesses = 0u, repairVerified = 0u, repairRecurrence = 0u;
         uint64_t falseStatic = 0u, staticGroups = 0u;
-        uint64_t stateTransitions = 0u, stateOscillations = 0u;
+        uint64_t stateTransitions = 0u, stateOscillations = 0u, determinismMismatches = 0u;
         uint64_t unavailableMetrics = 0u, syntheticMetrics = 0u;
+        uint32_t maximumWakeDelay = 0u;
+        float maximumBoundaryErrorMm = 0.0f;
+        uint64_t stateSequenceHash = 0ull, compactionSequenceHash = 0ull, finalPositionHash = 0ull;
         bool collisionGroundTruthAvailable = !m_performanceSamples.empty();
+        bool wakeGroundTruthAvailable = !m_performanceSamples.empty();
         bool repairVerificationAvailable = !m_performanceSamples.empty();
+        bool boundaryComparisonAvailable = !m_performanceSamples.empty();
+        bool determinismAvailable = !m_performanceSamples.empty();
         bool falseStaticGroundTruthAvailable = !m_performanceSamples.empty();
         for (const PerformanceSample& sample : m_performanceSamples)
         {
@@ -593,18 +699,35 @@ return sample;
                 gpuMilliseconds.push_back(sample.gpuHairMilliseconds);
             collisionCandidates += sample.collisionCandidateCount;
             collisionMisses += sample.collisionMissCount;
+            wakeTruePositive += sample.predictiveWakeTruePositiveCount;
+            wakeFalsePositive += sample.predictiveWakeFalsePositiveCount;
+            wakeFalseNegative += sample.predictiveWakeFalseNegativeCount;
+            maximumWakeDelay = std::max(maximumWakeDelay, sample.wakeDelayFrameMax);
             repairAttempts += sample.repairAttemptCount;
             repairSuccesses += sample.repairSuccessCount;
+            repairVerified += sample.repairVerifiedCount;
+            repairRecurrence += sample.repairRecurrenceCount;
             falseStatic += sample.falseStaticCount;
             staticGroups += sample.staticCachedGroupCount + sample.staticTransformedGroupCount;
             stateTransitions += sample.stateTransitionCount;
             stateOscillations += sample.stateOscillationCount;
+            determinismMismatches += sample.determinismMismatchCount;
+            maximumBoundaryErrorMm = std::max(maximumBoundaryErrorMm, sample.staticDynamicBoundaryMaxErrorMm);
+            stateSequenceHash = sample.stateSequenceHash;
+            compactionSequenceHash = sample.compactionSequenceHash;
+            finalPositionHash = sample.finalPositionHash;
             unavailableMetrics += sample.unavailableMetricCount;
             syntheticMetrics += sample.syntheticMetricCount;
             collisionGroundTruthAvailable = collisionGroundTruthAvailable &&
                 (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_CollisionGroundTruth) != 0ull;
+            wakeGroundTruthAvailable = wakeGroundTruthAvailable &&
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_WakeGroundTruth) != 0ull;
             repairVerificationAvailable = repairVerificationAvailable &&
                 (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_RepairVerification) != 0ull;
+            boundaryComparisonAvailable = boundaryComparisonAvailable &&
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_BoundaryComparison) != 0ull;
+            determinismAvailable = determinismAvailable &&
+                (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_DeterminismHash) != 0ull;
             falseStaticGroundTruthAvailable = falseStaticGroundTruthAvailable &&
                 (sample.metricAvailabilityMask & hairgpu::HairTelemetryAvailability_FalseStaticGroundTruth) != 0ull;
         }
@@ -684,6 +807,17 @@ return sample;
             : std::numeric_limits<float>::quiet_NaN());
         out << ",\n";
         out << "  \"wakeRequestGroupCount\": " << m_scenarioWakeRequestCount << ",\n";
+        out << "  \"predictiveWakePrecision\": ";
+        writeNullable(out, wakeGroundTruthAvailable
+            ? nullableRate(wakeTruePositive, wakeTruePositive + wakeFalsePositive)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"predictiveWakeRecall\": ";
+        writeNullable(out, wakeGroundTruthAvailable
+            ? nullableRate(wakeTruePositive, wakeTruePositive + wakeFalseNegative)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"wakeDelayFrameMax\": " << maximumWakeDelay << ",\n";
         out << "  \"repairAttemptCount\": " << repairAttempts << ",\n";
         out << "  \"repairSuccessCount\": ";
         if (repairVerificationAvailable) out << repairSuccesses; else out << "null";
@@ -693,6 +827,23 @@ return sample;
             ? nullableRate(repairSuccesses, repairAttempts)
             : std::numeric_limits<float>::quiet_NaN());
         out << ",\n";
+        out << "  \"repairExecutionSuccessRate\": ";
+        writeNullable(out, repairVerificationAvailable
+            ? nullableRate(repairSuccesses, repairAttempts)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"repairVerifiedSuccessRate\": ";
+        writeNullable(out, repairVerificationAvailable
+            ? nullableRate(repairVerified, repairAttempts)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"repairRecurrenceRate\": ";
+        writeNullable(out, repairVerificationAvailable
+            ? nullableRate(repairRecurrence, repairAttempts)
+            : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"repairVerifiedCount\": " << repairVerified << ",\n";
+        out << "  \"repairRecurrenceCount\": " << repairRecurrence << ",\n";
         out << "  \"falseStaticCount\": ";
         if (falseStaticGroundTruthAvailable) out << falseStatic; else out << "null";
         out << ",\n";
@@ -703,6 +854,16 @@ return sample;
         out << ",\n";
         out << "  \"stateTransitionCount\": " << stateTransitions << ",\n";
         out << "  \"stateOscillationCount\": " << stateOscillations << ",\n";
+        out << "  \"stateOscillationRate\": ";
+        writeNullable(out, nullableRate(stateOscillations, stateTransitions));
+        out << ",\n";
+        out << "  \"staticDynamicBoundaryMaxErrorMm\": ";
+        writeNullable(out, boundaryComparisonAvailable ? maximumBoundaryErrorMm : std::numeric_limits<float>::quiet_NaN());
+        out << ",\n";
+        out << "  \"determinismMismatchCount\": " << determinismMismatches << ",\n";
+        out << "  \"stateSequenceHash\": " << (determinismAvailable ? stateSequenceHash : 0ull) << ",\n";
+        out << "  \"compactionSequenceHash\": " << (determinismAvailable ? compactionSequenceHash : 0ull) << ",\n";
+        out << "  \"finalPositionHash\": " << (determinismAvailable ? finalPositionHash : 0ull) << ",\n";
         out << "  \"avg_frame_ms\": " << ComputeAverage(frameMilliseconds) << ",\n";
         out << "  \"p50_frame_ms\": " << ComputePercentile(frameMilliseconds, 50.0f) << ",\n";
         out << "  \"p95_frame_ms\": " << ComputePercentile(frameMilliseconds, 95.0f) << ",\n";

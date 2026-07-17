@@ -704,6 +704,77 @@ def build_matched_pair_rows(
     return output
 
 
+def build_determinism_rows(
+    raw_runs: list[dict[str, Any]], statistics_config: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Verify repeated determinism runs without treating a missing hash as zero."""
+    minimum_repetitions = max(int(statistics_config.get("determinism_min_repetitions", 3)), 2)
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for row in raw_runs:
+        if str(row.get("measurement_mode") or "").lower() != "determinism":
+            continue
+        key = (
+            row.get("method_code"), row.get("scenario_code"), row.get("seed"),
+            row.get("asset_sha256"), row.get("hardware_profile"),
+        )
+        groups.setdefault(key, []).append(row)
+    output: list[dict[str, Any]] = []
+    for key, rows in sorted(groups.items(), key=lambda item: tuple(str(v) for v in item[0])):
+        state_hashes = {str(row.get("state_sequence_sha256") or "") for row in rows}
+        compaction_hashes = {str(row.get("compaction_sequence_sha256") or "") for row in rows}
+        position_hashes = {str(row.get("final_position_sha256") or "") for row in rows}
+        missing = "" in state_hashes or "" in compaction_hashes or "" in position_hashes
+        mismatch = any(len(values - {""}) != 1 for values in (state_hashes, compaction_hashes, position_hashes))
+        run_flags_valid = all(int(row.get("determinism_valid") or 0) == 1 for row in rows)
+        passed = len(rows) >= minimum_repetitions and not missing and not mismatch and run_flags_valid
+        output.append({
+            "method_code": key[0], "scenario_code": key[1], "seed": key[2],
+            "asset_sha256": key[3], "hardware_profile": key[4],
+            "run_count": len(rows), "required_run_count": minimum_repetitions,
+            "state_hash_count": len(state_hashes - {""}),
+            "compaction_hash_count": len(compaction_hashes - {""}),
+            "position_hash_count": len(position_hashes - {""}),
+            "missing_hash": "yes" if missing else "no",
+            "mismatch": "yes" if mismatch else "no",
+            "passed": "yes" if passed else "no",
+        })
+    return output
+
+
+def build_long_run_rows(
+    raw_runs: list[dict[str, Any]], limits: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Apply leak/degradation gates to robustness and explicitly named long runs."""
+    max_vram_slope = float(limits.get("max_vram_slope_mb_per_min", 1.0))
+    max_ram_slope = float(limits.get("max_ram_slope_mb_per_min", 2.0))
+    max_p99_ratio = float(limits.get("max_p99_degradation_ratio", 1.10))
+    max_query_slope = float(limits.get("max_query_unresolved_slope", 0.0))
+    output: list[dict[str, Any]] = []
+    for row in raw_runs:
+        mode = str(row.get("measurement_mode") or "").lower()
+        run_name = str(row.get("run_name") or "").lower()
+        if mode not in {"robustness", "long_run"} and "long" not in run_name:
+            continue
+        checks = {
+            "vram_slope_mb_per_min": (row.get("vram_slope_mb_per_min"), max_vram_slope),
+            "ram_slope_mb_per_min": (row.get("ram_slope_mb_per_min"), max_ram_slope),
+            "p99_degradation_ratio": (row.get("p99_degradation_ratio"), max_p99_ratio),
+            "query_unresolved_slope": (row.get("query_unresolved_slope"), max_query_slope),
+        }
+        unavailable = [name for name, (value, _) in checks.items() if value is None]
+        failed = [name for name, (value, limit) in checks.items() if value is not None and float(value) > limit]
+        passed = not unavailable and not failed and int(row.get("long_run_valid") or 0) == 1
+        output.append({
+            "run_name": row.get("run_name"), "method_code": row.get("method_code"),
+            "scenario_code": row.get("scenario_code"),
+            **{name: value for name, (value, _) in checks.items()},
+            "unavailable_metrics": ";".join(unavailable),
+            "failed_metrics": ";".join(failed),
+            "passed": "yes" if passed else "no",
+        })
+    return output
+
+
 def build_scenario_coverage_rows(
     config: dict[str, Any],
     comparison_rows: list[dict[str, Any]],
@@ -1055,6 +1126,8 @@ def main() -> int:
             notes=row.get("notes", ""),
         )
     goal_rows = build_goal_rows(summary, dict(config.get("goals", {})))
+    determinism_rows = build_determinism_rows(raw_valid_runs, dict(config.get("statistics", {})))
+    long_run_rows = build_long_run_rows(raw_valid_runs, dict(config.get("long_run_gates", {})))
     db.close()
 
     export_workbook(db_path, excel_path)
@@ -1066,6 +1139,8 @@ def main() -> int:
     coverage_csv = outputs_dir / "runtime_suite_scenario_coverage.csv"
     goals_csv = outputs_dir / "runtime_suite_goal_checks.csv"
     failures_csv = outputs_dir / "runtime_suite_failed_runs.csv"
+    determinism_csv = outputs_dir / "runtime_suite_determinism.csv"
+    long_run_csv = outputs_dir / "runtime_suite_long_run.csv"
     markdown_path = outputs_dir / "runtime_suite_summary.md"
 
     write_csv(method_csv, method_rows)
@@ -1073,6 +1148,8 @@ def main() -> int:
     write_csv(coverage_csv, coverage_rows)
     write_csv(goals_csv, goal_rows)
     write_csv(failures_csv, failed_runs)
+    write_csv(determinism_csv, determinism_rows)
+    write_csv(long_run_csv, long_run_rows)
     for purpose, rows in pairwise_by_purpose.items():
         write_csv(outputs_dir / f"runtime_suite_pairwise_{purpose}.csv", rows)
     for purpose, rows in matched_by_purpose.items():
@@ -1080,9 +1157,11 @@ def main() -> int:
     write_markdown(markdown_path, summary, method_rows, coverage_rows, failed_runs)
 
     missing_coverage = [row for row in coverage_rows if row["present"] != "yes"]
+    failed_determinism = [row for row in determinism_rows if row["passed"] != "yes"]
+    failed_long_runs = [row for row in long_run_rows if row["passed"] != "yes"]
     suite_status = (
         "complete_valid"
-        if not failed_runs and not missing_coverage
+        if not failed_runs and not missing_coverage and not failed_determinism and not failed_long_runs
         else "complete_invalid"
     )
     payload: dict[str, Any] = {
@@ -1101,6 +1180,8 @@ def main() -> int:
         "matchedPairs": matched_by_purpose,
         "scenarioCoverage": coverage_rows,
         "goalChecks": goal_rows,
+        "determinismChecks": determinism_rows,
+        "longRunChecks": long_run_rows,
         "preflight": preflight,
         "databasePath": str(db_path),
         "excelPath": str(excel_path),
@@ -1116,6 +1197,8 @@ def main() -> int:
         coverage_csv,
         goals_csv,
         failures_csv,
+        determinism_csv,
+        long_run_csv,
         markdown_path,
         db_path,
         excel_path,

@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS runtime_runs (
     environment_valid INTEGER CHECK (environment_valid IS NULL OR environment_valid IN (0,1)),
     required_metric_coverage_valid INTEGER
         CHECK (required_metric_coverage_valid IS NULL OR required_metric_coverage_valid IN (0,1)),
+    thermal_evidence_available INTEGER
+        CHECK (thermal_evidence_available IS NULL OR thermal_evidence_available IN (0,1)),
+    ground_truth_valid INTEGER
+        CHECK (ground_truth_valid IS NULL OR ground_truth_valid IN (0,1)),
+    determinism_valid INTEGER
+        CHECK (determinism_valid IS NULL OR determinism_valid IN (0,1)),
+    long_run_valid INTEGER
+        CHECK (long_run_valid IS NULL OR long_run_valid IN (0,1)),
 
     requested_render_width INTEGER,
     requested_render_height INTEGER,
@@ -128,6 +136,11 @@ CREATE TABLE IF NOT EXISTS runtime_runs (
     avg_edit_to_run_latency_ms REAL,
     avg_penetration_per_sec REAL,
     peak_ram_mb REAL,
+    peak_vram_mb REAL,
+    vram_slope_mb_per_min REAL,
+    ram_slope_mb_per_min REAL,
+    p99_degradation_ratio REAL,
+    query_unresolved_slope REAL,
 
     gpu_timing_coverage REAL,
     counter_coverage REAL,
@@ -190,6 +203,9 @@ CREATE TABLE IF NOT EXISTS runtime_frame_metrics (
     collision_candidate_count INTEGER,
     collision_miss_count INTEGER,
     collision_miss_rate REAL,
+    penetration_event_count INTEGER,
+    mean_penetration_mm REAL,
+    max_penetration_mm REAL,
     predictive_wake_tp INTEGER,
     predictive_wake_fp INTEGER,
     predictive_wake_fn INTEGER,
@@ -245,6 +261,10 @@ CREATE TABLE IF NOT EXISTS runtime_frame_metrics (
     hair_draw_gpu_ms REAL,
     telemetry_reduction_gpu_ms REAL,
     total_hair_gpu_ms REAL,
+    determinism_mismatch_count INTEGER,
+    state_sequence_hash TEXT,
+    compaction_sequence_hash TEXT,
+    final_position_hash TEXT,
 
     FOREIGN KEY (run_id) REFERENCES runtime_runs(run_id) ON DELETE CASCADE,
     UNIQUE (run_id, sample_index)

@@ -30,7 +30,7 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.1-existing-source-only"
+VALIDATION_VERSION = "01-safe-v3.2-existing-source-only"
 FORMAL_METHOD_CODES = {"B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "P"}
 METHOD_ALIASES = {
     "b0": "B0", "b0_fulldynamic": "B0", "full_dynamic": "B0",
@@ -427,10 +427,31 @@ def _merge_formal_evidence(
             by_source[source] = evidence
     merged: list[dict[str, Any]] = []
     evidence_keys = (
-        "availabilityMask", "metricAvailabilityMask", "falseStaticCount",
-        "staticCachedGroupCount", "staticTransformedGroupCount",
+        "availabilityMask", "metricAvailabilityMask",
+        "falseStaticCount", "staticCachedGroupCount", "staticTransformedGroupCount",
+        "predictiveWakeEvaluatedCount", "predictiveWakeTruePositiveCount",
+        "predictiveWakeFalsePositiveCount", "predictiveWakeFalseNegativeCount",
+        "wakeDelayFrameSum", "wakeDelayFrameMax",
+        "wakePositionErrorMeanMm", "wakePositionErrorMaxMm",
+        "wakeVelocityErrorMean", "wakeVelocityErrorMax",
+        "collisionCandidateCount", "collisionMissCount", "penetrationEventCount",
+        "meanPenetrationMm", "maxPenetrationMm",
         "repairAttemptCount", "repairSuccessCount", "repairVerifiedCount",
-        "repairRecurrenceCount",
+        "repairUnverifiedCount", "repairFailureCount", "repairRecurrenceCount",
+        "repairLatencyFrameSum", "repairLatencyFrameMax",
+        "sharedPointConflictCount", "staticDynamicBoundaryMeanErrorMm",
+        "staticDynamicBoundaryMaxErrorMm", "stateTransitionCount",
+        "stateOscillationCount", "determinismMismatchCount",
+        "dynamicCompactionInputCount", "dynamicCompactionOutputCount",
+        "repairCompactionOutputCount", "blockClassificationGpuMilliseconds",
+        "groupClassificationGpuMilliseconds", "predictiveWakeGpuMilliseconds",
+        "wakePropagationGpuMilliseconds", "compactionGpuMilliseconds",
+        "staticTransformGpuMilliseconds", "dynamicSolveGpuMilliseconds",
+        "velocityRecoveryGpuMilliseconds", "repairSolveGpuMilliseconds",
+        "boundaryRepairGpuMilliseconds", "cacheUpdateGpuMilliseconds",
+        "watchdogGpuMilliseconds", "followerReconstructionGpuMilliseconds",
+        "renderPreparationGpuMilliseconds", "hairDrawGpuMilliseconds",
+        "telemetryReductionGpuMilliseconds", "totalHairGpuMilliseconds",
     )
     for row in rows:
         output = dict(row)
@@ -463,6 +484,16 @@ def _optional_int(value: Any) -> int | None:
 def _required_int(value: Any, default: int = 0) -> int:
     parsed = _optional_int(value)
     return parsed if parsed is not None else default
+
+
+def _optional_u64(value: Any) -> int | None:
+    if value in (None, "", "null") or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value, 0) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if 0 <= parsed <= 0xFFFFFFFFFFFFFFFF else None
 
 
 def _required_float(value: Any, default: float = 0.0) -> float:
@@ -612,12 +643,18 @@ def _validate_asset_manifest(path: Path) -> list[dict[str, Any]]:
     if not expected_hash:
         issues.append(_issue("E_ASSET_HASH_MISSING", "Asset manifest lacks sourceAssetSha256."))
     asset_value = manifest.get("sourceAssetPath") or manifest.get("assetPath") or manifest.get("sourceAsset")
-    if asset_value:
+    if not asset_value:
+        issues.append(_issue("E_ASSET_PATH_MISSING", "Frozen asset manifest must identify the source asset file."))
+    else:
         asset_path = _resolve_case_path(asset_value, path.parent)
         if asset_path is None or not asset_path.is_file():
             issues.append(_issue("E_ASSET_FILE_MISSING", "Frozen asset file is missing.", observed=str(asset_path)))
         elif expected_hash and sha256_file(asset_path).lower() != expected_hash.lower():
             issues.append(_issue("E_ASSET_FILE_HASH", "Frozen asset bytes do not match sourceAssetSha256.", expected=expected_hash, observed=sha256_file(asset_path)))
+    if not str(manifest.get("assetFormatVersion") or manifest.get("formatVersion") or manifest.get("schemaVersion") or ""):
+        issues.append(_issue("E_ASSET_FORMAT_VERSION", "Frozen asset manifest lacks assetFormatVersion."))
+    if not str(manifest.get("topologyHash") or manifest.get("generatedTopologySha256") or ""):
+        issues.append(_issue("E_ASSET_TOPOLOGY_HASH", "Frozen asset manifest lacks topologyHash."))
     return issues
 
 
@@ -789,11 +826,32 @@ def collect_hardware_probe(profile_name: str = "", phase: str = "") -> dict[str,
         payload["power"] = {"activeScheme": result.stdout.strip()}
     except Exception as exc:
         payload["powerProbeError"] = str(exc)
+    try:
+        import ctypes
+
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+        memory = _MemoryStatusEx()
+        memory.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory)):
+            payload["systemMemory"] = {
+                "totalMiB": memory.ullTotalPhys / (1024.0 * 1024.0),
+                "usedMiB": (memory.ullTotalPhys - memory.ullAvailPhys) / (1024.0 * 1024.0),
+                "loadPercent": memory.dwMemoryLoad,
+            }
+    except Exception as exc:
+        payload["memoryProbeError"] = str(exc)
     return payload
 
 
 class HardwareSampler:
-    def __init__(self, profile_name: str, interval_seconds: float = 5.0):
+    def __init__(self, profile_name: str, interval_seconds: float = 1.0):
         self.profile_name = profile_name
         self.interval_seconds = max(float(interval_seconds), 1.0)
         self.samples: list[dict[str, Any]] = []
@@ -822,19 +880,25 @@ def write_hardware_timeseries(path: Path, samples: list[dict[str, Any]]) -> None
     headers = [
         "sampleTimeUnix", "gpuName", "driverVersion", "temperatureC",
         "graphicsClockMHz", "memoryClockMHz", "powerDrawW", "powerLimitW",
-        "memoryTotalMiB", "memoryUsedMiB", "activePowerScheme",
+        "memoryTotalMiB", "memoryUsedMiB", "systemMemoryTotalMiB",
+        "systemMemoryUsedMiB", "systemMemoryLoadPercent", "activePowerScheme",
     ]
     rows: list[dict[str, Any]] = []
     for sample in samples:
         gpu = sample.get("gpu", {}) if isinstance(sample.get("gpu"), dict) else {}
         power = sample.get("power", {}) if isinstance(sample.get("power"), dict) else {}
+        system_memory = sample.get("systemMemory", {}) if isinstance(sample.get("systemMemory"), dict) else {}
         rows.append({
             "sampleTimeUnix": sample.get("sampleTimeUnix"),
             "gpuName": gpu.get("name"), "driverVersion": gpu.get("driverVersion"),
             "temperatureC": gpu.get("temperatureC"), "graphicsClockMHz": gpu.get("graphicsClockMHz"),
             "memoryClockMHz": gpu.get("memoryClockMHz"), "powerDrawW": gpu.get("powerDrawW"),
             "powerLimitW": gpu.get("powerLimitW"), "memoryTotalMiB": gpu.get("memoryTotalMiB"),
-            "memoryUsedMiB": gpu.get("memoryUsedMiB"), "activePowerScheme": power.get("activeScheme"),
+            "memoryUsedMiB": gpu.get("memoryUsedMiB"),
+            "systemMemoryTotalMiB": system_memory.get("totalMiB"),
+            "systemMemoryUsedMiB": system_memory.get("usedMiB"),
+            "systemMemoryLoadPercent": system_memory.get("loadPercent"),
+            "activePowerScheme": power.get("activeScheme"),
         })
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1068,9 +1132,26 @@ def _aggregate_frame_metrics(rows: list[dict[str, Any]], summary: Mapping[str, A
     wake_delays = _available_values(rows, ("wakeDelayFrameMax",), AVAILABILITY_BITS["wake"])
     shared_conflicts, shared_found = _sum_available(rows, ("sharedPointConflictCount",), AVAILABILITY_BITS["boundary"])
     display_counts = _available_values(rows, ("totalStrandCount", "displayStrandCount"))
+    determinism_mismatches, determinism_found = _sum_available(
+        rows, ("determinismMismatchCount",), AVAILABILITY_BITS["determinism"]
+    )
+    state_hashes = [_optional_u64(row.get("stateSequenceHash")) for row in rows]
+    compaction_hashes = [_optional_u64(row.get("compactionSequenceHash")) for row in rows]
+    position_hashes = [_optional_u64(row.get("finalPositionHash")) for row in rows]
+    final_state_hash = next((value for value in reversed(state_hashes) if value is not None), None)
+    final_compaction_hash = next((value for value in reversed(compaction_hashes) if value is not None), None)
+    final_position_hash = next((value for value in reversed(position_hashes) if value is not None), None)
 
     repair_available = _availability_coverage(rows, AVAILABILITY_BITS["repair"]) > 0.0
     false_static_available = _availability_coverage(rows, AVAILABILITY_BITS["falseStatic"]) > 0.0
+    window = max(len(frame_ms) // 10, 1) if frame_ms else 0
+    initial_p99 = _percentile(frame_ms[:window], 99.0) if window else None
+    final_p99 = _percentile(frame_ms[-window:], 99.0) if window else None
+    p99_degradation_ratio = (
+        final_p99 / initial_p99
+        if final_p99 is not None and initial_p99 is not None and initial_p99 > 0.0
+        else None
+    )
     return {
         "sampleCount": len(rows),
         "averageFrameMilliseconds": sum(frame_ms) / len(frame_ms) if frame_ms else None,
@@ -1079,6 +1160,9 @@ def _aggregate_frame_metrics(rows: list[dict[str, Any]], summary: Mapping[str, A
         "p99FrameMilliseconds": _percentile(frame_ms, 99.0),
         "p999FrameMilliseconds": _percentile(frame_ms, 99.9),
         "maximumFrameMilliseconds": max(frame_ms) if frame_ms else None,
+        "initialWindowP99Milliseconds": initial_p99,
+        "finalWindowP99Milliseconds": final_p99,
+        "p99DegradationRatio": p99_degradation_ratio,
         "frameBudgetOverrunRate": _safe_rate(sum(value > 16.67 for value in frame_ms), len(frame_ms)),
         "averageHairGpuMilliseconds": sum(gpu_ms) / len(gpu_ms) if gpu_ms else None,
         "p95HairGpuMilliseconds": _percentile(gpu_ms, 95.0),
@@ -1095,6 +1179,10 @@ def _aggregate_frame_metrics(rows: list[dict[str, Any]], summary: Mapping[str, A
         "stateOscillationRate": _safe_rate(oscillations, transitions),
         "staticDynamicBoundaryMaxErrorMm": max(boundary_values) if boundary_values else None,
         "sharedPointConflictCount": shared_conflicts if shared_found else None,
+        "determinismMismatchCount": determinism_mismatches if determinism_found else None,
+        "stateSequenceHash": final_state_hash,
+        "compactionSequenceHash": final_compaction_hash,
+        "finalPositionHash": final_position_hash,
         "displayStrandCount": int(round(max(display_counts))) if display_counts else None,
         "gpuTimingCoverage": _availability_coverage(rows, AVAILABILITY_BITS["gpuTiming"]),
         "availabilityCoverage": {name: _availability_coverage(rows, bit) for name, bit in AVAILABILITY_BITS.items()},
@@ -1148,6 +1236,43 @@ def _evaluate_quality_gates(aggregate: Mapping[str, Any], case: Mapping[str, Any
     return issues
 
 
+def _linear_slope_per_minute(samples: list[tuple[float, float]]) -> float | None:
+    if len(samples) < 3:
+        return None
+    origin = samples[0][0]
+    points = [((timestamp - origin) / 60.0, value) for timestamp, value in samples]
+    mean_x = sum(point[0] for point in points) / len(points)
+    mean_y = sum(point[1] for point in points) / len(points)
+    denominator = sum((point[0] - mean_x) ** 2 for point in points)
+    if denominator <= 0.0:
+        return None
+    return sum((x - mean_x) * (y - mean_y) for x, y in points) / denominator
+
+
+def _environment_runtime_metrics(environment: Mapping[str, Any]) -> dict[str, Any]:
+    samples = environment.get("samples", []) if isinstance(environment.get("samples"), list) else []
+    vram_points: list[tuple[float, float]] = []
+    ram_points: list[tuple[float, float]] = []
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        timestamp = _optional_float(sample.get("sampleTimeUnix"))
+        gpu = sample.get("gpu", {}) if isinstance(sample.get("gpu"), dict) else {}
+        memory = sample.get("systemMemory", {}) if isinstance(sample.get("systemMemory"), dict) else {}
+        vram = _optional_float(gpu.get("memoryUsedMiB"))
+        ram = _optional_float(memory.get("usedMiB"))
+        if timestamp is not None and vram is not None:
+            vram_points.append((timestamp, vram))
+        if timestamp is not None and ram is not None:
+            ram_points.append((timestamp, ram))
+    return {
+        "peakVramMb": max((value for _, value in vram_points), default=None),
+        "peakRamMb": max((value for _, value in ram_points), default=None),
+        "vramSlopeMbPerMin": _linear_slope_per_minute(vram_points),
+        "ramSlopeMbPerMin": _linear_slope_per_minute(ram_points),
+    }
+
+
 def _evaluate_environment(environment: Mapping[str, Any], case: Mapping[str, Any]) -> tuple[bool, bool, list[dict[str, Any]]]:
     issues: list[dict[str, Any]] = []
     if not environment:
@@ -1158,9 +1283,15 @@ def _evaluate_environment(environment: Mapping[str, Any], case: Mapping[str, Any
     gpu = start.get("gpu", {}) if isinstance(start.get("gpu"), dict) else {}
     if not gpu and isinstance(end.get("gpu"), dict):
         gpu = end.get("gpu", {})
-    environment_valid = bool(gpu.get("name") and gpu.get("driverVersion") and gpu.get("memoryTotalMiB"))
+    viewer_adapter = environment.get("viewerAdapter", {}) if isinstance(environment.get("viewerAdapter"), dict) else {}
+    gpu_name = gpu.get("name") or viewer_adapter.get("name")
+    driver_version = gpu.get("driverVersion") or viewer_adapter.get("driverVersion")
+    memory_total = gpu.get("memoryTotalMiB") or viewer_adapter.get("dedicatedVideoMemoryMiB")
+    vendor_id = viewer_adapter.get("vendorId")
+    device_id = viewer_adapter.get("deviceId")
+    environment_valid = bool(gpu_name and memory_total and (driver_version or (vendor_id and device_id)))
     if sys.platform == "win32" and not environment_valid:
-        issues.append(_issue("E_ENVIRONMENT_FIELDS", "GPU name, driver, and VRAM are required."))
+        issues.append(_issue("E_ENVIRONMENT_FIELDS", "GPU identity, driver or DXGI IDs, and dedicated VRAM are required."))
     temperatures: list[float] = []
     clocks: list[float] = []
     for sample in samples:
@@ -1171,7 +1302,17 @@ def _evaluate_environment(environment: Mapping[str, Any], case: Mapping[str, Any
             temperatures.append(temperature)
         if clock is not None:
             clocks.append(clock)
-    thermal_valid = True
+    thermal_evidence_available = bool(temperatures and len(clocks) >= 3)
+    thermal_valid = thermal_evidence_available
+    if not thermal_evidence_available and not _as_bool(case.get("allow_missing_thermal_evidence", False)):
+        issues.append(_issue(
+            "E_THERMAL_EVIDENCE_UNAVAILABLE",
+            "Formal performance evidence requires temperature and at least three GPU clock samples.",
+            expected={"temperatureSamples": ">=1", "clockSamples": ">=3"},
+            observed={"temperatureSamples": len(temperatures), "clockSamples": len(clocks)},
+        ))
+    elif not thermal_evidence_available:
+        thermal_valid = True
     maximum_temperature = _required_float(case.get("maximum_gpu_temperature_c"), 88.0)
     if temperatures and max(temperatures) > maximum_temperature:
         thermal_valid = False
@@ -1283,12 +1424,42 @@ def validate_required_outputs(
             if float(coverage) < minimum_metric_coverage:
                 issues.append(_issue("E_REQUIRED_METRIC_COVERAGE", f"Required evidence coverage is too low: {metric}", expected=minimum_metric_coverage, observed=coverage))
 
+    if str(normalized.get("measurement_mode", "")).lower() == "determinism":
+        for key in ("stateSequenceHash", "compactionSequenceHash", "finalPositionHash"):
+            if aggregate.get(key) in (None, 0):
+                issues.append(_issue("E_DETERMINISM_HASH_MISSING", f"Determinism mode requires {key}."))
+        if aggregate.get("determinismMismatchCount") not in (0, None):
+            issues.append(_issue(
+                "E_DETERMINISM_MISMATCH", "Determinism mismatch was observed.",
+                expected=0, observed=aggregate.get("determinismMismatchCount"),
+            ))
+
     environment: dict[str, Any] = {}
     if environment_json and Path(environment_json).is_file():
         environment = _read_json(Path(environment_json))
     environment_valid, thermal_valid, environment_issues = _evaluate_environment(environment, normalized)
     issues.extend(environment_issues)
+    runtime_environment_metrics = _environment_runtime_metrics(environment)
+    aggregate.update(runtime_environment_metrics)
+    unresolved_queries = _required_int(summary.get("gpuTimingUnresolvedFrameCount"), 0)
+    aggregate["queryUnresolvedSlope"] = 0.0 if unresolved_queries == 0 else (
+        unresolved_queries / max(float(len(rows)) / 3600.0, 1.0 / 60.0)
+    )
     quality_issues = _evaluate_quality_gates(aggregate, normalized)
+    if str(normalized.get("measurement_mode", "")).lower() in {"robustness", "long_run"}:
+        long_run_limits = {
+            "vramSlopeMbPerMin": _required_float(normalized.get("max_vram_slope_mb_per_min"), 1.0),
+            "ramSlopeMbPerMin": _required_float(normalized.get("max_ram_slope_mb_per_min"), 2.0),
+            "p99DegradationRatio": _required_float(normalized.get("max_p99_degradation_ratio"), 1.10),
+            "queryUnresolvedSlope": _required_float(normalized.get("max_query_unresolved_slope"), 0.0),
+        }
+        for metric, limit in long_run_limits.items():
+            observed = aggregate.get(metric)
+            if observed is None:
+                quality_issues.append(_issue("E_LONG_RUN_METRIC_UNAVAILABLE", f"Long-run metric is unavailable: {metric}"))
+            elif float(observed) > limit:
+                quality_issues.append(_issue("E_LONG_RUN_GATE", f"Long-run metric exceeds limit: {metric}", expected=limit, observed=observed))
+
 
     canonical_payload = {
         "summary": _canonical_summary(summary),
@@ -1342,6 +1513,17 @@ def validate_required_outputs(
         "collisionMissRate": aggregate.get("collisionMissRate"),
         "stateOscillationRate": aggregate.get("stateOscillationRate"),
         "staticDynamicBoundaryMaxErrorMm": aggregate.get("staticDynamicBoundaryMaxErrorMm"),
+        "determinismMismatchCount": aggregate.get("determinismMismatchCount"),
+        "stateSequenceHash": aggregate.get("stateSequenceHash"),
+        "compactionSequenceHash": aggregate.get("compactionSequenceHash"),
+        "finalPositionHash": aggregate.get("finalPositionHash"),
+        "peakVramMb": aggregate.get("peakVramMb"),
+        "peakRamMb": aggregate.get("peakRamMb"),
+        "vramSlopeMbPerMin": aggregate.get("vramSlopeMbPerMin"),
+        "ramSlopeMbPerMin": aggregate.get("ramSlopeMbPerMin"),
+        "p99DegradationRatio": aggregate.get("p99DegradationRatio"),
+        "queryUnresolvedSlope": aggregate.get("queryUnresolvedSlope"),
+        "longRunValid": not any(item["code"].startswith("E_LONG_RUN") for item in quality_issues),
     })
     write_json(Path(summary_json), summary)
 
@@ -1368,7 +1550,16 @@ def validate_required_outputs(
     }
     write_json(validation_path, validation)
 
+    artifact_directory = Path(summary_json).parent
     artifacts = [Path(summary_json), Path(frame_csv), Path(frame_jsonl), Path(settings_json), validation_path]
+    for auxiliary in (
+        artifact_directory / f"{run_name}_case.json",
+        artifact_directory / f"{run_name}_preflight.json",
+        _resolve_case_path(normalized.get("scenario_timeline")),
+        _resolve_case_path(normalized.get("asset_manifest")),
+    ):
+        if auxiliary is not None and Path(auxiliary).is_file():
+            artifacts.append(Path(auxiliary))
     if environment_json and Path(environment_json).is_file():
         artifacts.append(Path(environment_json))
     if evidence_path.is_file():
@@ -1540,19 +1731,53 @@ def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_sec
 
     environment_payload: dict[str, Any] = {"start": collect_hardware_probe(str(snapshot.get("hardware_profile", "")), "start")}
     write_json(paths["environment"], environment_payload)
-    sampler = HardwareSampler(str(snapshot.get("hardware_profile", "")), _required_float(snapshot.get("hardware_sample_interval_seconds"), 5.0))
+    sampler = HardwareSampler(str(snapshot.get("hardware_profile", "")), _required_float(snapshot.get("hardware_sample_interval_seconds"), 1.0))
     sampler.start()
     process_return_code: int | None = None
+    process_stdout = ""
+    process_stderr = ""
     try:
-        completed = subprocess.run([str(viewer_exe)], cwd=viewer_exe.parent, env=env, timeout=max(int(timeout_seconds), 1), check=False)
+        completed = subprocess.run(
+            [str(viewer_exe)], cwd=viewer_exe.parent, env=env,
+            timeout=max(int(timeout_seconds), 1), check=False,
+            capture_output=True, text=True, errors="replace",
+        )
         process_return_code = int(completed.returncode)
+        process_stdout = (completed.stdout or "")[-1_000_000:]
+        process_stderr = (completed.stderr or "")[-1_000_000:]
     except subprocess.TimeoutExpired as exc:
-        raise FormalRunError(f"Viewer timed out after {timeout_seconds} seconds.", EXIT_RUNTIME_FAILURE) from exc
+        process_stdout = ((exc.stdout or "").decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or ""))[-1_000_000:]
+        process_stderr = ((exc.stderr or "").decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or ""))[-1_000_000:]
+        error = FormalRunError(f"Viewer timed out after {timeout_seconds} seconds.", EXIT_RUNTIME_FAILURE, [
+            _issue("E_VIEWER_TIMEOUT", "Viewer exceeded the formal timeout.", expected=timeout_seconds, observed=timeout_seconds)
+        ])
+        write_json(paths["error"], {
+            "runName": run_name, "exitCode": error.exit_code, "error": str(error),
+            "issues": error.issues, "stdoutTail": process_stdout, "stderrTail": process_stderr,
+        })
+        raise error from exc
     finally:
         samples = sampler.stop()
         environment_payload["end"] = collect_hardware_probe(str(snapshot.get("hardware_profile", "")), "end")
         environment_payload["samples"] = samples
         environment_payload["viewerReturnCode"] = process_return_code
+        environment_payload["stdoutTail"] = process_stdout
+        environment_payload["stderrTail"] = process_stderr
+        if paths["settings"].is_file():
+            try:
+                viewer_settings = _read_json(paths["settings"])
+                observed_adapter = viewer_settings.get("observed", {}) if isinstance(viewer_settings.get("observed"), dict) else {}
+                dedicated_bytes = _optional_float(observed_adapter.get("dedicatedVideoMemoryBytes"))
+                environment_payload["viewerAdapter"] = {
+                    "name": observed_adapter.get("gpuName") or viewer_settings.get("gpuName") or viewer_settings.get("observedGpuName"),
+                    "driverVersion": viewer_settings.get("gpuDriver") or viewer_settings.get("driverVersion"),
+                    "vendorId": observed_adapter.get("gpuVendorId") or viewer_settings.get("gpuVendorId"),
+                    "deviceId": observed_adapter.get("gpuDeviceId") or viewer_settings.get("gpuDeviceId"),
+                    "dedicatedVideoMemoryMiB": dedicated_bytes / (1024.0 * 1024.0) if dedicated_bytes is not None else viewer_settings.get("dedicatedVideoMemoryMiB"),
+                    "adapterType": observed_adapter.get("adapterType") or viewer_settings.get("actualAdapterType"),
+                }
+            except Exception as adapter_exc:
+                environment_payload["viewerAdapterProbeError"] = str(adapter_exc)
         write_json(paths["environment"], environment_payload)
         write_hardware_timeseries(telemetry_dir / f"{run_name}_hardware_timeseries.csv", samples)
 

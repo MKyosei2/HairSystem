@@ -81,6 +81,15 @@ class FinalStageDatabase:
         "collision_miss_rate": "REAL",
         "state_oscillation_rate": "REAL",
         "max_boundary_error_mm": "REAL",
+        "thermal_evidence_available": "INTEGER",
+        "ground_truth_valid": "INTEGER",
+        "determinism_valid": "INTEGER",
+        "long_run_valid": "INTEGER",
+        "peak_vram_mb": "REAL",
+        "vram_slope_mb_per_min": "REAL",
+        "ram_slope_mb_per_min": "REAL",
+        "p99_degradation_ratio": "REAL",
+        "query_unresolved_slope": "REAL",
     }
 
     _FRAME_MIGRATION_COLUMNS: dict[str, str] = {
@@ -110,6 +119,13 @@ class FinalStageDatabase:
         "repair_compaction_output_count": "INTEGER",
         "wake_propagation_gpu_ms": "REAL",
         "total_hair_gpu_ms": "REAL",
+        "penetration_event_count": "INTEGER",
+        "mean_penetration_mm": "REAL",
+        "max_penetration_mm": "REAL",
+        "determinism_mismatch_count": "INTEGER",
+        "state_sequence_hash": "TEXT",
+        "compaction_sequence_hash": "TEXT",
+        "final_position_hash": "TEXT",
     }
 
     def __init__(self, db_path: Path):
@@ -527,6 +543,7 @@ class FinalStageDatabase:
         gpu = env_start.get("gpu", {}) if isinstance(env_start.get("gpu"), dict) else {}
         if not gpu:
             gpu = env_end.get("gpu", {}) if isinstance(env_end.get("gpu"), dict) else {}
+        viewer_adapter = environment.get("viewerAdapter", {}) if isinstance(environment.get("viewerAdapter"), dict) else {}
         power = env_start.get("power", {}) if isinstance(env_start.get("power"), dict) else {}
 
         run_values: dict[str, Any] = {
@@ -571,20 +588,40 @@ class FinalStageDatabase:
             "environment_json_sha256": self.file_sha256(environment_json_path) if environment_json_path else None,
             "validation_json_sha256": self.file_sha256(validation_json_path) if validation_json_path else None,
             "decision_sequence_sha256": sv("decisionSequenceSha256"),
-            "state_sequence_sha256": sv("stateSequenceSha256"),
-            "compaction_sequence_sha256": sv("compactionSequenceSha256"),
-            "final_position_sha256": sv("finalPositionSha256"),
+            "state_sequence_sha256": str(sv("stateSequenceHash", "stateSequenceSha256") or ""),
+            "compaction_sequence_sha256": str(sv("compactionSequenceHash", "compactionSequenceSha256") or ""),
+            "final_position_sha256": str(sv("finalPositionHash", "finalPositionSha256") or ""),
             "hardware_profile": sv("hardwareProfile", "hardware_profile"),
-            "gpu_name": sv("gpuName", default=gpu.get("name")),
-            "gpu_driver": sv("gpuDriver", default=gpu.get("driverVersion")),
-            "gpu_vendor_id": self._nullable_int(sv("gpuVendorId")),
-            "gpu_device_id": self._nullable_int(sv("gpuDeviceId")),
-            "dedicated_vram_mb": self._nullable_float(sv("dedicatedVramMb", default=gpu.get("memoryTotalMiB"))),
+            "gpu_name": sv("gpuName", default=gpu.get("name") or viewer_adapter.get("name")),
+            "gpu_driver": sv("gpuDriver", default=gpu.get("driverVersion") or viewer_adapter.get("driverVersion")),
+            "gpu_vendor_id": self._nullable_int(sv("gpuVendorId", default=viewer_adapter.get("vendorId"))),
+            "gpu_device_id": self._nullable_int(sv("gpuDeviceId", default=viewer_adapter.get("deviceId"))),
+            "dedicated_vram_mb": self._nullable_float(sv("dedicatedVramMb", default=gpu.get("memoryTotalMiB") or viewer_adapter.get("dedicatedVideoMemoryMiB"))),
             "cpu_name": sv("cpuName", default=env_start.get("processor")),
             "power_scheme": sv("powerScheme", default=power.get("activeScheme")),
             "thermal_valid": int(self._as_bool(validation.get("thermalValid", True))),
             "environment_valid": int(self._as_bool(validation.get("environmentValid", True))),
             "required_metric_coverage_valid": int(self._as_bool(validation.get("requiredMetricCoverageValid", True))),
+            "thermal_evidence_available": int(not any(
+                str(item.get("code", "")).startswith("E_THERMAL_EVIDENCE")
+                for item in validation.get("issues", []) if isinstance(item, dict)
+            )),
+            "ground_truth_valid": int(
+                str(sv("measurementMode", "measurement_mode", default="")).lower() != "quality"
+                or all(sv(key) is not None for key in ("falseStaticRate", "collisionMissRate"))
+            ),
+            "determinism_valid": int(
+                str(sv("measurementMode", "measurement_mode", default="")).lower() != "determinism"
+                or (self._nullable_int(sv("determinismMismatchCount")) in (None, 0)
+                    and bool(sv("stateSequenceHash")) and bool(sv("compactionSequenceHash"))
+                    and bool(sv("finalPositionHash")))
+            ),
+            "long_run_valid": int(self._as_bool(sv("longRunValid", default=True))),
+            "peak_vram_mb": self._nullable_float(sv("peakVramMb", "peak_vram_mb")),
+            "vram_slope_mb_per_min": self._nullable_float(sv("vramSlopeMbPerMin", "vram_slope_mb_per_min")),
+            "ram_slope_mb_per_min": self._nullable_float(sv("ramSlopeMbPerMin", "ram_slope_mb_per_min")),
+            "p99_degradation_ratio": self._nullable_float(sv("p99DegradationRatio", "p99_degradation_ratio")),
+            "query_unresolved_slope": self._nullable_float(sv("queryUnresolvedSlope", "query_unresolved_slope")),
             "requested_render_width": self._nullable_int(sv("requestedRenderWidth", default=requested.get("renderWidth", requested.get("width")))),
             "requested_render_height": self._nullable_int(sv("requestedRenderHeight", default=requested.get("renderHeight", requested.get("height")))),
             "actual_render_width": self._nullable_int(sv("actualRenderWidth", default=observed.get("renderWidth"))),
@@ -748,6 +785,9 @@ class FinalStageDatabase:
             "collision_candidate_count": optional_int(cv("collisionCandidateCount", "collision_candidate_count")),
             "collision_miss_count": optional_int(cv("collisionMissCount", "collision_miss_count")) if collision_available else None,
             "collision_miss_rate": optional_float(cv("collisionMissRate", "collision_miss_rate")) if collision_available else None,
+            "penetration_event_count": optional_int(cv("penetrationEventCount", "penetration_event_count")),
+            "mean_penetration_mm": optional_float(cv("meanPenetrationMm", "mean_penetration_mm")),
+            "max_penetration_mm": optional_float(cv("maxPenetrationMm", "max_penetration_mm")),
             "predictive_wake_tp": optional_int(cv("predictiveWakeTruePositiveCount", "predictive_wake_tp")) if wake_available else None,
             "predictive_wake_fp": optional_int(cv("predictiveWakeFalsePositiveCount", "predictive_wake_fp")) if wake_available else None,
             "predictive_wake_fn": optional_int(cv("predictiveWakeFalseNegativeCount", "predictive_wake_fn")) if wake_available else None,
@@ -798,6 +838,10 @@ class FinalStageDatabase:
             "hair_draw_gpu_ms": optional_float(cv("hairDrawGpuMilliseconds", "hair_draw_gpu_ms")),
             "telemetry_reduction_gpu_ms": optional_float(cv("telemetryReductionGpuMilliseconds", "telemetry_reduction_gpu_ms")),
             "total_hair_gpu_ms": optional_float(cv("totalHairGpuMilliseconds", "gpuHairMilliseconds", "total_hair_gpu_ms")),
+            "determinism_mismatch_count": optional_int(cv("determinismMismatchCount", "determinism_mismatch_count")),
+            "state_sequence_hash": str(cv("stateSequenceHash", "state_sequence_hash") or "") or None,
+            "compaction_sequence_hash": str(cv("compactionSequenceHash", "compaction_sequence_hash") or "") or None,
+            "final_position_hash": str(cv("finalPositionHash", "final_position_hash") or "") or None,
         }
         if result["sample_index"] is None:
             raise RuntimeError("Frame CSV contains a row without sampleIndex")

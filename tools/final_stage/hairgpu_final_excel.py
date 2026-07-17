@@ -110,9 +110,13 @@ def _formal_checks(run_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "method_identity": "PASS" if identity_match else "FAIL",
                 "validation_status": row.get("validation_status"),
                 "real_measurement": "PASS" if row.get("real_measurement") == 1 else "FAIL",
-                "thermal_valid": "PASS" if row.get("thermal_valid") in (None, 1) else "FAIL",
-                "environment_valid": "PASS" if row.get("environment_valid") in (None, 1) else "FAIL",
-                "metric_coverage_valid": "PASS" if row.get("required_metric_coverage_valid") in (None, 1) else "FAIL",
+                "thermal_evidence_available": "PASS" if row.get("thermal_evidence_available") == 1 else "FAIL",
+                "thermal_valid": "PASS" if row.get("thermal_valid") == 1 else "FAIL",
+                "environment_valid": "PASS" if row.get("environment_valid") == 1 else "FAIL",
+                "metric_coverage_valid": "PASS" if row.get("required_metric_coverage_valid") == 1 else "FAIL",
+                "ground_truth_valid": "PASS" if row.get("ground_truth_valid") == 1 else "FAIL",
+                "determinism_valid": "PASS" if row.get("determinism_valid") == 1 else "FAIL",
+                "long_run_valid": "PASS" if row.get("long_run_valid") == 1 else "FAIL",
                 "manifest_present": "PASS" if row.get("manifest_json_path") else "FAIL",
                 "canonical_hash_present": "PASS" if row.get("canonical_result_sha256") else "FAIL",
                 "result_manifest_hash_present": "PASS" if row.get("result_manifest_sha256") else "FAIL",
@@ -175,17 +179,30 @@ def export_workbook(db_path: Path, output_xlsx: Path) -> Path:
         "BoundaryAnalysis": (
             "run_name", "method_code", "scenario_code", "max_boundary_error_mm"
         ),
+        "GroundTruth": (
+            "run_name", "method_code", "scenario_code", "ground_truth_valid",
+            "false_static_rate", "collision_miss_rate", "max_boundary_error_mm",
+            "avg_penetration_per_sec"
+        ),
         "GpuPassTiming": (
             "run_name", "method_code", "scenario_code", "avg_hair_gpu_ms",
             "p95_hair_gpu_ms", "p99_hair_gpu_ms", "gpu_timing_coverage"
         ),
         "HardwareEnvironment": (
             "run_name", "hardware_profile", "gpu_name", "gpu_driver",
-            "dedicated_vram_mb", "cpu_name", "power_scheme",
+            "gpu_vendor_id", "gpu_device_id", "dedicated_vram_mb",
+            "cpu_name", "power_scheme", "thermal_evidence_available",
             "thermal_valid", "environment_valid"
+        ),
+        "LongRun": (
+            "run_name", "method_code", "scenario_code", "measurement_mode",
+            "long_run_valid", "peak_vram_mb", "peak_ram_mb",
+            "vram_slope_mb_per_min", "ram_slope_mb_per_min",
+            "p99_degradation_ratio", "query_unresolved_slope"
         ),
         "Determinism": (
             "run_name", "method_code", "scenario_code", "seed",
+            "repetition_index", "determinism_valid",
             "decision_sequence_sha256", "state_sequence_sha256",
             "compaction_sequence_sha256", "final_position_sha256"
         ),

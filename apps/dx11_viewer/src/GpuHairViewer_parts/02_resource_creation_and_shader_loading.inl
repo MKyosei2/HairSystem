@@ -167,8 +167,15 @@
             LARGE_INTEGER frameWorkEnd = {};
             QueryPerformanceCounter(&frameWorkEnd);
             m_lastCpuFrameWorkMilliseconds = static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
+            const bool captureCurrentFrame = ShouldCaptureCurrentFrame();
+            if (captureCurrentFrame)
+            {
+                // Finalize availability-aware rates once, then persist the exact
+                // same frame evidence to CSV/JSONL/formal sidecar.
+                hairgpu::FinalizeNoveltyTelemetryRates(m_noveltyTelemetry);
+            }
             PerformanceSample sample = BuildPerformanceSample(dt, instantFps);
-            if (ShouldCaptureCurrentFrame())
+            if (captureCurrentFrame)
             {
                 sample.measuredFrameIndex = m_measuredFrameIndex++;
                 m_performanceSamples.push_back(sample);
@@ -196,6 +203,64 @@
         }
 
         DrainGpuTimingAndCounterReadbacks();
+
+        if (m_experimentCase.enabled &&
+            m_experimentCase.measurementMode == MeasurementMode::Determinism &&
+            !m_performanceSamples.empty())
+        {
+            const auto fnvMix = [](uint64_t hash, uint64_t value)
+            {
+                for (uint32_t byteIndex = 0u; byteIndex < 8u; ++byteIndex)
+                {
+                    hash ^= static_cast<uint8_t>((value >> (byteIndex * 8u)) & 0xffu);
+                    hash *= 1099511628211ull;
+                }
+                return hash;
+            };
+            uint64_t stateHash = 1469598103934665603ull;
+            uint64_t compactionHash = 1469598103934665603ull;
+            for (PerformanceSample& measured : m_performanceSamples)
+            {
+                stateHash = fnvMix(stateHash, measured.sourceFrameIndex);
+                stateHash = fnvMix(stateHash, measured.staticCachedGroupCount);
+                stateHash = fnvMix(stateHash, measured.staticTransformedGroupCount);
+                stateHash = fnvMix(stateHash, measured.dynamicGroupCount);
+                stateHash = fnvMix(stateHash, measured.deferredCorrectionGroupCount);
+                stateHash = fnvMix(stateHash, measured.repairRequiredGroupCount);
+                compactionHash = fnvMix(compactionHash, measured.sourceFrameIndex);
+                compactionHash = fnvMix(compactionHash, measured.dynamicCompactionInputCount);
+                compactionHash = fnvMix(compactionHash, measured.dynamicCompactionOutputCount);
+                compactionHash = fnvMix(compactionHash, measured.repairCompactionOutputCount);
+                measured.stateSequenceHash = stateHash;
+                measured.compactionSequenceHash = compactionHash;
+                measured.metricAvailabilityMask |= hairgpu::HairTelemetryAvailability_DeterminismHash;
+                measured.availabilityMask |= hairgpu::HairTelemetryAvailability_DeterminismHash;
+            }
+
+            // A single end-of-run readback is outside the measured frame and is
+            // used only to generate a quantized final-position fingerprint.
+            std::vector<GpuParticle> finalParticles;
+            if (ReadBackCurrentParticlePositions(finalParticles))
+            {
+                uint64_t positionHash = 1469598103934665603ull;
+                for (const GpuParticle& particle : finalParticles)
+                {
+                    const int64_t qx = static_cast<int64_t>(std::llround(static_cast<double>(particle.x) * 100000.0));
+                    const int64_t qy = static_cast<int64_t>(std::llround(static_cast<double>(particle.y) * 100000.0));
+                    const int64_t qz = static_cast<int64_t>(std::llround(static_cast<double>(particle.z) * 100000.0));
+                    positionHash = fnvMix(positionHash, static_cast<uint64_t>(qx));
+                    positionHash = fnvMix(positionHash, static_cast<uint64_t>(qy));
+                    positionHash = fnvMix(positionHash, static_cast<uint64_t>(qz));
+                }
+                m_performanceSamples.back().finalPositionHash = positionHash;
+            }
+            else
+            {
+                ++m_performanceSamples.back().determinismMismatchCount;
+            }
+        }
+
+        hairgpu::GetHairFormalEvidenceRecorder().FlushNow();
 
         const std::wstring autoTelemetry = GetEnvironmentVariableString(L"HAIRGPU_AUTO_TELEMETRY");
         if (!autoTelemetry.empty() && autoTelemetry != L"0" && autoTelemetry != L"false" && autoTelemetry != L"FALSE")

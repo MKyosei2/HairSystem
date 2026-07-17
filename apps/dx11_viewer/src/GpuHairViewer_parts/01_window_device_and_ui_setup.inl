@@ -773,6 +773,52 @@
             return false;
         }
 
+        // Capture adapter identity from DXGI. This is the authoritative evidence
+        // for Formal Runs; nvidia-smi is only an optional thermal/clock sampler.
+        bool adapterIdentityAvailable = false;
+        if (m_device)
+        {
+            ComPtr<IDXGIDevice> dxgiDevice;
+            ComPtr<IDXGIAdapter> adapter;
+            DXGI_ADAPTER_DESC adapterDesc = {};
+            if (SUCCEEDED(m_device.As(&dxgiDevice)) &&
+                SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) && adapter &&
+                SUCCEEDED(adapter->GetDesc(&adapterDesc)))
+            {
+                m_observedGpuName = adapterDesc.Description;
+                m_observedGpuVendorId = adapterDesc.VendorId;
+                m_observedGpuDeviceId = adapterDesc.DeviceId;
+                m_observedDedicatedVideoMemory =
+                    static_cast<uint64_t>(adapterDesc.DedicatedVideoMemory);
+                m_experimentCase.observedGpuName = m_observedGpuName;
+                adapterIdentityAvailable =
+                    adapterDesc.VendorId != 0u && adapterDesc.DeviceId != 0u &&
+                    adapterDesc.DedicatedVideoMemory > 0u;
+            }
+        }
+        if (adapterIdentityAvailable)
+        {
+            m_noveltyTelemetry.availabilityMask |=
+                hairgpu::HairTelemetryAvailability_AdapterIdentity;
+            m_noveltyTelemetry.metricAvailabilityMask |=
+                hairgpu::HairTelemetryAvailability_AdapterIdentity;
+        }
+        else if (m_experimentCase.enabled && m_experimentCase.hardwareAdapterRequired)
+        {
+            ShowStartupDialog(m_hwnd, L"Hair GPU Viewer Formal Run Failure",
+                L"DXGI adapter identity or dedicated VRAM is unavailable.");
+            Shutdown();
+            return false;
+        }
+        if (m_experimentCase.enabled && m_experimentCase.hardwareAdapterRequired &&
+            m_observedDriverType != D3D_DRIVER_TYPE_HARDWARE)
+        {
+            ShowStartupDialog(m_hwnd, L"Hair GPU Viewer Formal Run Failure",
+                L"Formal runs require a hardware D3D11 adapter; WARP/reference is rejected.");
+            Shutdown();
+            return false;
+        }
+
         if (!CreateUiControls())
         {
             ShowStartupDialog(m_hwnd, L"Hair GPU Viewer Startup Failure", L"CreateUiControls() failed.");

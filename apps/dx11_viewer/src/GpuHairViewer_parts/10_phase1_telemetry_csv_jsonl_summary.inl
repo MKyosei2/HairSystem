@@ -1300,15 +1300,68 @@ return true;
         if (timeline.scenarioId == ExperimentScenarioId::Unknown || timeline.scenarioId != m_experimentCase.scenarioId) return false;
         if (timeline.durationFrames < m_experimentCase.warmupFrames + m_experimentCase.measurementFrames) return false;
         if (std::abs(timeline.fixedTimeStepSeconds - m_experimentCase.fixedTimeStepSeconds) > 1.0e-6f) return false;
+        if (timeline.events.empty()) return false;
+
         uint32_t previousFrame = 0u;
+        uint32_t measuredEventCount = 0u;
+        uint32_t stateStimulusCount = 0u;
+        bool hasCollider = false, hasStrongWind = false, hasEdit = false, hasRepair = false;
+        bool hasForceDynamic = false, hasForceStatic = false, hasCamera = false;
         for (size_t i = 0; i < timeline.events.size(); ++i)
         {
             const ScenarioEvent& event = timeline.events[i];
             if (event.type == ScenarioEventType::Unknown || event.frame >= timeline.durationFrames) return false;
             if (i > 0u && event.frame < previousFrame) return false;
             previousFrame = event.frame;
+            if (event.frame >= m_experimentCase.warmupFrames) ++measuredEventCount;
+            switch (event.type)
+            {
+            case ScenarioEventType::SetColliderTransform: hasCollider = true; break;
+            case ScenarioEventType::SetWind:
+                hasStrongWind = hasStrongWind || std::abs(event.value[0]) >= 0.5f;
+                ++stateStimulusCount;
+                break;
+            case ScenarioEventType::SetRootTranslation:
+            case ScenarioEventType::SetRootRotation:
+            case ScenarioEventType::TeleportRoot:
+                ++stateStimulusCount;
+                break;
+            case ScenarioEventType::InjectLocalEdit: hasEdit = true; break;
+            case ScenarioEventType::InjectRepairStorm: hasRepair = true; break;
+            case ScenarioEventType::ForceAllDynamic: hasForceDynamic = true; ++stateStimulusCount; break;
+            case ScenarioEventType::ForceAllStatic: hasForceStatic = true; ++stateStimulusCount; break;
+            case ScenarioEventType::SetCameraDistance: hasCamera = true; break;
+            default: break;
+            }
         }
-        return true;
+        if (measuredEventCount == 0u) return false;
+
+        // Semantic assertions prevent a correctly shaped timeline from silently
+        // exercising the wrong phenomenon. Only scenarios with a unique required
+        // stimulus are constrained here; the remaining scenarios use run-time counters.
+        switch (timeline.scenarioId)
+        {
+        case ExperimentScenarioId::S07_ColliderApproach:
+        case ExperimentScenarioId::S08_StaticDynamicBoundaryContact:
+            return hasCollider;
+        case ExperimentScenarioId::S09_StrongWind:
+            return hasStrongWind;
+        case ExperimentScenarioId::S11_LocalEdit:
+            return hasEdit;
+        case ExperimentScenarioId::S13_RepairStorm:
+            return hasRepair;
+        case ExperimentScenarioId::S14_AllDynamic:
+            return hasForceDynamic;
+        case ExperimentScenarioId::S15_AllStatic:
+            return hasForceStatic;
+        case ExperimentScenarioId::S16_StateThrashing:
+            return stateStimulusCount >= 2u;
+        case ExperimentScenarioId::S17_CloseCamera100k:
+        case ExperimentScenarioId::S18_FarCamera100k:
+            return hasCamera;
+        default:
+            return true;
+        }
     }
 
     void GpuHairViewer::ApplyScenarioTimelineFrame(uint32_t frameIndex)
@@ -1471,7 +1524,7 @@ return true;
         sample.collisionMissCount = m_noveltyTelemetry.collisionMissCount;
         sample.wakeRequestGroupCount = m_noveltyTelemetry.wakeRequestGroupCount;
         sample.repairAttemptCount = m_noveltyTelemetry.repairAttemptCount;
-        sample.repairSuccessCount = m_noveltyTelemetry.repairVerifiedCount;
+        sample.repairSuccessCount = m_noveltyTelemetry.repairSuccessCount;
         sample.stateTransitionCount = m_noveltyTelemetry.stateTransitionCount;
         sample.stateOscillationCount = m_noveltyTelemetry.stateOscillationCount;
         sample.warmupFrames = m_experimentCase.warmupFrames;
