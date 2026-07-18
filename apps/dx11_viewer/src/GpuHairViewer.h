@@ -36,6 +36,7 @@ namespace hairgpu::viewer
     public:
         bool Initialize(HINSTANCE instance, int showCommand);
         int Run();
+        int RunNativeSelfTests() const;
 
     private:
         static constexpr uint32_t kFixedGuideCount = 4000u;
@@ -602,6 +603,12 @@ namespace hairgpu::viewer
             std::wstring caseJsonPath;
             std::wstring scenarioTimelinePath;
             std::wstring assetManifestPath;
+            std::wstring formalAssetPath;
+  std::wstring formalAssetSha256;
+  std::wstring formalTopologySha256;
+  std::wstring generatorSettingsSha256;
+  std::wstring observedAssetPath;
+  bool formalAssetLoaded = false;
             std::wstring settingsHash;
             std::wstring executableSha256;
             std::wstring commitSha;

@@ -628,6 +628,12 @@ return sample;
             m_experimentCase.methodFlagsAcknowledged &&
             m_experimentCase.timelineLoaded &&
             m_experimentCase.assetFrozen &&
+            m_experimentCase.formalAssetLoaded &&
+            !m_experimentCase.formalAssetPath.empty() &&
+            !m_experimentCase.observedAssetPath.empty() &&
+            !m_experimentCase.formalAssetSha256.empty() &&
+            !m_experimentCase.formalTopologySha256.empty() &&
+            !m_experimentCase.generatorSettingsSha256.empty() &&
             !m_experimentCase.settingsHash.empty() &&
             !m_experimentCase.executableSha256.empty() &&
             !m_experimentCase.shaderBundleSha256.empty() &&
@@ -770,6 +776,12 @@ return sample;
         out << "  \"executableSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.executableSha256)) << "\",\n";
         out << "  \"shaderBundleSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.shaderBundleSha256)) << "\",\n";
         out << "  \"assetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\",\n";
+        out << "  \"formalAssetPath\": \"" << JsonEscape(WideToUtf8(m_experimentCase.formalAssetPath)) << "\",\n";
+        out << "  \"observedAssetPath\": \"" << JsonEscape(WideToUtf8(m_experimentCase.observedAssetPath)) << "\",\n";
+        out << "  \"formalAssetSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.formalAssetSha256)) << "\",\n";
+        out << "  \"formalTopologySha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.formalTopologySha256)) << "\",\n";
+        out << "  \"generatorSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.generatorSettingsSha256)) << "\",\n";
+        out << "  \"formalAssetLoaded\": " << (m_experimentCase.formalAssetLoaded ? "true" : "false") << ",\n";
         out << "  \"assetManifestSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.assetManifestSha256)) << "\",\n";
         out << "  \"scenarioTimelineSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.scenarioTimelineSha256)) << "\",\n";
         out << "  \"requestedMethodSettingsSha256\": \"" << JsonEscape(WideToUtf8(m_experimentCase.requestedMethodSettingsSha256)) << "\",\n";

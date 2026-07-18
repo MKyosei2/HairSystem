@@ -1,11 +1,11 @@
 {
   "suite_name": "novelty01_formal_runtime_suite",
-  "suite_version": "2.0",
+  "suite_version": "3.3",
   "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
   "outputs_dir": "../../out/novelty01_baseline",
   "telemetry_dir": "../../out/novelty01_baseline/telemetry",
   "hardware_profiles": "hardware_profiles.json",
-  "baseline_method": "B0_FullDynamic",
+  "baseline_method": "B8",
   "repetitions_per_seed": 1,
   "run_generation": {
     "mode": "cartesian_product",
@@ -19,7 +19,7 @@
   "source": {
     "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
     "schema": "../../tools/final_stage/schema.sql",
-    "asset_manifest": "novelty01_100k_asset_manifest.json",
+    "asset_manifest": "../../out/novelty01_baseline/frozen_asset_manifest.json",
     "shader_root": "../../apps/dx11_viewer/shaders",
     "required_branch": "Novelty"
   },
@@ -133,7 +133,10 @@
     "maximum_p95_frame_ms": 41.666666666666664,
     "maximum_p99_frame_ms": 50.0,
     "maximum_single_frame_ms": 100.0,
-    "maximum_frames_over_100ms": 0
+    "maximum_frames_over_100ms": 0,
+    "build_configuration": "Release",
+    "platform": "x64",
+    "fixed_timestep": true
   },
   "seeds": [
     1103,
@@ -145,125 +148,43 @@
   "methods": [
     {
       "code": "B0_FullDynamic",
-      "settings": {
-        "method_id": "B0_FullDynamic",
-        "enable_no_novelty_baseline": true,
-        "enable_segment_group_sleep": false,
-        "enable_active_set": false,
-        "enable_gpu_compaction": false,
-        "state_storage": "integrated"
-      }
+      "settings": {}
     },
     {
       "code": "B1_StrandSleep",
-      "settings": {
-        "method_id": "B1_StrandSleep",
-        "enable_strand_sleep": true,
-        "enable_segment_group_sleep": false,
-        "enable_active_set": false,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B2_BlockSleep",
-      "settings": {
-        "method_id": "B2_BlockSleep",
-        "enable_block_sleep": true,
-        "enable_segment_group_sleep": false,
-        "enable_active_set": false,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B3_SegmentThresholdSleep",
-      "settings": {
-        "method_id": "B3_SegmentThresholdSleep",
-        "enable_segment_group_sleep": true,
-        "enable_sleep_hysteresis": false,
-        "enable_static_cache": false,
-        "enable_gpu_compaction": false,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B4_SegmentHysteresisSleep",
-      "settings": {
-        "method_id": "B4_SegmentHysteresisSleep",
-        "enable_segment_group_sleep": true,
-        "enable_sleep_hysteresis": true,
-        "enable_static_cache": false,
-        "enable_gpu_compaction": false,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B5_SegmentCache",
-      "settings": {
-        "method_id": "B5_SegmentCache",
-        "enable_segment_group_sleep": true,
-        "enable_sleep_hysteresis": true,
-        "enable_static_cache": true,
-        "enable_gpu_compaction": false,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B6_SegmentGpuCompaction",
-      "settings": {
-        "method_id": "B6_SegmentGpuCompaction",
-        "enable_segment_group_sleep": true,
-        "enable_sleep_hysteresis": true,
-        "enable_static_cache": true,
-        "enable_gpu_compaction": true,
-        "enable_active_set": false,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B7_ActiveSetOnly",
-      "settings": {
-        "method_id": "B7_ActiveSetOnly",
-        "enable_segment_group_sleep": false,
-        "enable_active_set": true,
-        "enable_gpu_compaction": true,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "B8_ExternalStateArray",
-      "settings": {
-        "method_id": "B8_ExternalStateArray",
-        "enable_segment_group_sleep": true,
-        "enable_external_state_array": true,
-        "enable_segment_group_integrated_state": false,
-        "enable_shared_point_ownership": true,
-        "enable_directional_responsibility": true,
-        "enable_static_certificate": true,
-        "enable_predictive_wake": true,
-        "enable_velocity_recovery": true,
-        "enable_repair": true,
-        "enable_gpu_compaction": true,
-        "enable_active_set": true,
-        "state_storage": "external"
-      }
+      "settings": {}
     },
     {
       "code": "P_IntegratedSegmentGroup",
-      "settings": {
-        "method_id": "P_IntegratedSegmentGroup",
-        "enable_segment_group_sleep": true,
-        "enable_external_state_array": false,
-        "enable_segment_group_integrated_state": true,
-        "enable_shared_point_ownership": true,
-        "enable_directional_responsibility": true,
-        "enable_static_certificate": true,
-        "enable_predictive_wake": true,
-        "enable_velocity_recovery": true,
-        "enable_repair": true,
-        "enable_gpu_compaction": true,
-        "enable_active_set": true,
-        "state_storage": "integrated"
-      }
+      "settings": {}
     }
   ],
   "scenarios": [
@@ -460,29 +381,72 @@
   },
   "determinism_replays": [
     {
-      "method": "B0_FullDynamic",
+      "id": "DET_B0_WALK",
+      "method": "B0",
       "scenario": "S03_Walk",
       "seed": 1103,
       "repetitions": 5
     },
     {
-      "method": "B8_ExternalStateArray",
+      "id": "DET_B8_FALSE_STATIC",
+      "method": "B8",
       "scenario": "S12_FalseStaticTrap",
       "seed": 2207,
       "repetitions": 5
     },
     {
-      "method": "P_IntegratedSegmentGroup",
+      "id": "DET_P_REPAIR",
+      "method": "P",
       "scenario": "S13_RepairStorm",
       "seed": 3301,
       "repetitions": 5
     },
     {
-      "method": "P_IntegratedSegmentGroup",
+      "id": "DET_P_THRASH",
+      "method": "P",
       "scenario": "S16_StateThrashing",
       "seed": 4409,
       "repetitions": 5
     }
   ],
-  "runs": []
+  "runs": [],
+  "performance_baseline_method": "B6",
+  "quality_baseline_method": "B0",
+  "long_runs": [
+    {
+      "id": "L30_Walk",
+      "method": "P",
+      "scenario": "S03_Walk",
+      "seed": 1103,
+      "measurement_frames": 108000,
+      "timeline_repeat": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "L2H_StrongWind",
+      "method": "P",
+      "scenario": "S09_StrongWind",
+      "seed": 2207,
+      "measurement_frames": 432000,
+      "timeline_repeat": true,
+      "timeout_seconds": 9000
+    },
+    {
+      "id": "L8H_StateThrashing",
+      "method": "P",
+      "scenario": "S16_StateThrashing",
+      "seed": 3301,
+      "measurement_frames": 1728000,
+      "timeline_repeat": true,
+      "timeout_seconds": 33000
+    }
+  ],
+  "long_run_gates": {
+    "max_peak_vram_mb": 6144.0,
+    "max_vram_slope_mb_per_min": 1.0,
+    "max_ram_slope_mb_per_min": 2.0,
+    "max_p99_degradation_ratio": 1.1,
+    "max_query_unresolved_slope": 0.0
+  },
+  "method_settings_source": "tools/final_stage/hairgpu_final_run.py::METHOD_PRESETS"
 }

@@ -66,7 +66,7 @@ class BaselineRuntimeSuiteTests(unittest.TestCase):
                 "warmup_frames": 600,
                 "measurement_frames": 6000,
                 "display_strand_count": 100000,
-                "particles_per_guide": 24,
+                "particles_per_guide": 128,
                 "solver_iterations": 6,
             },
             "methods": [
@@ -219,6 +219,152 @@ class BaselineRuntimeSuiteTests(unittest.TestCase):
         }
         suite.write_json(paths["manifest"], manifest)
         self.assertTrue(suite.is_completed_case(self.root, run, telemetry))
+
+
+class CompletedEnvironmentRegressionTests(unittest.TestCase):
+    def test_special_runs_are_materialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            timeline = root / "timeline.json"
+            timeline.write_text(json.dumps({
+                "scenario": "S01_Idle", "durationFrames": 6600,
+                "fixedTimeStepSeconds": 1.0 / 60.0,
+                "events": [{"frame": 700, "type": "SetWind"}],
+            }), encoding="utf-8")
+            config = {
+                "experiment_name": "special-test",
+                "run_generation": {"mode": "cartesian_product"},
+                "run_defaults": {
+                    "guide_strand_count": 4000, "display_strand_count": 100000,
+                    "particles_per_guide": 128, "solver_iterations": 6,
+                    "warmup_frames": 600, "measurement_frames": 6000,
+                    "fixed_timestep": True, "fixed_timestep_seconds": 1.0 / 60.0,
+                    "width": 1920, "height": 1080,
+                },
+                "methods": [{"code": "P", "settings": {}}],
+                "scenarios": [{"code": "S01_Idle", "timeline": str(timeline), "assertions": {"min_applied_events": 1}}],
+                "seeds": [1103], "repetitions_per_seed": 1,
+                "statistics": {"randomize_execution_order": False, "randomize_block_order": False},
+                "determinism_replays": [{"id": "DET_TEST", "method": "P", "scenario": "S01_Idle", "seed": 1103, "repetitions": 3}],
+                "long_runs": [{"id": "LONG_TEST", "method": "P", "scenario": "S01_Idle", "seed": 1103, "measurement_frames": 12000, "timeline_repeat": True}],
+            }
+            runs = suite.expand_run_matrix(config, root)
+            self.assertEqual(sum(run.get("special_run_kind") == "determinism" for run in runs), 3)
+            self.assertEqual(sum(run.get("special_run_kind") == "long_run" for run in runs), 1)
+
+    def test_timeline_repeat_is_materialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            timeline = root / "timeline.json"
+            timeline.write_text(json.dumps({
+                "scenario": "S01_Idle", "durationFrames": 100,
+                "fixedTimeStepSeconds": 1.0 / 60.0,
+                "events": [{"frame": 10, "type": "SetWind"}],
+            }), encoding="utf-8")
+            case = {
+                "scenario_timeline": str(timeline), "timeline_repeat": True,
+                "warmup_frames": 20, "measurement_frames": 250,
+            }
+            result = final_run._materialize_repeated_timeline(case, root, "repeat")
+            materialized = json.loads(Path(result["scenario_timeline"]).read_text(encoding="utf-8"))
+            self.assertEqual(materialized["durationFrames"], 270)
+            self.assertEqual([event["frame"] for event in materialized["events"]], [10, 110, 210])
+
+    def test_quality_gate_error_file_is_not_resumable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            telemetry = root / "telemetry"
+            telemetry.mkdir()
+            run = {"run_name": "case", "case_id": "case", "settings_hash": "a" * 64}
+            paths = suite.expected_telemetry_paths(root, run, telemetry)
+            paths["error"].write_text("{}", encoding="utf-8")
+            self.assertFalse(suite.is_completed_case(root, run, telemetry))
+
+
+    def test_formal_asset_identity_requires_observed_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            asset = Path(temporary) / "asset.hairbin"
+            asset.write_bytes(b"formal-asset")
+            case = final_run._normalize_case({
+                "method": "P",
+                "scenario": "S01_Idle",
+                "formalAssetPath": str(asset),
+                "formalAssetSha256": "a" * 64,
+                "formalTopologySha256": "b" * 64,
+                "generatorSettingsSha256": "c" * 64,
+            })
+            requested = dict(final_run.METHOD_PRESETS["P"])
+            observed_flags = {
+                key: requested[key] for key in final_run.METHOD_FLAG_KEYS
+            }
+            settings_hash = final_run.canonical_json_sha256(requested)
+            settings = {
+                "requested": requested,
+                "applied": requested,
+                "observedFlags": observed_flags,
+                "observed": final_run._expected_runtime_settings(case),
+                "requestedMethodSettingsSha256": settings_hash,
+                "appliedMethodSettingsSha256": settings_hash,
+                "observedMethodSettingsSha256": settings_hash,
+                "methodFlagsMatched": True,
+                "formalAssetLoaded": True,
+                "formalAssetPath": str(asset),
+                "observedAssetPath": str(asset.resolve()),
+                "formalAssetSha256": "a" * 64,
+                "formalTopologySha256": "b" * 64,
+                "generatorSettingsSha256": "c" * 64,
+            }
+            issues, _ = final_run._compare_settings(settings, case)
+            self.assertEqual(issues, [])
+            settings["observedAssetPath"] = str(Path(temporary) / "wrong.hairbin")
+            issues, _ = final_run._compare_settings(settings, case)
+            self.assertIn(
+                "E_FORMAL_ASSET_PATH_MISMATCH",
+                {item["code"] for item in issues},
+            )
+
+    def test_frozen_asset_manifest_enforces_4000_24_128_6(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            asset = root / "asset.hairbin"
+            topology = root / "topology.json"
+            generator = root / "generator.json"
+            asset.write_bytes(b"asset")
+            topology.write_text('{"topology":1}', encoding="utf-8")
+            generator.write_text('{"generator":1}', encoding="utf-8")
+            manifest = {
+                "manifestVersion": "novelty01-100k-v1.4",
+                "assetFormatVersion": "novelty01-100k-v1.4",
+                "freezeStatus": "FROZEN",
+                "sourceAssetPath": str(asset),
+                "sourceAssetSha256": final_run.sha256_file(asset),
+                "sourceAssetSizeBytes": asset.stat().st_size,
+                "generatedTopologyPath": str(topology),
+                "generatedTopologySha256": final_run.sha256_file(topology),
+                "generatorSettingsPath": str(generator),
+                "generatorSettingsSha256": final_run.sha256_file(generator),
+                "sourceCommitSha": final_run._git_commit_sha(
+                    Path(__file__).resolve().parents[2]
+                ) or "0" * 40,
+                "sourceBranch": "Novelty",
+                "generation": {
+                    "displayStrandCount": 100000,
+                    "primaryGuideStrandCount": 4000,
+                    "followersPerGuide": 24,
+                    "particlesPerGuide": 128,
+                    "solverIterations": 6,
+                },
+            }
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertEqual(final_run._validate_asset_manifest(manifest_path), [])
+            manifest["generation"]["particlesPerGuide"] = 24
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            issues = final_run._validate_asset_manifest(manifest_path)
+            self.assertIn(
+                "E_ASSET_GENERATION_CONTRACT",
+                {item["code"] for item in issues},
+            )
 
 
 if __name__ == "__main__":

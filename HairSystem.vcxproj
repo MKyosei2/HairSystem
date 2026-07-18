@@ -213,6 +213,10 @@ exit /b 0</Command>
     <None Include="apps\hairgpu_cli\src\main.cpp" />
     <None Include="docs\PROJECT_ONE_PROJECT_NOTES.md" />
   </ItemGroup>
+  <Target Name="HairGpuFormalSelfTests" AfterTargets="Build" Condition="'$(HairGpuFormalSelfTest)' == 'true'">
+    <Exec Command="&quot;$(TargetPath)&quot; --native-self-test" />
+    <Exec Command="&quot;$(TargetPath)&quot; --shader-self-test" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

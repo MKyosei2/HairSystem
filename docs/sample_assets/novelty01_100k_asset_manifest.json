@@ -1,33 +1,32 @@
 {
-  "manifestVersion": "novelty01-100k-v1.3",
-  "assetFormatVersion": "novelty01-100k-v1",
+  "manifestVersion": "novelty01-100k-v1.4",
+  "assetFormatVersion": "novelty01-100k-v1.4",
   "purpose": "Deterministic 100,000 displayed-strand benchmark asset contract",
-  "freezeStatus": "UNFROZEN_REJECT_FOR_PAPER_EVIDENCE",
+  "freezeStatus": "TEMPLATE_REQUIRES_LOCAL_FREEZE",
   "assetId": "novelty01_100k_display_strands",
-  "sourceAssetPath": "REPLACE_WITH_LOCAL_ASSET_PATH",
+  "sourceAssetPath": "REPLACE_WITH_LOCAL_CANONICAL_HAIRBIN_PATH",
   "sourceAssetSha256": "REPLACE_AFTER_ASSET_FREEZE",
   "sourceAssetSizeBytes": 0,
   "generatedTopologySha256": "REPLACE_AFTER_ASSET_FREEZE",
-  "generatorSettingsPath": "REPLACE_WITH_GENERATOR_SETTINGS_PATH",
+  "generatorSettingsPath": "REPLACE_WITH_LOCAL_GENERATOR_SETTINGS_PATH",
   "generatorSettingsSha256": "REPLACE_AFTER_ASSET_FREEZE",
   "sourceCommitSha": "REPLACE_AFTER_PATCH_IS_COMMITTED",
   "frozenAtUtc": "REPLACE_AFTER_ASSET_FREEZE",
   "frozenBy": "REPLACE_AFTER_ASSET_FREEZE",
   "freezeTool": "tools/final_stage/freeze_novelty01_asset.py",
-  "freezeToolVersion": "1.2",
+  "freezeToolVersion": "1.4",
   "generation": {
     "displayStrandCount": 100000,
-    "guideStrandCounts": [
-      4000
-    ],
     "primaryGuideStrandCount": 4000,
-    "particlesPerGuide": 24,
+    "particlesPerGuide": 128,
     "followerGeneration": "deterministic_root_neighborhood",
     "followerSeed": 20260715,
     "requireExactDisplayStrandCount": true,
     "requireUniformGuidePointCount": true,
     "requireStableTopologyHash": true,
-    "topologyMutationDuringMeasurementAllowed": false
+    "topologyMutationDuringMeasurementAllowed": false,
+    "followersPerGuide": 24,
+    "solverIterations": 6
   },
   "segmentGroupContract": {
     "sharedPointReferenceRequired": true,
@@ -51,13 +50,18 @@
     "requireSameAssetHashAcrossAllMethodsAndSeeds": true,
     "requireSourceCommitMatch": true,
     "requireCleanGitWorktreeAtFreeze": true,
-    "requireLocalFileHashVerification": true
+    "requireLocalFileHashVerification": true,
+    "requireViewerObservedAssetPathMatch": true,
+    "requirePreAndPostRunAssetHashMatch": true
   },
   "freezeChecklist": [
-    "Commit all source changes before freezing the asset.",
-    "Run tools/final_stage/freeze_novelty01_asset.py with the real asset, generator settings, and topology bytes or topology SHA-256.",
-    "Confirm freezeStatus is FROZEN and all hashes are 64 hexadecimal characters.",
-    "Confirm sourceCommitSha matches the clean Git HEAD.",
-    "Do not change the asset, generator settings, or topology between methods, seeds, and repetitions."
-  ]
+    "Commit all source changes on Novelty before freezing the asset.",
+    "Generate the canonical 4000-guide, 24-follower, 128-point hairbin on the target Windows/DX11 machine.",
+    "Run tools/final_stage/freeze_novelty01_asset.py with separate template and output manifest paths.",
+    "Confirm freezeStatus is FROZEN and all SHA-256 values are 64 hexadecimal characters.",
+    "Confirm sourceCommitSha matches the clean Novelty HEAD.",
+    "Do not change asset, generator settings, topology, executable, or shaders between matched runs."
+  ],
+  "sourceBranch": "Novelty",
+  "generatedTopologyPath": "REPLACE_WITH_LOCAL_TOPOLOGY_PATH"
 }

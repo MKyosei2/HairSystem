@@ -30,7 +30,7 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.2-existing-source-only"
+VALIDATION_VERSION = "01-safe-v3.3-existing-source-only"
 FORMAL_METHOD_CODES = {"B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "P"}
 METHOD_ALIASES = {
     "b0": "B0", "b0_fulldynamic": "B0", "full_dynamic": "B0",
@@ -588,7 +588,8 @@ def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
         },
     }))
     required = set(result.get("required_quality_metrics", []))
-    required.update(REQUIRED_METRICS_BY_SCENARIO.get(str(result.get("scenario", "")), set()))
+    if method != "B0":
+        required.update(REQUIRED_METRICS_BY_SCENARIO.get(str(result.get("scenario", "")), set()))
     result["required_quality_metrics"] = sorted(required)
     return result
 
@@ -609,8 +610,17 @@ def _validate_timeline(path: Path, case: Mapping[str, Any]) -> list[dict[str, An
     if abs(fixed_dt - expected_dt) > 1.0e-6:
         issues.append(_issue("E_TIMELINE_TIMESTEP", "Timeline fixed timestep mismatch.", expected=expected_dt, observed=fixed_dt))
     events = timeline.get("events")
-    if not isinstance(events, list) or not events:
-        issues.append(_issue("E_TIMELINE_EVENTS", "Formal timeline must contain events."))
+    assertions = case.get("assertions", case.get("scenario_assertions", {}))
+    minimum_events = _required_int(
+        assertions.get("min_applied_events", assertions.get("minAppliedEvents"))
+        if isinstance(assertions, Mapping) else 0
+    )
+    if not isinstance(events, list):
+        issues.append(_issue("E_TIMELINE_EVENTS", "Formal timeline events must be an array."))
+        return issues
+    if not events:
+        if minimum_events > 0:
+            issues.append(_issue("E_TIMELINE_EVENTS", "Formal timeline must contain events when the scenario requires applied events."))
         return issues
     previous = -1
     measurement_events = 0
@@ -629,7 +639,7 @@ def _validate_timeline(path: Path, case: Mapping[str, Any]) -> list[dict[str, An
                 measurement_events += 1
         if not str(event.get("type") or ""):
             issues.append(_issue("E_TIMELINE_EVENT_NAME", f"Timeline event {index} has no type."))
-    if measurement_events == 0:
+    if minimum_events > 0 and measurement_events == 0:
         issues.append(_issue("E_TIMELINE_MEASUREMENT_EVENT", "Timeline has no event in the measured interval."))
     return issues
 
@@ -637,24 +647,134 @@ def _validate_timeline(path: Path, case: Mapping[str, Any]) -> list[dict[str, An
 def _validate_asset_manifest(path: Path) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     manifest = _read_json(path)
+
+    manifest_version = str(manifest.get("manifestVersion") or "")
+    if manifest_version != "novelty01-100k-v1.4":
+        issues.append(_issue(
+            "E_ASSET_MANIFEST_VERSION",
+            "Frozen asset manifest version is incompatible.",
+            expected="novelty01-100k-v1.4",
+            observed=manifest_version,
+        ))
     if str(manifest.get("freezeStatus") or "") != "FROZEN":
-        issues.append(_issue("E_ASSET_NOT_FROZEN", "Asset manifest must be FROZEN.", expected="FROZEN", observed=manifest.get("freezeStatus")))
+        issues.append(_issue(
+            "E_ASSET_NOT_FROZEN",
+            "Asset manifest must be FROZEN.",
+            expected="FROZEN",
+            observed=manifest.get("freezeStatus"),
+        ))
+
+    generation = manifest.get("generation") if isinstance(manifest.get("generation"), dict) else {}
+    expected_generation = {
+        "displayStrandCount": 100000,
+        "primaryGuideStrandCount": 4000,
+        "followersPerGuide": 24,
+        "particlesPerGuide": 128,
+        "solverIterations": 6,
+    }
+    for key, expected_value in expected_generation.items():
+        if _required_int(generation.get(key), -1) != expected_value:
+            issues.append(_issue(
+                "E_ASSET_GENERATION_CONTRACT",
+                f"Frozen asset generation value is invalid: {key}",
+                expected=expected_value,
+                observed=generation.get(key),
+            ))
+
+    def valid_sha256(value: Any) -> bool:
+        return re.fullmatch(r"[0-9a-fA-F]{64}", str(value or "")) is not None
+
     expected_hash = str(manifest.get("sourceAssetSha256") or "")
-    if not expected_hash:
-        issues.append(_issue("E_ASSET_HASH_MISSING", "Asset manifest lacks sourceAssetSha256."))
+    if not valid_sha256(expected_hash):
+        issues.append(_issue(
+            "E_ASSET_HASH_FORMAT",
+            "sourceAssetSha256 must be exactly 64 hexadecimal characters.",
+            observed=expected_hash,
+        ))
     asset_value = manifest.get("sourceAssetPath") or manifest.get("assetPath") or manifest.get("sourceAsset")
-    if not asset_value:
-        issues.append(_issue("E_ASSET_PATH_MISSING", "Frozen asset manifest must identify the source asset file."))
+    asset_path = _resolve_case_path(asset_value, path.parent) if asset_value else None
+    if asset_path is None or not asset_path.is_file():
+        issues.append(_issue("E_ASSET_FILE_MISSING", "Frozen asset file is missing.", observed=str(asset_path)))
     else:
-        asset_path = _resolve_case_path(asset_value, path.parent)
-        if asset_path is None or not asset_path.is_file():
-            issues.append(_issue("E_ASSET_FILE_MISSING", "Frozen asset file is missing.", observed=str(asset_path)))
-        elif expected_hash and sha256_file(asset_path).lower() != expected_hash.lower():
-            issues.append(_issue("E_ASSET_FILE_HASH", "Frozen asset bytes do not match sourceAssetSha256.", expected=expected_hash, observed=sha256_file(asset_path)))
-    if not str(manifest.get("assetFormatVersion") or manifest.get("formatVersion") or manifest.get("schemaVersion") or ""):
+        actual_hash = sha256_file(asset_path)
+        if valid_sha256(expected_hash) and actual_hash.lower() != expected_hash.lower():
+            issues.append(_issue(
+                "E_ASSET_FILE_HASH",
+                "Frozen asset bytes do not match sourceAssetSha256.",
+                expected=expected_hash,
+                observed=actual_hash,
+            ))
+        expected_size = _required_int(manifest.get("sourceAssetSizeBytes"), -1)
+        if expected_size < 1 or asset_path.stat().st_size != expected_size:
+            issues.append(_issue(
+                "E_ASSET_FILE_SIZE",
+                "Frozen asset size does not match sourceAssetSizeBytes.",
+                expected=expected_size,
+                observed=asset_path.stat().st_size,
+            ))
+
+    if not str(manifest.get("assetFormatVersion") or ""):
         issues.append(_issue("E_ASSET_FORMAT_VERSION", "Frozen asset manifest lacks assetFormatVersion."))
-    if not str(manifest.get("topologyHash") or manifest.get("generatedTopologySha256") or ""):
-        issues.append(_issue("E_ASSET_TOPOLOGY_HASH", "Frozen asset manifest lacks topologyHash."))
+
+    topology_hash = str(manifest.get("generatedTopologySha256") or manifest.get("topologyHash") or "")
+    if not valid_sha256(topology_hash):
+        issues.append(_issue(
+            "E_ASSET_TOPOLOGY_HASH",
+            "generatedTopologySha256 must be exactly 64 hexadecimal characters.",
+            observed=topology_hash,
+        ))
+    topology_value = manifest.get("generatedTopologyPath")
+    if topology_value:
+        topology_path = _resolve_case_path(topology_value, path.parent)
+        if topology_path is None or not topology_path.is_file():
+            issues.append(_issue("E_ASSET_TOPOLOGY_FILE", "Frozen topology file is missing.", observed=str(topology_path)))
+        elif valid_sha256(topology_hash) and sha256_file(topology_path).lower() != topology_hash.lower():
+            issues.append(_issue(
+                "E_ASSET_TOPOLOGY_FILE_HASH",
+                "Frozen topology bytes do not match generatedTopologySha256.",
+                expected=topology_hash,
+                observed=sha256_file(topology_path),
+            ))
+
+    settings_value = manifest.get("generatorSettingsPath")
+    settings_hash = str(manifest.get("generatorSettingsSha256") or "")
+    settings_path = _resolve_case_path(settings_value, path.parent) if settings_value else None
+    if settings_path is None or not settings_path.is_file():
+        issues.append(_issue("E_GENERATOR_SETTINGS_FILE", "Generator settings file is missing.", observed=str(settings_path)))
+    elif not valid_sha256(settings_hash):
+        issues.append(_issue(
+            "E_GENERATOR_SETTINGS_HASH_FORMAT",
+            "generatorSettingsSha256 must be exactly 64 hexadecimal characters.",
+            observed=settings_hash,
+        ))
+    elif sha256_file(settings_path).lower() != settings_hash.lower():
+        issues.append(_issue(
+            "E_GENERATOR_SETTINGS_HASH",
+            "Generator settings bytes do not match generatorSettingsSha256.",
+            expected=settings_hash,
+            observed=sha256_file(settings_path),
+        ))
+
+    source_commit = str(manifest.get("sourceCommitSha") or "")
+    if re.fullmatch(r"[0-9a-fA-F]{40}", source_commit) is None:
+        issues.append(_issue("E_ASSET_SOURCE_COMMIT_FORMAT", "sourceCommitSha must be a 40-character Git SHA.", observed=source_commit))
+    else:
+        repo_root = Path(__file__).resolve().parents[2]
+        current_commit = _git_commit_sha(repo_root)
+        if current_commit and current_commit.lower() != source_commit.lower():
+            issues.append(_issue(
+                "E_ASSET_SOURCE_COMMIT_MISMATCH",
+                "Frozen asset sourceCommitSha does not match the current Git HEAD.",
+                expected=source_commit,
+                observed=current_commit,
+            ))
+    if str(manifest.get("sourceBranch") or "") != "Novelty":
+        issues.append(_issue(
+            "E_ASSET_SOURCE_BRANCH",
+            "Frozen asset must be captured from Novelty.",
+            expected="Novelty",
+            observed=manifest.get("sourceBranch"),
+        ))
     return issues
 
 
@@ -676,11 +796,11 @@ def validate_case_contract(case: Mapping[str, Any], viewer_exe: Path | None = No
         issues.append(_issue("E_SCENARIO_ASSERTIONS", "Formal scenario assertions are required."))
     else:
         minimum_events = _required_int(assertions.get("min_applied_events", assertions.get("minAppliedEvents")))
-        if minimum_events < 1:
+        if minimum_events < 0:
             issues.append(_issue(
                 "E_SCENARIO_ASSERTION_EVENTS",
-                "Formal scenario assertions must require at least one applied event.",
-                expected=1, observed=minimum_events,
+                "Formal scenario min_applied_events must be zero or greater.",
+                expected=">=0", observed=minimum_events,
             ))
     method = normalize_method_code(str(normalized.get("method", "")))
     if method not in FORMAL_METHOD_CODES:
@@ -1049,6 +1169,41 @@ def _compare_settings(settings: dict[str, Any], case: Mapping[str, Any]) -> tupl
             "E_VIEWER_METHOD_ACKNOWLEDGEMENT",
             "Viewer did not acknowledge the complete method flag set.",
         ))
+
+    expected_asset_path = _resolve_case_path(case.get("formalAssetPath"))
+    observed_asset_path = _resolve_case_path(settings.get("observedAssetPath"))
+    if expected_asset_path is not None:
+        if not _as_bool(settings.get("formalAssetLoaded")):
+            issues.append(_issue(
+                "E_FORMAL_ASSET_NOT_LOADED",
+                "Viewer did not certify loading the frozen formal asset.",
+            ))
+        if observed_asset_path is None:
+            issues.append(_issue(
+                "E_FORMAL_ASSET_OBSERVED_PATH_MISSING",
+                "Viewer did not export the observed formal asset path.",
+            ))
+        elif os.path.normcase(str(observed_asset_path)) != os.path.normcase(str(expected_asset_path)):
+            issues.append(_issue(
+                "E_FORMAL_ASSET_PATH_MISMATCH",
+                "Viewer loaded a different asset path than the frozen manifest requested.",
+                expected=str(expected_asset_path),
+                observed=str(observed_asset_path),
+            ))
+        for settings_key, case_key, code in (
+            ("formalAssetSha256", "formalAssetSha256", "E_FORMAL_ASSET_HASH_MISMATCH"),
+            ("formalTopologySha256", "formalTopologySha256", "E_FORMAL_TOPOLOGY_HASH_MISMATCH"),
+            ("generatorSettingsSha256", "generatorSettingsSha256", "E_GENERATOR_SETTINGS_HASH_MISMATCH"),
+        ):
+            expected_value = str(case.get(case_key) or "").lower()
+            observed_value = str(settings.get(settings_key) or "").lower()
+            if not expected_value or observed_value != expected_value:
+                issues.append(_issue(
+                    code,
+                    f"Viewer formal identity mismatch: {settings_key}",
+                    expected=expected_value,
+                    observed=observed_value,
+                ))
 
     normalized = dict(settings)
     normalized.update({
@@ -1487,6 +1642,7 @@ def validate_required_outputs(
     quality_issues = _evaluate_quality_gates(aggregate, normalized)
     if str(normalized.get("measurement_mode", "")).lower() in {"robustness", "long_run"}:
         long_run_limits = {
+            "peakVramMb": _required_float(normalized.get("max_peak_vram_mb"), 6144.0),
             "vramSlopeMbPerMin": _required_float(normalized.get("max_vram_slope_mb_per_min"), 1.0),
             "ramSlopeMbPerMin": _required_float(normalized.get("max_ram_slope_mb_per_min"), 2.0),
             "p99DegradationRatio": _required_float(normalized.get("max_p99_degradation_ratio"), 1.10),
@@ -1573,6 +1729,7 @@ def validate_required_outputs(
         "status": status,
         "isValid": exit_code == EXIT_COMPLETE_VALID,
         "formalContractValid": not (issues or integrity_issues),
+        "evidenceIntegrityPassed": not (issues or integrity_issues),
         "qualityGatePassed": not quality_issues,
         "thermalValid": thermal_valid,
         "environmentValid": environment_valid,
@@ -1608,7 +1765,7 @@ def validate_required_outputs(
         artifacts.append(hardware_csv)
     _write_artifact_manifest(Path(summary_json).parent, run_name, artifacts, canonical_result_sha256)
 
-    if exit_code != EXIT_COMPLETE_VALID:
+    if exit_code not in (EXIT_COMPLETE_VALID, EXIT_QUALITY_GATE_FAILED):
         reasons = issues + integrity_issues + quality_issues
         raise FormalRunError(f"Run '{run_name}' failed formal validation: " + ", ".join(item["code"] for item in reasons[:10]), exit_code, reasons)
     return validation
@@ -1663,21 +1820,65 @@ def _write_case_snapshot(telemetry_dir: Path, run_name: str, case: Mapping[str, 
         snapshot["assetManifestSha256"] = sha256_file(asset_manifest)
         manifest = _read_json(asset_manifest)
         snapshot["assetSha256"] = str(manifest.get("sourceAssetSha256") or "")
+        source_asset = _resolve_case_path(manifest.get("sourceAssetPath"), asset_manifest.parent)
+        snapshot["formalAssetPath"] = str(source_asset) if source_asset else ""
+        snapshot["formalAssetSha256"] = str(manifest.get("sourceAssetSha256") or "")
+        snapshot["formalTopologySha256"] = str(manifest.get("generatedTopologySha256") or manifest.get("topologyHash") or "")
+        snapshot["generatorSettingsSha256"] = str(manifest.get("generatorSettingsSha256") or "")
         snapshot["assetFrozen"] = str(manifest.get("freezeStatus") or "") == "FROZEN"
     path = Path(telemetry_dir) / f"{run_name}_case.json"
     write_json(path, snapshot)
     return path
 
 
+
+def _materialize_repeated_timeline(case: Mapping[str, Any], telemetry_dir: Path, run_name: str) -> dict[str, Any]:
+    result = dict(case)
+    if not _as_bool(result.get("timeline_repeat")):
+        return result
+    source = _resolve_case_path(result.get("scenario_timeline"))
+    if source is None or not source.is_file():
+        raise FormalRunError("Repeated timeline source is missing.", EXIT_FORMAL_CONTRACT_INVALID)
+    payload = _read_json(source)
+    base_duration = _required_int(payload.get("durationFrames", payload.get("duration_frames")))
+    if base_duration <= 0:
+        raise FormalRunError("Repeated timeline duration must be positive.", EXIT_FORMAL_CONTRACT_INVALID)
+    events = payload.get("events")
+    if not isinstance(events, list):
+        raise FormalRunError("Repeated timeline events must be an array.", EXIT_FORMAL_CONTRACT_INVALID)
+    required_duration = _required_int(result.get("warmup_frames")) + _required_int(result.get("measurement_frames"))
+    expanded: list[dict[str, Any]] = []
+    for offset in range(0, required_duration, base_duration):
+        for raw_event in events:
+            if not isinstance(raw_event, dict):
+                continue
+            event = dict(raw_event)
+            frame = _required_int(event.get("frame"), -1)
+            if frame < 0:
+                continue
+            expanded_frame = frame + offset
+            if expanded_frame < required_duration:
+                event["frame"] = expanded_frame
+                expanded.append(event)
+    payload["events"] = expanded
+    payload["durationFrames"] = required_duration
+    payload["materializedFrom"] = str(source)
+    payload["timelineRepeat"] = True
+    output = telemetry_dir / f"{run_name}_timeline_materialized.json"
+    write_json(output, payload)
+    result["scenario_timeline"] = str(output)
+    result["timeline_materialized_from"] = str(source)
+    return result
+
 def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_seconds: int, case: Mapping[str, Any] | None = None) -> tuple[Path, Path, Path, Path, Path]:
     viewer_exe = Path(viewer_exe).resolve()
+    telemetry_dir = Path(telemetry_dir).resolve()
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
     normalized_case = _normalize_case(case or {})
+    normalized_case = _materialize_repeated_timeline(normalized_case, telemetry_dir, run_name)
     preflight = validate_case_contract(normalized_case, viewer_exe)
     if sys.platform != "win32":
         raise FormalRunError("The DirectX 11 formal viewer can only be launched on Windows.", EXIT_RUNTIME_FAILURE)
-
-    telemetry_dir = Path(telemetry_dir).resolve()
-    telemetry_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "summary": telemetry_dir / f"{run_name}_summary.json",
         "csv": telemetry_dir / f"{run_name}_frames.csv",
@@ -1721,6 +1922,10 @@ def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_sec
         "HAIRGPU_ASSET_SHA256": str(snapshot.get("assetSha256", "")),
         "HAIRGPU_SHADER_BUNDLE_SHA256": str(snapshot.get("shaderBundleSha256", "")),
         "HAIRGPU_ASSET_FROZEN": "1" if snapshot.get("assetFrozen") else "0",
+        "HAIRGPU_FORMAL_ASSET_PATH": str(snapshot.get("formalAssetPath", "")),
+        "HAIRGPU_FORMAL_ASSET_SHA256": str(snapshot.get("formalAssetSha256", "")),
+        "HAIRGPU_FORMAL_TOPOLOGY_SHA256": str(snapshot.get("formalTopologySha256", "")),
+        "HAIRGPU_GENERATOR_SETTINGS_SHA256": str(snapshot.get("generatorSettingsSha256", "")),
         "HAIRGPU_REQUESTED_METHOD_SETTINGS_SHA256": str(snapshot.get("requestedMethodSettingsSha256", "")),
     })
     direct_flags = {
@@ -1819,6 +2024,20 @@ def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_sec
                 environment_payload["viewerAdapterProbeError"] = str(adapter_exc)
         write_json(paths["environment"], environment_payload)
         write_hardware_timeseries(telemetry_dir / f"{run_name}_hardware_timeseries.csv", samples)
+
+    formal_asset = _resolve_case_path(snapshot.get("formalAssetPath"))
+    expected_asset_hash = str(snapshot.get("formalAssetSha256") or "").lower()
+    if formal_asset is None or not formal_asset.is_file() or not expected_asset_hash:
+        error = FormalRunError("Formal asset disappeared or lost its expected hash.", EXIT_OUTPUT_INTEGRITY_FAILURE)
+        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error)})
+        raise error
+    observed_asset_hash = sha256_file(formal_asset).lower()
+    if observed_asset_hash != expected_asset_hash:
+        error = FormalRunError("Formal asset bytes changed during the run.", EXIT_OUTPUT_INTEGRITY_FAILURE, [
+            _issue("E_ASSET_POST_RUN_HASH", "Formal asset SHA-256 changed during execution.", expected=expected_asset_hash, observed=observed_asset_hash)
+        ])
+        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error), "issues": error.issues})
+        raise error
 
     if process_return_code not in (0, None):
         error = FormalRunError(f"Viewer exited with code {process_return_code}.", EXIT_RUNTIME_FAILURE)

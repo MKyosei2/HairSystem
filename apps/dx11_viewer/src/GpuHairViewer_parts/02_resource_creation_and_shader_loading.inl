@@ -28,6 +28,12 @@
             return false;
         }
 
+        if (EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_SHADER_SELF_TEST")))
+        {
+            m_running = false;
+            return true;
+        }
+
         RebuildActiveSetFoundation();
         RecomputeAssetBounds();
         AutoFrameCameraToAsset(true);

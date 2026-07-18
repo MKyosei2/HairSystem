@@ -8,7 +8,9 @@ import json
 import math
 import os
 import random
+import re
 import shutil
+import subprocess
 import statistics
 import sys
 import zipfile
@@ -23,6 +25,7 @@ from hairgpu_final_db import FinalStageDatabase, RuntimeRunMetadata
 from hairgpu_final_excel import export_workbook
 from hairgpu_final_run import (
     FormalRunError,
+    _validate_asset_manifest,
     canonical_json_sha256,
     normalize_method_code,
     run_viewer,
@@ -357,8 +360,94 @@ def expand_run_matrix(config: dict[str, Any], base_dir: Path) -> list[dict[str, 
                 blocks.append(block)
     if bool(statistics_config.get("randomize_block_order", True)):
         rng.shuffle(blocks)
-    return [run for block in blocks for run in block]
+    base_runs = [run for block in blocks for run in block]
+    return _append_special_runs(config, base_dir, base_runs)
 
+
+
+def _append_special_runs(config: dict[str, Any], base_dir: Path, base_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output = list(base_runs)
+
+    def clone_base(method: str, scenario: str, seed: int) -> dict[str, Any] | None:
+        method = normalize_method_code(method)
+        for candidate in base_runs:
+            if (normalize_method_code(str(candidate.get("method"))) == method and
+                str(candidate.get("scenario")) == str(scenario) and
+                int(candidate.get("seed", -1)) == int(seed)):
+                result = copy.deepcopy(candidate)
+                for key in ("summary_json", "frame_csv", "frame_jsonl", "settings_json"):
+                    result.pop(key, None)
+                return result
+        return None
+
+    for replay in config.get("determinism_replays", []):
+        if not isinstance(replay, dict):
+            continue
+        method = normalize_method_code(str(replay.get("method", "")))
+        scenario = str(replay.get("scenario", ""))
+        seed = int(replay.get("seed", 0))
+        group_id = str(replay.get("id") or f"DET__{method}__{scenario}__seed{seed}")
+        repetitions = max(int(replay.get("repetitions", 0)), 0)
+        for repetition in range(repetitions):
+            run = clone_base(method, scenario, seed)
+            if run is None:
+                continue
+            case_id = f"{_safe_name(group_id)}__rep{repetition:02d}"
+            run.update({
+                "case_id": case_id,
+                "run_name": case_id,
+                "repeat_index": repetition,
+                "measurement_mode": "determinism",
+                "special_run_kind": "determinism",
+                "special_run_id": group_id,
+                "execution_block": group_id,
+            })
+            run["settings_hash"] = canonical_json_sha256({
+                "base": run.get("settings_hash"), "special": "determinism",
+                "group": group_id, "repetition": repetition,
+            })
+            output.append(run)
+
+    for entry in config.get("long_runs", []):
+        if not isinstance(entry, dict):
+            continue
+        method = normalize_method_code(str(entry.get("method", "")))
+        scenario = str(entry.get("scenario", ""))
+        seed = int(entry.get("seed", 0))
+        run = clone_base(method, scenario, seed)
+        if run is None:
+            continue
+        special_id = str(entry.get("id") or f"LONG__{method}__{scenario}__seed{seed}")
+        run.update({
+            "case_id": special_id,
+            "run_name": special_id,
+            "measurement_mode": "robustness",
+            "measurement_frames": int(entry.get("measurement_frames", run.get("measurement_frames", 6000))),
+            "timeout_seconds": int(entry.get("timeout_seconds", run.get("timeout_seconds", 900))),
+            "timeline_repeat": bool(entry.get("timeline_repeat", True)),
+            "special_run_kind": "long_run",
+            "special_run_id": special_id,
+            "execution_block": special_id,
+        })
+        long_run_limits = dict(config.get("long_run_gates", {}))
+        for key in (
+            "max_peak_vram_mb",
+            "max_vram_slope_mb_per_min",
+            "max_ram_slope_mb_per_min",
+            "max_p99_degradation_ratio",
+            "max_query_unresolved_slope",
+        ):
+            if key in entry:
+                run[key] = entry[key]
+            elif key in long_run_limits:
+                run[key] = long_run_limits[key]
+        run["settings_hash"] = canonical_json_sha256({
+            "base": run.get("settings_hash"), "special": "long_run",
+            "id": special_id, "measurement_frames": run["measurement_frames"],
+            "limits": {key: run.get(key) for key in long_run_limits},
+        })
+        output.append(run)
+    return output
 
 def expected_telemetry_paths(
     base_dir: Path,
@@ -513,8 +602,16 @@ def validate_suite_manifest(
 
     repetitions = max(int(config.get("repetitions_per_seed", 1)), 1)
     expected_count = len(method_codes) * len(scenario_codes) * len(seeds) * repetitions
-    if len(runs) != expected_count:
-        issue("run_count", "Expanded run matrix is incomplete.", expected_count, len(runs))
+    normal_runs = [run for run in runs if not run.get("special_run_kind")]
+    if len(normal_runs) != expected_count:
+        issue("run_count", "Expanded normal run matrix is incomplete.", expected_count, len(normal_runs))
+    configured_specials = sum(
+        max(int(item.get("repetitions", 0)), 0)
+        for item in config.get("determinism_replays", []) if isinstance(item, dict)
+    ) + sum(1 for item in config.get("long_runs", []) if isinstance(item, dict))
+    selected_specials = sum(1 for run in runs if run.get("special_run_kind"))
+    if selected_specials > configured_specials:
+        issue("special_run_count", "Expanded special run matrix exceeds the configured count.", configured_specials, selected_specials)
     identities = [str(run.get("case_id") or run.get("run_name") or "") for run in runs]
     if len(identities) != len(set(identities)):
         issue("duplicate_case_id", "Run matrix contains duplicate case identities.")
@@ -533,6 +630,41 @@ def validate_suite_manifest(
     return issues
 
 
+
+def _repository_hygiene_issues(config: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    critical_files = [
+        ".gitignore", "Directory.Build.targets", "HairSystem.vcxproj",
+        "tools/final_stage/hairgpu_final_run.py",
+        "tools/final_stage/hairgpu_runtime_suite.py",
+        "docs/sample_assets/final_runtime_suite_template.json",
+        "docs/sample_assets/novelty01_100k_asset_manifest.json",
+    ]
+    for relative in critical_files:
+        path = repo_root / relative
+        if not path.is_file() or path.stat().st_size == 0:
+            issues.append({"code": "critical_file_missing_or_empty", "message": relative})
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
+            if re.match(r"^(<<<<<<<|=======|>>>>>>>)", line):
+                issues.append({"code": "merge_conflict_marker", "message": f"{relative}:{line_number}"})
+    try:
+        branch = subprocess.run(["git", "branch", "--show-current"], cwd=repo_root, capture_output=True, text=True, timeout=10).stdout.strip()
+        expected_branch = str(config.get("source", {}).get("required_branch", ""))
+        if expected_branch and branch != expected_branch:
+            issues.append({"code": "wrong_branch", "message": "Formal suite must run from the required branch.", "expected": expected_branch, "observed": branch})
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=repo_root, capture_output=True, text=True, timeout=10).stdout.strip()
+        if bool(config.get("preflight", {}).get("require_clean_git", True)) and dirty:
+            issues.append({"code": "dirty_worktree", "message": "Formal suite requires a clean Git worktree.", "observed": dirty.splitlines()[:20]})
+    except Exception as exc:
+        issues.append({"code": "git_probe_failed", "message": str(exc)})
+    viewer = repo_root / "bin" / "Release" / "HairSystem"
+    for name in ("PENDING_STEP0_REAL.ini", "STEP0_FORCE_RUN.ini", "STEP0_REAL_MEASUREMENT_PENDING.txt", "STEP0_REAL_MEASUREMENT_READY.txt"):
+        if (viewer / name).exists() or (viewer / "profile_results" / name).exists():
+            issues.append({"code": "step0_pending_collision", "message": name})
+    return issues
+
 def run_preflight(
     config: dict[str, Any],
     config_path: Path,
@@ -540,6 +672,7 @@ def run_preflight(
     viewer_override: Path | None = None,
 ) -> dict[str, Any]:
     issues = validate_suite_manifest(config, runs)
+    issues.extend(_repository_hygiene_issues(config))
     base_dir = config_path.parent
     defaults = dict(config.get("run_defaults", {}))
     viewer = viewer_override or resolve_path(base_dir, defaults.get("viewer_exe"))
@@ -569,6 +702,13 @@ def run_preflight(
                         "message": "Asset manifest is not frozen.",
                     }
                 )
+            for asset_issue in _validate_asset_manifest(asset_manifest):
+                issues.append({
+                    "code": asset_issue.get("code", "asset_manifest_invalid"),
+                    "message": asset_issue.get("message", "Frozen asset manifest validation failed."),
+                    "expected": asset_issue.get("expected"),
+                    "observed": asset_issue.get("observed"),
+                })
     for scenario in config.get("scenarios", []):
         entry = _normalize_scenario_entry(scenario)
         timeline = resolve_path(base_dir, entry.get("timeline"))
@@ -849,6 +989,7 @@ def build_long_run_rows(
     raw_runs: list[dict[str, Any]], limits: dict[str, Any]
 ) -> list[dict[str, Any]]:
     """Apply leak/degradation gates to robustness and explicitly named long runs."""
+    max_peak_vram = float(limits.get("max_peak_vram_mb", 6144.0))
     max_vram_slope = float(limits.get("max_vram_slope_mb_per_min", 1.0))
     max_ram_slope = float(limits.get("max_ram_slope_mb_per_min", 2.0))
     max_p99_ratio = float(limits.get("max_p99_degradation_ratio", 1.10))
@@ -860,6 +1001,7 @@ def build_long_run_rows(
         if mode not in {"robustness", "long_run"} and "long" not in run_name:
             continue
         checks = {
+            "peak_vram_mb": (row.get("peak_vram_mb"), max_peak_vram),
             "vram_slope_mb_per_min": (row.get("vram_slope_mb_per_min"), max_vram_slope),
             "ram_slope_mb_per_min": (row.get("ram_slope_mb_per_min"), max_ram_slope),
             "p99_degradation_ratio": (row.get("p99_degradation_ratio"), max_p99_ratio),
@@ -1206,6 +1348,10 @@ def main() -> int:
     raw_valid_runs = [
         dict(row) for row in db.fetch_runs() if int(row["is_valid"] or 0) == 1
     ]
+    quality_failed_runs = [
+        row for row in raw_valid_runs
+        if int(row.get("quality_gate_passed") or 0) != 1
+    ]
 
     baselines = {
         "representation": normalize_method_code(
@@ -1241,6 +1387,11 @@ def main() -> int:
     goal_rows = build_goal_rows(summary, dict(config.get("goals", {})))
     determinism_rows = build_determinism_rows(raw_valid_runs, dict(config.get("statistics", {})))
     long_run_rows = build_long_run_rows(raw_valid_runs, dict(config.get("long_run_gates", {})))
+    valid_run_names = {str(row.get("run_name") or "") for row in raw_valid_runs}
+    expected_determinism_names = {str(run["run_name"]) for run in runs if run.get("special_run_kind") == "determinism"}
+    expected_long_run_names = {str(run["run_name"]) for run in runs if run.get("special_run_kind") == "long_run"}
+    missing_determinism_runs = sorted(expected_determinism_names - valid_run_names)
+    missing_long_runs = sorted(expected_long_run_names - valid_run_names)
     db.close()
 
     export_workbook(db_path, excel_path)
@@ -1274,7 +1425,7 @@ def main() -> int:
     failed_long_runs = [row for row in long_run_rows if row["passed"] != "yes"]
     suite_status = (
         "complete_valid"
-        if not failed_runs and not missing_coverage and not failed_determinism and not failed_long_runs
+        if not failed_runs and not quality_failed_runs and not missing_coverage and not failed_determinism and not failed_long_runs and not missing_determinism_runs and not missing_long_runs
         else "complete_invalid"
     )
     payload: dict[str, Any] = {
@@ -1285,6 +1436,15 @@ def main() -> int:
         "skippedRunNames": skipped_names,
         "invalidRunCount": len(failed_runs),
         "failedRuns": failed_runs,
+        "qualityGateFailedRuns": [
+            {
+                "run_name": row.get("run_name"),
+                "method_code": row.get("method_code"),
+                "scenario_code": row.get("scenario_code"),
+                "validation_status": row.get("validation_status"),
+            }
+            for row in quality_failed_runs
+        ],
         "summary": summary,
         "methodSummary": method_rows,
         "scenarioSummary": scenario_rows,
@@ -1295,6 +1455,8 @@ def main() -> int:
         "goalChecks": goal_rows,
         "determinismChecks": determinism_rows,
         "longRunChecks": long_run_rows,
+        "missingDeterminismRuns": missing_determinism_runs,
+        "missingLongRuns": missing_long_runs,
         "preflight": preflight,
         "databasePath": str(db_path),
         "excelPath": str(excel_path),

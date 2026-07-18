@@ -654,69 +654,138 @@
 
         const float initialSegmentLength = SegmentLengthForParticleCount(m_builderParticlesPerStrand);
 
-        // The formal 100k asset is expensive to procedurally rebuild. Reuse the existing
-        // Hair binary I/O path and cache only topology-identical assets. This changes no
-        // simulation, novelty, or strand-count semantics.
-        wchar_t assetCacheModulePath[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
-        const std::filesystem::path assetCacheDirectory =
-            std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
-        const std::wstring assetCacheFileName =
-            L"sample_hybrid_cache_v1_g" + std::to_wstring(m_builderGuideCount) +
-            L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
-            L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
-        const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
-
-        const uint64_t expectedCachedStrands =
-            static_cast<uint64_t>(m_builderGuideCount) *
-            static_cast<uint64_t>(m_builderFollowersPerGuide + 1u);
-        const uint64_t expectedCachedPoints =
-            expectedCachedStrands * static_cast<uint64_t>(m_builderParticlesPerStrand);
-
-        hairgpu::HairAsset cachedAsset = {};
-        std::string assetCacheError;
-        bool loadedCachedAsset = false;
-        std::error_code assetCacheEc;
-        if (std::filesystem::exists(assetCachePath, assetCacheEc) && !assetCacheEc &&
-            hairgpu::LoadHairAssetFromHairBinary(assetCachePath, cachedAsset, assetCacheError))
+        // HAIRGPU_FORMAL_ASSET_BINDING_V1: a formal run may never fall back to a generated/cache asset.
+        if (m_experimentCase.enabled)
         {
-            loadedCachedAsset =
-                cachedAsset.guideStrandCount == m_builderGuideCount &&
-                cachedAsset.followerStrandCount == m_builderGuideCount * m_builderFollowersPerGuide &&
-                cachedAsset.particlesPerStrand == m_builderParticlesPerStrand &&
-                cachedAsset.strands.size() == expectedCachedStrands &&
-                cachedAsset.restPoints.size() == expectedCachedPoints &&
-                cachedAsset.pointWidths.size() == expectedCachedPoints &&
-                cachedAsset.rootBindings.size() == expectedCachedStrands &&
-                cachedAsset.followData.size() == expectedCachedStrands;
-        }
+            const std::wstring formalAssetPathText = GetEnvironmentVariableString(L"HAIRGPU_FORMAL_ASSET_PATH");
+            if (formalAssetPathText.empty())
+            {
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
+                    L"HAIRGPU_FORMAL_ASSET_PATH is missing. Formal runs cannot use the interactive asset cache.");
+                return false;
+            }
 
-        if (loadedCachedAsset)
-        {
-            m_asset = std::move(cachedAsset);
-            m_lastAssetSource = L"Sample Hybrid Binary Cache";
-            m_lastImportStatus = L"Validated binary asset cache loaded";
+            m_experimentCase.formalAssetPath = formalAssetPathText;
+            m_experimentCase.formalAssetSha256 = GetEnvironmentVariableString(L"HAIRGPU_FORMAL_ASSET_SHA256");
+            m_experimentCase.formalTopologySha256 = GetEnvironmentVariableString(L"HAIRGPU_FORMAL_TOPOLOGY_SHA256");
+            m_experimentCase.generatorSettingsSha256 = GetEnvironmentVariableString(L"HAIRGPU_GENERATOR_SETTINGS_SHA256");
+            if (m_experimentCase.formalAssetSha256.empty() ||
+                m_experimentCase.formalTopologySha256.empty() ||
+                m_experimentCase.generatorSettingsSha256.empty())
+            {
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
+                    L"Formal asset, topology, and generator-settings hashes are required.");
+                return false;
+            }
+
+            const std::filesystem::path formalAssetPath(formalAssetPathText);
+            std::error_code formalAssetFileError;
+            hairgpu::HairAsset formalAsset = {};
+            std::string formalAssetError;
+            if (!std::filesystem::is_regular_file(formalAssetPath, formalAssetFileError) || formalAssetFileError ||
+                !hairgpu::LoadHairAssetFromHairBinary(formalAssetPath, formalAsset, formalAssetError))
+            {
+                const std::wstring details = L"Failed to load the frozen formal asset: " + formalAssetPath.wstring() +
+                    L"\r\n" + Utf8ToWide(formalAssetError);
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure", details);
+                return false;
+            }
+
+            const uint64_t expectedFormalStrands =
+                static_cast<uint64_t>(kFixedGuideCount) *
+                static_cast<uint64_t>(kFixedFollowersPerGuide + 1u);
+            const uint64_t expectedFormalPoints =
+                expectedFormalStrands * static_cast<uint64_t>(kFixedParticlesPerStrand);
+            const bool formalShapeValid =
+                formalAsset.guideStrandCount == kFixedGuideCount &&
+                formalAsset.followerStrandCount == kFixedGuideCount * kFixedFollowersPerGuide &&
+                formalAsset.particlesPerStrand == kFixedParticlesPerStrand &&
+                formalAsset.strands.size() == expectedFormalStrands &&
+                formalAsset.restPoints.size() == expectedFormalPoints &&
+                formalAsset.pointWidths.size() == expectedFormalPoints &&
+                formalAsset.rootBindings.size() == expectedFormalStrands &&
+                formalAsset.followData.size() == expectedFormalStrands;
+            if (!formalShapeValid)
+            {
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
+                    L"The frozen asset does not satisfy 4000 guides / 24 followers / 128 points / 100000 displayed strands.");
+                return false;
+            }
+
+            std::error_code canonicalError;
+            const std::filesystem::path observedPath = std::filesystem::weakly_canonical(formalAssetPath, canonicalError);
+            m_asset = std::move(formalAsset);
+            m_experimentCase.observedAssetPath = canonicalError ? formalAssetPath.wstring() : observedPath.wstring();
+            m_experimentCase.formalAssetLoaded = true;
+            m_lastAssetSource = L"Frozen Formal Asset";
+            m_lastImportStatus = L"Frozen formal asset loaded and topology-count validated";
         }
         else
         {
-            m_asset = BuildSampleHybridHairAsset(
-                m_builderGuideCount,
-                m_builderFollowersPerGuide,
-                m_builderParticlesPerStrand,
-                initialSegmentLength);
-            // Avoid double wig styling in viewer; sample/import paths already shape the asset.
-            EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
-            m_lastAssetSource = L"Sample Hybrid (cache rebuilt)";
-            if (m_lastImportStatus.empty())
+            // The formal 100k asset is expensive to procedurally rebuild. Reuse the existing
+            // Hair binary I/O path and cache only topology-identical assets. This changes no
+            // simulation, novelty, or strand-count semantics.
+            wchar_t assetCacheModulePath[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
+            const std::filesystem::path assetCacheDirectory =
+                std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
+            const std::wstring assetCacheFileName =
+                L"sample_hybrid_cache_v1_g" + std::to_wstring(m_builderGuideCount) +
+                L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
+                L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
+            const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
+
+            const uint64_t expectedCachedStrands =
+                static_cast<uint64_t>(m_builderGuideCount) *
+                static_cast<uint64_t>(m_builderFollowersPerGuide + 1u);
+            const uint64_t expectedCachedPoints =
+                expectedCachedStrands * static_cast<uint64_t>(m_builderParticlesPerStrand);
+
+            hairgpu::HairAsset cachedAsset = {};
+            std::string assetCacheError;
+            bool loadedCachedAsset = false;
+            std::error_code assetCacheEc;
+            if (std::filesystem::exists(assetCachePath, assetCacheEc) && !assetCacheEc &&
+                hairgpu::LoadHairAssetFromHairBinary(assetCachePath, cachedAsset, assetCacheError))
             {
-                m_lastImportStatus = L"Sample asset active";
+                loadedCachedAsset =
+                    cachedAsset.guideStrandCount == m_builderGuideCount &&
+                    cachedAsset.followerStrandCount == m_builderGuideCount * m_builderFollowersPerGuide &&
+                    cachedAsset.particlesPerStrand == m_builderParticlesPerStrand &&
+                    cachedAsset.strands.size() == expectedCachedStrands &&
+                    cachedAsset.restPoints.size() == expectedCachedPoints &&
+                    cachedAsset.pointWidths.size() == expectedCachedPoints &&
+                    cachedAsset.rootBindings.size() == expectedCachedStrands &&
+                    cachedAsset.followData.size() == expectedCachedStrands;
             }
 
-            std::filesystem::create_directories(assetCacheDirectory, assetCacheEc);
-            if (!assetCacheEc)
+            if (loadedCachedAsset)
             {
-                std::string saveCacheError;
-                hairgpu::SaveHairAssetToHairBinary(assetCachePath, m_asset, saveCacheError);
+                m_asset = std::move(cachedAsset);
+                m_lastAssetSource = L"Sample Hybrid Binary Cache";
+                m_lastImportStatus = L"Validated binary asset cache loaded";
+            }
+            else
+            {
+                m_asset = BuildSampleHybridHairAsset(
+                    m_builderGuideCount,
+                    m_builderFollowersPerGuide,
+                    m_builderParticlesPerStrand,
+                    initialSegmentLength);
+                // Avoid double wig styling in viewer; sample/import paths already shape the asset.
+                EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
+                m_lastAssetSource = L"Sample Hybrid (cache rebuilt)";
+                if (m_lastImportStatus.empty())
+                {
+                    m_lastImportStatus = L"Sample asset active";
+                }
+
+                std::filesystem::create_directories(assetCacheDirectory, assetCacheEc);
+                if (!assetCacheEc)
+                {
+                    std::string saveCacheError;
+                    hairgpu::SaveHairAssetToHairBinary(assetCachePath, m_asset, saveCacheError);
+                }
             }
         }
         m_activeSetBudget.maxActiveClusters = 6u;

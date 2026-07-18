@@ -12,10 +12,14 @@ from typing import Any
 
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+MANIFEST_VERSION = "novelty01-100k-v1.4"
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(value, dict):
+        raise SystemExit(f"Expected a JSON object: {path}")
+    return value
 
 
 def sha256_file(path: Path) -> str:
@@ -26,34 +30,15 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def git_head(repo_root: Path) -> str:
+def git_value(repo_root: Path, *args: str) -> str:
     try:
         completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=20,
+            ["git", *args], cwd=repo_root, check=False,
+            capture_output=True, text=True, timeout=20,
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         return ""
     return completed.stdout.strip() if completed.returncode == 0 else ""
-
-
-def git_clean(repo_root: Path) -> bool:
-    try:
-        completed = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=normal"],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-    except (FileNotFoundError, subprocess.SubprocessError):
-        return False
-    return completed.returncode == 0 and not completed.stdout.strip()
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -64,7 +49,7 @@ def find_repo_root(start: Path) -> Path | None:
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    encoded = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
         handle.write(encoded)
@@ -73,8 +58,9 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Freeze the novelty01 100k benchmark asset manifest using real local bytes.")
-    parser.add_argument("--manifest", required=True)
+    parser = argparse.ArgumentParser(description="Freeze the real Novelty01 100k asset without mutating the tracked template manifest.")
+    parser.add_argument("--template-manifest", "--manifest", dest="template_manifest", required=True)
+    parser.add_argument("--output-manifest", required=True)
     parser.add_argument("--asset", required=True)
     parser.add_argument("--generator-settings", required=True)
     topology_group = parser.add_mutually_exclusive_group(required=True)
@@ -82,61 +68,84 @@ def main() -> int:
     topology_group.add_argument("--topology-sha256")
     parser.add_argument("--operator", required=True)
     parser.add_argument("--repo-root")
-    parser.add_argument("--allow-dirty-worktree", action="store_true", help="Development only; not valid for final paper evidence.")
+    parser.add_argument("--allow-dirty-worktree", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    manifest_path = Path(args.manifest).resolve()
+    template_path = Path(args.template_manifest).resolve()
+    output_path = Path(args.output_manifest).resolve()
     asset_path = Path(args.asset).resolve()
-    generator_settings_path = Path(args.generator_settings).resolve()
-    topology_file = Path(args.topology_file).resolve() if args.topology_file else None
-    for path, label in ((manifest_path, "manifest"), (asset_path, "asset"), (generator_settings_path, "generator settings")):
-        if not path.exists() or not path.is_file():
-            raise SystemExit(f"Missing {label} file: {path}")
-    if topology_file is not None and (not topology_file.exists() or not topology_file.is_file()):
-        raise SystemExit(f"Missing topology file: {topology_file}")
+    settings_path = Path(args.generator_settings).resolve()
+    topology_path = Path(args.topology_file).resolve() if args.topology_file else None
+    for path, label in ((template_path, "template manifest"), (asset_path, "asset"), (settings_path, "generator settings")):
+        if not path.is_file():
+            raise SystemExit(f"Missing {label}: {path}")
+    if topology_path is not None and not topology_path.is_file():
+        raise SystemExit(f"Missing topology file: {topology_path}")
+    if output_path.exists() and not args.force:
+        raise SystemExit(f"Output manifest already exists: {output_path}. Use --force to replace it intentionally.")
 
-    payload = read_json(manifest_path)
-    if str(payload.get("freezeStatus", "")) == "FROZEN" and not args.force:
-        raise SystemExit("Manifest is already FROZEN. Use --force only after intentionally invalidating previous evidence.")
-
-    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(manifest_path.parent)
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(template_path.parent)
     if repo_root is None:
         raise SystemExit("Cannot locate the Git repository root.")
-    head = git_head(repo_root)
+    head = git_value(repo_root, "rev-parse", "HEAD")
+    branch = git_value(repo_root, "branch", "--show-current")
+    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
     if not COMMIT_PATTERN.fullmatch(head):
         raise SystemExit("Cannot resolve a valid Git HEAD commit.")
-    if not args.allow_dirty_worktree and not git_clean(repo_root):
-        raise SystemExit("Git worktree is dirty. Commit changes before freezing the evidence asset.")
+    if branch != "Novelty":
+        raise SystemExit(f"Asset freezing requires branch Novelty, observed: {branch or '<detached>'}")
+    if dirty and not args.allow_dirty_worktree:
+        raise SystemExit("Git worktree is dirty. Commit changes before freezing formal evidence.")
 
-    topology_sha256 = sha256_file(topology_file) if topology_file is not None else str(args.topology_sha256).lower()
+    topology_sha256 = sha256_file(topology_path) if topology_path else str(args.topology_sha256).lower()
     if not SHA256_PATTERN.fullmatch(topology_sha256):
         raise SystemExit("Topology SHA-256 must be exactly 64 hexadecimal characters.")
 
-    payload["manifestVersion"] = "novelty01-100k-v1.2"
-    payload["freezeStatus"] = "FROZEN"
-    payload["sourceAssetPath"] = str(asset_path)
-    payload["sourceAssetSha256"] = sha256_file(asset_path)
-    payload["sourceAssetSizeBytes"] = asset_path.stat().st_size
-    payload["generatedTopologySha256"] = topology_sha256
-    payload["generatorSettingsPath"] = str(generator_settings_path)
-    payload["generatorSettingsSha256"] = sha256_file(generator_settings_path)
-    payload["frozenAtUtc"] = datetime.now(timezone.utc).isoformat()
-    payload["frozenBy"] = args.operator
-    payload["sourceCommitSha"] = head.lower()
-    payload["freezeTool"] = "tools/final_stage/freeze_novelty01_asset.py"
-    payload["freezeToolVersion"] = "1.2"
-    payload.setdefault("evidenceGate", {})["rejectWhenFreezeStatusIsNot"] = "FROZEN"
-    payload["evidenceGate"]["rejectPlaceholderHashes"] = True
-    payload["evidenceGate"]["requireSameAssetHashAcrossAllMethodsAndSeeds"] = True
-    payload["evidenceGate"]["requireSourceCommitMatch"] = True
-    payload["evidenceGate"]["requireCleanGitWorktreeAtFreeze"] = not args.allow_dirty_worktree
+    payload = read_json(template_path)
+    generation = payload.setdefault("generation", {})
+    expected = {
+        "displayStrandCount": 100000,
+        "primaryGuideStrandCount": 4000,
+        "followersPerGuide": 24,
+        "particlesPerGuide": 128,
+        "solverIterations": 6,
+    }
+    mismatches = {key: (expected_value, generation.get(key)) for key, expected_value in expected.items() if generation.get(key) != expected_value}
+    if mismatches:
+        raise SystemExit(f"Template generation contract mismatch: {mismatches}")
 
-    backup = manifest_path.with_suffix(manifest_path.suffix + ".before_freeze")
-    if not backup.exists():
-        backup.write_bytes(manifest_path.read_bytes())
-    atomic_write_json(manifest_path, payload)
-    print(f"Frozen manifest: {manifest_path}")
+    payload.update({
+        "manifestVersion": MANIFEST_VERSION,
+        "freezeStatus": "FROZEN",
+        "sourceAssetPath": str(asset_path),
+        "sourceAssetSha256": sha256_file(asset_path),
+        "sourceAssetSizeBytes": asset_path.stat().st_size,
+        "generatedTopologySha256": topology_sha256,
+        "generatedTopologyPath": str(topology_path) if topology_path is not None else "",
+        "generatorSettingsPath": str(settings_path),
+        "generatorSettingsSha256": sha256_file(settings_path),
+        "frozenAtUtc": datetime.now(timezone.utc).isoformat(),
+        "frozenBy": args.operator,
+        "sourceCommitSha": head.lower(),
+        "sourceBranch": branch,
+        "freezeTool": "tools/final_stage/freeze_novelty01_asset.py",
+        "freezeToolVersion": "1.4",
+    })
+    gate = payload.setdefault("evidenceGate", {})
+    gate.update({
+        "rejectWhenFreezeStatusIsNot": "FROZEN",
+        "rejectPlaceholderHashes": True,
+        "requireExactSha256Format": True,
+        "requireSameAssetHashAcrossAllMethodsAndSeeds": True,
+        "requireSourceCommitMatch": True,
+        "requireCleanGitWorktreeAtFreeze": not args.allow_dirty_worktree,
+        "requireLocalFileHashVerification": True,
+        "requireViewerObservedAssetPathMatch": True,
+        "requirePreAndPostRunAssetHashMatch": True,
+    })
+    atomic_write_json(output_path, payload)
+    print(f"Frozen manifest: {output_path}")
     print(f"Asset SHA-256: {payload['sourceAssetSha256']}")
     print(f"Topology SHA-256: {payload['generatedTopologySha256']}")
     print(f"Generator settings SHA-256: {payload['generatorSettingsSha256']}")

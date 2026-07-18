@@ -11,7 +11,9 @@
     runner files, but it requires the executable to be allowed by Windows policy.
   -->
   <PropertyGroup>
-    <HairGpuStep0ProfileEnabled Condition="'$(HairGpuStep0ProfileEnabled)' == ''">true</HairGpuStep0ProfileEnabled>
+    <HairGpuStep0ProfileEnabled Condition="'$(HairGpuStep0ProfileEnabled)' == ''">false</HairGpuStep0ProfileEnabled>
+    <HairGpuFormalBuild Condition="'$(HairGpuFormalBuild)' == ''">false</HairGpuFormalBuild>
+    <HairGpuFormalSelfTest Condition="'$(HairGpuFormalSelfTest)' == ''">false</HairGpuFormalSelfTest>
     <HairGpuProfileRoot>$(MSBuildThisFileDirectory)profile_results</HairGpuProfileRoot>
     <HairGpuProfileTimestamp Condition="'$(HairGpuProfileTimestamp)' == ''">$([System.DateTime]::Now.ToString('yyyyMMdd_HHmmss'))</HairGpuProfileTimestamp>
     <HairGpuProfileTimestampHuman Condition="'$(HairGpuProfileTimestampHuman)' == ''">$([System.DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))</HairGpuProfileTimestampHuman>
@@ -60,7 +62,7 @@
     </HairGpuStep0Preset>
   </ItemGroup>
 
-  <Target Name="HairGpuStep0CreateCompletePolicySafeProfile" AfterTargets="Build" Condition="'$(HairGpuStep0ProfileEnabled)' == 'true' and '$(TargetPath)' != ''">
+  <Target Name="HairGpuStep0CreateCompletePolicySafeProfile" AfterTargets="Build" Condition="'$(HairGpuStep0ProfileEnabled)' == 'true' and '$(HairGpuFormalBuild)' != 'true' and '$(TargetPath)' != ''">
     <MakeDir Directories="$(HairGpuProfileRoot)" />
     <MakeDir Directories="$(HairGpuStep0RunDir)" />
     <MakeDir Directories="@(HairGpuStep0Preset->'$(HairGpuStep0RunDir)\%(Identity)')" />

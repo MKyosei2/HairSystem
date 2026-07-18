@@ -97,6 +97,10 @@ class FinalStageDatabase:
         "ram_slope_mb_per_min": "REAL",
         "p99_degradation_ratio": "REAL",
         "query_unresolved_slope": "REAL",
+        "formal_asset_path": "TEXT",
+        "formal_asset_sha256": "TEXT",
+        "formal_topology_sha256": "TEXT",
+        "generator_settings_sha256": "TEXT",
     }
 
     _FRAME_MIGRATION_COLUMNS: dict[str, str] = {
@@ -604,6 +608,10 @@ class FinalStageDatabase:
             "observed_shader_bytecode_sha256": sv("observedShaderBytecodeSha256"),
             "asset_sha256": sv("assetSha256"),
             "asset_manifest_sha256": sv("assetManifestSha256"),
+            "formal_asset_path": settings.get("observedAssetPath") or settings.get("formalAssetPath"),
+            "formal_asset_sha256": settings.get("formalAssetSha256") or sv("assetSha256"),
+            "formal_topology_sha256": settings.get("formalTopologySha256"),
+            "generator_settings_sha256": settings.get("generatorSettingsSha256"),
             "settings_sha256": sv("settingsSha256", "settings_hash"),
             "scenario_timeline_sha256": sv("scenarioTimelineSha256"),
             "method_settings_sha256": sv("appliedMethodSettingsSha256", "methodSettingsSha256"),

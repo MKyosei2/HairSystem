@@ -307,4 +307,20 @@
 
 
 
+
+    int GpuHairViewer::RunNativeSelfTests() const
+    {
+        if (sizeof(void*) != 8u) return 10;
+        if (kFixedGuideCount != 4000u || kFixedFollowersPerGuide != 24u ||
+            kFixedDisplayStrandCount != 100000u || kFixedParticlesPerStrand != 128u ||
+            kFixedSolverIterations != 6u) return 11;
+        if (kFixedGuideCount * (kFixedFollowersPerGuide + 1u) != kFixedDisplayStrandCount) return 12;
+        if ((sizeof(SegmentGroupGpuData) % 16u) != 0u ||
+            (sizeof(SegmentGroupBlockGpuData) % 16u) != 0u ||
+            (sizeof(SegmentGroupCertificateGpuData) % 16u) != 0u ||
+            (sizeof(SegmentGroupRuntimeCounters) % 16u) != 0u ||
+            (sizeof(SegmentGroupRuntimeConstants) % 16u) != 0u) return 13;
+        return 0;
+    }
+
 }
