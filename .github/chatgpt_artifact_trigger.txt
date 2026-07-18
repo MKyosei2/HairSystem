@@ -1,2 +1,2 @@
 Trigger packaging workflow after temporary base activation.
-Synchronization trigger 2.
+Synchronization trigger 3.
