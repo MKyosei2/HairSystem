@@ -21,4 +21,12 @@ source = source.replace(
     'text = text if "P0_FIXED_WORKLOAD" in text else text.replace("// This file is included by ../GpuHairViewer.cpp; do not compile it directly.\\n", "// This file is included by ../GpuHairViewer.cpp; do not compile it directly.\\n// P0_FIXED_WORKLOAD: persisted workload values are overridden during initialization and UI synchronization.\\n", 1)',
 )
 
+# Function declarations are earlier than the legacy snapshot definition in
+# GpuHairViewer.h.  Forward-declare the nested type before those declarations.
+source = source.replace(
+    '        struct GpuParticle""",\n    "header fixed workload",',
+    '        struct StrandEditSnapshot;\\n\\n        struct GpuParticle""",\n    "header fixed workload",',
+    1,
+)
+
 exec(compile(source, str(Path(__file__)), "exec"), globals(), globals())
