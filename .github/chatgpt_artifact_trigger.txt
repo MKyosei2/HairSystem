@@ -1,2 +1,2 @@
 Trigger packaging workflow after temporary base activation.
-Synchronization trigger 9 after base confirmation.
+Synchronization trigger 10 after YAML correction.
