@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout temporary validation branch
         uses: actions/checkout@v4
+        with:
+          ref: agent/p0-runtime-artifact-20260718
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,10 +30,26 @@ jobs:
           python-version: '3.12'
 
       - name: Apply P0 transformations
+        id: transform
+        continue-on-error: true
         shell: pwsh
         run: |
-          python tools/final_stage/_p0_artifact_transform.py
+          python tools/final_stage/_p0_artifact_transform.py *>&1 | Tee-Object -FilePath transform.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload transform diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-transform-diagnostics
+          path: transform.log
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Stop after transform failure
+        if: steps.transform.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
 
       - name: Validate Python and JSON
         shell: pwsh
