@@ -1,2 +1,2 @@
 Trigger packaging workflow after temporary base activation.
-Synchronization trigger 5 for merge SHA verification.
+Synchronization trigger 6 with refreshed main base.
