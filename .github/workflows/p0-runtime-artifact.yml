@@ -65,11 +65,27 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build Release x64
+        id: build
+        continue-on-error: true
         shell: pwsh
         run: |
-          msbuild HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64
+          msbuild HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /v:normal *>&1 | Tee-Object -FilePath msbuild.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path 'bin/Release/HairSystem/HairSystem.exe')) { throw 'Release x64 executable was not generated.' }
+
+      - name: Upload MSBuild diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-msbuild-diagnostics
+          path: msbuild.log
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Stop after build failure
+        if: steps.build.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
 
       - name: Compile changed HLSL entry points
         shell: pwsh
