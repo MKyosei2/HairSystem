@@ -1,2 +1,2 @@
 Trigger packaging workflow after temporary base activation.
-Synchronization trigger 8 after deterministic marker fix.
+Synchronization trigger 9 after base confirmation.
