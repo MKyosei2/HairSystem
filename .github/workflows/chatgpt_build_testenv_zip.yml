@@ -1,0 +1,1081 @@
+name: Build HairSystem test-environment ZIP
+
+on:
+  pull_request:
+    branches: [Novelty]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply existing-file-only changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import re
+          import shutil
+          import subprocess
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+          TARGETS = [
+              ".gitignore",
+              "Directory.Build.targets",
+              "HairSystem.vcxproj",
+              "apps/dx11_viewer/src/AppMain.cpp",
+              "apps/dx11_viewer/src/GpuHairViewer.h",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl",
+              "tools/final_stage/freeze_novelty01_asset.py",
+              "tools/final_stage/hairgpu_final_run.py",
+              "tools/final_stage/hairgpu_runtime_suite.py",
+              "tools/final_stage/hairgpu_final_db.py",
+              "tools/final_stage/Run_Final_Runtime_Suite.bat",
+              "tests/final_stage/test_hairgpu_safe_runtime_suite.py",
+              "docs/sample_assets/final_runtime_suite_template.json",
+              "docs/sample_assets/novelty01_100k_asset_manifest.json",
+          ]
+
+          def path_of(relative: str) -> Path:
+              path = ROOT / relative
+              if not path.is_file():
+                  raise RuntimeError(f"Missing existing target: {relative}")
+              return path
+
+          def read(relative: str) -> str:
+              return path_of(relative).read_text(encoding="utf-8-sig")
+
+          def write(relative: str, text: str) -> None:
+              path_of(relative).write_text(text, encoding="utf-8", newline="\n")
+
+          def replace_once(relative: str, old: str, new: str) -> None:
+              text = read(relative)
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{relative}: expected one occurrence, found {count}: {old[:80]!r}")
+              write(relative, text.replace(old, new, 1))
+
+          def insert_before_once(relative: str, marker: str, addition: str) -> None:
+              replace_once(relative, marker, addition + marker)
+
+          def insert_after_once(relative: str, marker: str, addition: str) -> None:
+              replace_once(relative, marker, marker + addition)
+
+          # 1. .gitignore: remove unresolved merge markers and preserve all result patterns.
+          gitignore = read(".gitignore")
+          gitignore = "\n".join(
+              line for line in gitignore.splitlines()
+              if not re.match(r"^(<<<<<<<|=======|>>>>>>>)", line)
+          ) + "\n"
+          for pattern in (
+              "*_settings.json", "*_environment.json", "*_validation.json",
+              "*_manifest.json", "*_hardware_timeseries.csv",
+          ):
+              if pattern not in gitignore.splitlines():
+                  gitignore += pattern + "\n"
+          write(".gitignore", gitignore)
+
+          # 2. Disable Step0 by default and completely suppress it for formal builds.
+          replace_once(
+              "Directory.Build.targets",
+              '<HairGpuStep0ProfileEnabled Condition="\'$(HairGpuStep0ProfileEnabled)\' == \'\'">true</HairGpuStep0ProfileEnabled>',
+              '<HairGpuStep0ProfileEnabled Condition="\'$(HairGpuStep0ProfileEnabled)\' == \'\'">false</HairGpuStep0ProfileEnabled>\n'
+              '    <HairGpuFormalBuild Condition="\'$(HairGpuFormalBuild)\' == \'\'">false</HairGpuFormalBuild>\n'
+              '    <HairGpuFormalSelfTest Condition="\'$(HairGpuFormalSelfTest)\' == \'\'">false</HairGpuFormalSelfTest>',
+          )
+          replace_once(
+              "Directory.Build.targets",
+              "Condition=\"'$(HairGpuStep0ProfileEnabled)' == 'true' and '$(TargetPath)' != ''\"",
+              "Condition=\"'$(HairGpuStep0ProfileEnabled)' == 'true' and '$(HairGpuFormalBuild)' != 'true' and '$(TargetPath)' != ''\"",
+          )
+
+          # 3. Connect native and shader self-tests to the existing project.
+          insert_before_once(
+              "HairSystem.vcxproj",
+              '  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />',
+              '''  <Target Name="HairGpuFormalSelfTests" AfterTargets="Build" Condition="'$(HairGpuFormalSelfTest)' == 'true'">
+    <Exec Command="&quot;$(TargetPath)&quot; --native-self-test" />
+    <Exec Command="&quot;$(TargetPath)&quot; --shader-self-test" />
+  </Target>
+''',
+          )
+
+          # 4. Existing AppMain becomes the command-line entry for built-in tests.
+          write(
+              "apps/dx11_viewer/src/AppMain.cpp",
+              '''#include "GpuHairViewer.h"
+
+#include <windows.h>
+#include <cwchar>
+#include <filesystem>
+
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
+{
+    wchar_t modulePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+    const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+    SetCurrentDirectoryW(exeDir.c_str());
+
+    const wchar_t* commandLine = GetCommandLineW();
+    if (std::wcsstr(commandLine, L"--native-self-test") != nullptr)
+    {
+        hairgpu::viewer::GpuHairViewer app;
+        return app.RunNativeSelfTests();
+    }
+    if (std::wcsstr(commandLine, L"--shader-self-test") != nullptr)
+    {
+        SetEnvironmentVariableW(L"HAIRGPU_SHADER_SELF_TEST", L"1");
+        hairgpu::viewer::GpuHairViewer app;
+        return app.Initialize(instance, SW_HIDE) ? 0 : 2;
+    }
+
+    hairgpu::viewer::GpuHairViewer app;
+    if (!app.Initialize(instance, showCommand))
+    {
+        MessageBoxW(nullptr,
+            L"GpuHairViewer::Initialize returned false.\r\n\r\nStartup failed before the normal viewer loop began.\r\nA startup diagnostic dialog should already have been shown.",
+            L"Hair GPU Viewer Startup Failure",
+            MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    return app.Run();
+}
+''',
+          )
+
+          # 5. Add formal-asset identity and the native-test entry to the existing class.
+          insert_after_once(
+              "apps/dx11_viewer/src/GpuHairViewer.h",
+              "        int Run();\n",
+              "        int RunNativeSelfTests() const;\n",
+          )
+          insert_after_once(
+              "apps/dx11_viewer/src/GpuHairViewer.h",
+              "            std::wstring assetManifestPath;\n",
+              '''            std::wstring formalAssetPath;
+            std::wstring formalAssetSha256;
+            std::wstring formalTopologySha256;
+            std::wstring generatorSettingsSha256;
+            std::wstring observedAssetPath;
+            bool formalAssetLoaded = false;
+''',
+          )
+
+          # 6. Formal runs must load the exact frozen asset; interactive mode retains the old cache path.
+          formal_asset_block = r'''        // HAIRGPU_FORMAL_ASSET_BINDING_V1: a formal run may never fall back to a generated/cache asset.
+        if (m_experimentCase.enabled)
+        {
+            const std::wstring formalAssetPathText = GetEnvironmentVariableString(L"HAIRGPU_FORMAL_ASSET_PATH");
+            if (formalAssetPathText.empty())
+            {
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
+                    L"HAIRGPU_FORMAL_ASSET_PATH is missing. Formal runs cannot use the interactive asset cache.");
+                return false;
+            }
+
+            m_experimentCase.formalAssetPath = formalAssetPathText;
+            m_experimentCase.formalAssetSha256 = GetEnvironmentVariableString(L"HAIRGPU_FORMAL_ASSET_SHA256");
+            m_experimentCase.formalTopologySha256 = GetEnvironmentVariableString(L"HAIRGPU_FORMAL_TOPOLOGY_SHA256");
+            m_experimentCase.generatorSettingsSha256 = GetEnvironmentVariableString(L"HAIRGPU_GENERATOR_SETTINGS_SHA256");
+
+            const std::filesystem::path formalAssetPath(formalAssetPathText);
+            hairgpu::HairAsset formalAsset = {};
+            std::string formalAssetError;
+            if (!std::filesystem::is_regular_file(formalAssetPath) ||
+                !hairgpu::LoadHairAssetFromHairBinary(formalAssetPath, formalAsset, formalAssetError))
+            {
+                const std::wstring details = L"Failed to load the frozen formal asset: " + formalAssetPath.wstring() +
+                    L"\r\n" + Utf8ToWide(formalAssetError);
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure", details);
+                return false;
+            }
+
+            const uint64_t expectedFormalStrands =
+                static_cast<uint64_t>(kFixedGuideCount) *
+                static_cast<uint64_t>(kFixedFollowersPerGuide + 1u);
+            const uint64_t expectedFormalPoints =
+                expectedFormalStrands * static_cast<uint64_t>(kFixedParticlesPerStrand);
+            const bool formalShapeValid =
+                formalAsset.guideStrandCount == kFixedGuideCount &&
+                formalAsset.followerStrandCount == kFixedGuideCount * kFixedFollowersPerGuide &&
+                formalAsset.particlesPerStrand == kFixedParticlesPerStrand &&
+                formalAsset.strands.size() == expectedFormalStrands &&
+                formalAsset.restPoints.size() == expectedFormalPoints &&
+                formalAsset.pointWidths.size() == expectedFormalPoints &&
+                formalAsset.rootBindings.size() == expectedFormalStrands &&
+                formalAsset.followData.size() == expectedFormalStrands;
+            if (!formalShapeValid)
+            {
+                ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
+                    L"The frozen asset does not satisfy 4000 guides / 24 followers / 128 points / 100000 displayed strands.");
+                return false;
+            }
+
+            std::error_code canonicalError;
+            const std::filesystem::path observedPath = std::filesystem::weakly_canonical(formalAssetPath, canonicalError);
+            m_asset = std::move(formalAsset);
+            m_experimentCase.observedAssetPath = canonicalError ? formalAssetPath.wstring() : observedPath.wstring();
+            m_experimentCase.formalAssetLoaded = true;
+            m_lastAssetSource = L"Frozen Formal Asset";
+            m_lastImportStatus = L"Frozen formal asset loaded and topology-count validated";
+        }
+        else
+        {
+'''
+          insert_before_once(
+              "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+              "        // The formal 100k asset is expensive to procedurally rebuild.",
+              formal_asset_block,
+          )
+          insert_before_once(
+              "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+              "        m_activeSetBudget.maxActiveClusters = 6u;",
+              "        }\n",
+          )
+
+          # 7. Shader self-test exits immediately after the existing full shader load succeeds.
+          insert_before_once(
+              "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
+              "        RebuildActiveSetFoundation();",
+              '''        if (EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_SHADER_SELF_TEST")))
+        {
+            m_running = false;
+            return true;
+        }
+
+''',
+          )
+
+          # 8. Persist requested and observed formal-asset identity.
+          insert_after_once(
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              '        out << "  \\"assetSha256\\": \\"" << JsonEscape(WideToUtf8(m_experimentCase.assetSha256)) << "\\",\\n";\n',
+              '''        out << "  \\"formalAssetPath\\": \\"" << JsonEscape(WideToUtf8(m_experimentCase.formalAssetPath)) << "\\",\\n";
+        out << "  \\"observedAssetPath\\": \\"" << JsonEscape(WideToUtf8(m_experimentCase.observedAssetPath)) << "\\",\\n";
+        out << "  \\"formalAssetSha256\\": \\"" << JsonEscape(WideToUtf8(m_experimentCase.formalAssetSha256)) << "\\",\\n";
+        out << "  \\"formalTopologySha256\\": \\"" << JsonEscape(WideToUtf8(m_experimentCase.formalTopologySha256)) << "\\",\\n";
+        out << "  \\"generatorSettingsSha256\\": \\"" << JsonEscape(WideToUtf8(m_experimentCase.generatorSettingsSha256)) << "\\",\\n";
+        out << "  \\"formalAssetLoaded\\": " << (m_experimentCase.formalAssetLoaded ? "true" : "false") << ",\\n";
+''',
+          )
+          replace_once(
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "            m_experimentCase.assetFrozen &&\n",
+              "            m_experimentCase.assetFrozen &&\n"
+              "            m_experimentCase.formalAssetLoaded &&\n"
+              "            !m_experimentCase.formalAssetPath.empty() &&\n"
+              "            !m_experimentCase.observedAssetPath.empty() &&\n",
+          )
+
+          # 9. Native self-test uses the actual compiled ABI and fixed-workload constants.
+          tail_path = "apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl"
+          tail = read(tail_path)
+          close_index = tail.rfind("\n}")
+          if close_index < 0:
+              raise RuntimeError("Could not locate viewer namespace close")
+          native_test = r'''
+
+    int GpuHairViewer::RunNativeSelfTests() const
+    {
+        if (sizeof(void*) != 8u) return 10;
+        if (kFixedGuideCount != 4000u || kFixedFollowersPerGuide != 24u ||
+            kFixedDisplayStrandCount != 100000u || kFixedParticlesPerStrand != 128u ||
+            kFixedSolverIterations != 6u) return 11;
+        if (kFixedGuideCount * (kFixedFollowersPerGuide + 1u) != kFixedDisplayStrandCount) return 12;
+        if ((sizeof(SegmentGroupGpuData) % 16u) != 0u ||
+            (sizeof(SegmentGroupBlockGpuData) % 16u) != 0u ||
+            (sizeof(SegmentGroupCertificateGpuData) % 16u) != 0u ||
+            (sizeof(SegmentGroupRuntimeCounters) % 16u) != 0u ||
+            (sizeof(SegmentGroupRuntimeConstants) % 16u) != 0u) return 13;
+        return 0;
+    }
+'''
+          tail = tail[:close_index] + native_test + tail[close_index:]
+          write(tail_path, tail)
+
+          # 10. Replace the freeze tool with a non-destructive template -> output workflow.
+          write(
+              "tools/final_stage/freeze_novelty01_asset.py",
+              '''from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+MANIFEST_VERSION = "novelty01-100k-v1.4"
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(value, dict):
+        raise SystemExit(f"Expected a JSON object: {path}")
+    return value
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_value(repo_root: Path, *args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", *args], cwd=repo_root, check=False,
+            capture_output=True, text=True, timeout=20,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return ""
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def find_repo_root(start: Path) -> Path | None:
+    for candidate in [start, *start.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        handle.write(encoded)
+        temporary = Path(handle.name)
+    temporary.replace(path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Freeze the real Novelty01 100k asset without mutating the tracked template manifest.")
+    parser.add_argument("--template-manifest", "--manifest", dest="template_manifest", required=True)
+    parser.add_argument("--output-manifest", required=True)
+    parser.add_argument("--asset", required=True)
+    parser.add_argument("--generator-settings", required=True)
+    topology_group = parser.add_mutually_exclusive_group(required=True)
+    topology_group.add_argument("--topology-file")
+    topology_group.add_argument("--topology-sha256")
+    parser.add_argument("--operator", required=True)
+    parser.add_argument("--repo-root")
+    parser.add_argument("--allow-dirty-worktree", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    template_path = Path(args.template_manifest).resolve()
+    output_path = Path(args.output_manifest).resolve()
+    asset_path = Path(args.asset).resolve()
+    settings_path = Path(args.generator_settings).resolve()
+    topology_path = Path(args.topology_file).resolve() if args.topology_file else None
+    for path, label in ((template_path, "template manifest"), (asset_path, "asset"), (settings_path, "generator settings")):
+        if not path.is_file():
+            raise SystemExit(f"Missing {label}: {path}")
+    if topology_path is not None and not topology_path.is_file():
+        raise SystemExit(f"Missing topology file: {topology_path}")
+    if output_path.exists() and not args.force:
+        raise SystemExit(f"Output manifest already exists: {output_path}. Use --force to replace it intentionally.")
+
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(template_path.parent)
+    if repo_root is None:
+        raise SystemExit("Cannot locate the Git repository root.")
+    head = git_value(repo_root, "rev-parse", "HEAD")
+    branch = git_value(repo_root, "branch", "--show-current")
+    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
+    if not COMMIT_PATTERN.fullmatch(head):
+        raise SystemExit("Cannot resolve a valid Git HEAD commit.")
+    if branch != "Novelty":
+        raise SystemExit(f"Asset freezing requires branch Novelty, observed: {branch or '<detached>'}")
+    if dirty and not args.allow_dirty_worktree:
+        raise SystemExit("Git worktree is dirty. Commit changes before freezing formal evidence.")
+
+    topology_sha256 = sha256_file(topology_path) if topology_path else str(args.topology_sha256).lower()
+    if not SHA256_PATTERN.fullmatch(topology_sha256):
+        raise SystemExit("Topology SHA-256 must be exactly 64 hexadecimal characters.")
+
+    payload = read_json(template_path)
+    generation = payload.setdefault("generation", {})
+    expected = {
+        "displayStrandCount": 100000,
+        "primaryGuideStrandCount": 4000,
+        "followersPerGuide": 24,
+        "particlesPerGuide": 128,
+        "solverIterations": 6,
+    }
+    mismatches = {key: (expected_value, generation.get(key)) for key, expected_value in expected.items() if generation.get(key) != expected_value}
+    if mismatches:
+        raise SystemExit(f"Template generation contract mismatch: {mismatches}")
+
+    payload.update({
+        "manifestVersion": MANIFEST_VERSION,
+        "freezeStatus": "FROZEN",
+        "sourceAssetPath": str(asset_path),
+        "sourceAssetSha256": sha256_file(asset_path),
+        "sourceAssetSizeBytes": asset_path.stat().st_size,
+        "generatedTopologySha256": topology_sha256,
+        "generatorSettingsPath": str(settings_path),
+        "generatorSettingsSha256": sha256_file(settings_path),
+        "frozenAtUtc": datetime.now(timezone.utc).isoformat(),
+        "frozenBy": args.operator,
+        "sourceCommitSha": head.lower(),
+        "sourceBranch": branch,
+        "freezeTool": "tools/final_stage/freeze_novelty01_asset.py",
+        "freezeToolVersion": "1.4",
+    })
+    gate = payload.setdefault("evidenceGate", {})
+    gate.update({
+        "rejectWhenFreezeStatusIsNot": "FROZEN",
+        "rejectPlaceholderHashes": True,
+        "requireExactSha256Format": True,
+        "requireSameAssetHashAcrossAllMethodsAndSeeds": True,
+        "requireSourceCommitMatch": True,
+        "requireCleanGitWorktreeAtFreeze": not args.allow_dirty_worktree,
+        "requireLocalFileHashVerification": True,
+        "requireViewerObservedAssetPathMatch": True,
+        "requirePreAndPostRunAssetHashMatch": True,
+    })
+    atomic_write_json(output_path, payload)
+    print(f"Frozen manifest: {output_path}")
+    print(f"Asset SHA-256: {payload['sourceAssetSha256']}")
+    print(f"Topology SHA-256: {payload['generatedTopologySha256']}")
+    print(f"Generator settings SHA-256: {payload['generatorSettingsSha256']}")
+    print(f"Source commit: {payload['sourceCommitSha']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+          )
+
+          # 11. Formal runner: frozen-asset contract, quality-failed resume, repeated timelines.
+          final_run = "tools/final_stage/hairgpu_final_run.py"
+          replace_once(final_run, 'VALIDATION_VERSION = "01-safe-v3.2-existing-source-only"', 'VALIDATION_VERSION = "01-safe-v3.3-existing-source-only"')
+          insert_after_once(
+              final_run,
+              "    manifest = _read_json(path)\n",
+              '''    generation = manifest.get("generation") if isinstance(manifest.get("generation"), dict) else {}
+    expected_generation = {
+        "displayStrandCount": 100000,
+        "primaryGuideStrandCount": 4000,
+        "followersPerGuide": 24,
+        "particlesPerGuide": 128,
+        "solverIterations": 6,
+    }
+    for key, expected_value in expected_generation.items():
+        if _required_int(generation.get(key), -1) != expected_value:
+            issues.append(_issue(
+                "E_ASSET_GENERATION_CONTRACT",
+                f"Frozen asset generation value is invalid: {key}",
+                expected=expected_value,
+                observed=generation.get(key),
+            ))
+''',
+          )
+          insert_after_once(
+              final_run,
+              '        snapshot["assetSha256"] = str(manifest.get("sourceAssetSha256") or "")\n',
+              '''        source_asset = _resolve_case_path(manifest.get("sourceAssetPath"), asset_manifest.parent)
+        snapshot["formalAssetPath"] = str(source_asset) if source_asset else ""
+        snapshot["formalAssetSha256"] = str(manifest.get("sourceAssetSha256") or "")
+        snapshot["formalTopologySha256"] = str(manifest.get("generatedTopologySha256") or manifest.get("topologyHash") or "")
+        snapshot["generatorSettingsSha256"] = str(manifest.get("generatorSettingsSha256") or "")
+''',
+          )
+          insert_after_once(
+              final_run,
+              '        "HAIRGPU_ASSET_FROZEN": "1" if snapshot.get("assetFrozen") else "0",\n',
+              '''        "HAIRGPU_FORMAL_ASSET_PATH": str(snapshot.get("formalAssetPath", "")),
+        "HAIRGPU_FORMAL_ASSET_SHA256": str(snapshot.get("formalAssetSha256", "")),
+        "HAIRGPU_FORMAL_TOPOLOGY_SHA256": str(snapshot.get("formalTopologySha256", "")),
+        "HAIRGPU_GENERATOR_SETTINGS_SHA256": str(snapshot.get("generatorSettingsSha256", "")),
+''',
+          )
+          replace_once(
+              final_run,
+              "    if exit_code != EXIT_COMPLETE_VALID:\n",
+              "    if exit_code not in (EXIT_COMPLETE_VALID, EXIT_QUALITY_GATE_FAILED):\n",
+          )
+          insert_after_once(
+              final_run,
+              '        "formalContractValid": not (issues or integrity_issues),\n',
+              '        "evidenceIntegrityPassed": not (issues or integrity_issues),\n',
+          )
+
+          repeat_helper = '''\n\ndef _materialize_repeated_timeline(case: Mapping[str, Any], telemetry_dir: Path, run_name: str) -> dict[str, Any]:
+    result = dict(case)
+    if not _as_bool(result.get("timeline_repeat")):
+        return result
+    source = _resolve_case_path(result.get("scenario_timeline"))
+    if source is None or not source.is_file():
+        raise FormalRunError("Repeated timeline source is missing.", EXIT_FORMAL_CONTRACT_INVALID)
+    payload = _read_json(source)
+    base_duration = _required_int(payload.get("durationFrames", payload.get("duration_frames")))
+    if base_duration <= 0:
+        raise FormalRunError("Repeated timeline duration must be positive.", EXIT_FORMAL_CONTRACT_INVALID)
+    events = payload.get("events")
+    if not isinstance(events, list):
+        raise FormalRunError("Repeated timeline events must be an array.", EXIT_FORMAL_CONTRACT_INVALID)
+    required_duration = _required_int(result.get("warmup_frames")) + _required_int(result.get("measurement_frames"))
+    expanded: list[dict[str, Any]] = []
+    for offset in range(0, required_duration, base_duration):
+        for raw_event in events:
+            if not isinstance(raw_event, dict):
+                continue
+            event = dict(raw_event)
+            frame = _required_int(event.get("frame"), -1)
+            if frame < 0:
+                continue
+            expanded_frame = frame + offset
+            if expanded_frame < required_duration:
+                event["frame"] = expanded_frame
+                expanded.append(event)
+    payload["events"] = expanded
+    payload["durationFrames"] = required_duration
+    payload["materializedFrom"] = str(source)
+    payload["timelineRepeat"] = True
+    output = telemetry_dir / f"{run_name}_timeline_materialized.json"
+    write_json(output, payload)
+    result["scenario_timeline"] = str(output)
+    result["timeline_materialized_from"] = str(source)
+    return result
+'''
+          insert_before_once(final_run, "\ndef run_viewer(", repeat_helper)
+          replace_once(
+              final_run,
+              '''    viewer_exe = Path(viewer_exe).resolve()
+    normalized_case = _normalize_case(case or {})
+    preflight = validate_case_contract(normalized_case, viewer_exe)
+    if sys.platform != "win32":
+        raise FormalRunError("The DirectX 11 formal viewer can only be launched on Windows.", EXIT_RUNTIME_FAILURE)
+
+    telemetry_dir = Path(telemetry_dir).resolve()
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
+''',
+              '''    viewer_exe = Path(viewer_exe).resolve()
+    telemetry_dir = Path(telemetry_dir).resolve()
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
+    normalized_case = _normalize_case(case or {})
+    normalized_case = _materialize_repeated_timeline(normalized_case, telemetry_dir, run_name)
+    preflight = validate_case_contract(normalized_case, viewer_exe)
+    if sys.platform != "win32":
+        raise FormalRunError("The DirectX 11 formal viewer can only be launched on Windows.", EXIT_RUNTIME_FAILURE)
+''',
+          )
+          insert_before_once(
+              final_run,
+              "    if process_return_code not in (0, None):\n",
+              '''    formal_asset = _resolve_case_path(snapshot.get("formalAssetPath"))
+    expected_asset_hash = str(snapshot.get("formalAssetSha256") or "").lower()
+    if formal_asset is None or not formal_asset.is_file() or not expected_asset_hash:
+        error = FormalRunError("Formal asset disappeared or lost its expected hash.", EXIT_OUTPUT_INTEGRITY_FAILURE)
+        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error)})
+        raise error
+    observed_asset_hash = sha256_file(formal_asset).lower()
+    if observed_asset_hash != expected_asset_hash:
+        error = FormalRunError("Formal asset bytes changed during the run.", EXIT_OUTPUT_INTEGRITY_FAILURE, [
+            _issue("E_ASSET_POST_RUN_HASH", "Formal asset SHA-256 changed during execution.", expected=expected_asset_hash, observed=observed_asset_hash)
+        ])
+        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error), "issues": error.issues})
+        raise error
+
+''',
+          )
+
+          # 12. Suite runner: determinism and long runs become actual matrix cells and mandatory gates.
+          suite_file = "tools/final_stage/hairgpu_runtime_suite.py"
+          replace_once(
+              suite_file,
+              "    return [run for block in blocks for run in block]\n",
+              "    base_runs = [run for block in blocks for run in block]\n    return _append_special_runs(config, base_dir, base_runs)\n",
+          )
+          special_helper = '''\n\ndef _append_special_runs(config: dict[str, Any], base_dir: Path, base_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output = list(base_runs)
+
+    def clone_base(method: str, scenario: str, seed: int) -> dict[str, Any] | None:
+        method = normalize_method_code(method)
+        for candidate in base_runs:
+            if (normalize_method_code(str(candidate.get("method"))) == method and
+                str(candidate.get("scenario")) == str(scenario) and
+                int(candidate.get("seed", -1)) == int(seed)):
+                result = copy.deepcopy(candidate)
+                for key in ("summary_json", "frame_csv", "frame_jsonl", "settings_json"):
+                    result.pop(key, None)
+                return result
+        return None
+
+    for replay in config.get("determinism_replays", []):
+        if not isinstance(replay, dict):
+            continue
+        method = normalize_method_code(str(replay.get("method", "")))
+        scenario = str(replay.get("scenario", ""))
+        seed = int(replay.get("seed", 0))
+        group_id = str(replay.get("id") or f"DET__{method}__{scenario}__seed{seed}")
+        repetitions = max(int(replay.get("repetitions", 0)), 0)
+        for repetition in range(repetitions):
+            run = clone_base(method, scenario, seed)
+            if run is None:
+                continue
+            case_id = f"{_safe_name(group_id)}__rep{repetition:02d}"
+            run.update({
+                "case_id": case_id,
+                "run_name": case_id,
+                "repeat_index": repetition,
+                "measurement_mode": "determinism",
+                "special_run_kind": "determinism",
+                "special_run_id": group_id,
+                "execution_block": group_id,
+            })
+            run["settings_hash"] = canonical_json_sha256({
+                "base": run.get("settings_hash"), "special": "determinism",
+                "group": group_id, "repetition": repetition,
+            })
+            output.append(run)
+
+    for entry in config.get("long_runs", []):
+        if not isinstance(entry, dict):
+            continue
+        method = normalize_method_code(str(entry.get("method", "")))
+        scenario = str(entry.get("scenario", ""))
+        seed = int(entry.get("seed", 0))
+        run = clone_base(method, scenario, seed)
+        if run is None:
+            continue
+        special_id = str(entry.get("id") or f"LONG__{method}__{scenario}__seed{seed}")
+        run.update({
+            "case_id": special_id,
+            "run_name": special_id,
+            "measurement_mode": "robustness",
+            "measurement_frames": int(entry.get("measurement_frames", run.get("measurement_frames", 6000))),
+            "timeout_seconds": int(entry.get("timeout_seconds", run.get("timeout_seconds", 900))),
+            "timeline_repeat": bool(entry.get("timeline_repeat", True)),
+            "special_run_kind": "long_run",
+            "special_run_id": special_id,
+            "execution_block": special_id,
+        })
+        run["settings_hash"] = canonical_json_sha256({
+            "base": run.get("settings_hash"), "special": "long_run",
+            "id": special_id, "measurement_frames": run["measurement_frames"],
+        })
+        output.append(run)
+    return output
+'''
+          insert_before_once(suite_file, "\ndef expected_telemetry_paths(", special_helper)
+          replace_once(
+              suite_file,
+              '''    expected_count = len(method_codes) * len(scenario_codes) * len(seeds) * repetitions
+    if len(runs) != expected_count:
+        issue("run_count", "Expanded run matrix is incomplete.", expected_count, len(runs))
+''',
+              '''    expected_count = len(method_codes) * len(scenario_codes) * len(seeds) * repetitions
+    normal_runs = [run for run in runs if not run.get("special_run_kind")]
+    if len(normal_runs) != expected_count:
+        issue("run_count", "Expanded normal run matrix is incomplete.", expected_count, len(normal_runs))
+    configured_specials = sum(
+        max(int(item.get("repetitions", 0)), 0)
+        for item in config.get("determinism_replays", []) if isinstance(item, dict)
+    ) + sum(1 for item in config.get("long_runs", []) if isinstance(item, dict))
+    selected_specials = sum(1 for run in runs if run.get("special_run_kind"))
+    if selected_specials > configured_specials:
+        issue("special_run_count", "Expanded special run matrix exceeds the configured count.", configured_specials, selected_specials)
+''',
+          )
+
+          hygiene_helper = '''\n\ndef _repository_hygiene_issues(config: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    critical_files = [
+        ".gitignore", "Directory.Build.targets", "HairSystem.vcxproj",
+        "tools/final_stage/hairgpu_final_run.py",
+        "tools/final_stage/hairgpu_runtime_suite.py",
+        "docs/sample_assets/final_runtime_suite_template.json",
+        "docs/sample_assets/novelty01_100k_asset_manifest.json",
+    ]
+    for relative in critical_files:
+        path = repo_root / relative
+        if not path.is_file() or path.stat().st_size == 0:
+            issues.append({"code": "critical_file_missing_or_empty", "message": relative})
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
+            if re.match(r"^(<<<<<<<|=======|>>>>>>>)", line):
+                issues.append({"code": "merge_conflict_marker", "message": f"{relative}:{line_number}"})
+    try:
+        branch = subprocess.run(["git", "branch", "--show-current"], cwd=repo_root, capture_output=True, text=True, timeout=10).stdout.strip()
+        expected_branch = str(config.get("source", {}).get("required_branch", ""))
+        if expected_branch and branch != expected_branch:
+            issues.append({"code": "wrong_branch", "message": "Formal suite must run from the required branch.", "expected": expected_branch, "observed": branch})
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=repo_root, capture_output=True, text=True, timeout=10).stdout.strip()
+        if bool(config.get("preflight", {}).get("require_clean_git", True)) and dirty:
+            issues.append({"code": "dirty_worktree", "message": "Formal suite requires a clean Git worktree.", "observed": dirty.splitlines()[:20]})
+    except Exception as exc:
+        issues.append({"code": "git_probe_failed", "message": str(exc)})
+    viewer = repo_root / "bin" / "Release" / "HairSystem"
+    for name in ("PENDING_STEP0_REAL.ini", "STEP0_FORCE_RUN.ini", "STEP0_REAL_MEASUREMENT_PENDING.txt", "STEP0_REAL_MEASUREMENT_READY.txt"):
+        if (viewer / name).exists() or (viewer / "profile_results" / name).exists():
+            issues.append({"code": "step0_pending_collision", "message": name})
+    return issues
+'''
+          insert_before_once(suite_file, "\ndef run_preflight(", hygiene_helper)
+          insert_after_once(
+              suite_file,
+              "    issues = validate_suite_manifest(config, runs)\n",
+              "    issues.extend(_repository_hygiene_issues(config))\n",
+          )
+          insert_after_once(
+              suite_file,
+              "    long_run_rows = build_long_run_rows(raw_valid_runs, dict(config.get(\"long_run_gates\", {})))\n",
+              '''    valid_run_names = {str(row.get("run_name") or "") for row in raw_valid_runs}
+    expected_determinism_names = {str(run["run_name"]) for run in runs if run.get("special_run_kind") == "determinism"}
+    expected_long_run_names = {str(run["run_name"]) for run in runs if run.get("special_run_kind") == "long_run"}
+    missing_determinism_runs = sorted(expected_determinism_names - valid_run_names)
+    missing_long_runs = sorted(expected_long_run_names - valid_run_names)
+''',
+          )
+          replace_once(
+              suite_file,
+              "        if not failed_runs and not missing_coverage and not failed_determinism and not failed_long_runs\n",
+              "        if not failed_runs and not missing_coverage and not failed_determinism and not failed_long_runs and not missing_determinism_runs and not missing_long_runs\n",
+          )
+          insert_after_once(
+              suite_file,
+              '        "longRunChecks": long_run_rows,\n',
+              '        "missingDeterminismRuns": missing_determinism_runs,\n        "missingLongRuns": missing_long_runs,\n',
+          )
+
+          # 13. DB preserves evidence-valid / quality-failed runs and formal asset identity.
+          db_file = "tools/final_stage/hairgpu_final_db.py"
+          insert_after_once(
+              db_file,
+              '        "query_unresolved_slope": "REAL",\n',
+              '''        "formal_asset_path": "TEXT",
+        "formal_asset_sha256": "TEXT",
+        "formal_topology_sha256": "TEXT",
+        "generator_settings_sha256": "TEXT",
+''',
+          )
+          insert_after_once(
+              db_file,
+              '            "asset_manifest_sha256": sv("assetManifestSha256"),\n',
+              '''            "formal_asset_path": settings.get("observedAssetPath") or settings.get("formalAssetPath"),
+            "formal_asset_sha256": settings.get("formalAssetSha256") or sv("assetSha256"),
+            "formal_topology_sha256": settings.get("formalTopologySha256"),
+            "generator_settings_sha256": settings.get("generatorSettingsSha256"),
+''',
+          )
+
+          # 14. One existing BAT remains the complete local CI entry point.
+          write(
+              "tools/final_stage/Run_Final_Runtime_Suite.bat",
+              r'''@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+
+if "%~1"=="" (
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [smoke^|baseline^|full^|soak30^|soak2h^|soak8h] [output_dir]
+  exit /b 1
+)
+
+set "ROOT=%~dp0..\.."
+for %%I in ("%ROOT%") do set "ROOT=%%~fI"
+set "CONFIG=%~f1"
+set "MODE=%~2"
+if "%MODE%"=="" set "MODE=baseline"
+set "OUTPUT_ARG="
+if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
+
+if /I not "%MODE%"=="smoke" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" (
+  echo ERROR: mode must be smoke, baseline, full, soak30, soak2h, or soak8h.
+  exit /b 2
+)
+
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+  echo ERROR: vswhere.exe was not found.
+  exit /b 3
+)
+set "MSBUILD="
+for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe`) do (
+  set "MSBUILD=%%I"
+  goto :msbuild_found
+)
+:msbuild_found
+if not defined MSBUILD (
+  echo ERROR: MSBuild.exe was not found.
+  exit /b 4
+)
+
+set "VIEWER_DIR=%ROOT%\bin\Release\HairSystem"
+for %%F in (PENDING_STEP0_REAL.ini STEP0_FORCE_RUN.ini STEP0_REAL_MEASUREMENT_PENDING.txt STEP0_REAL_MEASUREMENT_READY.txt) do (
+  if exist "%VIEWER_DIR%\%%F" del /Q "%VIEWER_DIR%\%%F"
+  if exist "%VIEWER_DIR%\profile_results\%%F" del /Q "%VIEWER_DIR%\profile_results\%%F"
+)
+
+echo [1/7] Rebuilding HairSystem Release x64 without Step0...
+"%MSBUILD%" "%ROOT%\HairSystem.sln" /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true
+if errorlevel 1 exit /b %errorlevel%
+set "VIEWER=%VIEWER_DIR%\HairSystem.exe"
+if not exist "%VIEWER%" (
+  echo ERROR: Release viewer was not generated: "%VIEWER%"
+  exit /b 5
+)
+
+echo [2/7] Running native ABI and workload self-test...
+"%VIEWER%" --native-self-test
+if errorlevel 1 exit /b %errorlevel%
+
+echo [3/7] Running HLSL load/compile self-test...
+"%VIEWER%" --shader-self-test
+if errorlevel 1 exit /b %errorlevel%
+
+echo [4/7] Checking Python tools...
+python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py"
+if errorlevel 1 exit /b %errorlevel%
+
+echo [5/7] Running validator and regression tests...
+python "%~dp0hairgpu_final_run.py" --self-test
+if errorlevel 1 exit /b %errorlevel%
+python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
+if errorlevel 1 exit /b %errorlevel%
+
+set "FILTER_ARGS="
+if /I "%MODE%"=="smoke" set "FILTER_ARGS=--only-method B0 --only-scenario S01_Idle --only-seed 1103"
+if /I "%MODE%"=="baseline" set "FILTER_ARGS=--only-method B0"
+if /I "%MODE%"=="soak30" set "FILTER_ARGS=--only-method P --only-scenario S03_Walk --only-seed 1103"
+if /I "%MODE%"=="soak2h" set "FILTER_ARGS=--only-method P --only-scenario S09_StrongWind --only-seed 2207"
+if /I "%MODE%"=="soak8h" set "FILTER_ARGS=--only-method P --only-scenario S16_StateThrashing --only-seed 3301"
+
+echo [6/7] Running strict dry-run preflight (%MODE%)...
+python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %FILTER_ARGS% %OUTPUT_ARG%
+if errorlevel 1 exit /b %errorlevel%
+
+echo [7/7] Running Release x64 suite (%MODE%)...
+python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %FILTER_ARGS% %OUTPUT_ARG%
+exit /b %errorlevel%
+''',
+          )
+
+          # 15. Expand the existing Python regression test file.
+          tests_file = "tests/final_stage/test_hairgpu_safe_runtime_suite.py"
+          tests = read(tests_file).replace('"particles_per_guide": 24,', '"particles_per_guide": 128,')
+          extra_tests = '''\n\nclass CompletedEnvironmentRegressionTests(unittest.TestCase):
+    def test_special_runs_are_materialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            timeline = root / "timeline.json"
+            timeline.write_text(json.dumps({
+                "scenario": "S01_Idle", "durationFrames": 6600,
+                "fixedTimeStepSeconds": 1.0 / 60.0,
+                "events": [{"frame": 700, "type": "SetWind"}],
+            }), encoding="utf-8")
+            config = {
+                "experiment_name": "special-test",
+                "run_generation": {"mode": "cartesian_product"},
+                "run_defaults": {
+                    "guide_strand_count": 4000, "display_strand_count": 100000,
+                    "particles_per_guide": 128, "solver_iterations": 6,
+                    "warmup_frames": 600, "measurement_frames": 6000,
+                    "fixed_timestep": True, "fixed_timestep_seconds": 1.0 / 60.0,
+                    "width": 1920, "height": 1080,
+                },
+                "methods": [{"code": "P", "settings": {}}],
+                "scenarios": [{"code": "S01_Idle", "timeline": str(timeline), "assertions": {"min_applied_events": 1}}],
+                "seeds": [1103], "repetitions_per_seed": 1,
+                "statistics": {"randomize_execution_order": False, "randomize_block_order": False},
+                "determinism_replays": [{"id": "DET_TEST", "method": "P", "scenario": "S01_Idle", "seed": 1103, "repetitions": 3}],
+                "long_runs": [{"id": "LONG_TEST", "method": "P", "scenario": "S01_Idle", "seed": 1103, "measurement_frames": 12000, "timeline_repeat": True}],
+            }
+            runs = suite.expand_run_matrix(config, root)
+            self.assertEqual(sum(run.get("special_run_kind") == "determinism" for run in runs), 3)
+            self.assertEqual(sum(run.get("special_run_kind") == "long_run" for run in runs), 1)
+
+    def test_timeline_repeat_is_materialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            timeline = root / "timeline.json"
+            timeline.write_text(json.dumps({
+                "scenario": "S01_Idle", "durationFrames": 100,
+                "fixedTimeStepSeconds": 1.0 / 60.0,
+                "events": [{"frame": 10, "type": "SetWind"}],
+            }), encoding="utf-8")
+            case = {
+                "scenario_timeline": str(timeline), "timeline_repeat": True,
+                "warmup_frames": 20, "measurement_frames": 250,
+            }
+            result = final_run._materialize_repeated_timeline(case, root, "repeat")
+            materialized = json.loads(Path(result["scenario_timeline"]).read_text(encoding="utf-8"))
+            self.assertEqual(materialized["durationFrames"], 270)
+            self.assertEqual([event["frame"] for event in materialized["events"]], [10, 110, 210])
+
+    def test_quality_gate_error_file_is_not_resumable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            telemetry = root / "telemetry"
+            telemetry.mkdir()
+            run = {"run_name": "case", "case_id": "case", "settings_hash": "a" * 64}
+            paths = suite.expected_telemetry_paths(root, run, telemetry)
+            paths["error"].write_text("{}", encoding="utf-8")
+            self.assertFalse(suite.is_completed_case(root, run, telemetry))
+'''
+          marker = '\n\nif __name__ == "__main__":\n'
+          if marker not in tests:
+              raise RuntimeError("Test main marker not found")
+          tests = tests.replace(marker, extra_tests + marker, 1)
+          write(tests_file, tests)
+
+          # 16. Formal suite configuration: actual determinism and 30m/2h/8h cells.
+          suite_json_path = "docs/sample_assets/final_runtime_suite_template.json"
+          suite_config = json.loads(read(suite_json_path))
+          suite_config["suite_version"] = "3.3"
+          suite_config["baseline_method"] = "B8"
+          suite_config["performance_baseline_method"] = "B6"
+          suite_config["quality_baseline_method"] = "B0"
+          suite_config.setdefault("source", {})["asset_manifest"] = "../../out/novelty01_baseline/frozen_asset_manifest.json"
+          defaults = suite_config.setdefault("run_defaults", {})
+          defaults.update({
+              "build_configuration": "Release", "platform": "x64",
+              "fixed_timestep": True, "guide_strand_count": 4000,
+              "followers_per_guide": 24, "display_strand_count": 100000,
+              "particles_per_guide": 128, "solver_iterations": 6,
+          })
+          suite_config["determinism_replays"] = [
+              {"id": "DET_B0_WALK", "method": "B0", "scenario": "S03_Walk", "seed": 1103, "repetitions": 5},
+              {"id": "DET_B8_FALSE_STATIC", "method": "B8", "scenario": "S12_FalseStaticTrap", "seed": 2207, "repetitions": 5},
+              {"id": "DET_P_REPAIR", "method": "P", "scenario": "S13_RepairStorm", "seed": 3301, "repetitions": 5},
+              {"id": "DET_P_THRASH", "method": "P", "scenario": "S16_StateThrashing", "seed": 4409, "repetitions": 5},
+          ]
+          suite_config["long_runs"] = [
+              {"id": "L30_Walk", "method": "P", "scenario": "S03_Walk", "seed": 1103, "measurement_frames": 108000, "timeline_repeat": True, "timeout_seconds": 2400},
+              {"id": "L2H_StrongWind", "method": "P", "scenario": "S09_StrongWind", "seed": 2207, "measurement_frames": 432000, "timeline_repeat": True, "timeout_seconds": 9000},
+              {"id": "L8H_StateThrashing", "method": "P", "scenario": "S16_StateThrashing", "seed": 3301, "measurement_frames": 1728000, "timeline_repeat": True, "timeout_seconds": 33000},
+          ]
+          suite_config["long_run_gates"] = {
+              "peakVramMb": 6144.0,
+              "vramSlopeMbPerMin": 1.0,
+              "ramSlopeMbPerMin": 2.0,
+              "p99DegradationRatio": 1.10,
+              "queryUnresolvedSlope": 0.0,
+          }
+          write(suite_json_path, json.dumps(suite_config, ensure_ascii=False, indent=2) + "\n")
+
+          # 17. Tracked manifest remains an explicit template until real Windows bytes are frozen.
+          manifest_path = "docs/sample_assets/novelty01_100k_asset_manifest.json"
+          manifest = json.loads(read(manifest_path))
+          manifest.update({
+              "manifestVersion": "novelty01-100k-v1.4",
+              "assetFormatVersion": "novelty01-100k-v1.4",
+              "freezeStatus": "TEMPLATE_REQUIRES_LOCAL_FREEZE",
+              "sourceAssetPath": "REPLACE_WITH_LOCAL_CANONICAL_HAIRBIN_PATH",
+              "sourceAssetSha256": "REPLACE_AFTER_ASSET_FREEZE",
+              "sourceAssetSizeBytes": 0,
+              "generatedTopologySha256": "REPLACE_AFTER_ASSET_FREEZE",
+              "generatorSettingsPath": "REPLACE_WITH_LOCAL_GENERATOR_SETTINGS_PATH",
+              "generatorSettingsSha256": "REPLACE_AFTER_ASSET_FREEZE",
+              "sourceCommitSha": "REPLACE_AFTER_PATCH_IS_COMMITTED",
+              "sourceBranch": "Novelty",
+              "frozenAtUtc": "REPLACE_AFTER_ASSET_FREEZE",
+              "frozenBy": "REPLACE_AFTER_ASSET_FREEZE",
+              "freezeToolVersion": "1.4",
+          })
+          generation = manifest.setdefault("generation", {})
+          generation.pop("guideStrandCounts", None)
+          generation.update({
+              "displayStrandCount": 100000,
+              "primaryGuideStrandCount": 4000,
+              "followersPerGuide": 24,
+              "particlesPerGuide": 128,
+              "solverIterations": 6,
+              "requireExactDisplayStrandCount": True,
+              "requireUniformGuidePointCount": True,
+              "requireStableTopologyHash": True,
+              "topologyMutationDuringMeasurementAllowed": False,
+          })
+          gate = manifest.setdefault("evidenceGate", {})
+          gate.update({
+              "requireViewerObservedAssetPathMatch": True,
+              "requirePreAndPostRunAssetHashMatch": True,
+          })
+          manifest["freezeChecklist"] = [
+              "Commit all source changes on Novelty before freezing the asset.",
+              "Generate the canonical 4000-guide, 24-follower, 128-point hairbin on the target Windows/DX11 machine.",
+              "Run tools/final_stage/freeze_novelty01_asset.py with separate template and output manifest paths.",
+              "Confirm freezeStatus is FROZEN and all SHA-256 values are 64 hexadecimal characters.",
+              "Confirm sourceCommitSha matches the clean Novelty HEAD.",
+              "Do not change asset, generator settings, topology, executable, or shaders between matched runs.",
+          ]
+          write(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+
+          # Static validation before packaging.
+          for relative in TARGETS:
+              p = path_of(relative)
+              if p.stat().st_size == 0:
+                  raise RuntimeError(f"Zero-byte target: {relative}")
+              for number, line in enumerate(p.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
+                  if re.match(r"^(<<<<<<<|=======|>>>>>>>)", line):
+                      raise RuntimeError(f"Conflict marker remains: {relative}:{number}")
+
+          for relative in (
+              "tools/final_stage/freeze_novelty01_asset.py",
+              "tools/final_stage/hairgpu_final_run.py",
+              "tools/final_stage/hairgpu_runtime_suite.py",
+              "tools/final_stage/hairgpu_final_db.py",
+              "tests/final_stage/test_hairgpu_safe_runtime_suite.py",
+          ):
+              subprocess.run([sys.executable, "-m", "py_compile", str(ROOT / relative)], check=True)
+
+          json.loads(read("docs/sample_assets/final_runtime_suite_template.json"))
+          json.loads(read("docs/sample_assets/novelty01_100k_asset_manifest.json"))
+
+          # Preserve only the requested existing paths in the final ZIP.
+          package_root = ROOT / "_package" / "HairSystem_Novelty_TestEnvironment_Completed_20260718"
+          if package_root.parent.exists():
+              shutil.rmtree(package_root.parent)
+          for relative in TARGETS:
+              destination = package_root / relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(ROOT / relative, destination)
+
+          zip_path = ROOT / "HairSystem_Novelty_TestEnvironment_Completed_20260718.zip"
+          with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for file in sorted(package_root.rglob("*")):
+                  if file.is_file():
+                      archive.write(file, file.relative_to(package_root.parent).as_posix())
+
+          with zipfile.ZipFile(zip_path) as archive:
+              names = [name for name in archive.namelist() if not name.endswith("/")]
+              if len(names) != len(TARGETS):
+                  raise RuntimeError(f"ZIP member count mismatch: {len(names)} != {len(TARGETS)}")
+          print(zip_path)
+          PY
+
+      - name: Run Python regression tests
+        shell: bash
+        run: |
+          python -m unittest discover -s tests/final_stage -p 'test_*.py'
+
+      - name: Upload completed ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem_Novelty_TestEnvironment_Completed_20260718
+          path: HairSystem_Novelty_TestEnvironment_Completed_20260718.zip
+          if-no-files-found: error
+          retention-days: 7
