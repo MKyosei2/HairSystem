@@ -1,0 +1,109 @@
+name: P0 Runtime Artifact
+
+on:
+  pull_request:
+    branches:
+      - Novelty
+    paths:
+      - tools/final_stage/_p0_artifact_transform.py
+      - tools/final_stage/.p0_transform_*
+      - .github/workflows/p0-runtime-artifact.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout temporary validation branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply P0 transformations
+        shell: pwsh
+        run: |
+          python tools/final_stage/_p0_artifact_transform.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate Python and JSON
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_final_run.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/final_stage/hairgpu_final_run.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import json,pathlib; p=pathlib.Path('docs/sample_assets/final_runtime_suite_template.json'); d=json.loads(p.read_text(encoding='utf-8')); r=d['run_defaults']; assert r['guide_strand_count']==4000; assert r['followers_per_guide']==24; assert r['display_strand_count']==100000; assert r['particles_per_guide']==128; assert r['solver_iterations']==6"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: pwsh
+        run: |
+          msbuild HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path 'bin/Release/HairSystem/HairSystem.exe')) { throw 'Release x64 executable was not generated.' }
+
+      - name: Compile changed HLSL entry points
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem 'C:/Program Files (x86)/Windows Kits/10/bin' -Recurse -Filter fxc.exe |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $fxc) { throw 'fxc.exe was not found.' }
+          New-Item -ItemType Directory -Force -Path out/hlsl-check | Out-Null
+          & $fxc.FullName /nologo /T cs_5_0 /E FollowCS /Fo out/hlsl-check/FollowCS.cso apps/dx11_viewer/shaders/HairSim.hlsl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $fxc.FullName /nologo /T vs_5_0 /E VSMain /Fo out/hlsl-check/HairStrandInstancedVS.cso apps/dx11_viewer/shaders/HairStrandInstanced.hlsl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $fxc.FullName /nologo /T ps_5_0 /E PSMain /Fo out/hlsl-check/HairStrandInstancedPS.cso apps/dx11_viewer/shaders/HairStrandInstanced.hlsl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package the requested 17 files
+        shell: pwsh
+        run: |
+          $root = Join-Path $PWD 'artifact/HairSystem_P0_Runtime_FullFiles'
+          $files = @(
+            'HairSystem.vcxproj',
+            'tools/final_stage/Run_Final_Runtime_Suite.bat',
+            'docs/sample_assets/final_runtime_suite_template.json',
+            'tools/final_stage/hairgpu_final_run.py',
+            'apps/dx11_viewer/src/GpuHairViewer.h',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/09_settings_load_save_and_export.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/12_strand_pick_gizmo_and_brush_edit.inl',
+            'apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl',
+            'include/hairgpu/Authoring.h',
+            'src/hairgpu_core/Authoring.cpp',
+            'apps/dx11_viewer/shaders/HairSim.hlsl',
+            'apps/dx11_viewer/shaders/HairStrandInstanced.hlsl'
+          )
+          foreach ($file in $files) {
+            if (-not (Test-Path $file)) { throw "Missing requested file: $file" }
+            $destination = Join-Path $root $file
+            New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+            Copy-Item -LiteralPath $file -Destination $destination -Force
+          }
+          $count = (Get-ChildItem $root -Recurse -File).Count
+          if ($count -ne 17) { throw "Expected 17 packaged files, got $count" }
+
+      - name: Upload validated source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem_P0_Runtime_FullFiles
+          path: artifact/HairSystem_P0_Runtime_FullFiles
+          if-no-files-found: error
+          retention-days: 3
