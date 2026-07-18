@@ -151,19 +151,18 @@ return true;
             return false;
         }
 
-        if (!CompileShaderFromFile(L"HairRibbon.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
-            !CompileShaderFromFile(L"HairRibbon.hlsl", "GSMain", "gs_5_0", &gsBlob, errorText) ||
-            !CompileShaderFromFile(L"HairRibbon.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "VSMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairStrandInstanced.hlsl", "PSMain", "ps_5_0", &psBlob, errorText))
         {
-            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Instanced hair shader compile failed", MB_ICONERROR);
             return false;
         }
         if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_ribbonVS)) ||
-            FAILED(m_device->CreateGeometryShader(gsBlob->GetBufferPointer(), gsBlob->GetBufferSize(), nullptr, &m_ribbonGS)) ||
             FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_ribbonPS)))
         {
             return false;
         }
+        m_ribbonGS.Reset();
 
         // Particle-only runtime:
         // keep startup dependencies limited to the shaders that are still used by the viewer.
@@ -327,20 +326,7 @@ return true;
             return false;
         }
 
-        ComPtr<ID3DBlob> ribbonVsBlob;
-        if (!CompileShaderFromFile(L"HairRibbon.hlsl", "VSMain", "vs_5_0", &ribbonVsBlob, errorText))
-        {
-            MessageBoxW(m_hwnd, errorText.c_str(), L"Shader compile failed", MB_ICONERROR);
-            return false;
-        }
-        const D3D11_INPUT_ELEMENT_DESC segmentLayout[] = {
-            { "PARTICLE_INDEX", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(SegmentRenderVertex, particleIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "STRAND_INDEX", 0, DXGI_FORMAT_R32_UINT, 0, offsetof(SegmentRenderVertex, strandIndex), D3D11_INPUT_PER_VERTEX_DATA, 0 },
-        };
-        if (FAILED(m_device->CreateInputLayout(segmentLayout, 2, ribbonVsBlob->GetBufferPointer(), ribbonVsBlob->GetBufferSize(), &m_segmentInputLayout)))
-        {
-            return false;
-        }
+        m_segmentInputLayout.Reset();
 
         ComPtr<ID3DBlob> scalpVsBlob;
         if (!CompileShaderFromFile(L"ScalpMesh.hlsl", "VSMain", "vs_5_0", &scalpVsBlob, errorText))
@@ -645,21 +631,13 @@ return true;
                 m_context->CSSetConstantBuffers(0, 2, nullConstantBuffers);
             };
 
-        // Preserve skipped Reduced/Frozen/Cached followers in the output ping-pong buffers
-        // with GPU-local copies, then integrate only the 4,000 guide strands.
-        m_context->CopyResource(
-            m_positions[outputBufferIndex].buffer.Get(),
-            m_positions[previousBufferIndex].buffer.Get());
-        m_context->CopyResource(
-            m_previousPositions[outputBufferIndex].buffer.Get(),
-            m_previousPositions[previousBufferIndex].buffer.Get());
-
+        // IntegrateCS writes every output point; followers are pass-through until FollowCS overwrites active points.
         bindCommonSrvs();
         bindPrimaryUavs();
         updateHairConstants(0u);
 
         dispatchTiled(m_rootBindCS.Get(), totalStrandCount, kHairThreadsPerGroup);
-        dispatchTiled(m_integrateCS.Get(), totalGuideParticleCount, kHairThreadsPerGroup);
+        dispatchTiled(m_integrateCS.Get(), totalParticleCount, kHairThreadsPerGroup);
 
         const uint32_t solverIterationCount = std::max<uint32_t>(m_simConfig.solverIterations, 1u);
 
@@ -733,7 +711,8 @@ return true;
         // Followers consume only the final solved guide state. Running this inside every
         // solver iteration produced the same final dependency but repeated 96k x 128 work.
         bindPrimaryUavs();
-        dispatchTiled(m_followCS.Get(), followerDispatchCount, kHairThreadsPerGroup);
+        const uint32_t followerPointDispatchCount = followerDispatchCount * particlesPerStrand;
+        dispatchTiled(m_followCS.Get(), followerPointDispatchCount, kHairThreadsPerGroup);
 
         unbindComputeState();
 

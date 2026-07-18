@@ -1,5 +1,6 @@
 // GpuHairViewer.cpp ordered part 09: settings_load_save_and_export
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
+// P0_FIXED_WORKLOAD: persisted workload values are overridden during initialization and UI synchronization.
 
         constexpr float kRadToDeg = 57.2957795f;
         switch (m_groomTool)

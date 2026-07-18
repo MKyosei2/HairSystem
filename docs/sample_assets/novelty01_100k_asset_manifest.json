@@ -1,5 +1,6 @@
 {
-  "manifestVersion": "novelty01-100k-v1.2",
+  "manifestVersion": "novelty01-100k-v1.3",
+  "assetFormatVersion": "novelty01-100k-v1",
   "purpose": "Deterministic 100,000 displayed-strand benchmark asset contract",
   "freezeStatus": "UNFROZEN_REJECT_FOR_PAPER_EVIDENCE",
   "assetId": "novelty01_100k_display_strands",
@@ -17,12 +18,10 @@
   "generation": {
     "displayStrandCount": 100000,
     "guideStrandCounts": [
-      2000,
-      3000,
-      5000
+      4000
     ],
-    "primaryGuideStrandCount": 3000,
-    "particlesPerGuide": 20,
+    "primaryGuideStrandCount": 4000,
+    "particlesPerGuide": 24,
     "followerGeneration": "deterministic_root_neighborhood",
     "followerSeed": 20260715,
     "requireExactDisplayStrandCount": true,

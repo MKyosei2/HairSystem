@@ -1419,84 +1419,53 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void FollowCS(uint3 id : SV_DispatchThreadID)
 {
-    uint followerDispatchIndex = DispatchBaseIndex + id.x;
-    uint followerIndex = followerDispatchIndex;
+    uint followerPointDispatchIndex = DispatchBaseIndex + id.x;
+    uint activeFollowerCount = GetCompactedFollowerCount();
+    uint totalFollowerPointCount = activeFollowerCount * ParticlesPerStrand;
+    if (followerPointDispatchIndex >= totalFollowerPointCount) return;
+
+    uint compactedFollowerIndex = followerPointDispatchIndex / ParticlesPerStrand;
+    uint localPointIndex = followerPointDispatchIndex % ParticlesPerStrand;
+    uint followerIndex = compactedFollowerIndex;
     if (UseCompactedFollowerDispatch != 0u)
-    {
-        if (followerDispatchIndex >= GetCompactedFollowerCount())
-        {
-            return;
-        }
-        followerIndex = CompactedFollowerIndices[followerDispatchIndex];
-    }
-    else if (followerIndex >= FollowerStrandCount)
-    {
-        return;
-    }
+        followerIndex = CompactedFollowerIndices[compactedFollowerIndex];
+    if (followerIndex >= FollowerStrandCount) return;
 
     uint tier = FollowerTierAssignments[followerIndex];
     if (tier == 1u)
     {
         uint reducedStride = max(FollowerUpdateStride, 2u);
-        if (((followerIndex + FollowerUpdatePhase) % reducedStride) != 0u)
-        {
-            return;
-        }
+        if (((followerIndex + FollowerUpdatePhase) % reducedStride) != 0u) return;
     }
-    else if (tier == 2u)
-    {
-        return;
-    }
+    else if (tier == 2u) return;
     else if (tier == 3u)
     {
         uint cachedStride = max(FollowerUpdateStride, 4u);
-        if (((followerIndex + FollowerUpdatePhase) % cachedStride) != 0u)
-        {
-            return;
-        }
+        if (((followerIndex + FollowerUpdatePhase) % cachedStride) != 0u) return;
     }
 
     uint strandIndex = GuideStrandCount + followerIndex;
     FollowData follow = FollowStrands[strandIndex];
-    if (follow.ParentGuide < 0)
-    {
-        return;
-    }
-
-    uint parentStart = uint(follow.ParentGuide) * ParticlesPerStrand;
-    uint strandStart = strandIndex * ParticlesPerStrand;
-    float3 boundFollowerRoot = EvaluateBoundRoot(strandIndex);
-
-    [loop]
-    for (uint i = 0; i < ParticlesPerStrand; ++i)
-    {
-        uint parentPointIndex = parentStart + i;
-        uint strandPointIndex = strandStart + i;
-
-        float3 parentPos = OutputPositions[parentPointIndex].xyz;
-        float3 parentRest = RestPositions[parentPointIndex].xyz;
-        float3 followerRest = RestPositions[strandPointIndex].xyz;
-        float3 restOffset = followerRest - parentRest;
-
-        float t = (ParticlesPerStrand > 1) ? (float(i) / float(ParticlesPerStrand - 1)) : 0.0f;
-        float noisePhase = ElapsedTime * (1.7f + 0.6f * follow.NoiseWeight) + strandIndex * 0.173f + i * 0.217f;
-        float noiseAmp = follow.NoiseWeight * (0.0015f + t * 0.0065f);
-        float3 noise = float3(sin(noisePhase), 0.0f, cos(noisePhase * 1.17f)) * noiseAmp;
-
-        float followGain = saturate(lerp(1.0f, follow.FollowWeight, FollowStiffness));
-        float clumpGain = lerp(0.25f, 1.0f, follow.ClumpWeight);
-        float curveGain = 0.35f + 0.65f * t;
-        float3 parentDelta = parentPos - parentRest;
-        float3 target = parentPos + restOffset * clumpGain + parentDelta * curveGain * 0.12f + noise;
-        float3 current = InputPositions[strandPointIndex].xyz;
-        float3 blended = lerp(current, target, followGain);
-
-        if (i == 0)
-        {
-            blended = boundFollowerRoot;
-        }
-
-        OutputPreviousPositions[strandPointIndex] = float4(InputPositions[strandPointIndex].xyz, 1.0f);
-        OutputPositions[strandPointIndex] = float4(blended, 1.0f);
-    }
+    if (follow.ParentGuide < 0) return;
+    uint parentPointIndex = uint(follow.ParentGuide) * ParticlesPerStrand + localPointIndex;
+    uint strandPointIndex = strandIndex * ParticlesPerStrand + localPointIndex;
+    float3 parentPos = OutputPositions[parentPointIndex].xyz;
+    float3 parentRest = RestPositions[parentPointIndex].xyz;
+    float3 followerRest = RestPositions[strandPointIndex].xyz;
+    float3 restOffset = followerRest - parentRest;
+    float t = ParticlesPerStrand > 1u ? float(localPointIndex) / float(ParticlesPerStrand - 1u) : 0.0f;
+    float noisePhase = ElapsedTime * (1.7f + 0.6f * follow.NoiseWeight) + strandIndex * 0.173f + localPointIndex * 0.217f;
+    float noiseAmp = follow.NoiseWeight * (0.0015f + t * 0.0065f);
+    float3 noise = float3(sin(noisePhase), 0.0f, cos(noisePhase * 1.17f)) * noiseAmp;
+    float followGain = saturate(lerp(1.0f, follow.FollowWeight, FollowStiffness));
+    float clumpGain = lerp(0.25f, 1.0f, follow.ClumpWeight);
+    float curveGain = 0.35f + 0.65f * t;
+    float3 parentDelta = parentPos - parentRest;
+    float3 target = parentPos + restOffset * clumpGain + parentDelta * curveGain * 0.12f + noise;
+    float3 current = InputPositions[strandPointIndex].xyz;
+    float3 blended = lerp(current, target, followGain);
+    if (localPointIndex == 0u) blended = EvaluateBoundRoot(strandIndex);
+    OutputPreviousPositions[strandPointIndex] = float4(current, 1.0f);
+    OutputPositions[strandPointIndex] = float4(blended, 1.0f);
 }
+

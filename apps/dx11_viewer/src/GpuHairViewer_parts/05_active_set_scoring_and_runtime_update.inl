@@ -102,30 +102,12 @@
         m_framesSinceVisibilityCheck = 0u;
     }
 
-    bool GpuHairViewer::ShouldRunVisibilityRecoveryThisFrame() const
+        bool GpuHairViewer::ShouldRunVisibilityRecoveryThisFrame() const
     {
-        if (m_cpuReadbackMode == CpuReadbackMode::Off)
-        {
-            return false;
-        }
-
-        if (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug)
-        {
-            return true;
-        }
-
-        if (m_visibilityRecoveryPending)
-        {
-            return true;
-        }
-
-        if (m_lastVisibilitySuspect && m_consecutiveInvisibleFrames >= 2u)
-        {
-            return true;
-        }
-
-        return m_framesSinceVisibilityCheck >= 120u;
+        return !IsExperimentModeEnabled() &&
+            m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug;
     }
+
 
     bool GpuHairViewer::RestoreGpuParticleStateFromInitialPose(bool resetCamera)
     {
@@ -314,8 +296,8 @@
         }
 
         const bool shouldDrawCpuFallback = !cpuMeshParticles.empty() &&
-            (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug ||
-             (m_cpuReadbackMode == CpuReadbackMode::OnDemandVisibility && m_lastVisibilitySuspect));
+            m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug &&
+            !IsExperimentModeEnabled();
 
         if (shouldDrawCpuFallback)
         {
@@ -416,20 +398,22 @@
             m_context->PSSetConstantBuffers(0, 1, &renderCb);
             m_context->VSSetShaderResources(0, 3, hairSrvs);
 
-            if (m_renderMode == RenderMode::StrandRibbon && m_ribbonVS && m_ribbonGS && m_ribbonPS && m_segmentInputLayout && hairVB && !m_renderData.segmentVertices.empty())
+            if (m_renderMode == RenderMode::StrandRibbon && m_ribbonVS && m_ribbonPS)
             {
-                m_context->IASetInputLayout(m_segmentInputLayout.Get());
-                m_context->IASetVertexBuffers(0, 1, &hairVB, &hairStride, &offset);
-                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->IASetInputLayout(nullptr);
+                m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+                m_context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0u);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
                 m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
-                m_context->GSSetShader(m_ribbonGS.Get(), nullptr, 0);
+                m_context->GSSetShader(nullptr, nullptr, 0);
                 m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
-                const UINT vertexCount = static_cast<UINT>(m_renderData.segmentVertices.size());
-                m_context->Draw(vertexCount, 0);
+                const UINT verticesPerStrand = m_asset.particlesPerStrand * 2u;
+                const UINT instanceCount = static_cast<UINT>(m_asset.strands.size());
+                m_context->DrawInstanced(verticesPerStrand, instanceCount, 0u, 0u);
                 m_lastCurrentHairDrawCalls = 1u;
-                m_lastCurrentHairVertexCount = static_cast<uint64_t>(vertexCount);
-                m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_renderData.segmentCount) * 2ull;
-                m_lastCurrentHairInstanceCount = 1u;
+                m_lastCurrentHairVertexCount = static_cast<uint64_t>(verticesPerStrand) * instanceCount;
+                m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_asset.particlesPerStrand - 1u) * 2ull * instanceCount;
+                m_lastCurrentHairInstanceCount = instanceCount;
             }
             else if (m_particleVS && m_particlePS)
             {

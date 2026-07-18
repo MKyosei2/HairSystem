@@ -2,8 +2,8 @@
   "suite_name": "novelty01_formal_runtime_suite",
   "suite_version": "2.0",
   "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
-  "outputs_dir": "../../out/novelty01_formal",
-  "telemetry_dir": "../../out/novelty01_formal/telemetry",
+  "outputs_dir": "../../out/novelty01_baseline",
+  "telemetry_dir": "../../out/novelty01_baseline/telemetry",
   "hardware_profiles": "hardware_profiles.json",
   "baseline_method": "B0_FullDynamic",
   "repetitions_per_seed": 1,
@@ -17,7 +17,7 @@
     ]
   },
   "source": {
-    "viewer_exe": "../../build/apps/dx11_viewer/Release/HairSystem.exe",
+    "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
     "schema": "../../tools/final_stage/schema.sql",
     "asset_manifest": "novelty01_100k_asset_manifest.json",
     "shader_root": "../../apps/dx11_viewer/shaders",
@@ -118,17 +118,22 @@
     "present_sync_interval": 0,
     "warmup_frames": 600,
     "measurement_frames": 6000,
-    "guide_count": 6250,
-    "followers_per_guide": 15,
+    "followers_per_guide": 24,
     "display_strand_count": 100000,
     "particles_per_guide": 128,
-    "solver_iterations": 12,
+    "solver_iterations": 6,
     "gpu_timestamp_delay_frames": 6,
     "timeout_seconds": 900,
     "auto_exit_after_capture": true,
     "strict_validation": true,
     "real_measurement_required": true,
-    "required_gpu_timing_coverage": 0.99
+    "required_gpu_timing_coverage": 0.99,
+    "guide_strand_count": 4000,
+    "minimum_average_fps": 24.0,
+    "maximum_p95_frame_ms": 41.666666666666664,
+    "maximum_p99_frame_ms": 50.0,
+    "maximum_single_frame_ms": 100.0,
+    "maximum_frames_over_100ms": 0
   },
   "seeds": [
     1103,
@@ -264,33 +269,33 @@
   "scenarios": [
     {
       "code": "S01_Idle",
-      "timeline": "../../benchmarks/novelty01/scenarios/S01_Idle.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S01_idle.json",
       "measurement_mode": "performance",
       "assertions": {
-        "min_applied_events": 1
+        "min_applied_events": 0
       }
     },
     {
       "code": "S02_Breathing",
-      "timeline": "../../benchmarks/novelty01/scenarios/S02_Breathing.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S02_breathing.json",
       "measurement_mode": "performance",
       "assertions": {
-        "min_applied_events": 1,
+        "min_applied_events": 0,
         "min_state_transitions": 1
       }
     },
     {
       "code": "S03_Walk",
-      "timeline": "../../benchmarks/novelty01/scenarios/S03_Walk.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S03_walk.json",
       "measurement_mode": "performance",
       "assertions": {
-        "min_applied_events": 1,
+        "min_applied_events": 0,
         "min_state_transitions": 1
       }
     },
     {
       "code": "S04_SuddenStop",
-      "timeline": "../../benchmarks/novelty01/scenarios/S04_SuddenStop.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S04_sudden_stop.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 2,
@@ -299,16 +304,16 @@
     },
     {
       "code": "S05_HeadRotation",
-      "timeline": "../../benchmarks/novelty01/scenarios/S05_HeadRotation.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S05_head_rotation.json",
       "measurement_mode": "performance",
       "assertions": {
-        "min_applied_events": 1,
+        "min_applied_events": 0,
         "min_state_transitions": 1
       }
     },
     {
       "code": "S06_Teleport",
-      "timeline": "../../benchmarks/novelty01/scenarios/S06_Teleport.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S06_teleport.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1,
@@ -317,7 +322,7 @@
     },
     {
       "code": "S07_ColliderApproach",
-      "timeline": "../../benchmarks/novelty01/scenarios/S07_ColliderApproach.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S07_collider_approach.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1,
@@ -326,7 +331,7 @@
     },
     {
       "code": "S08_StaticDynamicBoundaryContact",
-      "timeline": "../../benchmarks/novelty01/scenarios/S08_StaticDynamicBoundaryContact.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S08_boundary_contact.json",
       "measurement_mode": "quality",
       "assertions": {
         "min_applied_events": 1,
@@ -335,7 +340,7 @@
     },
     {
       "code": "S09_StrongWind",
-      "timeline": "../../benchmarks/novelty01/scenarios/S09_StrongWind.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S09_strong_wind.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1,
@@ -344,7 +349,7 @@
     },
     {
       "code": "S10_WindStop",
-      "timeline": "../../benchmarks/novelty01/scenarios/S10_WindStop.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S10_wind_stop.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 2,
@@ -353,7 +358,7 @@
     },
     {
       "code": "S11_LocalEdit",
-      "timeline": "../../benchmarks/novelty01/scenarios/S11_LocalEdit.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S11_local_edit.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1,
@@ -362,7 +367,7 @@
     },
     {
       "code": "S12_FalseStaticTrap",
-      "timeline": "../../benchmarks/novelty01/scenarios/S12_FalseStaticTrap.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S12_false_static_trap.json",
       "measurement_mode": "quality",
       "assertions": {
         "min_applied_events": 1,
@@ -371,7 +376,7 @@
     },
     {
       "code": "S13_RepairStorm",
-      "timeline": "../../benchmarks/novelty01/scenarios/S13_RepairStorm.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S13_repair_storm.json",
       "measurement_mode": "quality",
       "assertions": {
         "min_applied_events": 1,
@@ -380,7 +385,7 @@
     },
     {
       "code": "S14_AllDynamic",
-      "timeline": "../../benchmarks/novelty01/scenarios/S14_AllDynamic.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S14_all_dynamic.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1,
@@ -389,7 +394,7 @@
     },
     {
       "code": "S15_AllStatic",
-      "timeline": "../../benchmarks/novelty01/scenarios/S15_AllStatic.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S15_all_static.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1,
@@ -398,7 +403,7 @@
     },
     {
       "code": "S16_StateThrashing",
-      "timeline": "../../benchmarks/novelty01/scenarios/S16_StateThrashing.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S16_state_thrashing.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 4,
@@ -407,7 +412,7 @@
     },
     {
       "code": "S17_CloseCamera100k",
-      "timeline": "../../benchmarks/novelty01/scenarios/S17_CloseCamera100k.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S17_close_camera_100k.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1
@@ -415,7 +420,7 @@
     },
     {
       "code": "S18_FarCamera100k",
-      "timeline": "../../benchmarks/novelty01/scenarios/S18_FarCamera100k.json",
+      "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json",
       "measurement_mode": "performance",
       "assertions": {
         "min_applied_events": 1

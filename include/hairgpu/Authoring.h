@@ -198,4 +198,20 @@ namespace hairgpu
     bool ApplyPaletteToRegion(HairAsset& asset, const RegionSelectionResult& selection, const Palette& palette, float strength, std::string& outError);
     bool CanonicalizeHairAssetToParticleChains(HairAsset& asset, const ParticleChainCanonicalizationSettings& settings, std::string& outError);
     bool RetessellateHairAsset(HairAsset& asset, const StrandRetessellationSettings& settings, std::string& outError);
+
+    struct SparseEditResult
+    {
+        std::vector<uint32_t> affectedStrandIndices;
+        std::vector<uint32_t> changedPointIndices;
+    };
+
+    bool ApplyEditStackToGuideFamiliesSparse(
+        HairAsset& asset,
+        const HairAsset& baseAsset,
+        const EditStack& stack,
+        const std::vector<uint32_t>& affectedGuideIndices,
+        SparseEditResult* outResult,
+        RuntimeEditState* outState,
+        std::string& outError);
 }
+

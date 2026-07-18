@@ -559,7 +559,7 @@ def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
     result.setdefault("measurement_frames", 6000)
     result.setdefault("guide_strand_count", 4000)
     result.setdefault("display_strand_count", 100000)
-    result.setdefault("particles_per_guide", 24)
+    result.setdefault("particles_per_guide", 128)
     result.setdefault("solver_iterations", 6)
     result.setdefault("minimum_gpu_timing_coverage", 0.99)
     result.setdefault("minimum_metric_coverage", 0.99)
@@ -701,8 +701,13 @@ def validate_case_contract(case: Mapping[str, Any], viewer_exe: Path | None = No
         issues.append(_issue("E_MEASUREMENT_FRAMES", "Measurement must be at least 6000 frames."))
     guide_count = _required_int(normalized.get("guide_strand_count"))
     display_count = _required_int(normalized.get("display_strand_count"))
-    if not 2000 <= guide_count <= 5000:
-        issues.append(_issue("E_GUIDE_COUNT", "Guide count must be 2000-5000.", observed=guide_count))
+    if guide_count != 4000:
+        issues.append(_issue(
+            "E_GUIDE_COUNT",
+            "Formal evaluation requires exactly 4000 guide strands.",
+            expected=4000,
+            observed=guide_count,
+        ))
     if display_count != 100000:
         issues.append(_issue(
             "E_DISPLAY_STRANDS",
@@ -736,11 +741,21 @@ def validate_case_contract(case: Mapping[str, Any], viewer_exe: Path | None = No
             observed={"guideCount": guide_count, "displayStrandCount": display_count},
         ))
     particles = _required_int(normalized.get("particles_per_guide"))
-    if not 16 <= particles <= 24:
-        issues.append(_issue("E_POINTS_PER_GUIDE", "Particles per guide must be 16-24.", observed=particles))
+    if particles != 128:
+        issues.append(_issue(
+            "E_POINTS_PER_GUIDE",
+            "Formal evaluation requires exactly 128 particles per strand.",
+            expected=128,
+            observed=particles,
+        ))
     iterations = _required_int(normalized.get("solver_iterations"))
-    if not 3 <= iterations <= 8:
-        issues.append(_issue("E_SOLVER_ITERATIONS", "Solver iterations must be 3-8.", observed=iterations))
+    if iterations != 6:
+        issues.append(_issue(
+            "E_SOLVER_ITERATIONS",
+            "Formal evaluation requires exactly 6 solver iterations.",
+            expected=6,
+            observed=iterations,
+        ))
 
     timeline = _resolve_case_path(normalized.get("scenario_timeline"))
     if timeline is None or not timeline.is_file():
@@ -1155,6 +1170,8 @@ def _aggregate_frame_metrics(rows: list[dict[str, Any]], summary: Mapping[str, A
     return {
         "sampleCount": len(rows),
         "averageFrameMilliseconds": sum(frame_ms) / len(frame_ms) if frame_ms else None,
+        "averageFps": (1000.0 / (sum(frame_ms) / len(frame_ms))) if frame_ms and sum(frame_ms) > 0.0 else None,
+        "framesOver100Milliseconds": sum(value > 100.0 for value in frame_ms),
         "p50FrameMilliseconds": _percentile(frame_ms, 50.0),
         "p95FrameMilliseconds": _percentile(frame_ms, 95.0),
         "p99FrameMilliseconds": _percentile(frame_ms, 99.0),
@@ -1218,6 +1235,28 @@ def _evaluate_quality_gates(aggregate: Mapping[str, Any], case: Mapping[str, Any
     thresholds.update({key: float(value) for key, value in dict(case.get("quality_gates", {})).items()})
     required = set(case.get("required_quality_metrics", []))
     issues: list[dict[str, Any]] = []
+    minimum_average_fps = _required_float(case.get("minimum_average_fps"), 24.0)
+    maximum_p95_frame_ms = _required_float(case.get("maximum_p95_frame_ms"), 1000.0 / 24.0)
+    maximum_p99_frame_ms = _required_float(case.get("maximum_p99_frame_ms"), 50.0)
+    maximum_single_frame_ms = _required_float(case.get("maximum_single_frame_ms"), 100.0)
+    maximum_frames_over_100ms = _required_int(case.get("maximum_frames_over_100ms"), 0)
+
+    performance_gates = (
+        ("averageFps", minimum_average_fps, "minimum"),
+        ("p95FrameMilliseconds", maximum_p95_frame_ms, "maximum"),
+        ("p99FrameMilliseconds", maximum_p99_frame_ms, "maximum"),
+        ("maximumFrameMilliseconds", maximum_single_frame_ms, "maximum"),
+        ("framesOver100Milliseconds", float(maximum_frames_over_100ms), "maximum"),
+    )
+    for key, threshold, direction in performance_gates:
+        observed = aggregate.get(key)
+        if observed is None:
+            issues.append(_issue("E_PERFORMANCE_METRIC_UNAVAILABLE", f"Performance metric is unavailable: {key}"))
+        elif direction == "minimum" and float(observed) < threshold:
+            issues.append(_issue("E_PERFORMANCE_GATE", f"Performance metric is below minimum: {key}", expected=threshold, observed=observed))
+        elif direction == "maximum" and float(observed) > threshold:
+            issues.append(_issue("E_PERFORMANCE_GATE", f"Performance metric exceeds maximum: {key}", expected=threshold, observed=observed))
+
     maximum = {"falseStaticRate", "repairRecurrenceRate", "collisionMissRate", "stateOscillationRate", "staticDynamicBoundaryMaxErrorMm"}
     minimum = {"repairVerifiedSuccessRate", "predictiveWakeRecall"}
     for key in sorted(set(thresholds) | required):
@@ -1796,7 +1835,7 @@ def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_sec
 def _self_test() -> None:
     assert derive_method_code({key: METHOD_PRESETS["P"][key] for key in METHOD_FLAG_KEYS}) == "P"
     assert derive_method_code({key: METHOD_PRESETS["B8"][key] for key in METHOD_FLAG_KEYS}) == "B8"
-    case = _normalize_case({"method": "P", "width": 1920, "height": 1080, "display_strand_count": 100000, "guide_strand_count": 4000, "particles_per_guide": 24, "solver_iterations": 6, "vsync": False, "present_sync_interval": 0})
+    case = _normalize_case({"method": "P", "width": 1920, "height": 1080, "display_strand_count": 100000, "guide_strand_count": 4000, "particles_per_guide": 128, "solver_iterations": 6, "vsync": False, "present_sync_interval": 0})
     requested = dict(METHOD_PRESETS["P"])
     applied = {key: requested[key] for key in METHOD_FLAG_KEYS}
     observed_flags = dict(applied)

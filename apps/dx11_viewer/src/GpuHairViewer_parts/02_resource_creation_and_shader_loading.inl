@@ -458,7 +458,8 @@
             m_followGpuData.push_back({ f.parentGuide, f.followWeight, f.clumpWeight, f.noiseWeight });
         }
 
-        m_renderData = BuildSegmentRenderData(m_asset);
+        // Instanced rendering reads the particle buffers directly; avoid a 12.7M-segment CPU copy.
+        m_renderData = {};
 
         for (const Vec3& p : m_asset.scalpMesh.positions)
         {
@@ -500,12 +501,16 @@
         const UINT totalStrands = static_cast<UINT>(std::max<size_t>(m_asset.strands.size(), 1u));
         std::vector<uint32_t> initialRenderTiers(totalStrands, static_cast<uint32_t>(hairgpu::SimTier::Reduced));
         std::vector<uint32_t> initialGuideTiers(std::max<UINT>(m_asset.guideStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Full));
-        std::vector<uint32_t> initialFollowerTiers(std::max<UINT>(m_asset.followerStrandCount, 1u), static_cast<uint32_t>(hairgpu::SimTier::Reduced));
+        std::vector<uint32_t> initialFollowerTiers(std::max<UINT>(m_asset.followerStrandCount, 1u),
+            (m_experimentCase.methodId == ExperimentMethodId::B0_FullDynamic)
+                ? static_cast<uint32_t>(hairgpu::SimTier::Full)
+                : static_cast<uint32_t>(hairgpu::SimTier::Reduced));
         for (uint32_t strandIndex = 0u; strandIndex < totalStrands; ++strandIndex)
         {
             const bool isGuide = strandIndex < m_asset.guideStrandCount;
-            uint32_t tier = isGuide ? static_cast<uint32_t>(hairgpu::SimTier::Full)
-                                    : static_cast<uint32_t>(hairgpu::SimTier::Reduced);
+            uint32_t tier = (isGuide || m_experimentCase.methodId == ExperimentMethodId::B0_FullDynamic)
+                ? static_cast<uint32_t>(hairgpu::SimTier::Full)
+                : static_cast<uint32_t>(hairgpu::SimTier::Reduced);
             if (strandIndex < m_activeSetPlan.recommendedSimulationTiers.size())
             {
                 tier = static_cast<uint32_t>(m_activeSetPlan.recommendedSimulationTiers[strandIndex]);
@@ -624,16 +629,8 @@
         m_sortedCellStartsBuffer = CreateStructuredBuffer(sizeof(uint32_t), gridCellCount, invalidSortedStarts.data(), true);
         m_sortedCellEndsBuffer = CreateStructuredBuffer(sizeof(uint32_t), gridCellCount, invalidSortedEnds.data(), true);
 
-        D3D11_BUFFER_DESC vbDesc = {};
-        vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        vbDesc.ByteWidth = static_cast<UINT>(m_renderData.segmentVertices.size() * sizeof(SegmentRenderVertex));
-        vbDesc.Usage = D3D11_USAGE_IMMUTABLE;
-        D3D11_SUBRESOURCE_DATA vbData = {};
-        vbData.pSysMem = m_renderData.segmentVertices.data();
-        if (FAILED(m_device->CreateBuffer(&vbDesc, &vbData, &m_segmentVertexBuffer)))
-        {
-            return false;
-        }
+        m_segmentVertexBuffer.Reset();
+
 
         m_strandTubeVertexBuffer.Reset();
         m_strandTubeIndexBuffer.Reset();

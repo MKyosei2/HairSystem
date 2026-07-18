@@ -22,8 +22,7 @@ StructuredBuffer<float> Widths : register(t1);
 
 struct VSInput
 {
-    float strandU : TEXCOORD0;
-    float angle : TEXCOORD1;
+    uint vertexId : SV_VertexID;
     uint instanceId : SV_InstanceID;
 };
 
@@ -87,7 +86,9 @@ VSOutput VSMain(VSInput input)
     VSOutput output;
 
     const uint strandIndex = min(input.instanceId, max(TotalStrandCount, 1u) - 1u);
-    const float u = saturate(input.strandU);
+    const uint pointIndex = min(input.vertexId >> 1u, max(ParticlesPerStrand, 1u) - 1u);
+    const float u = (ParticlesPerStrand > 1u) ? (float(pointIndex) / float(ParticlesPerStrand - 1u)) : 0.0f;
+    const float angle = ((input.vertexId & 1u) == 0u) ? -1.57079632679f : 1.57079632679f;
     const float prevU = max(u - (1.0f / max((float)ParticlesPerStrand - 1.0f, 1.0f)), 0.0f);
     const float nextU = min(u + (1.0f / max((float)ParticlesPerStrand - 1.0f, 1.0f)), 1.0f);
 
@@ -116,7 +117,7 @@ VSOutput VSMain(VSInput input)
 
     const float width = max(SampleStrandWidth(strandIndex, u), 0.0015f);
     const float radius = max(width * 0.48f, 0.0018f);
-    const float3 radialDir = cos(input.angle) * normal + sin(input.angle) * binormal;
+    const float3 radialDir = cos(angle) * normal + sin(angle) * binormal;
     const float3 worldPosition = center + radialDir * radius;
 
     const float widthN = saturate((width - 0.0010f) / 0.0120f);

@@ -16,6 +16,7 @@
 #include <initializer_list>
 #include <limits>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "hairgpu/ActiveSet.h"
@@ -37,6 +38,19 @@ namespace hairgpu::viewer
         int Run();
 
     private:
+        static constexpr uint32_t kFixedGuideCount = 4000u;
+        static constexpr uint32_t kFixedFollowersPerGuide = 24u;
+        static constexpr uint32_t kFixedDisplayStrandCount = 100000u;
+        static constexpr uint32_t kFixedParticlesPerStrand = 128u;
+        static constexpr uint32_t kFixedSolverIterations = 6u;
+        static constexpr float kFixedTimeStepSeconds = 1.0f / 60.0f;
+        static constexpr size_t kMaximumUndoCount = 16u;
+        static_assert(
+            kFixedGuideCount * (kFixedFollowersPerGuide + 1u) == kFixedDisplayStrandCount,
+            "The fixed workload must remain exactly 100,000 strands.");
+
+        struct StrandEditSnapshot;
+
         struct GpuParticle
         {
             float x, y, z, w;
@@ -516,7 +530,7 @@ namespace hairgpu::viewer
         {
             ExperimentScenarioId scenarioId = ExperimentScenarioId::Unknown;
             uint32_t durationFrames = 0u;
-            float fixedTimeStepSeconds = 1.0f / 60.0f;
+            float fixedTimeStepSeconds = kFixedTimeStepSeconds;
             bool seedDriven = true;
             std::wstring sourcePath;
             std::wstring sha256;
@@ -618,10 +632,10 @@ namespace hairgpu::viewer
             uint32_t observedSolverIterations = 0u;
             bool observedVsyncEnabled = true;
             uint32_t observedPresentSyncInterval = 1u;
-            uint32_t requestedGuideCount = 4000u;
-            uint32_t requestedDisplayStrandCount = 100000u;
-            uint32_t requestedParticlesPerGuide = 24u;
-            uint32_t requestedSolverIterations = 6u;
+            uint32_t requestedGuideCount = kFixedGuideCount;
+            uint32_t requestedDisplayStrandCount = kFixedDisplayStrandCount;
+            uint32_t requestedParticlesPerGuide = kFixedParticlesPerStrand;
+            uint32_t requestedSolverIterations = kFixedSolverIterations;
             uint32_t presentSyncInterval = 0u;
             uint32_t gpuTimestampDelayFrames = 4u;
             uint32_t scenarioAssertionMinAppliedEvents = 0u;
@@ -1265,8 +1279,15 @@ namespace hairgpu::viewer
         std::wstring BuildHistorySummaryText() const;
         hairgpu::Vec3 GetSelectedStrandAnchorPoint(bool root) const;
         bool ProjectWorldToScreen(const hairgpu::Vec3& world, float& outX, float& outY) const;
+        void EnforceFixedWorkload();
         void CommitEditedRestState();
+        void CommitEditedPointIndices(const std::vector<uint32_t>& pointIndices);
+        std::vector<uint32_t> ExpandGuideFamilies(const std::vector<uint32_t>& guideIndices) const;
         void PushStrandEditUndoSnapshot();
+        void PushStrandEditUndoSnapshot(const std::vector<uint32_t>& guideIndices);
+        void ExtendLastStrandEditUndoSnapshot(const std::vector<uint32_t>& guideIndices);
+        void FinalizeLastStrandEditUndoSnapshot();
+        void ApplyStrandEditSnapshot(const StrandEditSnapshot& snapshot, bool applyAfter);
         bool UndoStrandEdit();
         bool RedoStrandEdit();
         bool SaveStrandEditSessionToPath(const std::filesystem::path& path) const;
@@ -1345,14 +1366,24 @@ namespace hairgpu::viewer
         bool m_showFollowLinks = false;
         bool m_showTestMesh = false; // legacy CPU test mesh path disabled in runtime UI
         POINT m_lastMouse = {};
+        struct SparsePointEdit
+        {
+            uint32_t pointIndex = 0u;
+            hairgpu::Vec3 before = {};
+            hairgpu::Vec3 after = {};
+        };
+
         struct StrandEditSnapshot
         {
-            std::vector<hairgpu::Vec3> restPoints;
-            std::vector<GpuParticle> initialParticles;
-            std::wstring inlineEditStackText;
-            std::vector<uint8_t> lockedStrands;
-            int32_t selectedStrandIndex = -1;
-            int32_t selectedInlineLayerIndex = -1;
+            std::vector<SparsePointEdit> points;
+            std::wstring inlineEditStackTextBefore;
+            std::wstring inlineEditStackTextAfter;
+            std::vector<uint8_t> lockedStrandsBefore;
+            std::vector<uint8_t> lockedStrandsAfter;
+            int32_t selectedStrandIndexBefore = -1;
+            int32_t selectedStrandIndexAfter = -1;
+            int32_t selectedInlineLayerIndexBefore = -1;
+            int32_t selectedInlineLayerIndexAfter = -1;
         };
 
         int32_t m_selectedStrandIndex = -1;
@@ -1361,7 +1392,7 @@ namespace hairgpu::viewer
         GizmoAxis m_activeGizmoAxis = GizmoAxis::None;
         bool m_gizmoDragging = false;
         POINT m_gizmoDragStartPoint = {};
-        std::vector<hairgpu::Vec3> m_gizmoDragBaseRestPoints;
+        StrandEditSnapshot m_gizmoDragSnapshot;
         std::vector<StrandEditSnapshot> m_strandUndoStack;
         std::vector<StrandEditSnapshot> m_strandRedoStack;
         bool m_brushStrokeActive = false;
@@ -1371,6 +1402,7 @@ namespace hairgpu::viewer
         hairgpu::Vec2 m_brushStrokeCurrentUv = { 0.5f, 0.5f };
         hairgpu::EditStack m_brushStrokeBaseStack = {};
         uint32_t m_brushStrokeAffectedGuideCount = 0u;
+        bool m_brushStrokeSnapshotActive = false;
         std::vector<uint8_t> m_lockedStrands;
         std::vector<std::wstring> m_viewportHistory;
         uint32_t m_viewportStrokeSerial = 0u;
@@ -1400,9 +1432,9 @@ namespace hairgpu::viewer
         float m_runtimeAngularBendStiffness = 0.35f;
         float m_runtimeAngularBendDamping = 0.08f;
         uint32_t m_sortedBroadphasePaddedCount = 1u;
-        uint32_t m_builderGuideCount = 4000u;
-        uint32_t m_builderFollowersPerGuide = 24u;
-        uint32_t m_builderParticlesPerStrand = 128u;
+        uint32_t m_builderGuideCount = kFixedGuideCount;
+        uint32_t m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+        uint32_t m_builderParticlesPerStrand = kFixedParticlesPerStrand;
         std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";

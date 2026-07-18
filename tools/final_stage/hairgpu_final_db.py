@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""SQLite persistence for validated HairSystem formal runtime evidence.
+
+Evidence integrity and result quality are intentionally separate. A real,
+hash-consistent run may be imported even when its quality/performance gate is
+not met; the distinction is retained in ``validation_status`` and
+``quality_gate_passed``.
+"""
+
 import csv
 import hashlib
 import json
@@ -8,7 +16,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 # Keep these values aligned with include/hairgpu/HairNoveltyTelemetry.h.
 AVAILABILITY_GPU_TIMING = 1 << 2
@@ -19,6 +27,8 @@ AVAILABILITY_BOUNDARY_COMPARISON = 1 << 9
 AVAILABILITY_FALSE_STATIC_GROUND_TRUTH = 1 << 12
 AVAILABILITY_PERFORMANCE_ENVIRONMENT = 1 << 13
 AVAILABILITY_RESULT_INTEGRITY = 1 << 14
+
+IMPORTABLE_STATUSES = {"complete_valid", "quality_gate_failed"}
 
 
 @dataclass(frozen=True)
@@ -38,12 +48,7 @@ def _utc_now() -> str:
 
 
 class FinalStageDatabase:
-    """SQLite storage for validated HairSystem formal runs.
-
-    Invalid, synthetic, incomplete, hash-mismatched, or identity-mismatched runs
-    are rejected before any run row is committed. Missing metrics remain SQL
-    NULL and are never converted to a favourable zero.
-    """
+    """Store only complete, real, identity-matched measurement evidence."""
 
     _RUN_MIGRATION_COLUMNS: dict[str, str] = {
         "manifest_json_path": "TEXT",
@@ -61,6 +66,8 @@ class FinalStageDatabase:
         "thermal_valid": "INTEGER",
         "environment_valid": "INTEGER",
         "required_metric_coverage_valid": "INTEGER",
+        "evidence_integrity_passed": "INTEGER",
+        "quality_gate_passed": "INTEGER",
         "requested_guide_count": "INTEGER",
         "actual_guide_count": "INTEGER",
         "requested_particles_per_guide": "INTEGER",
@@ -151,11 +158,22 @@ class FinalStageDatabase:
             self._ensure_columns("runtime_runs", self._RUN_MIGRATION_COLUMNS)
             self._ensure_columns("runtime_frame_metrics", self._FRAME_MIGRATION_COLUMNS)
 
-    def _ensure_columns(self, table: str, definitions: dict[str, str]) -> None:
-        existing = {
+    def _table_exists(self, table: str) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        return row is not None
+
+    def _table_columns(self, table: str) -> set[str]:
+        if not self._table_exists(table):
+            return set()
+        return {
             str(row["name"])
             for row in self.connection.execute(f"PRAGMA table_info({table})").fetchall()
         }
+
+    def _ensure_columns(self, table: str, definitions: Mapping[str, str]) -> None:
+        existing = self._table_columns(table)
         for name, sql_type in definitions.items():
             if name not in existing:
                 self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
@@ -169,7 +187,9 @@ class FinalStageDatabase:
         return digest.hexdigest()
 
     @staticmethod
-    def _read_json(path: Path) -> dict[str, Any]:
+    def _read_json(path: Path | None) -> dict[str, Any]:
+        if path is None:
+            return {}
         payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
         if not isinstance(payload, dict):
             raise RuntimeError(f"Expected a JSON object: {path}")
@@ -191,23 +211,14 @@ class FinalStageDatabase:
         return int(parsed) if parsed is not None else None
 
     @staticmethod
-    def _pick(payload: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    def _pick(payload: Mapping[str, Any], *keys: str, default: Any = None) -> Any:
         for key in keys:
             if key in payload and payload[key] is not None:
                 return payload[key]
         return default
 
     @staticmethod
-    def _nested(payload: dict[str, Any], dotted_key: str, default: Any = None) -> Any:
-        current: Any = payload
-        for part in dotted_key.split("."):
-            if not isinstance(current, dict) or part not in current:
-                return default
-            current = current[part]
-        return current
-
-    @staticmethod
-    def _csv_value(row: dict[str, Any], *keys: str) -> Any:
+    def _csv_value(row: Mapping[str, Any], *keys: str) -> Any:
         for key in keys:
             value = row.get(key)
             if value not in (None, ""):
@@ -222,7 +233,7 @@ class FinalStageDatabase:
 
     def upsert_experiment(self, experiment_name: str, operator_name: str, notes: str) -> int:
         row = self.connection.execute(
-            "SELECT experiment_id FROM experiments WHERE experiment_name = ? "
+            "SELECT experiment_id FROM experiments WHERE experiment_name=? "
             "ORDER BY experiment_id DESC LIMIT 1",
             (experiment_name,),
         ).fetchone()
@@ -246,22 +257,17 @@ class FinalStageDatabase:
             raise RuntimeError(f"Artifact manifest is missing: {manifest_path}")
         manifest = self._read_json(manifest_path)
         if expected_manifest_sha256:
-            observed_manifest_sha = self.file_sha256(manifest_path)
-            # resultManifestSha256 may be either the physical file hash or the
-            # canonical manifest hash. Accept only an explicit match to one.
-            canonical_hash = str(manifest.get("manifestSha256") or "")
-            if expected_manifest_sha256.lower() not in {
-                observed_manifest_sha.lower(), canonical_hash.lower()
-            }:
+            physical = self.file_sha256(manifest_path)
+            canonical = str(manifest.get("manifestSha256") or "")
+            if expected_manifest_sha256.lower() not in {physical.lower(), canonical.lower()}:
                 raise RuntimeError("Artifact manifest hash does not match the summary")
-
         entries = manifest.get("artifacts")
         if not isinstance(entries, list):
             raise RuntimeError("Artifact manifest has no artifacts array")
         by_name = {
-            str(entry.get("path")): entry
-            for entry in entries
-            if isinstance(entry, dict) and entry.get("path")
+            str(item.get("path")): item
+            for item in entries
+            if isinstance(item, dict) and item.get("path")
         }
         for path in required_paths:
             path = Path(path)
@@ -271,11 +277,10 @@ class FinalStageDatabase:
             if not entry:
                 raise RuntimeError(f"Required artifact is absent from manifest: {path.name}")
             expected = str(entry.get("sha256") or "").lower()
-            observed = self.file_sha256(path).lower()
-            if not expected or expected != observed:
+            if expected != self.file_sha256(path).lower():
                 raise RuntimeError(f"Artifact hash mismatch: {path.name}")
-            expected_size = self._nullable_int(entry.get("sizeBytes"))
-            if expected_size is None or expected_size != path.stat().st_size:
+            size = self._nullable_int(entry.get("sizeBytes"))
+            if size is None or size != path.stat().st_size:
                 raise RuntimeError(f"Artifact size mismatch: {path.name}")
         return manifest
 
@@ -288,23 +293,19 @@ class FinalStageDatabase:
         *,
         commit: bool = True,
     ) -> None:
+        if not self._table_exists("run_artifacts"):
+            return
         artifact_path = Path(artifact_path)
-        sha256 = self.file_sha256(artifact_path) if artifact_path.is_file() else None
-        size_bytes = artifact_path.stat().st_size if artifact_path.is_file() else None
-        self.connection.execute(
-            "INSERT INTO run_artifacts "
-            "(run_id, category, label, artifact_path, sha256, size_bytes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                run_id,
-                category,
-                label,
-                str(artifact_path),
-                sha256,
-                size_bytes,
-                _utc_now(),
-            ),
-        )
+        values = {
+            "run_id": run_id,
+            "category": category,
+            "label": label,
+            "artifact_path": str(artifact_path),
+            "sha256": self.file_sha256(artifact_path) if artifact_path.is_file() else None,
+            "size_bytes": artifact_path.stat().st_size if artifact_path.is_file() else None,
+            "created_at": _utc_now(),
+        }
+        self._insert_dynamic("run_artifacts", values)
         if commit:
             self.connection.commit()
 
@@ -319,21 +320,18 @@ class FinalStageDatabase:
         units: str = "",
         notes: str = "",
     ) -> None:
-        self.connection.execute(
-            "INSERT INTO derived_metrics "
-            "(run_id, scope_type, scope_key, metric_name, metric_value, units, notes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                run_id,
-                scope_type,
-                scope_key,
-                metric_name,
-                float(metric_value) if metric_value is not None else None,
-                units,
-                notes,
-                _utc_now(),
-            ),
-        )
+        if not self._table_exists("derived_metrics"):
+            return
+        self._insert_dynamic("derived_metrics", {
+            "run_id": run_id,
+            "scope_type": scope_type,
+            "scope_key": scope_key,
+            "metric_name": metric_name,
+            "metric_value": float(metric_value) if metric_value is not None else None,
+            "units": units,
+            "notes": notes,
+            "created_at": _utc_now(),
+        })
         self.connection.commit()
 
     def add_user_task_result(
@@ -351,39 +349,36 @@ class FinalStageDatabase:
         satisfaction_score: float | None = None,
         notes: str = "",
     ) -> None:
+        if not self._table_exists("user_task_results"):
+            return
         with self.connection:
             experiment_id = self.upsert_experiment(experiment_name, "", notes)
-            self.connection.execute(
-                "INSERT INTO user_task_results "
-                "(experiment_id, task_id, title, method_code, scenario_code, asset_name, "
-                "participant_id, completion_seconds, redo_count, unintended_change_score, "
-                "satisfaction_score, notes, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    experiment_id,
-                    task_id,
-                    title,
-                    method_code,
-                    scenario_code,
-                    asset_name,
-                    participant_id,
-                    completion_seconds,
-                    redo_count,
-                    unintended_change_score,
-                    satisfaction_score,
-                    notes,
-                    _utc_now(),
-                ),
-            )
+            self._insert_dynamic("user_task_results", {
+                "experiment_id": experiment_id,
+                "task_id": task_id,
+                "title": title,
+                "method_code": method_code,
+                "scenario_code": scenario_code,
+                "asset_name": asset_name,
+                "participant_id": participant_id,
+                "completion_seconds": completion_seconds,
+                "redo_count": redo_count,
+                "unintended_change_score": unintended_change_score,
+                "satisfaction_score": satisfaction_score,
+                "notes": notes,
+                "created_at": _utc_now(),
+            })
 
     def clear_suite_rows(self, suite_name: str) -> None:
         with self.connection:
-            self.connection.execute(
-                "DELETE FROM hypothesis_checks WHERE suite_name = ?", (suite_name,)
-            )
-            self.connection.execute(
-                "DELETE FROM scenario_coverage WHERE suite_name = ?", (suite_name,)
-            )
+            if self._table_exists("hypothesis_checks"):
+                self.connection.execute(
+                    "DELETE FROM hypothesis_checks WHERE suite_name=?", (suite_name,)
+                )
+            if self._table_exists("scenario_coverage"):
+                self.connection.execute(
+                    "DELETE FROM scenario_coverage WHERE suite_name=?", (suite_name,)
+                )
 
     def add_scenario_coverage(
         self,
@@ -395,20 +390,17 @@ class FinalStageDatabase:
         category: str = "",
         notes: str = "",
     ) -> None:
-        self.connection.execute(
-            "INSERT INTO scenario_coverage "
-            "(suite_name, scenario_code, category, required_method_code, is_present, notes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                suite_name,
-                scenario_code,
-                category,
-                required_method_code,
-                int(is_present),
-                notes,
-                _utc_now(),
-            ),
-        )
+        if not self._table_exists("scenario_coverage"):
+            return
+        self._insert_dynamic("scenario_coverage", {
+            "suite_name": suite_name,
+            "scenario_code": scenario_code,
+            "category": category,
+            "required_method_code": required_method_code,
+            "is_present": int(is_present),
+            "notes": notes,
+            "created_at": _utc_now(),
+        })
         self.connection.commit()
 
     def add_hypothesis_check(
@@ -429,31 +421,50 @@ class FinalStageDatabase:
         baseline_method_code: str = "",
         notes: str = "",
     ) -> None:
-        self.connection.execute(
-            "INSERT INTO hypothesis_checks "
-            "(suite_name, hypothesis_id, title, source_type, scenario_code, task_id, "
-            "method_code, baseline_method_code, metric_name, actual_value, threshold_value, "
-            "comparator, passed, notes, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                suite_name,
-                hypothesis_id,
-                title,
-                source_type,
-                scenario_code,
-                task_id,
-                method_code,
-                baseline_method_code,
-                metric_name,
-                actual_value,
-                threshold_value,
-                comparator,
-                int(passed),
-                notes,
-                _utc_now(),
-            ),
-        )
+        if not self._table_exists("hypothesis_checks"):
+            return
+        self._insert_dynamic("hypothesis_checks", {
+            "suite_name": suite_name,
+            "hypothesis_id": hypothesis_id,
+            "title": title,
+            "source_type": source_type,
+            "scenario_code": scenario_code,
+            "task_id": task_id,
+            "method_code": method_code,
+            "baseline_method_code": baseline_method_code,
+            "metric_name": metric_name,
+            "actual_value": actual_value,
+            "threshold_value": threshold_value,
+            "comparator": comparator,
+            "passed": int(passed),
+            "notes": notes,
+            "created_at": _utc_now(),
+        })
         self.connection.commit()
+
+    def _insert_dynamic(self, table: str, values: Mapping[str, Any]) -> sqlite3.Cursor:
+        columns = self._table_columns(table)
+        filtered = {key: value for key, value in values.items() if key in columns}
+        if not filtered:
+            raise RuntimeError(f"No compatible columns found for table {table}")
+        names = list(filtered)
+        return self.connection.execute(
+            f"INSERT INTO {table} ({','.join(names)}) VALUES ({','.join('?' for _ in names)})",
+            [filtered[name] for name in names],
+        )
+
+    def _delete_existing_run(self, run_name: str) -> None:
+        if not self._table_exists("runtime_runs"):
+            return
+        rows = self.connection.execute(
+            "SELECT run_id FROM runtime_runs WHERE run_name=?", (run_name,)
+        ).fetchall()
+        for row in rows:
+            run_id = int(row["run_id"])
+            for table in ("run_artifacts", "derived_metrics", "runtime_frame_metrics"):
+                if self._table_exists(table) and "run_id" in self._table_columns(table):
+                    self.connection.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
+            self.connection.execute("DELETE FROM runtime_runs WHERE run_id=?", (run_id,))
 
     def import_runtime_run(
         self,
@@ -476,32 +487,40 @@ class FinalStageDatabase:
 
         required_files = [summary_json_path, frame_csv_path]
         required_files.extend(
-            path
-            for path in (frame_jsonl_path, settings_json_path, environment_json_path, validation_json_path)
-            if path is not None
+            path for path in (
+                frame_jsonl_path,
+                settings_json_path,
+                environment_json_path,
+                validation_json_path,
+            ) if path is not None
         )
         for path in required_files:
             if not path.is_file():
                 raise RuntimeError(f"Required formal artifact is missing: {path}")
 
         summary = self._read_json(summary_json_path)
-        settings = self._read_json(settings_json_path) if settings_json_path else {}
-        validation = self._read_json(validation_json_path) if validation_json_path else {}
-        environment = self._read_json(environment_json_path) if environment_json_path else {}
-
+        settings = self._read_json(settings_json_path)
+        validation = self._read_json(validation_json_path)
+        environment = self._read_json(environment_json_path)
         status = str(
             summary.get("validationStatus")
             or summary.get("status")
             or validation.get("status")
             or "incomplete"
         ).strip().lower()
-        if status != "complete_valid" or not self._as_bool(summary.get("realMeasurement")):
+        if status not in IMPORTABLE_STATUSES or not self._as_bool(summary.get("realMeasurement")):
             reasons = summary.get("validationReasons") or validation.get("issues") or []
             raise RuntimeError(
                 f"Run '{metadata.run_name}' is not importable: status={status}, reasons={reasons}"
             )
-        if validation and not self._as_bool(validation.get("isValid")):
-            raise RuntimeError(f"Run '{metadata.run_name}' has an invalid validation artifact")
+        evidence_valid = self._as_bool(
+            validation.get(
+                "evidenceIntegrityPassed",
+                validation.get("formalContractValid", validation.get("isValid", False)),
+            )
+        )
+        if not evidence_valid:
+            raise RuntimeError(f"Run '{metadata.run_name}' has invalid measurement evidence")
 
         requested_code = str(summary.get("requestedMethodCode") or "").strip()
         applied_code = str(summary.get("appliedMethodCode") or "").strip()
@@ -517,8 +536,9 @@ class FinalStageDatabase:
 
         manifest_json_path = Path(manifest_json_path) if manifest_json_path else None
         if manifest_json_path is None:
-            manifest_name = str(summary.get("resultManifestPath") or f"{metadata.run_name}_manifest.json")
-            manifest_json_path = summary_json_path.parent / manifest_name
+            manifest_json_path = summary_json_path.parent / str(
+                summary.get("resultManifestPath") or f"{metadata.run_name}_manifest.json"
+            )
         self._verify_manifest(
             manifest_json_path,
             required_files,
@@ -546,6 +566,12 @@ class FinalStageDatabase:
         viewer_adapter = environment.get("viewerAdapter", {}) if isinstance(environment.get("viewerAdapter"), dict) else {}
         power = env_start.get("power", {}) if isinstance(env_start.get("power"), dict) else {}
 
+        aggregate = summary.get("formalAggregateMetrics") if isinstance(summary.get("formalAggregateMetrics"), dict) else {}
+        def metric(*keys: str, default: Any = None) -> Any:
+            value = self._pick(summary, *keys, default=None)
+            return self._pick(aggregate, *keys, default=default) if value is None else value
+
+        quality_gate_passed = self._as_bool(validation.get("qualityGatePassed", status == "complete_valid"))
         run_values: dict[str, Any] = {
             "experiment_id": None,
             "run_name": metadata.run_name,
@@ -564,6 +590,8 @@ class FinalStageDatabase:
             "is_valid": 1,
             "invalid_reason_json": json.dumps([], ensure_ascii=False),
             "real_measurement": 1,
+            "evidence_integrity_passed": 1,
+            "quality_gate_passed": int(quality_gate_passed),
             "requested_method_code": requested_code,
             "applied_method_code": applied_code,
             "observed_method_code": observed_code,
@@ -608,20 +636,24 @@ class FinalStageDatabase:
             )),
             "ground_truth_valid": int(
                 str(sv("measurementMode", "measurement_mode", default="")).lower() != "quality"
-                or all(sv(key) is not None for key in ("falseStaticRate", "collisionMissRate"))
+                or all(metric(key) is not None for key in ("falseStaticRate", "collisionMissRate"))
             ),
             "determinism_valid": int(
                 str(sv("measurementMode", "measurement_mode", default="")).lower() != "determinism"
-                or (self._nullable_int(sv("determinismMismatchCount")) in (None, 0)
-                    and bool(sv("stateSequenceHash")) and bool(sv("compactionSequenceHash"))
-                    and bool(sv("finalPositionHash")))
+                or (
+                    self._nullable_int(metric("determinismMismatchCount")) in (None, 0)
+                    and bool(metric("stateSequenceHash"))
+                    and bool(metric("compactionSequenceHash"))
+                    and bool(metric("finalPositionHash"))
+                )
             ),
             "long_run_valid": int(self._as_bool(sv("longRunValid", default=True))),
-            "peak_vram_mb": self._nullable_float(sv("peakVramMb", "peak_vram_mb")),
-            "vram_slope_mb_per_min": self._nullable_float(sv("vramSlopeMbPerMin", "vram_slope_mb_per_min")),
-            "ram_slope_mb_per_min": self._nullable_float(sv("ramSlopeMbPerMin", "ram_slope_mb_per_min")),
-            "p99_degradation_ratio": self._nullable_float(sv("p99DegradationRatio", "p99_degradation_ratio")),
-            "query_unresolved_slope": self._nullable_float(sv("queryUnresolvedSlope", "query_unresolved_slope")),
+            "peak_vram_mb": self._nullable_float(metric("peakVramMb", "peak_vram_mb")),
+            "peak_ram_mb": self._nullable_float(metric("peakRamMb", "peak_ram_mb")),
+            "vram_slope_mb_per_min": self._nullable_float(metric("vramSlopeMbPerMin", "vram_slope_mb_per_min")),
+            "ram_slope_mb_per_min": self._nullable_float(metric("ramSlopeMbPerMin", "ram_slope_mb_per_min")),
+            "p99_degradation_ratio": self._nullable_float(metric("p99DegradationRatio", "p99_degradation_ratio")),
+            "query_unresolved_slope": self._nullable_float(metric("queryUnresolvedSlope", "query_unresolved_slope")),
             "requested_render_width": self._nullable_int(sv("requestedRenderWidth", default=requested.get("renderWidth", requested.get("width")))),
             "requested_render_height": self._nullable_int(sv("requestedRenderHeight", default=requested.get("renderHeight", requested.get("height")))),
             "actual_render_width": self._nullable_int(sv("actualRenderWidth", default=observed.get("renderWidth"))),
@@ -634,49 +666,48 @@ class FinalStageDatabase:
             "actual_particles_per_guide": self._nullable_int(sv("actualParticlesPerGuide", default=observed.get("particlesPerGuide"))),
             "requested_solver_iterations": self._nullable_int(sv("requestedSolverIterations", default=requested.get("solverIterations"))),
             "actual_solver_iterations": self._nullable_int(sv("actualSolverIterations", default=observed.get("solverIterations"))),
-            "sample_count": self._nullable_int(sv("sample_count", "sampleCount")),
-            "avg_frame_ms": self._nullable_float(sv("avg_frame_ms", "avgFrameMs", "averageFrameMilliseconds")),
-            "p50_frame_ms": self._nullable_float(sv("p50_frame_ms", "p50FrameMs")),
-            "p95_frame_ms": self._nullable_float(sv("p95_frame_ms", "p95FrameMs")),
-            "p99_frame_ms": self._nullable_float(sv("p99_frame_ms", "p99FrameMs")),
-            "p999_frame_ms": self._nullable_float(sv("p999_frame_ms", "p999FrameMs")),
-            "worst_frame_ms": self._nullable_float(sv("worst_frame_ms", "worstFrameMs")),
-            "avg_simulation_ms": self._nullable_float(sv("avg_simulation_ms", "avgSimulationMs")),
-            "avg_hair_gpu_ms": self._nullable_float(sv("avg_hair_gpu_ms", "avgHairGpuMs")),
-            "p95_hair_gpu_ms": self._nullable_float(sv("p95_hair_gpu_ms", "p95HairGpuMs")),
-            "p99_hair_gpu_ms": self._nullable_float(sv("p99_hair_gpu_ms", "p99HairGpuMs")),
-            "avg_fps": self._nullable_float(sv("avg_fps", "avgFps")),
-            "sixty_fps_ratio": self._nullable_float(sv("sixty_fps_ratio", "sixtyFpsRatio")),
-            "frame_overrun_rate": self._nullable_float(sv("frameOverrunRate", "frame_overrun_rate")),
-            "guide_count": self._nullable_int(sv("guide_count", "guideCount")),
-            "follower_count": self._nullable_int(sv("follower_count", "followerCount")),
-            "total_strand_count": self._nullable_int(sv("total_strand_count", "totalStrandCount")),
-            "total_particle_count": self._nullable_int(sv("total_particle_count", "totalParticleCount")),
-            "false_static_rate": self._nullable_float(sv("falseStaticRate")),
-            "predictive_wake_precision": self._nullable_float(sv("predictiveWakePrecision")),
-            "predictive_wake_recall": self._nullable_float(sv("predictiveWakeRecall")),
-            "repair_execution_success_rate": self._nullable_float(sv("repairExecutionSuccessRate")),
-            "repair_verified_success_rate": self._nullable_float(sv("repairVerifiedSuccessRate", "repairSuccessRate")),
-            "repair_recurrence_rate": self._nullable_float(sv("repairRecurrenceRate")),
-            "collision_miss_rate": self._nullable_float(sv("collisionMissRate")),
-            "state_oscillation_rate": self._nullable_float(sv("stateOscillationRate")),
-            "max_boundary_error_mm": self._nullable_float(sv("staticDynamicBoundaryMaxErrorMm")),
-            "avg_silhouette_error": self._nullable_float(sv("avg_silhouette_error", "averageSilhouetteError")),
-            "avg_clump_preservation": self._nullable_float(sv("avg_clump_preservation", "averageClumpPreservation")),
-            "avg_edit_locality": self._nullable_float(sv("avg_edit_locality", "averageEditLocality")),
-            "avg_boundary_naturalness": self._nullable_float(sv("avg_boundary_naturalness", "averageBoundaryNaturalness")),
-            "avg_edit_to_run_latency_ms": self._nullable_float(sv("avg_edit_to_run_latency_ms", "averageEditToRunLatencyMs")),
-            "avg_penetration_per_sec": self._nullable_float(sv("avg_penetration_per_sec", "avgPenetrationPerSec")),
-            "peak_ram_mb": self._nullable_float(sv("peak_ram_mb", "peakRamMb")),
-            "gpu_timing_coverage": self._nullable_float(sv("gpuTimingCoverage")),
-            "counter_coverage": self._nullable_float(sv("counterCoverage")),
+            "sample_count": self._nullable_int(metric("sample_count", "sampleCount")),
+            "avg_frame_ms": self._nullable_float(metric("avg_frame_ms", "avgFrameMs", "averageFrameMilliseconds")),
+            "p50_frame_ms": self._nullable_float(metric("p50_frame_ms", "p50FrameMs", "p50FrameMilliseconds")),
+            "p95_frame_ms": self._nullable_float(metric("p95_frame_ms", "p95FrameMs", "p95FrameMilliseconds")),
+            "p99_frame_ms": self._nullable_float(metric("p99_frame_ms", "p99FrameMs", "p99FrameMilliseconds")),
+            "p999_frame_ms": self._nullable_float(metric("p999_frame_ms", "p999FrameMs", "p999FrameMilliseconds")),
+            "worst_frame_ms": self._nullable_float(metric("worst_frame_ms", "worstFrameMs", "maximumFrameMilliseconds")),
+            "avg_simulation_ms": self._nullable_float(metric("avg_simulation_ms", "avgSimulationMs")),
+            "avg_hair_gpu_ms": self._nullable_float(metric("avg_hair_gpu_ms", "avgHairGpuMs", "averageHairGpuMilliseconds")),
+            "p95_hair_gpu_ms": self._nullable_float(metric("p95_hair_gpu_ms", "p95HairGpuMs", "p95HairGpuMilliseconds")),
+            "p99_hair_gpu_ms": self._nullable_float(metric("p99_hair_gpu_ms", "p99HairGpuMs", "p99HairGpuMilliseconds")),
+            "avg_fps": self._nullable_float(metric("avg_fps", "avgFps")),
+            "sixty_fps_ratio": self._nullable_float(metric("sixty_fps_ratio", "sixtyFpsRatio")),
+            "frame_overrun_rate": self._nullable_float(metric("frameOverrunRate", "frame_overrun_rate", "frameBudgetOverrunRate")),
+            "guide_count": self._nullable_int(metric("guide_count", "guideCount")),
+            "follower_count": self._nullable_int(metric("follower_count", "followerCount")),
+            "total_strand_count": self._nullable_int(metric("total_strand_count", "totalStrandCount", "displayStrandCount")),
+            "total_particle_count": self._nullable_int(metric("total_particle_count", "totalParticleCount")),
+            "false_static_rate": self._nullable_float(metric("falseStaticRate")),
+            "predictive_wake_precision": self._nullable_float(metric("predictiveWakePrecision")),
+            "predictive_wake_recall": self._nullable_float(metric("predictiveWakeRecall")),
+            "repair_execution_success_rate": self._nullable_float(metric("repairExecutionSuccessRate")),
+            "repair_verified_success_rate": self._nullable_float(metric("repairVerifiedSuccessRate", "repairSuccessRate")),
+            "repair_recurrence_rate": self._nullable_float(metric("repairRecurrenceRate")),
+            "collision_miss_rate": self._nullable_float(metric("collisionMissRate")),
+            "state_oscillation_rate": self._nullable_float(metric("stateOscillationRate")),
+            "max_boundary_error_mm": self._nullable_float(metric("staticDynamicBoundaryMaxErrorMm")),
+            "avg_silhouette_error": self._nullable_float(metric("avg_silhouette_error", "averageSilhouetteError")),
+            "avg_clump_preservation": self._nullable_float(metric("avg_clump_preservation", "averageClumpPreservation")),
+            "avg_edit_locality": self._nullable_float(metric("avg_edit_locality", "averageEditLocality")),
+            "avg_boundary_naturalness": self._nullable_float(metric("avg_boundary_naturalness", "averageBoundaryNaturalness")),
+            "avg_edit_to_run_latency_ms": self._nullable_float(metric("avg_edit_to_run_latency_ms", "averageEditToRunLatencyMs")),
+            "avg_penetration_per_sec": self._nullable_float(metric("avg_penetration_per_sec", "avgPenetrationPerSec")),
+            "gpu_timing_coverage": self._nullable_float(metric("gpuTimingCoverage")),
+            "counter_coverage": self._nullable_float(metric("counterCoverage")),
             "fatal_runtime_failure_count": fatal_count,
-            "nan_count": self._nullable_int(sv("nanCount", "nanStateCount")),
-            "inf_count": self._nullable_int(sv("infCount", "infiniteStateCount")),
-            "full_cpu_upload_count": self._nullable_int(sv("fullCpuUploadCount", "fullCpuGroupUploadCount")),
-            "same_frame_readback_count": self._nullable_int(sv("sameFrameReadbackCount")),
+            "nan_count": self._nullable_int(metric("nanCount", "nanStateCount")),
+            "inf_count": self._nullable_int(metric("infCount", "infiniteStateCount")),
+            "full_cpu_upload_count": self._nullable_int(metric("fullCpuUploadCount", "fullCpuGroupUploadCount")),
+            "same_frame_readback_count": self._nullable_int(metric("sameFrameReadbackCount")),
             "synthetic_metric_count": synthetic_count,
-            "unavailable_metric_count": self._nullable_int(sv("unavailableMetricCount")),
+            "unavailable_metric_count": self._nullable_int(metric("unavailableMetricCount")),
             "created_at": _utc_now(),
         }
 
@@ -689,7 +720,6 @@ class FinalStageDatabase:
                 frame_rows.append(self._frame_record(row))
         if not frame_rows:
             raise RuntimeError("Frame CSV has no data rows")
-
         expected_count = run_values.get("sample_count")
         if expected_count is not None and expected_count != len(frame_rows):
             raise RuntimeError(
@@ -701,23 +731,12 @@ class FinalStageDatabase:
                 metadata.experiment_name, metadata.operator_name, metadata.notes
             )
             run_values["experiment_id"] = experiment_id
-            columns = list(run_values)
-            cursor = self.connection.execute(
-                f"INSERT INTO runtime_runs ({','.join(columns)}) "
-                f"VALUES ({','.join('?' for _ in columns)})",
-                [run_values[column] for column in columns],
-            )
+            self._delete_existing_run(metadata.run_name)
+            cursor = self._insert_dynamic("runtime_runs", run_values)
             run_id = int(cursor.lastrowid)
-
             for frame in frame_rows:
                 frame["run_id"] = run_id
-                frame_columns = list(frame)
-                self.connection.execute(
-                    f"INSERT INTO runtime_frame_metrics ({','.join(frame_columns)}) "
-                    f"VALUES ({','.join('?' for _ in frame_columns)})",
-                    [frame[column] for column in frame_columns],
-                )
-
+                self._insert_dynamic("runtime_frame_metrics", frame)
             for category, label, artifact in (
                 ("telemetry", "summary_json", summary_json_path),
                 ("telemetry", "frame_csv", frame_csv_path),
@@ -731,33 +750,20 @@ class FinalStageDatabase:
                     self.add_artifact(run_id, category, label, Path(artifact), commit=False)
         return run_id
 
-    def _frame_record(self, row: dict[str, Any]) -> dict[str, Any]:
+    def _frame_record(self, row: Mapping[str, Any]) -> dict[str, Any]:
         cv = lambda *keys: self._csv_value(row, *keys)
-        availability = self._nullable_int(
-            cv("availabilityMask", "availability_mask")
-        ) or 0
-        metric_availability = self._nullable_int(
-            cv("metricAvailabilityMask", "metric_availability_mask")
-        ) or availability
-        collision_available = bool(
-            metric_availability & AVAILABILITY_COLLISION_GROUND_TRUTH
-        )
-        wake_available = bool(metric_availability & AVAILABILITY_WAKE_GROUND_TRUTH)
-        repair_available = bool(
-            metric_availability & AVAILABILITY_REPAIR_VERIFICATION
-        )
-        boundary_available = bool(
-            metric_availability & AVAILABILITY_BOUNDARY_COMPARISON
-        )
-        false_static_available = bool(
-            metric_availability & AVAILABILITY_FALSE_STATIC_GROUND_TRUTH
-        )
-
         optional_int = self._nullable_int
         optional_float = self._nullable_float
+        availability = optional_int(cv("availabilityMask", "availability_mask")) or 0
+        metric_availability = optional_int(cv("metricAvailabilityMask", "metric_availability_mask")) or availability
+        collision_available = bool(metric_availability & AVAILABILITY_COLLISION_GROUND_TRUTH)
+        wake_available = bool(metric_availability & AVAILABILITY_WAKE_GROUND_TRUTH)
+        repair_available = bool(metric_availability & AVAILABILITY_REPAIR_VERIFICATION)
+        boundary_available = bool(metric_availability & AVAILABILITY_BOUNDARY_COMPARISON)
+        false_static_available = bool(metric_availability & AVAILABILITY_FALSE_STATIC_GROUND_TRUTH)
         result: dict[str, Any] = {
             "run_id": None,
-            "sample_index": optional_int(cv("sampleIndex", "sample_index")),
+            "sample_index": optional_int(cv("sampleIndex", "sample_index", "measuredFrameIndex")),
             "source_frame_index": optional_int(cv("sourceFrameIndex", "source_frame_index")),
             "elapsed_seconds": optional_float(cv("elapsedSeconds", "elapsed_seconds")),
             "frame_ms": optional_float(cv("frameMilliseconds", "frame_ms")),
@@ -844,78 +850,61 @@ class FinalStageDatabase:
             "final_position_hash": str(cv("finalPositionHash", "final_position_hash") or "") or None,
         }
         if result["sample_index"] is None:
-            raise RuntimeError("Frame CSV contains a row without sampleIndex")
+            raise RuntimeError("Frame CSV contains a row without sampleIndex/measuredFrameIndex")
         return result
 
     @staticmethod
     def _rows_to_dicts(rows: Iterable[sqlite3.Row]) -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
+    def _select_all(self, table: str, order_by: str = "") -> list[dict[str, Any]]:
+        if not self._table_exists(table):
+            return []
+        suffix = f" ORDER BY {order_by}" if order_by else ""
+        return self._rows_to_dicts(self.connection.execute(f"SELECT * FROM {table}{suffix}").fetchall())
+
     def fetch_runs(self):
-        return self.connection.execute(
-            "SELECT * FROM runtime_runs ORDER BY created_at, run_id"
-        ).fetchall()
+        if not self._table_exists("runtime_runs"):
+            return []
+        return self.connection.execute("SELECT * FROM runtime_runs ORDER BY run_id").fetchall()
 
     def fetch_frame_metrics(self):
+        if not self._table_exists("runtime_frame_metrics"):
+            return []
         return self.connection.execute(
             "SELECT * FROM runtime_frame_metrics ORDER BY run_id, sample_index"
         ).fetchall()
 
     def fetch_artifact_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT * FROM run_artifacts ORDER BY run_id, artifact_id"
-            ).fetchall()
-        )
+        return self._select_all("run_artifacts", "run_id, artifact_id")
 
     def fetch_derived_metric_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT * FROM derived_metrics ORDER BY scope_type, scope_key, metric_name"
-            ).fetchall()
-        )
-
-    def fetch_user_task_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT utr.*, e.experiment_name FROM user_task_results utr "
-                "JOIN experiments e ON e.experiment_id = utr.experiment_id "
-                "ORDER BY utr.created_at, utr.task_result_id"
-            ).fetchall()
-        )
-
-    def fetch_user_task_summary_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT e.experiment_name, utr.task_id, utr.title, utr.method_code, "
-                "utr.scenario_code, utr.asset_name, COUNT(*) AS sample_count, "
-                "AVG(utr.completion_seconds) AS avg_completion_seconds, "
-                "AVG(utr.redo_count) AS avg_redo_count, "
-                "AVG(utr.unintended_change_score) AS avg_unintended_change_score, "
-                "AVG(utr.satisfaction_score) AS avg_satisfaction_score "
-                "FROM user_task_results utr "
-                "JOIN experiments e ON e.experiment_id = utr.experiment_id "
-                "GROUP BY e.experiment_name, utr.task_id, utr.title, utr.method_code, "
-                "utr.scenario_code, utr.asset_name "
-                "ORDER BY utr.task_id, utr.method_code"
-            ).fetchall()
-        )
+        return self._select_all("derived_metrics", "run_id, metric_id")
 
     def fetch_scenario_coverage_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT * FROM scenario_coverage "
-                "ORDER BY suite_name, scenario_code, required_method_code"
-            ).fetchall()
-        )
+        return self._select_all("scenario_coverage", "suite_name, scenario_code, required_method_code")
 
     def fetch_hypothesis_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT * FROM hypothesis_checks "
-                "ORDER BY suite_name, hypothesis_id, check_id"
-            ).fetchall()
-        )
+        return self._select_all("hypothesis_checks", "suite_name, hypothesis_id, check_id")
+
+    def fetch_user_task_rows(self) -> list[dict[str, Any]]:
+        return self._select_all("user_task_results", "task_result_id")
+
+    def fetch_user_task_summary_rows(self) -> list[dict[str, Any]]:
+        if not self._table_exists("user_task_results"):
+            return []
+        columns = self._table_columns("user_task_results")
+        required = {"method_code", "completion_seconds", "redo_count", "unintended_change_score", "satisfaction_score"}
+        if not required.issubset(columns):
+            return []
+        return self._rows_to_dicts(self.connection.execute(
+            "SELECT method_code, COUNT(*) AS task_count, "
+            "AVG(completion_seconds) AS avg_completion_seconds, "
+            "AVG(redo_count) AS avg_redo_count, "
+            "AVG(unintended_change_score) AS avg_unintended_change_score, "
+            "AVG(satisfaction_score) AS avg_satisfaction_score "
+            "FROM user_task_results GROUP BY method_code ORDER BY method_code"
+        ).fetchall())
 
     def fetch_comparison_rows(self):
         return self.connection.execute(
@@ -937,9 +926,8 @@ class FinalStageDatabase:
             "AVG(avg_boundary_naturalness) AS avg_boundary_naturalness, "
             "AVG(avg_edit_to_run_latency_ms) AS avg_edit_to_run_latency_ms, "
             "AVG(avg_penetration_per_sec) AS avg_penetration_per_sec "
-            "FROM runtime_runs WHERE is_valid = 1 "
-            "GROUP BY method_code, scenario_code "
-            "ORDER BY method_code, scenario_code"
+            "FROM runtime_runs WHERE is_valid=1 "
+            "GROUP BY method_code, scenario_code ORDER BY method_code, scenario_code"
         ).fetchall()
 
     def fetch_ablation_rows(self):
@@ -955,7 +943,7 @@ class FinalStageDatabase:
             "AVG(predictive_wake_recall) AS avg_predictive_wake_recall, "
             "AVG(repair_verified_success_rate) AS avg_repair_verified_success_rate, "
             "AVG(collision_miss_rate) AS avg_collision_miss_rate "
-            "FROM runtime_runs WHERE is_valid = 1 "
+            "FROM runtime_runs WHERE is_valid=1 "
             "GROUP BY method_code ORDER BY method_code"
         ).fetchall()
 
@@ -963,26 +951,24 @@ class FinalStageDatabase:
         return self._rows_to_dicts(self.fetch_ablation_rows())
 
     def fetch_scenario_summary_rows(self) -> list[dict[str, Any]]:
-        return self._rows_to_dicts(
-            self.connection.execute(
-                "SELECT scenario_code, COUNT(*) AS run_count, "
-                "AVG(avg_frame_ms) AS avg_frame_ms, "
-                "AVG(p95_frame_ms) AS avg_p95_frame_ms, "
-                "AVG(p99_frame_ms) AS avg_p99_frame_ms, "
-                "AVG(worst_frame_ms) AS avg_worst_frame_ms, "
-                "AVG(avg_hair_gpu_ms) AS avg_hair_gpu_ms, "
-                "AVG(avg_fps) AS avg_fps, "
-                "AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio, "
-                "AVG(false_static_rate) AS avg_false_static_rate, "
-                "AVG(predictive_wake_recall) AS avg_predictive_wake_recall, "
-                "AVG(repair_verified_success_rate) AS avg_repair_verified_success_rate, "
-                "AVG(collision_miss_rate) AS avg_collision_miss_rate, "
-                "AVG(state_oscillation_rate) AS avg_state_oscillation_rate, "
-                "AVG(max_boundary_error_mm) AS avg_max_boundary_error_mm "
-                "FROM runtime_runs WHERE is_valid = 1 "
-                "GROUP BY scenario_code ORDER BY scenario_code"
-            ).fetchall()
-        )
+        return self._rows_to_dicts(self.connection.execute(
+            "SELECT scenario_code, COUNT(*) AS run_count, "
+            "AVG(avg_frame_ms) AS avg_frame_ms, "
+            "AVG(p95_frame_ms) AS avg_p95_frame_ms, "
+            "AVG(p99_frame_ms) AS avg_p99_frame_ms, "
+            "AVG(worst_frame_ms) AS avg_worst_frame_ms, "
+            "AVG(avg_hair_gpu_ms) AS avg_hair_gpu_ms, "
+            "AVG(avg_fps) AS avg_fps, "
+            "AVG(sixty_fps_ratio) AS avg_sixty_fps_ratio, "
+            "AVG(false_static_rate) AS avg_false_static_rate, "
+            "AVG(predictive_wake_recall) AS avg_predictive_wake_recall, "
+            "AVG(repair_verified_success_rate) AS avg_repair_verified_success_rate, "
+            "AVG(collision_miss_rate) AS avg_collision_miss_rate, "
+            "AVG(state_oscillation_rate) AS avg_state_oscillation_rate, "
+            "AVG(max_boundary_error_mm) AS avg_max_boundary_error_mm "
+            "FROM runtime_runs WHERE is_valid=1 "
+            "GROUP BY scenario_code ORDER BY scenario_code"
+        ).fetchall())
 
     def fetch_experiment_summary(self) -> dict[str, Any]:
         row = self.connection.execute(
@@ -1001,6 +987,6 @@ class FinalStageDatabase:
             "AVG(predictive_wake_recall) AS avg_predictive_wake_recall, "
             "AVG(repair_verified_success_rate) AS avg_repair_verified_success_rate, "
             "AVG(collision_miss_rate) AS avg_collision_miss_rate "
-            "FROM runtime_runs WHERE is_valid = 1"
+            "FROM runtime_runs WHERE is_valid=1"
         ).fetchone()
         return dict(row) if row else {}

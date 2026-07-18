@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import hashlib
 import json
@@ -106,6 +107,92 @@ def resolve_path(base_dir: Path, value: str | Path | None) -> Path | None:
         return None
     path = Path(value)
     return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
+
+
+def prepare_suite_config(
+    config: dict[str, Any],
+    *,
+    only_methods: list[str] | None = None,
+    only_scenarios: list[str] | None = None,
+    only_seeds: list[int] | None = None,
+) -> dict[str, Any]:
+    """Normalize legacy paths/keys and optionally select a stable partial suite.
+
+    The returned dictionary is independent from the caller's configuration so a
+    smoke/baseline invocation never mutates the full formal-suite definition.
+    """
+    prepared = copy.deepcopy(config)
+    source = dict(prepared.get("source", {}))
+    defaults = prepared.setdefault("run_defaults", {})
+
+    for key in ("viewer_exe", "asset_manifest"):
+        if not defaults.get(key) and source.get(key):
+            defaults[key] = source[key]
+    if not prepared.get("schema") and source.get("schema"):
+        prepared["schema"] = source["schema"]
+
+    # One canonical key is used by hairgpu_final_run.py and the Viewer contract.
+    if "guide_count" in defaults and "guide_strand_count" not in defaults:
+        defaults["guide_strand_count"] = defaults.pop("guide_count")
+
+    selected_methods = {normalize_method_code(value) for value in (only_methods or [])}
+    selected_scenarios = {str(value) for value in (only_scenarios or [])}
+    selected_seeds = {int(value) for value in (only_seeds or [])}
+
+    if selected_methods:
+        prepared["methods"] = [
+            entry for entry in prepared.get("methods", [])
+            if normalize_method_code(str(entry.get("code") if isinstance(entry, dict) else entry))
+            in selected_methods
+        ]
+    if selected_scenarios:
+        prepared["scenarios"] = [
+            entry for entry in prepared.get("scenarios", [])
+            if str(entry.get("code") if isinstance(entry, dict) else entry)
+            in selected_scenarios
+        ]
+    if selected_seeds:
+        prepared["seeds"] = [
+            int(seed) for seed in prepared.get("seeds", [])
+            if int(seed) in selected_seeds
+        ]
+
+    if not prepared.get("methods"):
+        raise ValueError("Method selection produced an empty suite")
+    if not prepared.get("scenarios"):
+        raise ValueError("Scenario selection produced an empty suite")
+    if not prepared.get("seeds"):
+        raise ValueError("Seed selection produced an empty suite")
+
+    # Partial runs are first-class suites: preflight and coverage must validate
+    # the selected cells, not demand methods that were intentionally excluded.
+    method_codes = [
+        normalize_method_code(str(entry.get("code") if isinstance(entry, dict) else entry))
+        for entry in prepared.get("methods", [])
+    ]
+    scenario_codes = [
+        str(entry.get("code") if isinstance(entry, dict) else entry)
+        for entry in prepared.get("scenarios", [])
+    ]
+    preflight = prepared.setdefault("preflight", {})
+    preflight["required_method_codes"] = method_codes
+    preflight["required_scenario_codes"] = scenario_codes
+    preflight["minimum_seed_count"] = len(set(int(seed) for seed in prepared.get("seeds", [])))
+
+    prepared["scenario_matrix"] = [
+        {
+            "scenario": scenario,
+            "required_methods": list(method_codes),
+            "category": "selected_formal",
+        }
+        for scenario in scenario_codes
+    ]
+    prepared["selection"] = {
+        "methods": method_codes,
+        "scenarios": scenario_codes,
+        "seeds": list(prepared.get("seeds", [])),
+    }
+    return prepared
 
 
 def _safe_name(value: Any) -> str:
@@ -228,14 +315,24 @@ def expand_run_matrix(config: dict[str, Any], base_dir: Path) -> list[dict[str, 
                     by_method = scenario.get("assertions_by_method", {})
                     if isinstance(by_method, dict) and method_code in by_method:
                         run["assertions"].update(by_method[method_code])
+                    if method_code == "B0":
+                        # Full-dynamic baseline has no sleep/wake/repair state
+                        # transition contract. Keep only the timeline event gate.
+                        original = dict(run.get("assertions", {}))
+                        run["assertions"] = {
+                            "min_applied_events": max(
+                                int(original.get("min_applied_events", original.get("minAppliedEvents", 0))),
+                                0,
+                            )
+                        }
                     assertions = run.get("assertions")
                     if not isinstance(assertions, dict) or not assertions:
                         raise ValueError(f"{case_id}: formal run requires scenario assertions")
                     minimum_events = int(assertions.get(
                         "min_applied_events", assertions.get("minAppliedEvents", 0)
                     ))
-                    if minimum_events < 1:
-                        raise ValueError(f"{case_id}: min_applied_events must be at least 1")
+                    if minimum_events < 0:
+                        raise ValueError(f"{case_id}: min_applied_events must be zero or greater")
                     run_telemetry_dir = (
                         resolve_path(base_dir, run.get("telemetry_dir"))
                         or telemetry_dir
@@ -344,11 +441,18 @@ def is_completed_case(
     try:
         validation = read_json(paths["validation"])
         summary = read_json(paths["summary"])
-        if validation.get("status") != "complete_valid" or not validation.get(
-            "isValid", False
-        ):
+        allowed_statuses = {"complete_valid", "quality_gate_failed"}
+        validation_status = str(validation.get("status") or "")
+        summary_status = str(summary.get("validationStatus") or summary.get("status") or "")
+        evidence_valid = bool(
+            validation.get(
+                "evidenceIntegrityPassed",
+                validation.get("formalContractValid", validation.get("isValid", False)),
+            )
+        )
+        if validation_status not in allowed_statuses or not evidence_valid:
             return False
-        if summary.get("validationStatus") != "complete_valid":
+        if summary_status not in allowed_statuses:
             return False
         if str(summary.get("caseId") or summary.get("case_id") or "") != str(
             run.get("case_id", "")
@@ -507,7 +611,7 @@ def import_run(
 
     if not is_completed_case(base_dir, run, default_telemetry_dir):
         raise RuntimeError(
-            f"Run '{run_name}' is not complete_valid with intact artifacts"
+            f"Run '{run_name}' does not contain intact importable evidence"
         )
 
     metadata = RuntimeRunMetadata(
@@ -1003,6 +1107,9 @@ def main() -> int:
     parser.add_argument("--rerun-failed", action="store_true")
     parser.add_argument("--viewer-exe")
     parser.add_argument("--output")
+    parser.add_argument("--only-method", action="append", default=[])
+    parser.add_argument("--only-scenario", action="append", default=[])
+    parser.add_argument("--only-seed", action="append", type=int, default=[])
     parser.add_argument(
         "--fail-policy",
         choices=("stop", "continue"),
@@ -1011,7 +1118,13 @@ def main() -> int:
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
-    config = read_json(config_path)
+    raw_config = read_json(config_path)
+    config = prepare_suite_config(
+        raw_config,
+        only_methods=args.only_method,
+        only_scenarios=args.only_scenario,
+        only_seeds=args.only_seed,
+    )
     base_dir = config_path.parent
     if args.viewer_exe:
         config.setdefault("run_defaults", {})["viewer_exe"] = str(

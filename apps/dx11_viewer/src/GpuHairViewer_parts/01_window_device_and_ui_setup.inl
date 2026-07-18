@@ -619,6 +619,21 @@
         }
     }
 
+
+    void GpuHairViewer::EnforceFixedWorkload()
+    {
+        m_builderGuideCount = kFixedGuideCount;
+        m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+        m_builderParticlesPerStrand = kFixedParticlesPerStrand;
+        m_simConfig.solverIterations = kFixedSolverIterations;
+        m_simConfig.fixedTimeStep = kFixedTimeStepSeconds;
+        m_experimentCase.requestedGuideCount = kFixedGuideCount;
+        m_experimentCase.requestedDisplayStrandCount = kFixedDisplayStrandCount;
+        m_experimentCase.requestedParticlesPerGuide = kFixedParticlesPerStrand;
+        m_experimentCase.requestedSolverIterations = kFixedSolverIterations;
+        m_experimentCase.fixedTimeStepSeconds = kFixedTimeStepSeconds;
+    }
+
     bool GpuHairViewer::Initialize(HINSTANCE instance, int showCommand)
     {
         INITCOMMONCONTROLSEX icc = {};
@@ -635,6 +650,7 @@
             return false;
         }
         ApplyExperimentConfigBeforeAssetCreation();
+        EnforceFixedWorkload();
 
         const float initialSegmentLength = SegmentLengthForParticleCount(m_builderParticlesPerStrand);
 
@@ -706,8 +722,8 @@
         m_activeSetBudget.maxActiveClusters = 6u;
         m_activeSetBudget.maxActiveGuides = 256u;
         m_activeSetBudget.promoteScoreThreshold = 0.52f;
-        m_simConfig.solverIterations = 12;
-        m_simConfig.fixedTimeStep = 1.0f / 120.0f;
+        m_simConfig.solverIterations = kFixedSolverIterations;
+        m_simConfig.fixedTimeStep = kFixedTimeStepSeconds;
         m_simConfig.gravity = 18.5f;
         m_simConfig.globalDamping = 0.100f;
         m_simConfig.segmentLength = initialSegmentLength;
@@ -752,16 +768,12 @@
 
         if (m_experimentCase.enabled)
         {
-            m_simConfig.solverIterations = std::max<uint32_t>(m_experimentCase.requestedSolverIterations, 1u);
-            if (m_experimentCase.fixedTimeStepEnabled && m_experimentCase.fixedTimeStepSeconds > 0.0f)
-            {
-                m_simConfig.fixedTimeStep = m_experimentCase.fixedTimeStepSeconds;
-            }
             m_vsyncEnabled = m_experimentCase.vsyncEnabled;
             m_presentSyncInterval = m_vsyncEnabled
                 ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u)
                 : 0u;
         }
+        EnforceFixedWorkload();
 
         m_colliders.spheres.push_back({ { 0.0f, 1.66f, 0.0f }, 0.215f });
         m_colliders.capsules.push_back({ { -0.19f, 1.36f, 0.02f }, 0.11f, { -0.42f, 1.15f, 0.04f }, 0.08f });

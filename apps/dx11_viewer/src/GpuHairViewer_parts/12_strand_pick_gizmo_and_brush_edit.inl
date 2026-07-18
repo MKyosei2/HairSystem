@@ -78,7 +78,7 @@
         return layer;
     }
 
-    bool GpuHairViewer::BeginViewportBrushStroke(POINT clientPoint)
+        bool GpuHairViewer::BeginViewportBrushStroke(POINT clientPoint)
     {
         Vec2 centerUv = { 0.5f, 0.5f };
         int32_t guideIndex = -1;
@@ -87,10 +87,10 @@
         {
             return false;
         }
-        PushStrandEditUndoSnapshot();
         m_selectedStrandIndex = guideIndex;
         m_lastSelectedStrandScreenDistance = screenDistance;
         m_brushStrokeActive = true;
+        m_brushStrokeSnapshotActive = false;
         m_brushStrokeStartPoint = clientPoint;
         m_brushStrokeLastPoint = clientPoint;
         m_brushStrokeStartUv = centerUv;
@@ -111,6 +111,7 @@
         return true;
     }
 
+
     void GpuHairViewer::UpdateViewportBrushStroke(POINT clientPoint)
     {
         if (!m_brushStrokeActive)
@@ -121,12 +122,13 @@
         ApplyViewportBrushStroke(clientPoint, false);
     }
 
-    bool GpuHairViewer::ApplyViewportBrushStroke(POINT clientPoint, bool commitStroke)
+        bool GpuHairViewer::ApplyViewportBrushStroke(POINT clientPoint, bool commitStroke)
     {
         if (!m_brushStrokeActive && !commitStroke)
         {
             return false;
         }
+
         Vec2 centerUv = m_brushStrokeCurrentUv;
         int32_t guideIndex = m_selectedStrandIndex;
         float screenDistance = 0.0f;
@@ -144,77 +146,72 @@
         previewStack.boundaryRadiusUv = hairgpu::Clamp(std::max(m_quickEditBoundaryRadiusUv,
             (m_groomTool == GroomTool::Smooth) ? 0.14f : m_quickEditBoundaryRadiusUv), 0.01f, 0.30f);
 
-        hairgpu::EditLayer layer = BuildViewportBrushLayer(centerUv, m_brushStrokeStartUv, m_brushStrokeCurrentUv, clientPoint, &m_brushStrokeAffectedGuideCount);
-        if (m_groomTool == GroomTool::Freeze)
-        {
-            for (uint32_t guideIndex : layer.strandSelection)
-            {
-                if (guideIndex >= m_lockedStrands.size())
-                {
-                    m_lockedStrands.resize(m_asset.strands.size(), 0u);
-                }
-                m_lockedStrands[guideIndex] = 1u;
-                for (uint32_t strandIndex = m_asset.guideStrandCount; strandIndex < m_asset.strands.size() && strandIndex < m_asset.followData.size(); ++strandIndex)
-                {
-                    if (m_asset.followData[strandIndex].parentGuide == static_cast<int32_t>(guideIndex))
-                    {
-                        if (strandIndex >= m_lockedStrands.size())
-                        {
-                            m_lockedStrands.resize(m_asset.strands.size(), 0u);
-                        }
-                        m_lockedStrands[strandIndex] = 1u;
-                    }
-                }
-            }
-            UpdateWindowTitle();
-            RefreshQuickEditFormLabels();
-            if (commitStroke)
-            {
-                RecordViewportHistory(L"Freeze brush locked " + std::to_wstring(layer.strandSelection.size()) + L" guides");
-            }
-            return true;
-        }
-
+        hairgpu::EditLayer layer = BuildViewportBrushLayer(
+            centerUv, m_brushStrokeStartUv, m_brushStrokeCurrentUv, clientPoint,
+            &m_brushStrokeAffectedGuideCount);
         if (layer.strandSelection.empty())
         {
             return false;
         }
-        previewStack.layers.push_back(layer);
 
-        hairgpu::HairAsset previewAsset = m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
-        std::string outError;
-        hairgpu::RuntimeEditState runtimeState = {};
-        if (!hairgpu::ApplyEditStackToAsset(previewAsset, m_baseAsset.strands.empty() ? m_asset : m_baseAsset, previewStack, &runtimeState, outError))
+        if (!m_brushStrokeSnapshotActive)
         {
-            return false;
-        }
-        m_runtimeEditState = runtimeState;
-        m_asset = std::move(previewAsset);
-        if (m_initialParticles.size() != m_asset.restPoints.size())
-        {
-            CreateSimulationResources();
-            RebuildActiveSetFoundation();
+            PushStrandEditUndoSnapshot(layer.strandSelection);
+            m_brushStrokeSnapshotActive = true;
         }
         else
         {
-            for (size_t i = 0; i < m_asset.restPoints.size() && i < m_initialParticles.size(); ++i)
-            {
-                m_initialParticles[i].x = m_asset.restPoints[i].x;
-                m_initialParticles[i].y = m_asset.restPoints[i].y;
-                m_initialParticles[i].z = m_asset.restPoints[i].z;
-            }
-            CommitEditedRestState();
+            ExtendLastStrandEditUndoSnapshot(layer.strandSelection);
         }
-        QueueVisibilityRecovery();
 
-        std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(previewStack));
+        if (m_groomTool == GroomTool::Freeze)
+        {
+            const std::vector<uint32_t> familyStrands = ExpandGuideFamilies(layer.strandSelection);
+            if (m_lockedStrands.size() < m_asset.strands.size())
+            {
+                m_lockedStrands.resize(m_asset.strands.size(), 0u);
+            }
+            for (uint32_t strandIndex : familyStrands)
+            {
+                if (strandIndex < m_lockedStrands.size())
+                {
+                    m_lockedStrands[strandIndex] = 1u;
+                }
+            }
+            if (commitStroke)
+            {
+                FinalizeLastStrandEditUndoSnapshot();
+                RecordViewportHistory(L"Freeze brush locked " + std::to_wstring(layer.strandSelection.size()) + L" guides");
+            }
+            UpdateWindowTitle();
+            RefreshQuickEditFormLabels();
+            return true;
+        }
+
+        previewStack.layers.push_back(layer);
+        const hairgpu::HairAsset& baseAsset = m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+        hairgpu::SparseEditResult sparseResult = {};
+        std::string outError;
+        hairgpu::RuntimeEditState runtimeState = {};
+        if (!hairgpu::ApplyEditStackToGuideFamiliesSparse(
+                m_asset, baseAsset, previewStack, layer.strandSelection,
+                &sparseResult, &runtimeState, outError))
+        {
+            return false;
+        }
+        m_runtimeEditState = std::move(runtimeState);
+        CommitEditedPointIndices(sparseResult.changedPointIndices);
+
+        const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(previewStack));
         SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
         m_selectedInlineLayerIndex = static_cast<int>(previewStack.layers.size()) - 1;
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
 
         if (commitStroke)
         {
-            std::wstring entry = std::wstring(GetGroomToolDisplayName()) + L" stroke | guides=" + std::to_wstring(m_brushStrokeAffectedGuideCount) +
+            FinalizeLastStrandEditUndoSnapshot();
+            std::wstring entry = std::wstring(GetGroomToolDisplayName()) +
+                L" stroke | guides=" + std::to_wstring(m_brushStrokeAffectedGuideCount) +
                 L" | overlay=" + GetMaskOverlayModeDisplayName();
             RecordViewportHistory(entry);
         }
@@ -222,7 +219,8 @@
         return true;
     }
 
-    void GpuHairViewer::EndViewportBrushStroke(bool cancelStroke)
+
+        void GpuHairViewer::EndViewportBrushStroke(bool cancelStroke)
     {
         if (!m_brushStrokeActive)
         {
@@ -230,18 +228,11 @@
         }
         if (cancelStroke)
         {
-            if (!m_strandUndoStack.empty())
+            if (m_brushStrokeSnapshotActive && !m_strandUndoStack.empty())
             {
-                StrandEditSnapshot snapshot = m_strandUndoStack.back();
+                StrandEditSnapshot snapshot = std::move(m_strandUndoStack.back());
                 m_strandUndoStack.pop_back();
-                m_asset.restPoints = std::move(snapshot.restPoints);
-                m_initialParticles = std::move(snapshot.initialParticles);
-                m_selectedStrandIndex = snapshot.selectedStrandIndex;
-                m_lockedStrands = std::move(snapshot.lockedStrands);
-                SetWindowTextW(m_editInlineEditStack, snapshot.inlineEditStackText.c_str());
-                m_selectedInlineLayerIndex = snapshot.selectedInlineLayerIndex;
-                LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
-                CommitEditedRestState();
+                ApplyStrandEditSnapshot(snapshot, false);
             }
         }
         else
@@ -249,9 +240,11 @@
             ApplyViewportBrushStroke(m_brushStrokeLastPoint, true);
         }
         m_brushStrokeActive = false;
+        m_brushStrokeSnapshotActive = false;
         m_brushStrokeBaseStack = {};
         m_brushStrokeAffectedGuideCount = 0u;
     }
+
 
     void GpuHairViewer::RecordViewportHistory(const std::wstring& entry)
     {
@@ -313,7 +306,7 @@
         return m_asset.restPoints[pointIndex];
     }
 
-    bool GpuHairViewer::BeginStrandGizmoDrag(POINT clientPoint)
+        bool GpuHairViewer::BeginStrandGizmoDrag(POINT clientPoint)
     {
         if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
         {
@@ -328,212 +321,155 @@
         }
         const float gizmoScale = std::max(0.06f, m_cameraDistance * 0.10f);
         struct Candidate { GizmoAxis axis; float distSq; } best = { GizmoAxis::None, 20.0f * 20.0f };
-        const std::array<std::pair<GizmoAxis, Vec3>, 3> axes = { std::make_pair(GizmoAxis::X, Vec3(gizmoScale, 0.0f, 0.0f)), std::make_pair(GizmoAxis::Y, Vec3(0.0f, gizmoScale, 0.0f)), std::make_pair(GizmoAxis::Z, Vec3(0.0f, 0.0f, gizmoScale)) };
+        const std::array<std::pair<GizmoAxis, Vec3>, 3> axes = {
+            std::make_pair(GizmoAxis::X, Vec3(gizmoScale, 0.0f, 0.0f)),
+            std::make_pair(GizmoAxis::Y, Vec3(0.0f, gizmoScale, 0.0f)),
+            std::make_pair(GizmoAxis::Z, Vec3(0.0f, 0.0f, gizmoScale)) };
         for (const auto& candidate : axes)
         {
             float bx = 0.0f, by = 0.0f;
-            if (!ProjectWorldToScreen(anchor + candidate.second, bx, by))
-            {
-                continue;
-            }
-            const float abx = bx - ax;
-            const float aby = by - ay;
+            if (!ProjectWorldToScreen(anchor + candidate.second, bx, by)) continue;
+            const float abx = bx - ax, aby = by - ay;
             const float denom = std::max(abx * abx + aby * aby, 1.0e-5f);
             const float t = std::clamp(((clientPoint.x - ax) * abx + (clientPoint.y - ay) * aby) / denom, 0.0f, 1.0f);
-            const float px = ax + abx * t;
-            const float py = ay + aby * t;
-            const float dx = static_cast<float>(clientPoint.x) - px;
-            const float dy = static_cast<float>(clientPoint.y) - py;
+            const float dx = static_cast<float>(clientPoint.x) - (ax + abx * t);
+            const float dy = static_cast<float>(clientPoint.y) - (ay + aby * t);
             const float distSq = dx * dx + dy * dy;
-            if (distSq < best.distSq)
-            {
-                best = { candidate.first, distSq };
-            }
+            if (distSq < best.distSq) best = { candidate.first, distSq };
         }
-        if (best.axis == GizmoAxis::None)
-        {
-            return false;
-        }
+        if (best.axis == GizmoAxis::None) return false;
         PushStrandEditUndoSnapshot();
-        m_gizmoDragBaseRestPoints = m_asset.restPoints;
+        if (m_strandUndoStack.empty()) return false;
+        m_gizmoDragSnapshot = m_strandUndoStack.back();
         m_activeGizmoAxis = best.axis;
         m_gizmoDragStartPoint = clientPoint;
         m_gizmoDragging = true;
         return true;
     }
 
-    void GpuHairViewer::UpdateStrandGizmoDrag(POINT clientPoint)
+
+        void GpuHairViewer::UpdateStrandGizmoDrag(POINT clientPoint)
     {
-        if (!m_gizmoDragging || m_activeGizmoAxis == GizmoAxis::None || m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
+        if (!m_gizmoDragging || m_activeGizmoAxis == GizmoAxis::None ||
+            m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
         {
             return;
         }
         const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
-        if (m_gizmoDragBaseRestPoints.size() != m_asset.restPoints.size() || strand.pointCount == 0u)
+        if (strand.pointCount == 0u) return;
+        for (const SparsePointEdit& point : m_gizmoDragSnapshot.points)
         {
-            return;
+            if (point.pointIndex < m_asset.restPoints.size()) m_asset.restPoints[point.pointIndex] = point.before;
         }
-        m_asset.restPoints = m_gizmoDragBaseRestPoints;
         const float dx = static_cast<float>(clientPoint.x - m_gizmoDragStartPoint.x);
         const float dy = static_cast<float>(clientPoint.y - m_gizmoDragStartPoint.y);
-        const float signedPixels = (m_activeGizmoAxis == GizmoAxis::Y) ? (-dy) : dx;
+        const float signedPixels = (m_activeGizmoAxis == GizmoAxis::Y) ? -dy : dx;
         const float scale = std::max(0.0008f, m_cameraDistance * 0.0009f);
-        Vec3 delta(0.0f, 0.0f, 0.0f);
-        switch (m_activeGizmoAxis)
+        Vec3 delta = {};
+        if (m_activeGizmoAxis == GizmoAxis::X) delta.x = signedPixels * scale;
+        else if (m_activeGizmoAxis == GizmoAxis::Y) delta.y = signedPixels * scale;
+        else if (m_activeGizmoAxis == GizmoAxis::Z) delta.z = signedPixels * scale;
+        Vec3 rootDelta = {}, tipDelta = {};
+        if (m_strandGizmoMode == StrandGizmoMode::WholeTranslate) rootDelta = tipDelta = delta;
+        else if (m_strandGizmoMode == StrandGizmoMode::RootTranslate) rootDelta = delta;
+        else tipDelta = delta;
+        std::vector<uint32_t> changed;
+        changed.reserve(strand.pointCount);
+        for (uint32_t i = 0u; i < strand.pointCount; ++i)
         {
-        case GizmoAxis::X: delta.x = signedPixels * scale; break;
-        case GizmoAxis::Y: delta.y = signedPixels * scale; break;
-        case GizmoAxis::Z: delta.z = signedPixels * scale; break;
-        default: break;
+            const uint32_t pointIndex = strand.pointOffset + i;
+            const float t = strand.pointCount > 1u ? static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
+            m_asset.restPoints[pointIndex] += Lerp(rootDelta, tipDelta, t);
+            changed.push_back(pointIndex);
         }
-        Vec3 rootDelta(0.0f, 0.0f, 0.0f);
-        Vec3 tipDelta(0.0f, 0.0f, 0.0f);
-        if (m_strandGizmoMode == StrandGizmoMode::WholeTranslate)
+        CommitEditedPointIndices(changed);
+    }
+
+
+        void GpuHairViewer::EndStrandGizmoDrag(bool cancelDrag)
+    {
+        if (!m_gizmoDragging) return;
+        if (cancelDrag)
         {
-            rootDelta = delta;
-            tipDelta = delta;
-        }
-        else if (m_strandGizmoMode == StrandGizmoMode::RootTranslate)
-        {
-            rootDelta = delta;
+            ApplyStrandEditSnapshot(m_gizmoDragSnapshot, false);
+            if (!m_strandUndoStack.empty()) m_strandUndoStack.pop_back();
         }
         else
         {
-            tipDelta = delta;
-        }
-        for (uint32_t i = 0; i < strand.pointCount; ++i)
-        {
-            const uint32_t pointIndex = strand.pointOffset + i;
-            const float t = (strand.pointCount > 1u) ? (static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u)) : 0.0f;
-            m_asset.restPoints[pointIndex] += Lerp(rootDelta, tipDelta, t);
-            if (pointIndex < m_initialParticles.size())
-            {
-                m_initialParticles[pointIndex].x = m_asset.restPoints[pointIndex].x;
-                m_initialParticles[pointIndex].y = m_asset.restPoints[pointIndex].y;
-                m_initialParticles[pointIndex].z = m_asset.restPoints[pointIndex].z;
-            }
-        }
-        CommitEditedRestState();
-    }
-
-    void GpuHairViewer::EndStrandGizmoDrag(bool cancelDrag)
-    {
-        if (!m_gizmoDragging)
-        {
-            return;
-        }
-        if (cancelDrag && m_gizmoDragBaseRestPoints.size() == m_asset.restPoints.size())
-        {
-            m_asset.restPoints = m_gizmoDragBaseRestPoints;
-            for (size_t i = 0; i < m_asset.restPoints.size() && i < m_initialParticles.size(); ++i)
-            {
-                m_initialParticles[i].x = m_asset.restPoints[i].x;
-                m_initialParticles[i].y = m_asset.restPoints[i].y;
-                m_initialParticles[i].z = m_asset.restPoints[i].z;
-            }
-            CommitEditedRestState();
+            FinalizeLastStrandEditUndoSnapshot();
         }
         m_gizmoDragging = false;
         m_activeGizmoAxis = GizmoAxis::None;
-        m_gizmoDragBaseRestPoints.clear();
+        m_gizmoDragSnapshot = {};
     }
 
-    bool GpuHairViewer::PickStrandAtPoint(POINT clientPoint)
+
+        bool GpuHairViewer::PickStrandAtPoint(POINT clientPoint)
     {
-        std::vector<GpuParticle> particles;
-        if (!ReadBackCurrentParticlePositions(particles))
-        {
-            particles = m_initialParticles;
-        }
-        if (particles.size() < m_asset.restPoints.size() || m_asset.strands.empty())
+        const uint32_t guideCount = std::min<uint32_t>(
+            m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
+        if (guideCount == 0u || m_asset.restPoints.empty())
         {
             m_selectedStrandIndex = -1;
             return false;
         }
-
         const RECT renderRect = GetRenderViewportRect();
         const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
         const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
         const float aspectRatio = std::max(renderWidth / std::max(renderHeight, 1.0f), 0.6f);
-
+        constexpr uint32_t kPickStride = 4u;
         float bestDistSq = 18.0f * 18.0f;
-        int32_t bestStrand = -1;
-        for (uint32_t strandIndex = 0; strandIndex < static_cast<uint32_t>(m_asset.strands.size()); ++strandIndex)
+        int32_t bestGuide = -1;
+        for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
         {
-            const StrandRange& strand = m_asset.strands[strandIndex];
-            for (uint32_t i = 0; i + 1u < strand.pointCount; ++i)
+            const StrandRange& strand = m_asset.strands[guideIndex];
+            for (uint32_t i = 0u; i + 1u < strand.pointCount; i += kPickStride)
             {
-                const GpuParticle& a = particles[strand.pointOffset + i];
-                const GpuParticle& b = particles[strand.pointOffset + i + 1u];
+                const uint32_t next = std::min<uint32_t>(i + kPickStride, strand.pointCount - 1u);
+                const Vec3& a = m_asset.restPoints[strand.pointOffset + i];
+                const Vec3& b = m_asset.restPoints[strand.pointOffset + next];
                 Vec3 ndcA, ndcB;
-                if (!ProjectWorldToNdc(Vec3(a.x, a.y, a.z), m_cameraPosition, m_cameraTarget, aspectRatio, ndcA) ||
-                    !ProjectWorldToNdc(Vec3(b.x, b.y, b.z), m_cameraPosition, m_cameraTarget, aspectRatio, ndcB))
-                {
-                    continue;
-                }
+                if (!ProjectWorldToNdc(a, m_cameraPosition, m_cameraTarget, aspectRatio, ndcA) ||
+                    !ProjectWorldToNdc(b, m_cameraPosition, m_cameraTarget, aspectRatio, ndcB)) continue;
                 const float ax = renderRect.left + (ndcA.x * 0.5f + 0.5f) * renderWidth;
                 const float ay = renderRect.top + (-ndcA.y * 0.5f + 0.5f) * renderHeight;
                 const float bx = renderRect.left + (ndcB.x * 0.5f + 0.5f) * renderWidth;
                 const float by = renderRect.top + (-ndcB.y * 0.5f + 0.5f) * renderHeight;
-                const float abx = bx - ax;
-                const float aby = by - ay;
+                const float abx = bx - ax, aby = by - ay;
                 const float denom = std::max(abx * abx + aby * aby, 1.0e-5f);
                 const float t = std::clamp(((clientPoint.x - ax) * abx + (clientPoint.y - ay) * aby) / denom, 0.0f, 1.0f);
-                const float px = ax + abx * t;
-                const float py = ay + aby * t;
-                const float dx = static_cast<float>(clientPoint.x) - px;
-                const float dy = static_cast<float>(clientPoint.y) - py;
+                const float dx = static_cast<float>(clientPoint.x) - (ax + abx * t);
+                const float dy = static_cast<float>(clientPoint.y) - (ay + aby * t);
                 const float distSq = dx * dx + dy * dy;
-                if (distSq < bestDistSq)
-                {
-                    bestDistSq = distSq;
-                    bestStrand = static_cast<int32_t>(strandIndex);
-                }
+                if (distSq < bestDistSq) { bestDistSq = distSq; bestGuide = static_cast<int32_t>(guideIndex); }
             }
         }
-
-        m_selectedStrandIndex = bestStrand;
-        m_lastSelectedStrandScreenDistance = (bestStrand >= 0) ? std::sqrt(bestDistSq) : 0.0f;
-        return bestStrand >= 0;
+        m_selectedStrandIndex = bestGuide;
+        m_lastSelectedStrandScreenDistance = bestGuide >= 0 ? std::sqrt(bestDistSq) : 0.0f;
+        return bestGuide >= 0;
     }
+
 
 
 bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3& tipOffset)
 {
-    if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
-    {
-        return false;
-    }
+    if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size()) return false;
     const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
-    if (strand.pointCount == 0u)
-    {
-        return false;
-    }
+    if (strand.pointCount == 0u) return false;
     PushStrandEditUndoSnapshot();
-    for (uint32_t i = 0; i < strand.pointCount; ++i)
+    std::vector<uint32_t> changed;
+    changed.reserve(strand.pointCount);
+    for (uint32_t i = 0u; i < strand.pointCount; ++i)
     {
         const uint32_t pointIndex = strand.pointOffset + i;
-        const float tt = (strand.pointCount > 1u) ? (static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u)) : 0.0f;
-        const Vec3 delta = Lerp(rootOffset, tipOffset, tt);
-        m_asset.restPoints[pointIndex] += delta;
-        if (pointIndex < m_initialParticles.size())
-        {
-            m_initialParticles[pointIndex].x = m_asset.restPoints[pointIndex].x;
-            m_initialParticles[pointIndex].y = m_asset.restPoints[pointIndex].y;
-            m_initialParticles[pointIndex].z = m_asset.restPoints[pointIndex].z;
-        }
+        const float t = strand.pointCount > 1u ? static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
+        m_asset.restPoints[pointIndex] += Lerp(rootOffset, tipOffset, t);
+        changed.push_back(pointIndex);
     }
-
     hairgpu::EditStack stack = {};
     std::string parseError;
     const std::string inlineUtf8 = WideToUtf8(GetInlineEditStackText());
-    if (!inlineUtf8.empty())
-    {
-        LocalLoadEditStackCsvText(inlineUtf8, stack, parseError);
-    }
-    stack.boundarySmoothing = hairgpu::Clamp(m_quickEditBoundarySmoothing, 0.0f, 1.0f);
-    stack.boundaryRadiusUv = hairgpu::Clamp(m_quickEditBoundaryRadiusUv, 0.01f, 0.30f);
-
+    if (!inlineUtf8.empty()) LocalLoadEditStackCsvText(inlineUtf8, stack, parseError);
     hairgpu::EditLayer layer = {};
     layer.name = "single_strand_fix";
     layer.enabled = true;
@@ -541,31 +477,204 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
     layer.region.mode = hairgpu::RegionSelectMode::All;
     layer.edit.rootOffset = rootOffset;
     layer.edit.tipOffset = tipOffset;
-    layer.edit.lengthScale = 1.0f;
-    layer.edit.widthScale = 1.0f;
-    layer.edit.followerInfluence = 1.0f;
     layer.strandSelection = { static_cast<uint32_t>(m_selectedStrandIndex) };
     layer.strandSelectionMode = hairgpu::StrandSelectionMode::Replace;
-    layer.strandSelectionWeight = 1.0f;
     stack.layers.push_back(layer);
-
-    const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));
-    SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+    SetWindowTextW(m_editInlineEditStack, Utf8ToWide(SerializeEditStackToCsvText(stack)).c_str());
     m_selectedInlineLayerIndex = static_cast<int>(stack.layers.size()) - 1;
     LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
-
-    CommitEditedRestState();
+    CommitEditedPointIndices(changed);
+    FinalizeLastStrandEditUndoSnapshot();
     return true;
 }
 
-    void GpuHairViewer::CommitEditedRestState()
+
+        void GpuHairViewer::CommitEditedRestState()
     {
-        if (m_restPositions.buffer && !m_initialParticles.empty())
+        std::vector<uint32_t> changed;
+        changed.reserve(4096u);
+        const size_t count = std::min(m_asset.restPoints.size(), m_initialParticles.size());
+        for (size_t index = 0u; index < count; ++index)
         {
-            m_context->UpdateSubresource(m_restPositions.buffer.Get(), 0, nullptr, m_initialParticles.data(), 0, 0);
+            const Vec3& p = m_asset.restPoints[index];
+            const GpuParticle& initial = m_initialParticles[index];
+            if (std::fabs(p.x - initial.x) > 1.0e-7f ||
+                std::fabs(p.y - initial.y) > 1.0e-7f ||
+                std::fabs(p.z - initial.z) > 1.0e-7f)
+            {
+                changed.push_back(static_cast<uint32_t>(index));
+            }
         }
-        ResetSimulation();
-        QueueVisibilityRecovery();
+        CommitEditedPointIndices(changed);
+    }
+
+
+
+    std::vector<uint32_t> GpuHairViewer::ExpandGuideFamilies(const std::vector<uint32_t>& guideIndices) const
+    {
+        std::unordered_set<uint32_t> guideSet;
+        for (uint32_t guide : guideIndices)
+        {
+            if (guide < m_asset.guideStrandCount) guideSet.insert(guide);
+            else if (guide < m_asset.followData.size() && m_asset.followData[guide].parentGuide >= 0)
+                guideSet.insert(static_cast<uint32_t>(m_asset.followData[guide].parentGuide));
+        }
+        std::vector<uint32_t> result;
+        result.reserve(guideSet.size() * (kFixedFollowersPerGuide + 1u));
+        for (uint32_t guide : guideSet) result.push_back(guide);
+        for (uint32_t strand = m_asset.guideStrandCount; strand < m_asset.strands.size() && strand < m_asset.followData.size(); ++strand)
+        {
+            const int32_t parent = m_asset.followData[strand].parentGuide;
+            if (parent >= 0 && guideSet.count(static_cast<uint32_t>(parent)) != 0u) result.push_back(strand);
+        }
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+
+    void GpuHairViewer::PushStrandEditUndoSnapshot(const std::vector<uint32_t>& guideIndices)
+    {
+        StrandEditSnapshot snapshot = {};
+        const std::vector<uint32_t> strands = ExpandGuideFamilies(guideIndices);
+        for (uint32_t strandIndex : strands)
+        {
+            if (strandIndex >= m_asset.strands.size()) continue;
+            const StrandRange& strand = m_asset.strands[strandIndex];
+            for (uint32_t local = 0u; local < strand.pointCount; ++local)
+            {
+                const uint32_t pointIndex = strand.pointOffset + local;
+                if (pointIndex < m_asset.restPoints.size())
+                {
+                    const Vec3 value = m_asset.restPoints[pointIndex];
+                    snapshot.points.push_back({ pointIndex, value, value });
+                }
+            }
+        }
+        snapshot.inlineEditStackTextBefore = GetInlineEditStackText();
+        snapshot.inlineEditStackTextAfter = snapshot.inlineEditStackTextBefore;
+        snapshot.lockedStrandsBefore = m_lockedStrands;
+        snapshot.lockedStrandsAfter = snapshot.lockedStrandsBefore;
+        snapshot.selectedStrandIndexBefore = m_selectedStrandIndex;
+        snapshot.selectedStrandIndexAfter = m_selectedStrandIndex;
+        snapshot.selectedInlineLayerIndexBefore = m_selectedInlineLayerIndex;
+        snapshot.selectedInlineLayerIndexAfter = m_selectedInlineLayerIndex;
+        m_strandUndoStack.push_back(std::move(snapshot));
+        if (m_strandUndoStack.size() > kMaximumUndoCount) m_strandUndoStack.erase(m_strandUndoStack.begin());
+        m_strandRedoStack.clear();
+    }
+
+    void GpuHairViewer::PushStrandEditUndoSnapshot()
+    {
+        if (m_selectedStrandIndex < 0) return;
+        PushStrandEditUndoSnapshot({ static_cast<uint32_t>(m_selectedStrandIndex) });
+    }
+
+    void GpuHairViewer::ExtendLastStrandEditUndoSnapshot(const std::vector<uint32_t>& guideIndices)
+    {
+        if (m_strandUndoStack.empty()) return;
+        StrandEditSnapshot& snapshot = m_strandUndoStack.back();
+        std::unordered_set<uint32_t> existing;
+        existing.reserve(snapshot.points.size());
+        for (const SparsePointEdit& point : snapshot.points) existing.insert(point.pointIndex);
+        for (uint32_t strandIndex : ExpandGuideFamilies(guideIndices))
+        {
+            if (strandIndex >= m_asset.strands.size()) continue;
+            const StrandRange& strand = m_asset.strands[strandIndex];
+            for (uint32_t local = 0u; local < strand.pointCount; ++local)
+            {
+                const uint32_t pointIndex = strand.pointOffset + local;
+                if (pointIndex < m_asset.restPoints.size() && existing.insert(pointIndex).second)
+                {
+                    const Vec3 value = m_asset.restPoints[pointIndex];
+                    snapshot.points.push_back({ pointIndex, value, value });
+                }
+            }
+        }
+    }
+
+    void GpuHairViewer::FinalizeLastStrandEditUndoSnapshot()
+    {
+        if (m_strandUndoStack.empty()) return;
+        StrandEditSnapshot& snapshot = m_strandUndoStack.back();
+        for (SparsePointEdit& point : snapshot.points)
+            if (point.pointIndex < m_asset.restPoints.size()) point.after = m_asset.restPoints[point.pointIndex];
+        snapshot.points.erase(std::remove_if(snapshot.points.begin(), snapshot.points.end(), [](const SparsePointEdit& point)
+        {
+            return Length(point.after - point.before) <= 1.0e-8f;
+        }), snapshot.points.end());
+        snapshot.inlineEditStackTextAfter = GetInlineEditStackText();
+        snapshot.lockedStrandsAfter = m_lockedStrands;
+        snapshot.selectedStrandIndexAfter = m_selectedStrandIndex;
+        snapshot.selectedInlineLayerIndexAfter = m_selectedInlineLayerIndex;
+        if (snapshot.points.empty() && snapshot.lockedStrandsBefore == snapshot.lockedStrandsAfter &&
+            snapshot.inlineEditStackTextBefore == snapshot.inlineEditStackTextAfter)
+            m_strandUndoStack.pop_back();
+    }
+
+    void GpuHairViewer::ApplyStrandEditSnapshot(const StrandEditSnapshot& snapshot, bool applyAfter)
+    {
+        std::vector<uint32_t> changed;
+        changed.reserve(snapshot.points.size());
+        for (const SparsePointEdit& point : snapshot.points)
+        {
+            if (point.pointIndex >= m_asset.restPoints.size()) continue;
+            m_asset.restPoints[point.pointIndex] = applyAfter ? point.after : point.before;
+            changed.push_back(point.pointIndex);
+        }
+        m_lockedStrands = applyAfter ? snapshot.lockedStrandsAfter : snapshot.lockedStrandsBefore;
+        m_selectedStrandIndex = applyAfter ? snapshot.selectedStrandIndexAfter : snapshot.selectedStrandIndexBefore;
+        m_selectedInlineLayerIndex = applyAfter ? snapshot.selectedInlineLayerIndexAfter : snapshot.selectedInlineLayerIndexBefore;
+        SetWindowTextW(m_editInlineEditStack, (applyAfter ? snapshot.inlineEditStackTextAfter : snapshot.inlineEditStackTextBefore).c_str());
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+        CommitEditedPointIndices(changed);
+    }
+
+    void GpuHairViewer::CommitEditedPointIndices(const std::vector<uint32_t>& pointIndices)
+    {
+        if (!m_context || pointIndices.empty()) return;
+        std::vector<uint32_t> sorted = pointIndices;
+        std::sort(sorted.begin(), sorted.end());
+        sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+        sorted.erase(std::remove_if(sorted.begin(), sorted.end(), [&](uint32_t index)
+        {
+            return index >= m_asset.restPoints.size() || index >= m_initialParticles.size();
+        }), sorted.end());
+        if (sorted.empty()) return;
+
+        for (uint32_t index : sorted)
+        {
+            const Vec3& p = m_asset.restPoints[index];
+            m_initialParticles[index] = { p.x, p.y, p.z, 1.0f };
+        }
+
+        size_t cursor = 0u;
+        while (cursor < sorted.size())
+        {
+            const uint32_t first = sorted[cursor];
+            uint32_t last = first;
+            while (cursor + 1u < sorted.size() && sorted[cursor + 1u] == last + 1u)
+            {
+                ++cursor;
+                last = sorted[cursor];
+            }
+            D3D11_BOX box = {};
+            box.left = first * static_cast<UINT>(sizeof(GpuParticle));
+            box.right = (last + 1u) * static_cast<UINT>(sizeof(GpuParticle));
+            box.top = 0u; box.bottom = 1u; box.front = 0u; box.back = 1u;
+            const GpuParticle* source = m_initialParticles.data() + first;
+            if (m_restPositions.buffer) m_context->UpdateSubresource(m_restPositions.buffer.Get(), 0u, &box, source, 0u, 0u);
+            for (uint32_t buffer = 0u; buffer < 2u; ++buffer)
+            {
+                if (m_positions[buffer].buffer) m_context->UpdateSubresource(m_positions[buffer].buffer.Get(), 0u, &box, source, 0u, 0u);
+                if (m_previousPositions[buffer].buffer) m_context->UpdateSubresource(m_previousPositions[buffer].buffer.Get(), 0u, &box, source, 0u, 0u);
+            }
+            ++cursor;
+        }
+        if (m_distanceLambdaBuffer.buffer && !m_zeroDistanceLambdas.empty())
+            m_context->UpdateSubresource(m_distanceLambdaBuffer.buffer.Get(), 0u, nullptr, m_zeroDistanceLambdas.data(), 0u, 0u);
+        if (m_bendLambdaBuffer.buffer && !m_zeroBendLambdas.empty())
+            m_context->UpdateSubresource(m_bendLambdaBuffer.buffer.Get(), 0u, nullptr, m_zeroBendLambdas.data(), 0u, 0u);
+        m_gpuDebugLinesDirty = true;
         UpdateWindowTitle();
     }
 
@@ -605,80 +714,29 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         return true;
     }
 
-    void GpuHairViewer::PushStrandEditUndoSnapshot()
+    
+        bool GpuHairViewer::UndoStrandEdit()
     {
-        StrandEditSnapshot snapshot = {};
-        snapshot.restPoints = m_asset.restPoints;
-        snapshot.initialParticles = m_initialParticles;
-        snapshot.inlineEditStackText = GetInlineEditStackText();
-        snapshot.lockedStrands = m_lockedStrands;
-        snapshot.selectedStrandIndex = m_selectedStrandIndex;
-        snapshot.selectedInlineLayerIndex = m_selectedInlineLayerIndex;
-        m_strandUndoStack.push_back(std::move(snapshot));
-        if (m_strandUndoStack.size() > 64u)
-        {
-            m_strandUndoStack.erase(m_strandUndoStack.begin());
-        }
-        m_strandRedoStack.clear();
-    }
-
-    bool GpuHairViewer::UndoStrandEdit()
-    {
-        if (m_strandUndoStack.empty())
-        {
-            return false;
-        }
-
-        StrandEditSnapshot current = {};
-        current.restPoints = m_asset.restPoints;
-        current.initialParticles = m_initialParticles;
-        current.inlineEditStackText = GetInlineEditStackText();
-        current.lockedStrands = m_lockedStrands;
-        current.selectedStrandIndex = m_selectedStrandIndex;
-        current.selectedInlineLayerIndex = m_selectedInlineLayerIndex;
-        m_strandRedoStack.push_back(std::move(current));
-
+        if (m_strandUndoStack.empty()) return false;
         StrandEditSnapshot snapshot = std::move(m_strandUndoStack.back());
         m_strandUndoStack.pop_back();
-        m_asset.restPoints = std::move(snapshot.restPoints);
-        m_initialParticles = std::move(snapshot.initialParticles);
-        m_lockedStrands = std::move(snapshot.lockedStrands);
-        m_selectedStrandIndex = snapshot.selectedStrandIndex;
-        m_selectedInlineLayerIndex = snapshot.selectedInlineLayerIndex;
-        SetWindowTextW(m_editInlineEditStack, snapshot.inlineEditStackText.c_str());
-        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
-        CommitEditedRestState();
+        ApplyStrandEditSnapshot(snapshot, false);
+        m_strandRedoStack.push_back(std::move(snapshot));
         RecordViewportHistory(L"Undo");
         return true;
     }
 
-    bool GpuHairViewer::RedoStrandEdit()
+
+        bool GpuHairViewer::RedoStrandEdit()
     {
-        if (m_strandRedoStack.empty())
-        {
-            return false;
-        }
-
-        StrandEditSnapshot current = {};
-        current.restPoints = m_asset.restPoints;
-        current.initialParticles = m_initialParticles;
-        current.inlineEditStackText = GetInlineEditStackText();
-        current.lockedStrands = m_lockedStrands;
-        current.selectedStrandIndex = m_selectedStrandIndex;
-        current.selectedInlineLayerIndex = m_selectedInlineLayerIndex;
-        m_strandUndoStack.push_back(std::move(current));
-
+        if (m_strandRedoStack.empty()) return false;
         StrandEditSnapshot snapshot = std::move(m_strandRedoStack.back());
         m_strandRedoStack.pop_back();
-        m_asset.restPoints = std::move(snapshot.restPoints);
-        m_initialParticles = std::move(snapshot.initialParticles);
-        m_lockedStrands = std::move(snapshot.lockedStrands);
-        m_selectedStrandIndex = snapshot.selectedStrandIndex;
-        m_selectedInlineLayerIndex = snapshot.selectedInlineLayerIndex;
-        SetWindowTextW(m_editInlineEditStack, snapshot.inlineEditStackText.c_str());
-        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
-        CommitEditedRestState();
+        ApplyStrandEditSnapshot(snapshot, true);
+        m_strandUndoStack.push_back(std::move(snapshot));
+        if (m_strandUndoStack.size() > kMaximumUndoCount) m_strandUndoStack.erase(m_strandUndoStack.begin());
         RecordViewportHistory(L"Redo");
         return true;
     }
+
 

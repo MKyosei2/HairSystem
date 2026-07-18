@@ -1850,4 +1850,134 @@ namespace hairgpu
         }
         return true;
     }
+
+
+    bool ApplyEditStackToGuideFamiliesSparse(
+        HairAsset& asset,
+        const HairAsset& baseAsset,
+        const EditStack& stack,
+        const std::vector<uint32_t>& affectedGuideIndices,
+        SparseEditResult* outResult,
+        RuntimeEditState* outState,
+        std::string& outError)
+    {
+        outError.clear();
+        if (asset.strands.size() != baseAsset.strands.size() ||
+            asset.restPoints.size() != baseAsset.restPoints.size() ||
+            asset.pointWidths.size() != baseAsset.pointWidths.size())
+        {
+            outError = "Sparse edit requires topology-identical current and base assets.";
+            return false;
+        }
+        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+        std::vector<uint32_t> guides;
+        guides.reserve(affectedGuideIndices.size());
+        for (uint32_t guide : affectedGuideIndices)
+        {
+            if (guide < guideCount) guides.push_back(guide);
+            else if (guide < asset.followData.size() && asset.followData[guide].parentGuide >= 0)
+                guides.push_back(static_cast<uint32_t>(asset.followData[guide].parentGuide));
+        }
+        std::sort(guides.begin(), guides.end());
+        guides.erase(std::unique(guides.begin(), guides.end()), guides.end());
+        if (guides.empty())
+        {
+            outError = "Sparse edit did not resolve an affected guide.";
+            return false;
+        }
+        std::vector<uint8_t> guideMask(guideCount, 0u);
+        for (uint32_t guide : guides) guideMask[guide] = 1u;
+        std::vector<uint32_t> familyStrands = guides;
+        for (uint32_t strand = guideCount; strand < asset.strands.size() && strand < asset.followData.size(); ++strand)
+        {
+            const int32_t parent = asset.followData[strand].parentGuide;
+            if (parent >= 0 && static_cast<uint32_t>(parent) < guideCount && guideMask[static_cast<uint32_t>(parent)] != 0u)
+                familyStrands.push_back(strand);
+        }
+        for (uint32_t strandIndex : familyStrands)
+        {
+            const StrandRange& strand = asset.strands[strandIndex];
+            for (uint32_t local = 0u; local < strand.pointCount; ++local)
+            {
+                const uint32_t index = strand.pointOffset + local;
+                asset.restPoints[index] = baseAsset.restPoints[index];
+                if (index < asset.pointWidths.size()) asset.pointWidths[index] = baseAsset.pointWidths[index];
+            }
+        }
+        RuntimeEditState state = {};
+        state.guideInfluence.assign(guideCount, 0.0f);
+        state.strandInfluence.assign(asset.strands.size(), 0.0f);
+
+        auto selectedWeight = [](const EditLayer& layer, uint32_t guide) -> float
+        {
+            if (layer.strandSelection.empty()) return 1.0f;
+            return std::find(layer.strandSelection.begin(), layer.strandSelection.end(), guide) != layer.strandSelection.end()
+                ? Clamp01(layer.layerWeight * layer.strandSelectionWeight) : 0.0f;
+        };
+
+        for (const EditLayer& layer : stack.layers)
+        {
+            if (!layer.enabled || layer.layerWeight <= 1.0e-5f) continue;
+            for (uint32_t guide : guides)
+            {
+                const float weight = selectedWeight(layer, guide);
+                if (weight <= 1.0e-5f) continue;
+                state.guideInfluence[guide] = std::max(state.guideInfluence[guide], weight);
+                state.maxGuideInfluence = std::max(state.maxGuideInfluence, weight);
+                const StrandRange& strand = asset.strands[guide];
+                if (strand.pointCount == 0u) continue;
+                const Vec3 root = asset.restPoints[strand.pointOffset];
+                const Vec3 tip = asset.restPoints[strand.pointOffset + strand.pointCount - 1u];
+                Vec3 axis = Normalize(tip - root);
+                if (Length(axis) <= 1.0e-6f) axis = Vec3(0.0f, -1.0f, 0.0f);
+                Vec3 lateral = Normalize(Cross(Vec3(0.0f, 1.0f, 0.0f), axis));
+                if (Length(lateral) <= 1.0e-6f) lateral = Vec3(1.0f, 0.0f, 0.0f);
+                for (uint32_t local = 0u; local < strand.pointCount; ++local)
+                {
+                    const uint32_t index = strand.pointOffset + local;
+                    const float u = strand.pointCount > 1u ? static_cast<float>(local) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
+                    Vec3 relative = asset.restPoints[index] - root;
+                    relative = RotateYaw(relative, layer.edit.yawRadians * weight);
+                    relative = relative * Lerp(1.0f, layer.edit.lengthScale, u * weight);
+                    const Vec3 offset = Lerp(layer.edit.rootOffset, layer.edit.tipOffset, u) * weight + lateral * (layer.edit.sideOffset * weight);
+                    asset.restPoints[index] = root + relative + offset;
+                    if (index < asset.pointWidths.size())
+                        asset.pointWidths[index] *= Lerp(1.0f, layer.edit.widthScale, weight);
+                }
+                state.strandInfluence[guide] = std::max(state.strandInfluence[guide], weight);
+                for (uint32_t follower : familyStrands)
+                {
+                    if (follower < guideCount || follower >= asset.followData.size() || asset.followData[follower].parentGuide != static_cast<int32_t>(guide)) continue;
+                    const StrandRange& followerRange = asset.strands[follower];
+                    const float followerWeight = Clamp01(weight * layer.edit.followerInfluence * asset.followData[follower].followWeight);
+                    const uint32_t count = std::min(strand.pointCount, followerRange.pointCount);
+                    for (uint32_t local = 0u; local < count; ++local)
+                    {
+                        const uint32_t gi = strand.pointOffset + local;
+                        const uint32_t fi = followerRange.pointOffset + local;
+                        const Vec3 guideDelta = asset.restPoints[gi] - baseAsset.restPoints[gi];
+                        asset.restPoints[fi] = baseAsset.restPoints[fi] + guideDelta * followerWeight;
+                        if (fi < asset.pointWidths.size())
+                            asset.pointWidths[fi] = baseAsset.pointWidths[fi] * Lerp(1.0f, layer.edit.widthScale, followerWeight);
+                    }
+                    state.strandInfluence[follower] = std::max(state.strandInfluence[follower], followerWeight);
+                }
+            }
+        }
+        state.activeGuideCount = static_cast<uint32_t>(std::count_if(state.guideInfluence.begin(), state.guideInfluence.end(), [](float value) { return value > 1.0e-5f; }));
+        if (outState) *outState = std::move(state);
+        if (outResult)
+        {
+            outResult->affectedStrandIndices = familyStrands;
+            outResult->changedPointIndices.clear();
+            for (uint32_t strandIndex : familyStrands)
+            {
+                const StrandRange& strand = asset.strands[strandIndex];
+                for (uint32_t local = 0u; local < strand.pointCount; ++local)
+                    outResult->changedPointIndices.push_back(strand.pointOffset + local);
+            }
+        }
+        return true;
+    }
+
 }

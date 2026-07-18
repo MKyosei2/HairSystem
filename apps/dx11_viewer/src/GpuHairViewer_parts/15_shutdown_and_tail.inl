@@ -44,8 +44,8 @@
             case IDC_EDIT_PARTICLES:
                 if (code == EN_KILLFOCUS)
                 {
-                    SyncStateFromControls();
-                    RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
+                    EnforceFixedWorkload();
+                    SyncControlsFromState();
                 }
                 return 0;
             case IDC_CHECK_SELF_COLLISION:

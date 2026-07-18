@@ -17,6 +17,14 @@ out/
 *_frames.csv
 *_frames.jsonl
 *_summary.json
+<<<<<<< Updated upstream
+=======
+*_settings.json
+*_environment.json
+*_validation.json
+*_manifest.json
+*_hardware_timeseries.csv
+>>>>>>> Stashed changes
 *.before_freeze
 *.log
 *.tlog

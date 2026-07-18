@@ -1,5 +1,6 @@
 // GpuHairViewer.cpp ordered part 06: render_mesh_and_visibility_recovery
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
+// P0_INSTANCED_RUNTIME: render tail contains no full-particle CPU readback path.
 
         if (m_gpuDebugLinesDirty)
         {
