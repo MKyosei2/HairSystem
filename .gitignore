@@ -37,6 +37,11 @@ out/
 *.VC.db
 *.opendb
 
+# Locally generated canonical formal bundle.
+# It is frozen and hash-verified by the runner, but is intentionally not committed
+# because the 100k/128-point asset is large and machine-generated.
+benchmarks/novelty01/frozen_asset_bundle/
+
 # Python caches
 __pycache__/
 *.pyc
