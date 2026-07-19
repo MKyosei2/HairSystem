@@ -1,0 +1,117 @@
+name: Windows Build and Test
+
+on:
+  push:
+    branches: [Novelty]
+  pull_request:
+    branches: [Novelty]
+  workflow_dispatch:
+    inputs:
+      run_formal_smoke:
+        description: Run formal proposal smoke on a self-hosted GPU runner
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-static-tests:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: cmd
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+          /p:HairGpuFormalSelfTest=false
+
+      - name: Python syntax
+        shell: cmd
+        run: >-
+          python -m py_compile
+          tools\final_stage\freeze_novelty01_asset.py
+          tools\final_stage\hairgpu_final_run.py
+          tools\final_stage\hairgpu_runtime_suite.py
+          tools\final_stage\hairgpu_safe_runtime_suite.py
+          tools\final_stage\hairgpu_final_db.py
+          tools\final_stage\hairgpu_final_excel.py
+          tools\final_stage\hairgpu_completion_gates.py
+
+      - name: Python self-tests
+        shell: cmd
+        run: |
+          python tools\final_stage\hairgpu_final_run.py --self-test
+          python tools\final_stage\hairgpu_runtime_suite.py --self-test
+          python tools\final_stage\hairgpu_completion_gates.py --self-test
+
+      - name: Unit tests
+        shell: cmd
+        run: python -m unittest discover -s tests\final_stage -p "test_*.py"
+
+      - name: Native ABI self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
+
+      - name: Shader self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-test-${{ github.sha }}
+          if-no-files-found: ignore
+          path: |
+            bin\Release\HairSystem\*.log
+            bin-int\Release\HairSystem\*.log
+
+  formal-gpu-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_formal_smoke
+    runs-on: [self-hosted, Windows, X64, GTX1660, HairSystem]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Require clean repository
+        shell: cmd
+        run: |
+          git status --porcelain --untracked-files=normal > worktree.txt
+          for /f %%A in (worktree.txt) do exit /b 1
+
+      - name: Prepare frozen asset
+        shell: cmd
+        env:
+          HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_SelfHosted
+        run: tools\final_stage\Run_Completed_Runtime_Environment.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
+
+      - name: Proposal smoke with completion gates
+        shell: cmd
+        run: tools\final_stage\Run_Completed_Runtime_Environment.bat docs\sample_assets\final_runtime_suite_template.json proposal-smoke out\ci_proposal_smoke
+
+      - name: Upload formal smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-gpu-smoke-${{ github.sha }}
+          if-no-files-found: error
+          path: out\ci_proposal_smoke
