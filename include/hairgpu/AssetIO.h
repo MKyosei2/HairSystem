@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <iterator>
 #include <string>
 
 #include "hairgpu/Types.h"
