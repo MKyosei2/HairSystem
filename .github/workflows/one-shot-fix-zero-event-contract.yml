@@ -17,6 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
+      # This workflow exists only to make one exact edit in a large split INL.
       - name: Apply exact source patch
         shell: python
         run: |
