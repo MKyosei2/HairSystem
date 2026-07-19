@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 if "%~1"=="" (
-  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [smoke^|baseline^|full^|soak30^|soak2h^|soak8h] [output_dir]
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h] [output_dir]
   exit /b 1
 )
 
@@ -10,12 +10,12 @@ set "ROOT=%~dp0..\.."
 for %%I in ("%ROOT%") do set "ROOT=%%~fI"
 set "CONFIG=%~f1"
 set "MODE=%~2"
-if "%MODE%"=="" set "MODE=baseline"
+if "%MODE%"=="" set "MODE=proposal-smoke"
 set "OUTPUT_ARG="
 if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
 
-if /I not "%MODE%"=="smoke" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" (
-  echo ERROR: mode must be smoke, baseline, full, soak30, soak2h, or soak8h.
+if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" (
+  echo ERROR: unsupported mode "%MODE%".
   exit /b 2
 )
 
@@ -55,6 +55,38 @@ for %%F in (PENDING_STEP0_REAL.ini STEP0_FORCE_RUN.ini STEP0_REAL_MEASUREMENT_PE
   if exist "%VIEWER_DIR%\profile_results\%%F" del /Q "%VIEWER_DIR%\profile_results\%%F"
 )
 
+set "FILTER_ARGS="
+set "RUN_KIND_ARGS=--run-kind formal"
+if /I "%MODE%"=="proposal-smoke" set "FILTER_ARGS=--only-method P --only-scenario S01_Idle --only-seed 1103"
+if /I "%MODE%"=="comparison-smoke" set "FILTER_ARGS=--only-method B0 --only-method P --only-scenario S01_Idle --only-seed 1103"
+if /I "%MODE%"=="critical" set "FILTER_ARGS=--only-method B0 --only-method B8 --only-method P --only-scenario S01_Idle --only-scenario S07_ColliderApproach --only-scenario S08_StaticDynamicBoundaryContact --only-scenario S12_FalseStaticTrap --only-scenario S13_RepairStorm --only-scenario S16_StateThrashing --only-scenario S17_CloseCamera100k --only-seed 1103"
+if /I "%MODE%"=="baseline" set "FILTER_ARGS=--only-method B0"
+if /I "%MODE%"=="full" set "FILTER_ARGS="
+if /I "%MODE%"=="determinism" set "RUN_KIND_ARGS=--run-kind determinism"
+if /I "%MODE%"=="soak30" (
+  set "RUN_KIND_ARGS=--run-kind long-run"
+  set "FILTER_ARGS=--only-run-name L30_Walk"
+)
+if /I "%MODE%"=="soak2h" (
+  set "RUN_KIND_ARGS=--run-kind long-run"
+  set "FILTER_ARGS=--only-run-name L2H_StrongWind"
+)
+if /I "%MODE%"=="soak8h" (
+  set "RUN_KIND_ARGS=--run-kind long-run"
+  set "FILTER_ARGS=--only-run-name L8H_StateThrashing"
+)
+
+rem Resolve the portable frozen bundle. Formal measurement never auto-generates it.
+if not defined HAIRGPU_FROZEN_ASSET_MANIFEST (
+  for /f "usebackq delims=" %%M in (`python -c "import json,pathlib; c=pathlib.Path(r'%CONFIG%').resolve(); j=json.loads(c.read_text(encoding='utf-8-sig')); p=pathlib.Path(j['source']['asset_manifest']); print((p if p.is_absolute() else c.parent/p).resolve())"`) do set "HAIRGPU_FROZEN_ASSET_MANIFEST=%%M"
+)
+if not exist "%HAIRGPU_FROZEN_ASSET_MANIFEST%" (
+  echo ERROR: Frozen Asset Manifest was not found:
+  echo   "%HAIRGPU_FROZEN_ASSET_MANIFEST%"
+  echo Generate it explicitly with freeze_novelty01_asset.py before formal measurement.
+  exit /b 9
+)
+
 echo [1/8] Rebuilding HairSystem Release x64 without Step0...
 "%MSBUILD%" "%ROOT%\HairSystem.sln" /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true
 if errorlevel 1 exit /b %errorlevel%
@@ -76,20 +108,13 @@ echo [4/8] Checking Python syntax...
 python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py"
 if errorlevel 1 exit /b %errorlevel%
 
-echo [5/8] Running validator and suite failure-injection self-tests...
+echo [5/8] Running lock, telemetry-contract, and suite-selection self-tests...
 python "%~dp0hairgpu_final_run.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python "%~dp0hairgpu_runtime_suite.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
 if errorlevel 1 exit /b %errorlevel%
-
-set "FILTER_ARGS="
-if /I "%MODE%"=="smoke" set "FILTER_ARGS=--only-method B0 --only-scenario S01_Idle --only-seed 1103"
-if /I "%MODE%"=="baseline" set "FILTER_ARGS=--only-method B0"
-if /I "%MODE%"=="soak30" set "FILTER_ARGS=--only-method P --only-scenario S03_Walk --only-seed 1103"
-if /I "%MODE%"=="soak2h" set "FILTER_ARGS=--only-method P --only-scenario S09_StrongWind --only-seed 2207"
-if /I "%MODE%"=="soak8h" set "FILTER_ARGS=--only-method P --only-scenario S16_StateThrashing --only-seed 3301"
 
 echo [6/8] Confirming active power scheme...
 powercfg /GETACTIVESCHEME
@@ -99,9 +124,9 @@ if errorlevel 1 (
 )
 
 echo [7/8] Running strict dry-run preflight (%MODE%)...
-python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %FILTER_ARGS% %OUTPUT_ARG%
+python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
 if errorlevel 1 exit /b %errorlevel%
 
 echo [8/8] Running Release x64 suite (%MODE%)...
-python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %FILTER_ARGS% %OUTPUT_ARG%
+python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
 exit /b %errorlevel%

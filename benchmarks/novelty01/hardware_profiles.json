@@ -1,15 +1,14 @@
 {
-  "schemaVersion": "novelty01-hardware-profile-v2",
+  "schemaVersion": "novelty01-hardware-profile-v3-process-evidence",
   "profiles": {
     "low_gtx1660_reference": {
       "role": "primary_low_end_target",
-      "description": "Primary lower-end reproducibility target for the formal Novelty01 suite.",
+      "description": "Primary lower-end reproducibility target. Installed RAM describes the host only; HairSystem memory limits are process-scoped.",
       "target": {
         "gpuNameRegex": "(GeForce )?GTX 1660( SUPER| Ti)?",
         "minimumDedicatedVramMiB": 5800,
         "maximumDedicatedVramMiB": 7000,
-        "minimumCpuPhysicalCoreCount": 6,
-        "maximumSystemRamMiB": 32768
+        "minimumCpuPhysicalCoreCount": 6
       },
       "executionContract": {
         "acPowerRequired": true,
@@ -22,6 +21,10 @@
         "maximumGpuClockDropRatio": 0.15,
         "minimumGpuClockSamples": 3,
         "minimumGpuTimingCoverage": 0.99,
+        "maximumProcessPrivateMemoryMiB": 32768.0,
+        "targetProcessPrivateMemoryMiB": 1024.0,
+        "maximumDxgiLocalUsageMiB": 6144.0,
+        "minimumProcessMemorySampleCoverage": 0.95,
         "requiredPowerSchemeRegex": "(High performance|Ultimate Performance|高パフォーマンス|究極のパフォーマンス)"
       }
     },
@@ -34,7 +37,11 @@
         "vsyncDisabled": true,
         "requiredWidth": 1920,
         "requiredHeight": 1080,
-        "minimumGpuTimingCoverage": 0.99
+        "minimumGpuTimingCoverage": 0.99,
+        "maximumProcessPrivateMemoryMiB": 32768.0,
+        "targetProcessPrivateMemoryMiB": 1024.0,
+        "maximumDxgiLocalUsageMiB": 16384.0,
+        "minimumProcessMemorySampleCoverage": 0.75
       }
     }
   }

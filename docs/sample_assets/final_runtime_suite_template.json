@@ -1,6 +1,6 @@
 {
   "suite_name": "novelty01_formal_runtime_suite",
-  "suite_version": "3.4-stable-runtime",
+  "suite_version": "3.5-process-evidence",
   "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
   "outputs_dir": "../../out/novelty01_baseline",
   "telemetry_dir": "../../out/novelty01_baseline/telemetry",
@@ -21,7 +21,7 @@
   "source": {
     "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
     "schema": "../../tools/final_stage/schema.sql",
-    "asset_manifest": "../../out/novelty01_baseline/frozen_asset_manifest.json",
+    "asset_manifest": "../../benchmarks/novelty01/frozen_asset_bundle/frozen_asset_manifest.json",
     "shader_root": "../../apps/dx11_viewer/shaders",
     "required_branch": "Novelty"
   },
@@ -79,8 +79,10 @@
     "required_telemetry_fields": [
       "sourceFrameIndex",
       "availabilityMask",
+      "metricAvailabilityMask",
       "fatalFailure",
       "fatalFailureCode",
+      "totalStrandCount",
       "totalSegmentGroupCount",
       "staticCachedGroupCount",
       "staticTransformedGroupCount",
@@ -97,18 +99,107 @@
       "blockClassificationGpuMilliseconds",
       "groupClassificationGpuMilliseconds",
       "compactionGpuMilliseconds",
-      "predictiveWakeGpuMilliseconds",
       "staticTransformGpuMilliseconds",
       "dynamicSolveGpuMilliseconds",
-      "velocityRecoveryGpuMilliseconds",
-      "repairSolveGpuMilliseconds",
       "boundaryRepairGpuMilliseconds",
-      "cacheUpdateGpuMilliseconds",
       "watchdogGpuMilliseconds",
       "telemetryReductionGpuMilliseconds",
-      "metricAvailabilityMask",
-      "syntheticMetricCount"
+      "gpuHairMilliseconds",
+      "syntheticMetricCount",
+      "sameFrameReadbackCount",
+      "nanStateCount",
+      "infiniteStateCount"
     ]
+  },
+  "telemetry_contract": {
+    "schema_version": 4,
+    "required_fields": [
+      "sourceFrameIndex",
+      "availabilityMask",
+      "metricAvailabilityMask",
+      "fatalFailure",
+      "fatalFailureCode",
+      "totalStrandCount",
+      "totalSegmentGroupCount",
+      "staticCachedGroupCount",
+      "staticTransformedGroupCount",
+      "dynamicGroupCount",
+      "repairRequiredGroupCount",
+      "falseStaticCount",
+      "collisionCandidateCount",
+      "collisionMissCount",
+      "wakeRequestGroupCount",
+      "repairAttemptCount",
+      "repairSuccessCount",
+      "stateTransitionCount",
+      "stateOscillationCount",
+      "blockClassificationGpuMilliseconds",
+      "groupClassificationGpuMilliseconds",
+      "compactionGpuMilliseconds",
+      "staticTransformGpuMilliseconds",
+      "dynamicSolveGpuMilliseconds",
+      "boundaryRepairGpuMilliseconds",
+      "watchdogGpuMilliseconds",
+      "telemetryReductionGpuMilliseconds",
+      "gpuHairMilliseconds",
+      "syntheticMetricCount",
+      "sameFrameReadbackCount",
+      "nanStateCount",
+      "infiniteStateCount"
+    ],
+    "minimum_field_coverage": 0.99,
+    "require_zero_synthetic_metrics": true,
+    "require_zero_same_frame_readbacks": true,
+    "required_availability_by_scenario": {
+      "S01_Idle": [
+        "FrameInterval",
+        "CpuFrameWork",
+        "GpuTiming",
+        "GpuCounters",
+        "Scenario",
+        "ObservedSettings",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S07_ColliderApproach": [
+        "GpuTiming",
+        "CollisionGroundTruth",
+        "WakeGroundTruth",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S08_StaticDynamicBoundaryContact": [
+        "GpuTiming",
+        "BoundaryComparison",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S12_FalseStaticTrap": [
+        "GpuTiming",
+        "FalseStaticGroundTruth",
+        "WakeGroundTruth",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S13_RepairStorm": [
+        "GpuTiming",
+        "RepairVerification",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S16_StateThrashing": [
+        "GpuTiming",
+        "DeterminismHash",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ]
+    }
   },
   "run_defaults": {
     "run_name": "generated",
@@ -148,7 +239,12 @@
     "maximum_gpu_temperature_spread_c": 12.0,
     "maximum_gpu_clock_drop_ratio": 0.15,
     "build_configuration": "Release",
-    "platform": "x64"
+    "platform": "x64",
+    "hardware_sample_interval_seconds": 1.0,
+    "minimum_process_memory_sample_coverage": 0.95,
+    "maximum_process_private_memory_mib": 32768.0,
+    "target_process_private_memory_mib": 1024.0,
+    "maximum_dxgi_local_usage_mib": 6144.0
   },
   "seeds": [
     1103,
@@ -391,9 +487,12 @@
     }
   ],
   "long_run_gates": {
-    "max_peak_vram_mb": 6144.0,
-    "max_vram_slope_mb_per_min": 1.0,
-    "max_ram_slope_mb_per_min": 2.0,
+    "max_peak_process_private_mib": 32768.0,
+    "target_peak_process_private_mib": 1024.0,
+    "max_process_private_slope_mib_per_min": 2.0,
+    "max_peak_dxgi_local_usage_mib": 6144.0,
+    "max_dxgi_local_usage_slope_mib_per_min": 1.0,
+    "minimum_process_memory_sample_coverage": 0.95,
     "max_p99_degradation_ratio": 1.1,
     "max_query_unresolved_slope": 0.0
   },
