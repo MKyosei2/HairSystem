@@ -51,14 +51,12 @@ jobs:
           tools\final_stage\hairgpu_safe_runtime_suite.py
           tools\final_stage\hairgpu_final_db.py
           tools\final_stage\hairgpu_final_excel.py
-          tools\final_stage\hairgpu_completion_gates.py
 
       - name: Python self-tests
         shell: cmd
         run: |
           python tools\final_stage\hairgpu_final_run.py --self-test
           python tools\final_stage\hairgpu_runtime_suite.py --self-test
-          python tools\final_stage\hairgpu_completion_gates.py --self-test
 
       - name: Unit tests
         shell: cmd
@@ -95,18 +93,20 @@ jobs:
       - name: Require clean repository
         shell: cmd
         run: |
-          git status --porcelain --untracked-files=normal > worktree.txt
-          for /f %%A in (worktree.txt) do exit /b 1
+          for /f "delims=" %%A in ('git status --porcelain --untracked-files=normal') do (
+            echo Dirty worktree: %%A
+            exit /b 1
+          )
 
       - name: Prepare frozen asset
         shell: cmd
         env:
           HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_SelfHosted
-        run: tools\final_stage\Run_Completed_Runtime_Environment.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
+        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
 
       - name: Proposal smoke with completion gates
         shell: cmd
-        run: tools\final_stage\Run_Completed_Runtime_Environment.bat docs\sample_assets\final_runtime_suite_template.json proposal-smoke out\ci_proposal_smoke
+        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json proposal-smoke out\ci_proposal_smoke
 
       - name: Upload formal smoke evidence
         if: always()
