@@ -10,36 +10,138 @@
             layer.edit.yawRadians = hairgpu::Clamp(angle * 0.20f, -1.0f, 1.0f);
             break;
         case GroomTool::Grab:
+            layer.edit.lengthScale = 1.0f;
+            layer.edit.widthScale = 1.0f;
             layer.edit.rootOffset = worldDelta * 0.35f;
             layer.edit.tipOffset = worldDelta;
+            layer.edit.sideOffset = 0.0f;
+            layer.edit.yawRadians = 0.0f;
+            layer.edit.clumpStrength = 0.0f;
+            layer.edit.curlStrength = 0.0f;
+            layer.edit.partingStrength = 0.0f;
+            layer.edit.flowAlignStrength = 0.0f;
+            layer.edit.smoothStrength = 0.0f;
+            layer.edit.liftStrength = 0.0f;
+            layer.edit.pressStrength = 0.0f;
+            layer.edit.normalOffsetStrength = 0.0f;
+            layer.edit.twistStrength = 0.0f;
             break;
         case GroomTool::Smooth:
-            layer.layerWeight = hairgpu::Clamp(0.35f + signedMagnitude * 0.35f, 0.0f, 1.0f);
-            layer.edit.rootOffset = worldDelta * 0.03f;
-            layer.edit.tipOffset = worldDelta * 0.08f;
-            layer.edit.widthScale = 1.0f;
+            // Smooth owns only curvature relaxation. Positional offsets are not
+            // added on top of smoothStrength, and Boundary Smoothing excludes
+            // this core region in Authoring.cpp.
+            layer.layerWeight = hairgpu::Clamp(
+                0.35f + signedMagnitude * 0.35f,
+                0.0f,
+                1.0f);
             layer.edit.lengthScale = 1.0f;
-            layer.edit.followerInfluence = 1.25f;
+            layer.edit.widthScale = 1.0f;
+            layer.edit.rootOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.tipOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.sideOffset = 0.0f;
+            layer.edit.yawRadians = 0.0f;
+            layer.edit.clumpStrength = 0.0f;
+            layer.edit.curlStrength = 0.0f;
+            layer.edit.partingStrength = 0.0f;
+            layer.edit.flowAlignStrength = 0.0f;
+            layer.edit.liftStrength = 0.0f;
+            layer.edit.pressStrength = 0.0f;
+            layer.edit.normalOffsetStrength = 0.0f;
+            layer.edit.twistStrength = 0.0f;
+            layer.edit.smoothStrength = hairgpu::Clamp(
+                std::max(
+                    layer.edit.smoothStrength,
+                    0.35f + signedMagnitude * 0.45f),
+                0.0f,
+                1.0f);
+            layer.edit.followerInfluence = 1.0f;
             break;
         case GroomTool::Length:
-            layer.edit.lengthScale = hairgpu::Clamp(1.0f + verticalSign * signedMagnitude * 0.35f, 0.6f, 1.4f);
-            layer.edit.tipOffset.y += verticalSign * signedMagnitude * 0.015f;
+            // Length owns only the authored segment-length scale. A second tip
+            // translation would increase total length again after scaling.
+            layer.edit.lengthScale = hairgpu::Clamp(
+                1.0f + verticalSign * signedMagnitude * 0.35f,
+                0.6f,
+                1.4f);
+            layer.edit.widthScale = 1.0f;
+            layer.edit.rootOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.tipOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.sideOffset = 0.0f;
+            layer.edit.yawRadians = 0.0f;
+            layer.edit.clumpStrength = 0.0f;
+            layer.edit.curlStrength = 0.0f;
+            layer.edit.partingStrength = 0.0f;
+            layer.edit.flowAlignStrength = 0.0f;
+            layer.edit.smoothStrength = 0.0f;
+            layer.edit.liftStrength = 0.0f;
+            layer.edit.pressStrength = 0.0f;
+            layer.edit.normalOffsetStrength = 0.0f;
+            layer.edit.twistStrength = 0.0f;
             break;
         case GroomTool::Volume:
-            layer.edit.widthScale = hairgpu::Clamp(1.0f + verticalSign * signedMagnitude * 0.55f, 0.5f, 1.8f);
-            layer.edit.sideOffset = hairgpu::Clamp(verticalSign * signedMagnitude * 0.08f, -0.20f, 0.20f);
-            layer.edit.tipOffset = worldDelta * 0.20f;
+            // Volume owns silhouette displacement only. Thickness and tip
+            // translation are intentionally left unchanged.
+            layer.edit.lengthScale = 1.0f;
+            layer.edit.widthScale = 1.0f;
+            layer.edit.rootOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.tipOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.sideOffset = hairgpu::Clamp(
+                verticalSign * signedMagnitude * 0.08f,
+                -0.20f,
+                0.20f);
+            layer.edit.yawRadians = 0.0f;
+            layer.edit.clumpStrength = 0.0f;
+            layer.edit.curlStrength = 0.0f;
+            layer.edit.partingStrength = 0.0f;
+            layer.edit.flowAlignStrength = 0.0f;
+            layer.edit.smoothStrength = 0.0f;
+            layer.edit.liftStrength = 0.0f;
+            layer.edit.pressStrength = 0.0f;
+            layer.edit.normalOffsetStrength = 0.0f;
+            layer.edit.twistStrength = 0.0f;
             break;
         case GroomTool::Part:
+            // Part owns the parting field only. Do not also rotate, translate,
+            // smooth, clump, curl, or change width/length for the same sample.
             layer.region.angleCenterRadians = angle;
-            layer.edit.yawRadians = hairgpu::Clamp(angle * 0.35f, -1.2f, 1.2f);
-            layer.edit.sideOffset = hairgpu::Clamp(dxPixels * 0.0007f, -0.20f, 0.20f);
-            layer.edit.tipOffset = worldDelta * 0.40f;
+            layer.edit.lengthScale = 1.0f;
+            layer.edit.widthScale = 1.0f;
+            layer.edit.rootOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.tipOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.yawRadians = 0.0f;
+            layer.edit.sideOffset = 0.0f;
+            layer.edit.clumpStrength = 0.0f;
+            layer.edit.curlStrength = 0.0f;
+            layer.edit.flowAlignStrength = 0.0f;
+            layer.edit.smoothStrength = 0.0f;
+            layer.edit.liftStrength = 0.0f;
+            layer.edit.pressStrength = 0.0f;
+            layer.edit.normalOffsetStrength = 0.0f;
+            layer.edit.twistStrength = 0.0f;
+            layer.edit.partingStrength = hairgpu::Clamp(
+                std::max(
+                    layer.edit.partingStrength,
+                    signedMagnitude * 0.12f),
+                0.0f,
+                0.20f);
             break;
         case GroomTool::Freeze:
             layer.layerWeight = 1.0f;
             layer.edit.lengthScale = 1.0f;
             layer.edit.widthScale = 1.0f;
+            layer.edit.rootOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.tipOffset = Vec3(0.0f, 0.0f, 0.0f);
+            layer.edit.sideOffset = 0.0f;
+            layer.edit.yawRadians = 0.0f;
+            layer.edit.clumpStrength = 0.0f;
+            layer.edit.curlStrength = 0.0f;
+            layer.edit.partingStrength = 0.0f;
+            layer.edit.flowAlignStrength = 0.0f;
+            layer.edit.smoothStrength = 0.0f;
+            layer.edit.liftStrength = 0.0f;
+            layer.edit.pressStrength = 0.0f;
+            layer.edit.normalOffsetStrength = 0.0f;
+            layer.edit.twistStrength = 0.0f;
             layer.edit.followerInfluence = 1.0f;
             break;
         default:
@@ -235,9 +337,15 @@
                 ApplyStrandEditSnapshot(snapshot, false);
             }
         }
-        else
+        else if (m_brushStrokeSnapshotActive)
         {
-            ApplyViewportBrushStroke(m_brushStrokeLastPoint, true);
+            // The latest mouse-move preview already contains the final coordinates.
+            // Commit the existing preview without evaluating the same sample twice.
+            FinalizeLastStrandEditUndoSnapshot();
+            std::wstring entry = std::wstring(GetGroomToolDisplayName()) +
+                L" stroke | guides=" + std::to_wstring(m_brushStrokeAffectedGuideCount) +
+                L" | overlay=" + GetMaskOverlayModeDisplayName();
+            RecordViewportHistory(entry);
         }
         m_brushStrokeActive = false;
         m_brushStrokeSnapshotActive = false;
@@ -347,42 +455,116 @@
         return true;
     }
 
-
         void GpuHairViewer::UpdateStrandGizmoDrag(POINT clientPoint)
     {
         if (!m_gizmoDragging || m_activeGizmoAxis == GizmoAxis::None ||
-            m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
+            m_selectedStrandIndex < 0 ||
+            static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
         {
             return;
         }
-        const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
-        if (strand.pointCount == 0u) return;
-        for (const SparsePointEdit& point : m_gizmoDragSnapshot.points)
+
+        const uint32_t guideCount = std::min<uint32_t>(
+            m_asset.guideStrandCount,
+            static_cast<uint32_t>(m_asset.strands.size()));
+
+        uint32_t guideIndex = static_cast<uint32_t>(m_selectedStrandIndex);
+        if (guideIndex >= guideCount)
         {
-            if (point.pointIndex < m_asset.restPoints.size()) m_asset.restPoints[point.pointIndex] = point.before;
+            if (guideIndex >= m_asset.followData.size() ||
+                m_asset.followData[guideIndex].parentGuide < 0)
+            {
+                return;
+            }
+            guideIndex = static_cast<uint32_t>(m_asset.followData[guideIndex].parentGuide);
         }
+        if (guideIndex >= guideCount || m_asset.strands[guideIndex].pointCount == 0u)
+        {
+            return;
+        }
+
         const float dx = static_cast<float>(clientPoint.x - m_gizmoDragStartPoint.x);
         const float dy = static_cast<float>(clientPoint.y - m_gizmoDragStartPoint.y);
         const float signedPixels = (m_activeGizmoAxis == GizmoAxis::Y) ? -dy : dx;
         const float scale = std::max(0.0008f, m_cameraDistance * 0.0009f);
+
         Vec3 delta = {};
         if (m_activeGizmoAxis == GizmoAxis::X) delta.x = signedPixels * scale;
         else if (m_activeGizmoAxis == GizmoAxis::Y) delta.y = signedPixels * scale;
         else if (m_activeGizmoAxis == GizmoAxis::Z) delta.z = signedPixels * scale;
-        Vec3 rootDelta = {}, tipDelta = {};
-        if (m_strandGizmoMode == StrandGizmoMode::WholeTranslate) rootDelta = tipDelta = delta;
-        else if (m_strandGizmoMode == StrandGizmoMode::RootTranslate) rootDelta = delta;
-        else tipDelta = delta;
-        std::vector<uint32_t> changed;
-        changed.reserve(strand.pointCount);
-        for (uint32_t i = 0u; i < strand.pointCount; ++i)
+
+        Vec3 rootDelta = {};
+        Vec3 tipDelta = {};
+        if (m_strandGizmoMode == StrandGizmoMode::WholeTranslate)
         {
-            const uint32_t pointIndex = strand.pointOffset + i;
-            const float t = strand.pointCount > 1u ? static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
-            m_asset.restPoints[pointIndex] += Lerp(rootDelta, tipDelta, t);
-            changed.push_back(pointIndex);
+            rootDelta = delta;
+            tipDelta = delta;
         }
-        CommitEditedPointIndices(changed);
+        else if (m_strandGizmoMode == StrandGizmoMode::RootTranslate)
+        {
+            rootDelta = delta;
+        }
+        else
+        {
+            tipDelta = delta;
+        }
+
+        // The Edit Stack is the canonical edit representation. Every mouse
+        // move is rebuilt from the drag-start stack, so preview evaluation
+        // cannot accumulate direct coordinate writes frame after frame.
+        hairgpu::EditStack previewStack = {};
+        std::string parseError;
+        const std::string baseStackUtf8 =
+            WideToUtf8(m_gizmoDragSnapshot.inlineEditStackTextBefore);
+        if (!baseStackUtf8.empty() &&
+            !LocalLoadEditStackCsvText(baseStackUtf8, previewStack, parseError))
+        {
+            return;
+        }
+
+        hairgpu::EditLayer layer = {};
+        layer.name = "strand_gizmo";
+        layer.enabled = true;
+        layer.layerWeight = 1.0f;
+        layer.region.mode = hairgpu::RegionSelectMode::All;
+        layer.region.guidesOnly = true;
+        layer.edit.semantic = hairgpu::GroomEditSemantic::StrandFix;
+        layer.edit.rootOffset = rootDelta;
+        layer.edit.tipOffset = tipDelta;
+        layer.edit.lengthScale = 1.0f;
+        layer.edit.widthScale = 1.0f;
+        layer.edit.followerInfluence = 1.0f;
+        layer.strandSelection = { guideIndex };
+        layer.strandSelectionMode = hairgpu::StrandSelectionMode::GuideFamily;
+        layer.strandSelectionWeight = 1.0f;
+        previewStack.layers.push_back(layer);
+
+        const hairgpu::HairAsset& baseAsset =
+            m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+        hairgpu::SparseEditResult sparseResult = {};
+        hairgpu::RuntimeEditState runtimeState = {};
+        std::string outError;
+        if (!hairgpu::ApplyEditStackToGuideFamiliesSparse(
+                m_asset,
+                baseAsset,
+                previewStack,
+                { guideIndex },
+                &sparseResult,
+                &runtimeState,
+                outError))
+        {
+            return;
+        }
+
+        m_runtimeEditState = std::move(runtimeState);
+        CommitEditedPointIndices(sparseResult.changedPointIndices);
+
+        const std::wstring inlineText =
+            Utf8ToWide(SerializeEditStackToCsvText(previewStack));
+        SetWindowTextW(m_editInlineEditStack, inlineText.c_str());
+        m_selectedInlineLayerIndex =
+            static_cast<int>(previewStack.layers.size()) - 1;
+        LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
     }
 
 
@@ -453,37 +635,86 @@
 
 bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3& tipOffset)
 {
-    if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size()) return false;
-    const StrandRange& strand = m_asset.strands[static_cast<size_t>(m_selectedStrandIndex)];
-    if (strand.pointCount == 0u) return false;
-    PushStrandEditUndoSnapshot();
-    std::vector<uint32_t> changed;
-    changed.reserve(strand.pointCount);
-    for (uint32_t i = 0u; i < strand.pointCount; ++i)
+    if (m_selectedStrandIndex < 0 ||
+        static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
     {
-        const uint32_t pointIndex = strand.pointOffset + i;
-        const float t = strand.pointCount > 1u ? static_cast<float>(i) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
-        m_asset.restPoints[pointIndex] += Lerp(rootOffset, tipOffset, t);
-        changed.push_back(pointIndex);
+        return false;
     }
+
+    const uint32_t guideCount = std::min<uint32_t>(
+        m_asset.guideStrandCount,
+        static_cast<uint32_t>(m_asset.strands.size()));
+
+    uint32_t guideIndex = static_cast<uint32_t>(m_selectedStrandIndex);
+    if (guideIndex >= guideCount)
+    {
+        if (guideIndex >= m_asset.followData.size() ||
+            m_asset.followData[guideIndex].parentGuide < 0)
+        {
+            return false;
+        }
+        guideIndex = static_cast<uint32_t>(m_asset.followData[guideIndex].parentGuide);
+    }
+    if (guideIndex >= guideCount || m_asset.strands[guideIndex].pointCount == 0u)
+    {
+        return false;
+    }
+
+    PushStrandEditUndoSnapshot({ guideIndex });
+
     hairgpu::EditStack stack = {};
     std::string parseError;
     const std::string inlineUtf8 = WideToUtf8(GetInlineEditStackText());
-    if (!inlineUtf8.empty()) LocalLoadEditStackCsvText(inlineUtf8, stack, parseError);
+    if (!inlineUtf8.empty() && !LocalLoadEditStackCsvText(inlineUtf8, stack, parseError))
+    {
+        if (!m_strandUndoStack.empty())
+        {
+            m_strandUndoStack.pop_back();
+        }
+        return false;
+    }
+
     hairgpu::EditLayer layer = {};
     layer.name = "single_strand_fix";
     layer.enabled = true;
     layer.layerWeight = 1.0f;
     layer.region.mode = hairgpu::RegionSelectMode::All;
+    layer.region.guidesOnly = true;
+    layer.edit.semantic = hairgpu::GroomEditSemantic::StrandFix;
     layer.edit.rootOffset = rootOffset;
     layer.edit.tipOffset = tipOffset;
-    layer.strandSelection = { static_cast<uint32_t>(m_selectedStrandIndex) };
-    layer.strandSelectionMode = hairgpu::StrandSelectionMode::Replace;
+    layer.strandSelection = { guideIndex };
+    layer.strandSelectionMode = hairgpu::StrandSelectionMode::GuideFamily;
+    layer.strandSelectionWeight = 1.0f;
     stack.layers.push_back(layer);
-    SetWindowTextW(m_editInlineEditStack, Utf8ToWide(SerializeEditStackToCsvText(stack)).c_str());
+
+    const hairgpu::HairAsset& baseAsset = m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+    hairgpu::SparseEditResult sparseResult = {};
+    hairgpu::RuntimeEditState runtimeState = {};
+    std::string outError;
+    if (!hairgpu::ApplyEditStackToGuideFamiliesSparse(
+            m_asset,
+            baseAsset,
+            stack,
+            { guideIndex },
+            &sparseResult,
+            &runtimeState,
+            outError))
+    {
+        if (!m_strandUndoStack.empty())
+        {
+            m_strandUndoStack.pop_back();
+        }
+        return false;
+    }
+
+    m_runtimeEditState = std::move(runtimeState);
+    SetWindowTextW(
+        m_editInlineEditStack,
+        Utf8ToWide(SerializeEditStackToCsvText(stack)).c_str());
     m_selectedInlineLayerIndex = static_cast<int>(stack.layers.size()) - 1;
     LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
-    CommitEditedPointIndices(changed);
+    CommitEditedPointIndices(sparseResult.changedPointIndices);
     FinalizeLastStrandEditUndoSnapshot();
     return true;
 }
@@ -611,23 +842,63 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
             m_strandUndoStack.pop_back();
     }
 
-    void GpuHairViewer::ApplyStrandEditSnapshot(const StrandEditSnapshot& snapshot, bool applyAfter)
+    void GpuHairViewer::ApplyStrandEditSnapshot(
+        const StrandEditSnapshot& snapshot,
+        bool applyAfter)
     {
-        std::vector<uint32_t> changed;
-        changed.reserve(snapshot.points.size());
-        for (const SparsePointEdit& point : snapshot.points)
+        const std::wstring& canonicalStackText =
+            applyAfter
+                ? snapshot.inlineEditStackTextAfter
+                : snapshot.inlineEditStackTextBefore;
+
+        hairgpu::EditStack stack = {};
+        std::string parseError;
+        const std::string stackUtf8 = WideToUtf8(canonicalStackText);
+        if (!stackUtf8.empty() &&
+            !LocalLoadEditStackCsvText(stackUtf8, stack, parseError))
         {
-            if (point.pointIndex >= m_asset.restPoints.size()) continue;
-            m_asset.restPoints[point.pointIndex] = applyAfter ? point.after : point.before;
-            changed.push_back(point.pointIndex);
+            return;
         }
-        m_lockedStrands = applyAfter ? snapshot.lockedStrandsAfter : snapshot.lockedStrandsBefore;
-        m_selectedStrandIndex = applyAfter ? snapshot.selectedStrandIndexAfter : snapshot.selectedStrandIndexBefore;
-        m_selectedInlineLayerIndex = applyAfter ? snapshot.selectedInlineLayerIndexAfter : snapshot.selectedInlineLayerIndexBefore;
-        SetWindowTextW(m_editInlineEditStack, (applyAfter ? snapshot.inlineEditStackTextAfter : snapshot.inlineEditStackTextBefore).c_str());
+
+        const hairgpu::HairAsset& canonicalBase =
+            m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+        hairgpu::HairAsset rebuiltAsset = canonicalBase;
+        hairgpu::RuntimeEditState runtimeState = {};
+        std::string applyError;
+        if (!hairgpu::ApplyEditStackToAsset(
+                rebuiltAsset,
+                canonicalBase,
+                stack,
+                &runtimeState,
+                applyError))
+        {
+            return;
+        }
+
+        // Snapshot point arrays are retained only as a sparse undo/cache diff.
+        // They are never treated as a second authoritative edit result.
+        m_asset = std::move(rebuiltAsset);
+        m_runtimeEditState = std::move(runtimeState);
+        m_lockedStrands =
+            applyAfter
+                ? snapshot.lockedStrandsAfter
+                : snapshot.lockedStrandsBefore;
+        m_selectedStrandIndex =
+            applyAfter
+                ? snapshot.selectedStrandIndexAfter
+                : snapshot.selectedStrandIndexBefore;
+        m_selectedInlineLayerIndex =
+            applyAfter
+                ? snapshot.selectedInlineLayerIndexAfter
+                : snapshot.selectedInlineLayerIndexBefore;
+        SetWindowTextW(m_editInlineEditStack, canonicalStackText.c_str());
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
-        CommitEditedPointIndices(changed);
+        CommitEditedRestState();
+        RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        QueueVisibilityRecovery();
     }
+
 
     void GpuHairViewer::CommitEditedPointIndices(const std::vector<uint32_t>& pointIndices)
     {
@@ -738,5 +1009,3 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         RecordViewportHistory(L"Redo");
         return true;
     }
-
-

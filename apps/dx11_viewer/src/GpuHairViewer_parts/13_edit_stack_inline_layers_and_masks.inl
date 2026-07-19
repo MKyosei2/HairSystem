@@ -8,20 +8,24 @@
         {
             return false;
         }
-        out << "version=2\n";
+
+        // Version 3 makes the Edit Stack the only persistent edit source.
+        // Derived point coordinates are intentionally not serialized.
+        out << "version=3\n";
         out << "selected=" << m_selectedStrandIndex << "\n";
         out << "selectedLayer=" << m_selectedInlineLayerIndex << "\n";
+
         uint32_t lockedCount = 0u;
-        for (uint8_t v : m_lockedStrands)
+        for (uint8_t value : m_lockedStrands)
         {
-            lockedCount += (v != 0u) ? 1u : 0u;
+            lockedCount += (value != 0u) ? 1u : 0u;
         }
         out << "lockedCount=" << lockedCount << "\n";
         out << "locked=";
         bool first = true;
-        for (size_t i = 0; i < m_lockedStrands.size(); ++i)
+        for (size_t index = 0u; index < m_lockedStrands.size(); ++index)
         {
-            if (!m_lockedStrands[i])
+            if (m_lockedStrands[index] == 0u)
             {
                 continue;
             }
@@ -29,23 +33,20 @@
             {
                 out << ',';
             }
-            out << i;
+            out << index;
             first = false;
         }
         out << "\n";
+
         const std::wstring inlineStack = GetInlineEditStackText();
         out << "inlineStackBegin\n";
         out << WideToUtf8(inlineStack);
-        if (inlineStack.empty() || (inlineStack.back() != L'\n' && inlineStack.back() != L'\r'))
+        if (inlineStack.empty() ||
+            (inlineStack.back() != L'\n' && inlineStack.back() != L'\r'))
         {
             out << "\n";
         }
         out << "inlineStackEnd\n";
-        out << "pointCount=" << m_asset.restPoints.size() << "\n";
-        for (const Vec3& p : m_asset.restPoints)
-        {
-            out << std::setprecision(9) << p.x << ',' << p.y << ',' << p.z << "\n";
-        }
         return static_cast<bool>(out);
     }
 
@@ -56,14 +57,16 @@
         {
             return false;
         }
+
         std::string line;
+        uint32_t sessionVersion = 0u;
         int32_t selected = -1;
         int32_t selectedLayer = -1;
-        size_t pointCount = 0u;
-        std::vector<Vec3> restPoints;
         std::vector<uint8_t> lockedStrands(m_asset.strands.size(), 0u);
         std::string inlineStackUtf8;
         bool readingInlineStack = false;
+        bool sawLegacyPointPayload = false;
+
         while (std::getline(in, line))
         {
             if (readingInlineStack)
@@ -86,6 +89,7 @@
             }
             if (line.rfind("version=", 0) == 0)
             {
+                sessionVersion = static_cast<uint32_t>(std::stoul(line.substr(8)));
                 continue;
             }
             if (line.rfind("selected=", 0) == 0)
@@ -100,9 +104,9 @@
             }
             if (line.rfind("locked=", 0) == 0)
             {
-                std::stringstream ss(line.substr(7));
+                std::stringstream stream(line.substr(7));
                 std::string token;
-                while (std::getline(ss, token, ','))
+                while (std::getline(stream, token, ','))
                 {
                     if (token.empty())
                     {
@@ -118,37 +122,88 @@
             }
             if (line.rfind("pointCount=", 0) == 0)
             {
-                pointCount = static_cast<size_t>(std::stoull(line.substr(11)));
-                restPoints.reserve(pointCount);
+                // Version 2 stored a second authoritative coordinate payload.
+                // It is ignored during migration; the inline Edit Stack wins.
+                sawLegacyPointPayload = true;
                 continue;
             }
-            std::stringstream ss(line);
-            std::string sx, sy, sz;
-            if (!std::getline(ss, sx, ',') || !std::getline(ss, sy, ',') || !std::getline(ss, sz, ','))
+            if (sawLegacyPointPayload)
             {
+                // Ignore legacy x,y,z rows instead of applying them over the
+                // result reconstructed from the Edit Stack.
                 continue;
             }
-            restPoints.push_back({ std::stof(sx), std::stof(sy), std::stof(sz) });
         }
-        if (pointCount == 0u || restPoints.size() != pointCount || pointCount != m_asset.restPoints.size())
+
+        if (readingInlineStack || sessionVersion == 0u)
         {
             return false;
         }
-        PushStrandEditUndoSnapshot();
-        m_asset.restPoints = std::move(restPoints);
-        for (size_t i = 0; i < m_asset.restPoints.size() && i < m_initialParticles.size(); ++i)
+
+        hairgpu::EditStack stack = {};
+        std::string parseError;
+        if (!inlineStackUtf8.empty() &&
+            !LocalLoadEditStackCsvText(inlineStackUtf8, stack, parseError))
         {
-            m_initialParticles[i].x = m_asset.restPoints[i].x;
-            m_initialParticles[i].y = m_asset.restPoints[i].y;
-            m_initialParticles[i].z = m_asset.restPoints[i].z;
+            return false;
         }
+
+        // A legacy point-only session cannot be migrated without restoring the
+        // duplicate coordinate authority that this fix removes.
+        if (sessionVersion < 3u && stack.layers.empty())
+        {
+            return false;
+        }
+
+        const hairgpu::HairAsset& canonicalBase =
+            m_baseAsset.strands.empty() ? m_asset : m_baseAsset;
+        hairgpu::HairAsset rebuiltAsset = canonicalBase;
+        hairgpu::RuntimeEditState runtimeState = {};
+        std::string applyError;
+        if (!hairgpu::ApplyEditStackToAsset(
+                rebuiltAsset,
+                canonicalBase,
+                stack,
+                &runtimeState,
+                applyError))
+        {
+            return false;
+        }
+
+        if (selected < 0 ||
+            static_cast<size_t>(selected) >= rebuiltAsset.strands.size())
+        {
+            selected = -1;
+        }
+        if (selectedLayer < 0 ||
+            static_cast<size_t>(selectedLayer) >= stack.layers.size())
+        {
+            selectedLayer =
+                stack.layers.empty()
+                    ? -1
+                    : static_cast<int32_t>(stack.layers.size() - 1u);
+        }
+
+        m_asset = std::move(rebuiltAsset);
+        m_runtimeEditState = std::move(runtimeState);
         m_lockedStrands = std::move(lockedStrands);
         m_selectedStrandIndex = selected;
-        SetWindowTextW(m_editInlineEditStack, Utf8ToWide(inlineStackUtf8).c_str());
         m_selectedInlineLayerIndex = selectedLayer;
+        const std::wstring canonicalStackText =
+            Utf8ToWide(SerializeEditStackToCsvText(stack));
+        SetWindowTextW(m_editInlineEditStack, canonicalStackText.c_str());
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+
+        // Old snapshots can contain coordinates derived from a different stack.
+        // Clearing them prevents an undo from reintroducing dual ownership.
+        m_strandUndoStack.clear();
+        m_strandRedoStack.clear();
         CommitEditedRestState();
-        RecordViewportHistory(L"Loaded strand edit session");
+        RebuildActiveSetFoundation();
+        RecomputeAssetBounds();
+        QueueVisibilityRecovery();
+        RefreshQuickEditFormLabels();
+        RecordViewportHistory(L"Loaded strand edit session (Edit Stack canonical)");
         return true;
     }
 
@@ -700,4 +755,3 @@
             addWorldLine(p010, p110, r, g, b, a); addWorldLine(p010, p011, r, g, b, a);
             addWorldLine(p001, p101, r, g, b, a); addWorldLine(p001, p011, r, g, b, a);
         }
-

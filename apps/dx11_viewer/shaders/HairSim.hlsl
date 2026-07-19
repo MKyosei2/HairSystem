@@ -297,7 +297,6 @@ float ComputeAngularTargetOffset(float prevLength, float nextLength)
     float avgSegment = 0.5f * (prevLength + nextLength);
     return avgSegment * sin(max(AngularBendRadians, 0.0f) * 0.5f);
 }
-
 float3 EvaluateBoundRoot(uint strandIndex)
 {
     RootBindingData binding = RootBindings[strandIndex];
@@ -514,6 +513,8 @@ void RootBindCS(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    // RootBindCS is the single owner of root binding for the step.
+    // IntegrateCS and DistanceCS intentionally leave root particles untouched.
     uint rootIndex = strandIndex * ParticlesPerStrand;
     float3 boundRoot = EvaluateBoundRoot(strandIndex);
     OutputPositions[rootIndex] = float4(boundRoot, 1.0f);
@@ -537,9 +538,10 @@ void IntegrateCS(uint3 id : SV_DispatchThreadID)
 
     if (localIndex == 0)
     {
-        float3 boundRoot = EvaluateBoundRoot(strandIndex);
-        OutputPositions[particleIndex] = float4(boundRoot, 1.0f);
-        OutputPreviousPositions[particleIndex] = float4(boundRoot, 1.0f);
+        // RootBindCS is the single owner of the bound root for this step.
+        // Leaving this lane untouched prevents IntegrateCS from writing the
+        // same root a second time and preserves the value already placed in
+        // the output buffer by RootBindCS.
         return;
     }
 
@@ -557,15 +559,8 @@ void IntegrateCS(uint3 id : SV_DispatchThreadID)
     float3 acceleration = float3(0.0f, -Gravity, 0.0f) + SafeNormalize(WindDirection) * WindStrength * windPulse;
     float3 next = current + velocity + acceleration * (DeltaTime * DeltaTime);
 
-    if (localIndex == 1)
-    {
-        float3 boundRoot = EvaluateBoundRoot(strandIndex);
-        float3 restRoot = RestPositions[strandIndex * ParticlesPerStrand].xyz;
-        float3 restCurrent = RestPositions[particleIndex].xyz;
-        float3 tetherDir = SafeNormalize(restCurrent - restRoot);
-        float3 tetherTarget = boundRoot + tetherDir * SegmentLength;
-        next = lerp(next, tetherTarget, RootStiffness);
-    }
+    // The distance solver is the single owner of root-adjacent segment length.
+    // Do not add a second tether correction for localIndex == 1 here.
 
     float freezeFactor = ComputeBackFreezeFactor(strandIndex, localIndex);
     if (freezeFactor > 0.0f)
@@ -589,10 +584,9 @@ void DistanceCS(uint3 id : SV_DispatchThreadID)
 
     uint start = strandIndex * ParticlesPerStrand;
     float alpha = StretchCompliance / max(DeltaTime * DeltaTime, 1.0e-8f);
-    float3 boundRoot = EvaluateBoundRoot(strandIndex);
-    OutputPositions[start] = float4(boundRoot, 1.0f);
-    OutputPreviousPositions[start] = float4(boundRoot, 1.0f);
 
+    // IntegrateCS already wrote the bound root. DistanceCS must not write
+    // current/previous root values again in the same simulation step.
     [loop]
     for (uint i = 1; i < ParticlesPerStrand; ++i)
     {
@@ -606,7 +600,14 @@ void DistanceCS(uint3 id : SV_DispatchThreadID)
         float3 delta = p1 - p0;
         float lengthValue = max(length(delta), 1.0e-6f);
         float3 dir = delta / lengthValue;
-        float C = lengthValue - SegmentLength;
+
+        // Preserve the authored/edited segment length. A single global
+        // SegmentLength would force every chain toward the same length and
+        // reintroduce the unbounded-growth failure on 128-point strands.
+        float3 restP0 = RestPositions[prevIndex].xyz;
+        float3 restP1 = RestPositions[currentIndex].xyz;
+        float targetSegmentLength = max(length(restP1 - restP0), 1.0e-5f);
+        float C = lengthValue - targetSegmentLength;
         float w0 = (i == 1) ? 0.0f : 1.0f;
         float w1 = 1.0f;
         float denom = w0 + w1 + alpha;
@@ -780,7 +781,7 @@ void CollisionCS(uint3 id : SV_DispatchThreadID)
     float3 previousPosition = OutputPreviousPositions[particleIndex].xyz;
     bool touchedSurface = false;
 
-        [loop]
+    [loop]
     for (uint sphereIndex = 0; sphereIndex < SphereColliderCount; ++sphereIndex)
     {
         float4 sphere = SphereData[sphereIndex];
@@ -883,7 +884,8 @@ void ClearGridCS(uint3 id : SV_DispatchThreadID)
 void BuildGridCS(uint3 id : SV_DispatchThreadID)
 {
     uint dispatchIndex = DispatchBaseIndex + id.x;
-    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();    if (dispatchIndex >= guideParticleDispatchCount)
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
+    if (dispatchIndex >= guideParticleDispatchCount)
     {
         return;
     }
@@ -916,7 +918,6 @@ void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
 {
     uint index = DispatchBaseIndex + id.x;
     uint totalGuideParticles = TotalGuideParticles();
-    uint activeGuideParticles = GetGuideParticleDispatchCount();
     uint bucketCount = max(BroadphaseHashBucketCount, 1u);
     if (index < bucketCount)
     {
@@ -932,7 +933,8 @@ void ClearHashGridCS(uint3 id : SV_DispatchThreadID)
 void BuildHashGridCS(uint3 id : SV_DispatchThreadID)
 {
     uint dispatchIndex = DispatchBaseIndex + id.x;
-    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();    if (dispatchIndex >= guideParticleDispatchCount)
+    uint guideParticleDispatchCount = GetGuideParticleDispatchCount();
+    if (dispatchIndex >= guideParticleDispatchCount)
     {
         return;
     }
@@ -978,7 +980,7 @@ void BuildSortedEntriesCS(uint3 id : SV_DispatchThreadID)
 {
     uint entryIndex = DispatchBaseIndex + id.x;
     if (entryIndex >= max(SortedPaddedEntryCount, 1u))
-{
+    {
         return;
     }
 
@@ -1216,7 +1218,8 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
     {
         float3 legacyP = ComputeLegacySelfCollision(particleIndex, strandIndex, localIndex);
         legacyP = ApplyLooseGuideConstraints(strandIndex, localIndex, legacyP);
-        legacyP = ApplySupportCollisionApprox(strandIndex, localIndex, legacyP);
+        // SupportCollisionApprox is owned by CollisionCS and must not be
+        // applied a second time from the self-collision pass.
         OutputPositions[particleIndex] = float4(legacyP, 1.0f);
         return;
     }
@@ -1340,7 +1343,7 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
     }
     else
     {
-        uint queryLevelBegin = (BroadphaseMode == 2u) ? 0u : 0u;
+        uint queryLevelBegin = 0u;
         uint queryLevelEnd = (BroadphaseMode == 2u) ? 2u : 0u;
         [loop]
         for (uint queryLevel = queryLevelBegin; queryLevel <= queryLevelEnd; ++queryLevel)
@@ -1404,15 +1407,10 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
     }
 
     p = ApplyLooseGuideConstraints(strandIndex, localIndex, p);
-    p = ApplySupportCollisionApprox(strandIndex, localIndex, p);
 
-    float freezeFactor = ComputeBackFreezeFactor(strandIndex, localIndex);
-    if (freezeFactor > 0.0f)
-    {
-        float3 current = OutputPositions[particleIndex].xyz;
-        p = lerp(p, current, freezeFactor * FreezeBlend * 0.35f);
-    }
-
+    // CollisionCS owns support collision and IntegrateCS owns freeze damping.
+    // Reapplying either term here would make the result iteration-count
+    // dependent and would over-constrain the same particle twice.
     OutputPositions[particleIndex] = float4(p, 1.0f);
 }
 
@@ -1447,8 +1445,14 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     uint strandIndex = GuideStrandCount + followerIndex;
     FollowData follow = FollowStrands[strandIndex];
     if (follow.ParentGuide < 0) return;
-    uint parentPointIndex = uint(follow.ParentGuide) * ParticlesPerStrand + localPointIndex;
     uint strandPointIndex = strandIndex * ParticlesPerStrand + localPointIndex;
+    if (localPointIndex == 0u)
+    {
+        // RootBindCS already wrote the follower root for this step.
+        return;
+    }
+
+    uint parentPointIndex = uint(follow.ParentGuide) * ParticlesPerStrand + localPointIndex;
     float3 parentPos = OutputPositions[parentPointIndex].xyz;
     float3 parentRest = RestPositions[parentPointIndex].xyz;
     float3 followerRest = RestPositions[strandPointIndex].xyz;
@@ -1459,13 +1463,12 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     float3 noise = float3(sin(noisePhase), 0.0f, cos(noisePhase * 1.17f)) * noiseAmp;
     float followGain = saturate(lerp(1.0f, follow.FollowWeight, FollowStiffness));
     float clumpGain = lerp(0.25f, 1.0f, follow.ClumpWeight);
-    float curveGain = 0.35f + 0.65f * t;
-    float3 parentDelta = parentPos - parentRest;
-    float3 target = parentPos + restOffset * clumpGain + parentDelta * curveGain * 0.12f + noise;
+
+    // parentPos already contains the complete guide displacement. Adding
+    // the guide delta again would amplify motion a second time.
+    float3 target = parentPos + restOffset * clumpGain + noise;
     float3 current = InputPositions[strandPointIndex].xyz;
     float3 blended = lerp(current, target, followGain);
-    if (localPointIndex == 0u) blended = EvaluateBoundRoot(strandIndex);
     OutputPreviousPositions[strandPointIndex] = float4(current, 1.0f);
     OutputPositions[strandPointIndex] = float4(blended, 1.0f);
 }
-

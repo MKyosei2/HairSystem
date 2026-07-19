@@ -316,39 +316,37 @@ namespace hairgpu
                 {
                     continue;
                 }
-                AppendSelectedStrand(result.strands, strandIndex, layer.strandSelectionWeight);
+
+                // GuideFamily deformation is guide-owned. Followers are not put
+                // in the deformation selection because ApplyEditToRegion drives
+                // them once from the edited guide later in the same operation.
                 if (layer.strandSelectionMode == StrandSelectionMode::GuideFamily)
                 {
-                    if (strandIndex < guideCount)
+                    uint32_t resolvedGuide = strandIndex;
+                    if (strandIndex >= guideCount)
                     {
-                        for (uint32_t followerIndex = guideCount; followerIndex < asset.strands.size(); ++followerIndex)
+                        if (strandIndex >= asset.followData.size())
                         {
-                            if (followerIndex < asset.followData.size() &&
-                                asset.followData[followerIndex].parentGuide == static_cast<int32_t>(strandIndex))
-                            {
-                                AppendSelectedStrand(result.strands,
-                                                     followerIndex,
-                                                     layer.strandSelectionWeight * std::clamp(asset.followData[followerIndex].followWeight, 0.0f, 1.0f));
-                            }
+                            continue;
                         }
-                    }
-                    else if (strandIndex < asset.followData.size())
-                    {
                         const FollowData& follow = asset.followData[strandIndex];
-                        if (follow.parentGuide >= 0 && static_cast<uint32_t>(follow.parentGuide) < guideCount)
+                        if (follow.parentGuide < 0 || static_cast<uint32_t>(follow.parentGuide) >= guideCount)
                         {
-                            AppendSelectedStrand(result.strands,
-                                                 static_cast<uint32_t>(follow.parentGuide),
-                                                 layer.strandSelectionWeight);
+                            continue;
                         }
+                        resolvedGuide = static_cast<uint32_t>(follow.parentGuide);
                     }
+                    AppendSelectedStrand(result.strands, resolvedGuide, layer.strandSelectionWeight);
+                    continue;
                 }
+
+                AppendSelectedStrand(result.strands, strandIndex, layer.strandSelectionWeight);
             }
             return result;
         }
 
         RegionSelectionResult MergeSelections(const RegionSelectionResult& a,
-                                              const RegionSelectionResult& b)
+                                               const RegionSelectionResult& b)
         {
             RegionSelectionResult merged = a;
             for (const SelectedStrand& strand : b.strands)
@@ -360,7 +358,19 @@ namespace hairgpu
 
         RegionSelectionResult BuildLayerSelection(const HairAsset& asset, const EditLayer& layer)
         {
-            const RegionSelectionResult regionSelection = SelectRegion(asset, layer.region);
+            RegionSelectionResult regionSelection = SelectRegion(asset, layer.region);
+            if (layer.strandSelectionMode == StrandSelectionMode::GuideFamily)
+            {
+                // Region selection for a guide-family layer must also remain
+                // guide-only. Runtime influence is propagated to followers later.
+                regionSelection.strands.erase(
+                    std::remove_if(regionSelection.strands.begin(), regionSelection.strands.end(),
+                        [&](const SelectedStrand& strand)
+                        {
+                            return strand.strandIndex >= asset.guideStrandCount;
+                        }),
+                    regionSelection.strands.end());
+            }
             const RegionSelectionResult explicitSelection = BuildExplicitStrandSelection(asset, layer);
             if (layer.strandSelection.empty() || layer.strandSelectionMode == StrandSelectionMode::None)
             {
@@ -711,6 +721,114 @@ namespace hairgpu
             }
         }
 
+        void AccumulateBoundedWidthScales(
+            const HairAsset& baseAsset,
+            const RegionSelectionResult& selection,
+            const EditSettings& settings,
+            std::vector<float>& inOutCumulativeScales)
+        {
+            if (inOutCumulativeScales.size() != baseAsset.pointWidths.size())
+            {
+                inOutCumulativeScales.assign(baseAsset.pointWidths.size(), 1.0f);
+            }
+
+            const uint32_t guideCount = std::min<uint32_t>(
+                baseAsset.guideStrandCount,
+                static_cast<uint32_t>(baseAsset.strands.size()));
+
+            for (const SelectedStrand& selected : selection.strands)
+            {
+                if (selected.strandIndex >= baseAsset.strands.size())
+                {
+                    continue;
+                }
+                const StrandRange& strand = baseAsset.strands[selected.strandIndex];
+                for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+                {
+                    const uint32_t pointIndex = strand.pointOffset + localIndex;
+                    if (pointIndex >= inOutCumulativeScales.size())
+                    {
+                        continue;
+                    }
+                    const float u = (strand.pointCount > 1u)
+                        ? static_cast<float>(localIndex) / static_cast<float>(strand.pointCount - 1u)
+                        : 0.0f;
+                    const float zoneEnvelope = EvaluateZoneEnvelope(settings.zone, u);
+                    const float baseEditGain = Clamp01(selected.weight) * zoneEnvelope;
+                    const float widthBlend = Clamp01(
+                        baseEditGain *
+                        (0.70f + 0.30f *
+                            (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
+                    const float requestedScale = Lerp(1.0f, settings.widthScale, widthBlend);
+                    inOutCumulativeScales[pointIndex] = std::clamp(
+                        inOutCumulativeScales[pointIndex] * requestedScale,
+                        0.25f,
+                        3.0f);
+                }
+            }
+
+            // Followers receive the parent guide's width request once. They are
+            // not also present in GuideFamily deformation selections.
+            for (uint32_t followerIndex = guideCount;
+                 followerIndex < baseAsset.strands.size();
+                 ++followerIndex)
+            {
+                if (followerIndex >= baseAsset.followData.size())
+                {
+                    continue;
+                }
+                const FollowData& follow = baseAsset.followData[followerIndex];
+                if (follow.parentGuide < 0 || static_cast<uint32_t>(follow.parentGuide) >= guideCount)
+                {
+                    continue;
+                }
+                const auto selectedGuide = std::find_if(
+                    selection.strands.begin(), selection.strands.end(),
+                    [&](const SelectedStrand& selected)
+                    {
+                        return selected.strandIndex == static_cast<uint32_t>(follow.parentGuide);
+                    });
+                if (selectedGuide == selection.strands.end())
+                {
+                    continue;
+                }
+
+                const StrandRange& guide = baseAsset.strands[static_cast<uint32_t>(follow.parentGuide)];
+                const StrandRange& follower = baseAsset.strands[followerIndex];
+                const uint32_t count = std::min(guide.pointCount, follower.pointCount);
+                const float followerBlend = Clamp01(
+                    selectedGuide->weight *
+                    settings.followerInfluence *
+                    std::clamp(follow.followWeight, 0.0f, 1.0f));
+                for (uint32_t localIndex = 0u; localIndex < count; ++localIndex)
+                {
+                    const uint32_t guidePointIndex = guide.pointOffset + localIndex;
+                    const uint32_t followerPointIndex = follower.pointOffset + localIndex;
+                    if (guidePointIndex >= inOutCumulativeScales.size() ||
+                        followerPointIndex >= inOutCumulativeScales.size())
+                    {
+                        continue;
+                    }
+                    const float u = (count > 1u)
+                        ? static_cast<float>(localIndex) / static_cast<float>(count - 1u)
+                        : 0.0f;
+                    const float zoneEnvelope = EvaluateZoneEnvelope(settings.zone, u);
+                    const float baseEditGain = Clamp01(selectedGuide->weight) * zoneEnvelope;
+                    const float widthBlend = Clamp01(
+                        baseEditGain *
+                        (0.70f + 0.30f *
+                            (1.0f - std::clamp(settings.clumpStrength, 0.0f, 1.0f) * 0.35f)));
+                    const float parentRequestedScale =
+                        Lerp(1.0f, settings.widthScale, widthBlend);
+                    const float followerRequestedScale =
+                        Lerp(1.0f, parentRequestedScale, followerBlend);
+                    inOutCumulativeScales[followerPointIndex] = std::clamp(
+                        inOutCumulativeScales[followerPointIndex] * followerRequestedScale,
+                        0.25f,
+                        3.0f);
+                }
+            }
+        }
 
         Vec3 ComputeBoundaryTangent(const HairAsset& asset, const StrandRange& strand, uint32_t localIndex)
         {
@@ -732,6 +850,7 @@ namespace hairgpu
 
         void ApplyBoundarySmoothing(HairAsset& asset,
                                     const std::vector<float>& strandInfluence,
+                                    const std::vector<float>& smoothCoreInfluence,
                                     float radiusUv,
                                     float smoothingStrength)
         {
@@ -754,6 +873,15 @@ namespace hairgpu
             {
                 const StrandRange& strand = asset.strands[guideIndex];
                 if (strand.pointCount < 2u)
+                {
+                    continue;
+                }
+
+                // Smooth semantic layers already performed their point-wise
+                // smoothing in ApplyEditToRegion. Boundary smoothing is only
+                // allowed outside those cores to avoid a second smoothing pass.
+                if (guideIndex < smoothCoreInfluence.size() &&
+                    smoothCoreInfluence[guideIndex] > 1.0e-4f)
                 {
                     continue;
                 }
@@ -853,10 +981,16 @@ namespace hairgpu
                 {
                     continue;
                 }
-                const StrandRange& guide = asset.strands[static_cast<uint32_t>(follow.parentGuide)];
+                const uint32_t parentGuideIndex = static_cast<uint32_t>(follow.parentGuide);
+                if (parentGuideIndex < smoothCoreInfluence.size() &&
+                    smoothCoreInfluence[parentGuideIndex] > 1.0e-4f)
+                {
+                    continue;
+                }
+                const StrandRange& guide = asset.strands[parentGuideIndex];
                 const StrandRange& follower = asset.strands[strandIndex];
                 const uint32_t pointCount = std::min(guide.pointCount, follower.pointCount);
-                const float parentInfluence = Clamp01(strandInfluence[static_cast<uint32_t>(follow.parentGuide)]);
+                const float parentInfluence = Clamp01(strandInfluence[parentGuideIndex]);
                 const float boundary = Clamp01(1.0f - std::abs(parentInfluence - 0.5f) * 2.0f);
                 const float blend = Clamp01((0.18f + 0.62f * boundary) * std::clamp(follow.followWeight, 0.0f, 1.0f));
                 for (uint32_t localIndex = 0u; localIndex < pointCount; ++localIndex)
@@ -897,7 +1031,6 @@ namespace hairgpu
             return Lerp(palette.samples[upper].offset, palette.samples[next].offset, alpha);
         }
     }
-
     RegionSelectionResult SelectRegion(const HairAsset& asset, const RegionSelectionSettings& settings)
     {
         RegionSelectionResult result;
@@ -935,12 +1068,37 @@ namespace hairgpu
         const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
         const std::vector<Vec3> originalPoints = asset.restPoints;
 
+        std::vector<uint8_t> selectedGuideMask(guideCount, 0u);
+        for (const SelectedStrand& selected : selection.strands)
+        {
+            if (selected.strandIndex < guideCount)
+            {
+                selectedGuideMask[selected.strandIndex] = 1u;
+            }
+        }
+
         for (const SelectedStrand& selected : selection.strands)
         {
             if (selected.strandIndex >= asset.strands.size())
             {
                 continue;
             }
+
+            // When a follower's parent guide is selected, follower geometry is
+            // exclusively produced by the guide-driven pass below. This guard
+            // also protects non-GuideFamily region selections from double edits.
+            if (selected.strandIndex >= guideCount &&
+                selected.strandIndex < asset.followData.size())
+            {
+                const FollowData& follow = asset.followData[selected.strandIndex];
+                if (follow.parentGuide >= 0 &&
+                    static_cast<uint32_t>(follow.parentGuide) < selectedGuideMask.size() &&
+                    selectedGuideMask[static_cast<uint32_t>(follow.parentGuide)] != 0u)
+                {
+                    continue;
+                }
+            }
+
             const StrandRange& strand = asset.strands[selected.strandIndex];
             if (strand.pointCount == 0u)
             {
@@ -1084,7 +1242,10 @@ namespace hairgpu
                 const Vec3 restOffset = originalPoints[si] - originalPoints[gi];
                 const Vec3 guideDrivenTarget = asset.restPoints[gi] + restOffset * (1.0f - 0.55f * settings.clumpStrength);
                 const float localBlend = Clamp01(Lerp(familyBlend, clumpBlend, u));
-                asset.restPoints[si] = Lerp(asset.restPoints[si], guideDrivenTarget, localBlend);
+
+                // Followers have not been directly edited in GuideFamily mode,
+                // so this is the only geometry deformation pass they receive.
+                asset.restPoints[si] = Lerp(originalPoints[si], guideDrivenTarget, localBlend);
                 if (si < asset.pointWidths.size() && gi < asset.pointWidths.size())
                 {
                     asset.pointWidths[si] = Lerp(asset.pointWidths[si], asset.pointWidths[gi], familyBlend);
@@ -1265,29 +1426,57 @@ namespace hairgpu
         }
 
         bool appliedAnyLayer = false;
+        std::vector<float> cumulativeWidthScales(baseAsset.pointWidths.size(), 1.0f);
+        std::vector<float> smoothCoreInfluence(baseAsset.strands.size(), 0.0f);
+
         for (const EditLayer& layer : stack.layers)
         {
             if (!layer.enabled || layer.layerWeight <= 1.0e-4f)
             {
                 continue;
             }
-            RegionSelectionResult selection = BuildLayerSelection(asset, layer);
+            RegionSelectionResult selection = BuildLayerSelection(baseAsset, layer);
             selection = ScaleSelectionWeights(selection, layer.layerWeight);
             if (selection.strands.empty())
             {
                 continue;
             }
-            if (!ApplyEditToRegion(asset, selection, layer.edit, outError))
+
+            AccumulateBoundedWidthScales(baseAsset, selection, layer.edit, cumulativeWidthScales);
+            if (layer.edit.semantic == GroomEditSemantic::Smooth || layer.edit.smoothStrength > 1.0e-4f)
+            {
+                AccumulateSelectionWeights(smoothCoreInfluence, baseAsset, selection, 1.0f);
+            }
+
+            // Geometry and width are resolved separately. Width is reconstructed
+            // once from base widths after all layers, so repeated layers cannot
+            // multiply the already-edited width without a bounded accumulator.
+            EditSettings geometrySettings = layer.edit;
+            geometrySettings.widthScale = 1.0f;
+            if (!ApplyEditToRegion(asset, selection, geometrySettings, outError))
             {
                 return false;
             }
             appliedAnyLayer = true;
         }
 
+        for (size_t pointIndex = 0u;
+             pointIndex < asset.pointWidths.size() && pointIndex < baseAsset.pointWidths.size();
+             ++pointIndex)
+        {
+            asset.pointWidths[pointIndex] =
+                baseAsset.pointWidths[pointIndex] * cumulativeWidthScales[pointIndex];
+        }
+
         RuntimeEditState state = BuildRuntimeEditState(baseAsset, stack);
         if (appliedAnyLayer)
         {
-            ApplyBoundarySmoothing(asset, state.strandInfluence, stack.boundaryRadiusUv, stack.boundarySmoothing);
+            ApplyBoundarySmoothing(
+                asset,
+                state.strandInfluence,
+                smoothCoreInfluence,
+                stack.boundaryRadiusUv,
+                stack.boundarySmoothing);
         }
 
         if (outState)
@@ -1484,7 +1673,6 @@ namespace hairgpu
         }
     }
 
-
     void ApplyAngularXpbdBendRelaxation(HairAsset& asset, const AngularXpbdBendSettings& settings)
     {
         const float targetBend = std::clamp(settings.targetBendRadians, 0.0f, 3.05f);
@@ -1564,7 +1752,6 @@ namespace hairgpu
             }
         }
     }
-
 
     namespace
     {
@@ -1851,7 +2038,6 @@ namespace hairgpu
         return true;
     }
 
-
     bool ApplyEditStackToGuideFamiliesSparse(
         HairAsset& asset,
         const HairAsset& baseAsset,
@@ -1866,115 +2052,276 @@ namespace hairgpu
             asset.restPoints.size() != baseAsset.restPoints.size() ||
             asset.pointWidths.size() != baseAsset.pointWidths.size())
         {
-            outError = "Sparse edit requires topology-identical current and base assets.";
+            outError =
+                "Sparse edit requires topology-identical current and base assets.";
             return false;
         }
-        const uint32_t guideCount = std::min<uint32_t>(asset.guideStrandCount, static_cast<uint32_t>(asset.strands.size()));
+
+        const uint32_t guideCount = std::min<uint32_t>(
+            asset.guideStrandCount,
+            static_cast<uint32_t>(asset.strands.size()));
+
         std::vector<uint32_t> guides;
         guides.reserve(affectedGuideIndices.size());
-        for (uint32_t guide : affectedGuideIndices)
+        for (uint32_t strandIndex : affectedGuideIndices)
         {
-            if (guide < guideCount) guides.push_back(guide);
-            else if (guide < asset.followData.size() && asset.followData[guide].parentGuide >= 0)
-                guides.push_back(static_cast<uint32_t>(asset.followData[guide].parentGuide));
+            if (strandIndex < guideCount)
+            {
+                guides.push_back(strandIndex);
+            }
+            else if (strandIndex < asset.followData.size() &&
+                     asset.followData[strandIndex].parentGuide >= 0)
+            {
+                const uint32_t parentGuide =
+                    static_cast<uint32_t>(
+                        asset.followData[strandIndex].parentGuide);
+                if (parentGuide < guideCount)
+                {
+                    guides.push_back(parentGuide);
+                }
+            }
         }
         std::sort(guides.begin(), guides.end());
-        guides.erase(std::unique(guides.begin(), guides.end()), guides.end());
+        guides.erase(
+            std::unique(guides.begin(), guides.end()),
+            guides.end());
+
         if (guides.empty())
         {
             outError = "Sparse edit did not resolve an affected guide.";
             return false;
         }
+
         std::vector<uint8_t> guideMask(guideCount, 0u);
-        for (uint32_t guide : guides) guideMask[guide] = 1u;
-        std::vector<uint32_t> familyStrands = guides;
-        for (uint32_t strand = guideCount; strand < asset.strands.size() && strand < asset.followData.size(); ++strand)
+        for (uint32_t guideIndex : guides)
         {
-            const int32_t parent = asset.followData[strand].parentGuide;
-            if (parent >= 0 && static_cast<uint32_t>(parent) < guideCount && guideMask[static_cast<uint32_t>(parent)] != 0u)
-                familyStrands.push_back(strand);
+            guideMask[guideIndex] = 1u;
         }
+
+        std::vector<uint32_t> familyStrands = guides;
+        for (uint32_t strandIndex = guideCount;
+             strandIndex < asset.strands.size() &&
+             strandIndex < asset.followData.size();
+             ++strandIndex)
+        {
+            const int32_t parent =
+                asset.followData[strandIndex].parentGuide;
+            if (parent >= 0 &&
+                static_cast<uint32_t>(parent) < guideCount &&
+                guideMask[static_cast<uint32_t>(parent)] != 0u)
+            {
+                familyStrands.push_back(strandIndex);
+            }
+        }
+
+        // Rebuild only the affected guide families from the canonical base.
+        // The sparse path no longer carries a second hand-written edit
+        // evaluator; it delegates every edit semantic to ApplyEditToRegion.
         for (uint32_t strandIndex : familyStrands)
         {
             const StrandRange& strand = asset.strands[strandIndex];
-            for (uint32_t local = 0u; local < strand.pointCount; ++local)
+            for (uint32_t localIndex = 0u;
+                 localIndex < strand.pointCount;
+                 ++localIndex)
             {
-                const uint32_t index = strand.pointOffset + local;
-                asset.restPoints[index] = baseAsset.restPoints[index];
-                if (index < asset.pointWidths.size()) asset.pointWidths[index] = baseAsset.pointWidths[index];
+                const uint32_t pointIndex =
+                    strand.pointOffset + localIndex;
+                asset.restPoints[pointIndex] =
+                    baseAsset.restPoints[pointIndex];
+                if (pointIndex < asset.pointWidths.size())
+                {
+                    asset.pointWidths[pointIndex] =
+                        baseAsset.pointWidths[pointIndex];
+                }
             }
         }
-        RuntimeEditState state = {};
-        state.guideInfluence.assign(guideCount, 0.0f);
-        state.strandInfluence.assign(asset.strands.size(), 0.0f);
 
-        auto selectedWeight = [](const EditLayer& layer, uint32_t guide) -> float
-        {
-            if (layer.strandSelection.empty()) return 1.0f;
-            return std::find(layer.strandSelection.begin(), layer.strandSelection.end(), guide) != layer.strandSelection.end()
-                ? Clamp01(layer.layerWeight * layer.strandSelectionWeight) : 0.0f;
-        };
+        std::vector<float> cumulativeWidthScales(
+            baseAsset.pointWidths.size(),
+            1.0f);
+        std::vector<float> smoothCoreInfluence(
+            baseAsset.strands.size(),
+            0.0f);
+        bool appliedAnyLayer = false;
 
         for (const EditLayer& layer : stack.layers)
         {
-            if (!layer.enabled || layer.layerWeight <= 1.0e-5f) continue;
-            for (uint32_t guide : guides)
+            if (!layer.enabled ||
+                layer.layerWeight <= 1.0e-5f)
             {
-                const float weight = selectedWeight(layer, guide);
-                if (weight <= 1.0e-5f) continue;
-                state.guideInfluence[guide] = std::max(state.guideInfluence[guide], weight);
-                state.maxGuideInfluence = std::max(state.maxGuideInfluence, weight);
-                const StrandRange& strand = asset.strands[guide];
-                if (strand.pointCount == 0u) continue;
-                const Vec3 root = asset.restPoints[strand.pointOffset];
-                const Vec3 tip = asset.restPoints[strand.pointOffset + strand.pointCount - 1u];
-                Vec3 axis = Normalize(tip - root);
-                if (Length(axis) <= 1.0e-6f) axis = Vec3(0.0f, -1.0f, 0.0f);
-                Vec3 lateral = Normalize(Cross(Vec3(0.0f, 1.0f, 0.0f), axis));
-                if (Length(lateral) <= 1.0e-6f) lateral = Vec3(1.0f, 0.0f, 0.0f);
-                for (uint32_t local = 0u; local < strand.pointCount; ++local)
+                continue;
+            }
+
+            RegionSelectionResult selection =
+                BuildLayerSelection(baseAsset, layer);
+            selection =
+                ScaleSelectionWeights(selection, layer.layerWeight);
+
+            RegionSelectionResult filteredSelection = {};
+            filteredSelection.strands.reserve(
+                selection.strands.size());
+            for (const SelectedStrand& selected :
+                 selection.strands)
+            {
+                if (selected.strandIndex >=
+                    baseAsset.strands.size())
                 {
-                    const uint32_t index = strand.pointOffset + local;
-                    const float u = strand.pointCount > 1u ? static_cast<float>(local) / static_cast<float>(strand.pointCount - 1u) : 0.0f;
-                    Vec3 relative = asset.restPoints[index] - root;
-                    relative = RotateYaw(relative, layer.edit.yawRadians * weight);
-                    relative = relative * Lerp(1.0f, layer.edit.lengthScale, u * weight);
-                    const Vec3 offset = Lerp(layer.edit.rootOffset, layer.edit.tipOffset, u) * weight + lateral * (layer.edit.sideOffset * weight);
-                    asset.restPoints[index] = root + relative + offset;
-                    if (index < asset.pointWidths.size())
-                        asset.pointWidths[index] *= Lerp(1.0f, layer.edit.widthScale, weight);
+                    continue;
                 }
-                state.strandInfluence[guide] = std::max(state.strandInfluence[guide], weight);
-                for (uint32_t follower : familyStrands)
+
+                uint32_t ownerGuide = selected.strandIndex;
+                if (ownerGuide >= guideCount)
                 {
-                    if (follower < guideCount || follower >= asset.followData.size() || asset.followData[follower].parentGuide != static_cast<int32_t>(guide)) continue;
-                    const StrandRange& followerRange = asset.strands[follower];
-                    const float followerWeight = Clamp01(weight * layer.edit.followerInfluence * asset.followData[follower].followWeight);
-                    const uint32_t count = std::min(strand.pointCount, followerRange.pointCount);
-                    for (uint32_t local = 0u; local < count; ++local)
+                    if (ownerGuide >=
+                            baseAsset.followData.size() ||
+                        baseAsset.followData[ownerGuide]
+                                .parentGuide < 0)
                     {
-                        const uint32_t gi = strand.pointOffset + local;
-                        const uint32_t fi = followerRange.pointOffset + local;
-                        const Vec3 guideDelta = asset.restPoints[gi] - baseAsset.restPoints[gi];
-                        asset.restPoints[fi] = baseAsset.restPoints[fi] + guideDelta * followerWeight;
-                        if (fi < asset.pointWidths.size())
-                            asset.pointWidths[fi] = baseAsset.pointWidths[fi] * Lerp(1.0f, layer.edit.widthScale, followerWeight);
+                        continue;
                     }
-                    state.strandInfluence[follower] = std::max(state.strandInfluence[follower], followerWeight);
+                    ownerGuide = static_cast<uint32_t>(
+                        baseAsset.followData[ownerGuide]
+                            .parentGuide);
+                }
+
+                if (ownerGuide < guideMask.size() &&
+                    guideMask[ownerGuide] != 0u)
+                {
+                    AppendSelectedStrand(
+                        filteredSelection.strands,
+                        selected.strandIndex,
+                        selected.weight);
+                }
+            }
+
+            if (filteredSelection.strands.empty())
+            {
+                continue;
+            }
+
+            AccumulateBoundedWidthScales(
+                baseAsset,
+                filteredSelection,
+                layer.edit,
+                cumulativeWidthScales);
+
+            if (layer.edit.semantic ==
+                    GroomEditSemantic::Smooth ||
+                layer.edit.smoothStrength > 1.0e-4f)
+            {
+                AccumulateSelectionWeights(
+                    smoothCoreInfluence,
+                    baseAsset,
+                    filteredSelection,
+                    1.0f);
+            }
+
+            EditSettings geometrySettings = layer.edit;
+            geometrySettings.widthScale = 1.0f;
+            if (!ApplyEditToRegion(
+                    asset,
+                    filteredSelection,
+                    geometrySettings,
+                    outError))
+            {
+                return false;
+            }
+            appliedAnyLayer = true;
+        }
+
+        for (uint32_t strandIndex : familyStrands)
+        {
+            const StrandRange& strand =
+                asset.strands[strandIndex];
+            for (uint32_t localIndex = 0u;
+                 localIndex < strand.pointCount;
+                 ++localIndex)
+            {
+                const uint32_t pointIndex =
+                    strand.pointOffset + localIndex;
+                if (pointIndex < asset.pointWidths.size() &&
+                    pointIndex <
+                        baseAsset.pointWidths.size() &&
+                    pointIndex <
+                        cumulativeWidthScales.size())
+                {
+                    asset.pointWidths[pointIndex] =
+                        baseAsset.pointWidths[pointIndex] *
+                        cumulativeWidthScales[pointIndex];
                 }
             }
         }
-        state.activeGuideCount = static_cast<uint32_t>(std::count_if(state.guideInfluence.begin(), state.guideInfluence.end(), [](float value) { return value > 1.0e-5f; }));
-        if (outState) *outState = std::move(state);
+
+        RuntimeEditState fullState =
+            BuildRuntimeEditState(baseAsset, stack);
+        RuntimeEditState sparseState = {};
+        sparseState.guideInfluence.assign(
+            guideCount,
+            0.0f);
+        sparseState.strandInfluence.assign(
+            asset.strands.size(),
+            0.0f);
+
+        for (uint32_t guideIndex : guides)
+        {
+            if (guideIndex <
+                fullState.guideInfluence.size())
+            {
+                sparseState.guideInfluence[guideIndex] =
+                    fullState.guideInfluence[guideIndex];
+                sparseState.maxGuideInfluence = std::max(
+                    sparseState.maxGuideInfluence,
+                    sparseState.guideInfluence[guideIndex]);
+                if (sparseState.guideInfluence[guideIndex] >
+                    1.0e-4f)
+                {
+                    ++sparseState.activeGuideCount;
+                }
+            }
+        }
+        for (uint32_t strandIndex : familyStrands)
+        {
+            if (strandIndex <
+                fullState.strandInfluence.size())
+            {
+                sparseState.strandInfluence[strandIndex] =
+                    fullState.strandInfluence[strandIndex];
+            }
+        }
+
+        if (appliedAnyLayer &&
+            stack.boundarySmoothing > 1.0e-4f)
+        {
+            ApplyBoundarySmoothing(
+                asset,
+                sparseState.strandInfluence,
+                smoothCoreInfluence,
+                stack.boundaryRadiusUv,
+                stack.boundarySmoothing);
+        }
+
+        if (outState)
+        {
+            *outState = std::move(sparseState);
+        }
+
         if (outResult)
         {
-            outResult->affectedStrandIndices = familyStrands;
+            outResult->affectedStrandIndices =
+                familyStrands;
             outResult->changedPointIndices.clear();
-            for (uint32_t strandIndex : familyStrands)
+            for (uint32_t strandIndex :
+                 familyStrands)
             {
-                const StrandRange& strand = asset.strands[strandIndex];
-                for (uint32_t local = 0u; local < strand.pointCount; ++local)
-                    outResult->changedPointIndices.push_back(strand.pointOffset + local);
+                const StrandRange& strand =
+                    asset.strands[strandIndex];
+                for (uint32_t localIndex = 0u;
+                     localIndex < strand.pointCount;
+                     ++localIndex)
+                {
+                    outResult->changedPointIndices.push_back(
+                        strand.pointOffset + localIndex);
+                }
             }
         }
         return true;
