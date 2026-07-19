@@ -1,0 +1,72 @@
+name: Formal GPU Regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Formal suite mode
+        required: true
+        default: proposal-smoke
+        type: choice
+        options:
+          - proposal-smoke
+          - comparison-smoke
+          - critical
+          - determinism
+          - soak30
+          - soak2h
+          - soak8h
+          - full
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-gpu-regression
+  cancel-in-progress: false
+
+jobs:
+  formal-gtx1660:
+    runs-on: [self-hosted, Windows, X64, HairSystem, GTX1660]
+    timeout-minutes: 600
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+      HAIRGPU_FREEZE_OPERATOR: GitHub_Actions
+    steps:
+      - name: Checkout clean Novelty state
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare canonical frozen asset
+        shell: cmd
+        run: >-
+          tools\final_stage\Run_Final_Runtime_Suite.bat
+          docs\sample_assets\final_runtime_suite_template.json
+          prepare-asset
+
+      - name: Run selected formal gate
+        shell: cmd
+        run: >-
+          tools\final_stage\Run_Final_Runtime_Suite.bat
+          docs\sample_assets\final_runtime_suite_template.json
+          ${{ inputs.mode }}
+
+      - name: Upload formal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-gpu-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
+          path: |
+            out\novelty01_baseline\**
+            benchmarks\novelty01\frozen_asset_bundle\frozen_asset_manifest.json
