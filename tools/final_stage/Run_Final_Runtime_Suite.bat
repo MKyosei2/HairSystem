@@ -140,6 +140,21 @@ echo [6/9] Verifying frozen bundle before the run...
 python "%FREEZER%" --bundle-dir "%FROZEN_BUNDLE%" --viewer-exe "%VIEWER%" --verify-only
 if errorlevel 1 exit /b %errorlevel%
 
+rem The native Viewer intentionally refuses generated/cache assets in formal mode.
+rem Resolve the exact frozen member path and immutable hashes from the verified manifest.
+for /f "usebackq tokens=1,* delims==" %%A in (`python -c "import json,pathlib; m=pathlib.Path(r'%HAIRGPU_FROZEN_ASSET_MANIFEST%').resolve(); j=json.loads(m.read_text(encoding='utf-8-sig')); print('HAIRGPU_FORMAL_ASSET_PATH='+str((m.parent/pathlib.Path(j['sourceAssetPath'])).resolve())); print('HAIRGPU_FORMAL_ASSET_SHA256='+str(j['sourceAssetSha256'])); print('HAIRGPU_FORMAL_TOPOLOGY_SHA256='+str(j['generatedTopologySha256'])); print('HAIRGPU_GENERATOR_SETTINGS_SHA256='+str(j['generatorSettingsSha256']))"`) do set "%%A=%%B"
+if not defined HAIRGPU_FORMAL_ASSET_PATH (
+  echo ERROR: Failed to resolve HAIRGPU_FORMAL_ASSET_PATH from the frozen manifest.
+  exit /b 11
+)
+if not exist "%HAIRGPU_FORMAL_ASSET_PATH%" (
+  echo ERROR: Frozen formal asset was not found: "%HAIRGPU_FORMAL_ASSET_PATH%"
+  exit /b 11
+)
+if not defined HAIRGPU_FORMAL_ASSET_SHA256 exit /b 11
+if not defined HAIRGPU_FORMAL_TOPOLOGY_SHA256 exit /b 11
+if not defined HAIRGPU_GENERATOR_SETTINGS_SHA256 exit /b 11
+
 echo [7/9] Running strict static and hardware dry-run preflight (%MODE%)...
 python "%GATE%" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG% %HARDWARE_ARG%
 if errorlevel 1 exit /b %errorlevel%
