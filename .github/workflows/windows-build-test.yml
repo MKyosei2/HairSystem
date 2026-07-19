@@ -70,7 +70,11 @@ jobs:
 
       - name: Run final-stage unit tests
         shell: cmd
-        run: python -m unittest discover -s tests\final_stage -p "test_*.py" -v
+        run: |
+          python -m unittest discover -s tests\final_stage -p "test_*.py" -v > build_check\unittest.log 2>&1
+          set "TEST_EXIT=%ERRORLEVEL%"
+          type build_check\unittest.log
+          exit /b %TEST_EXIT%
 
       - name: Upload build diagnostics on failure
         if: failure()
