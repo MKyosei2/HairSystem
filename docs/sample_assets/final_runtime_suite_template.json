@@ -1,6 +1,6 @@
 {
   "suite_name": "novelty01_formal_runtime_suite",
-  "suite_version": "3.5-process-evidence",
+  "suite_version": "3.6-frozen-asset-source",
   "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
   "outputs_dir": "../../out/novelty01_baseline",
   "telemetry_dir": "../../out/novelty01_baseline/telemetry",
@@ -110,6 +110,21 @@
       "nanStateCount",
       "infiniteStateCount"
     ]
+  },
+  "frozen_asset_contract": {
+    "manifest_version": "novelty01-100k-v1.6",
+    "generation_mode": "viewer-canonical-export",
+    "asset_format_version": 1,
+    "topology_format_version": 1,
+    "generator_settings_schema_version": "novelty01-generator-settings-v1",
+    "required_guide_strand_count": 4000,
+    "required_followers_per_guide": 24,
+    "required_display_strand_count": 100000,
+    "required_particles_per_strand": 128,
+    "required_solver_iterations": 6,
+    "required_groups_per_block": 8,
+    "require_round_trip_validation": true,
+    "require_viewer_runtime_validation": true
   },
   "telemetry_contract": {
     "schema_version": 4,
