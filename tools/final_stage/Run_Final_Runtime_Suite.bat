@@ -55,6 +55,11 @@ if not defined MSBUILD (
 )
 
 set "VIEWER_DIR=%ROOT%\bin\Release\HairSystem"
+set "VIEWER=%VIEWER_DIR%\HairSystem.exe"
+set "FROZEN_BUNDLE=%ROOT%\benchmarks\novelty01\frozen_asset_bundle"
+set "GATE=%~dp0hairgpu_formal_gate.py"
+set "FREEZER=%~dp0freeze_novelty01_asset.py"
+
 for %%F in (PENDING_STEP0_REAL.ini STEP0_FORCE_RUN.ini STEP0_REAL_MEASUREMENT_PENDING.txt STEP0_REAL_MEASUREMENT_READY.txt) do (
   if exist "%VIEWER_DIR%\%%F" del /Q "%VIEWER_DIR%\%%F"
   if exist "%VIEWER_DIR%\profile_results\%%F" del /Q "%VIEWER_DIR%\profile_results\%%F"
@@ -81,12 +86,13 @@ if /I "%MODE%"=="soak8h" (
   set "FILTER_ARGS=--only-run-name L8H_StateThrashing"
 )
 
-set "FROZEN_BUNDLE=%ROOT%\benchmarks\novelty01\frozen_asset_bundle"
+set "HARDWARE_ARG="
+if /I "%HAIRGPU_SKIP_HARDWARE_CONTRACT%"=="1" set "HARDWARE_ARG=--skip-hardware-contract"
+
 if not defined HAIRGPU_FROZEN_ASSET_MANIFEST (
   for /f "usebackq delims=" %%M in (`python -c "import json,pathlib; c=pathlib.Path(r'%CONFIG%').resolve(); j=json.loads(c.read_text(encoding='utf-8-sig')); p=pathlib.Path(j['source']['asset_manifest']); print((p if p.is_absolute() else c.parent/p).resolve())"`) do set "HAIRGPU_FROZEN_ASSET_MANIFEST=%%M"
 )
 
-rem prepare-asset intentionally does not require an existing manifest.
 if /I not "%MODE%"=="prepare-asset" (
   if not exist "%HAIRGPU_FROZEN_ASSET_MANIFEST%" (
     echo ERROR: Frozen Asset Manifest was not found:
@@ -98,59 +104,52 @@ if /I not "%MODE%"=="prepare-asset" (
   )
 )
 
-
-echo [1/8] Rebuilding HairSystem Release x64 without Step0...
+echo [1/9] Rebuilding HairSystem Release x64 without Step0...
 "%MSBUILD%" "%ROOT%\HairSystem.sln" /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true
 if errorlevel 1 exit /b %errorlevel%
-set "VIEWER=%VIEWER_DIR%\HairSystem.exe"
 if not exist "%VIEWER%" (
   echo ERROR: Release viewer was not generated: "%VIEWER%"
   exit /b 7
 )
 
-
-echo [2/8] Running native ABI, canonical asset, and workload self-test...
+echo [2/9] Running native ABI and fixed-workload self-test...
 "%VIEWER%" --native-self-test
 if errorlevel 1 exit /b %errorlevel%
 
-
-echo [3/8] Running HLSL load/compile self-test...
+echo [3/9] Running HLSL load/compile self-test...
 "%VIEWER%" --shader-self-test
 if errorlevel 1 exit /b %errorlevel%
 
-
-echo [4/8] Checking Python syntax...
-python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py"
+echo [4/9] Checking Python syntax...
+python -m py_compile "%FREEZER%" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py" "%GATE%"
 if errorlevel 1 exit /b %errorlevel%
 
-
-echo [5/8] Running lock, telemetry-contract, and suite-selection self-tests...
+echo [5/9] Running lock, telemetry, selection, gate, and unit self-tests...
 python "%~dp0hairgpu_final_run.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python "%~dp0hairgpu_runtime_suite.py" --self-test
+if errorlevel 1 exit /b %errorlevel%
+python "%GATE%" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
 if errorlevel 1 exit /b %errorlevel%
 
 if /I "%MODE%"=="prepare-asset" goto :prepare_asset
 
-
-echo [6/8] Confirming active power scheme...
-powercfg /GETACTIVESCHEME
-if errorlevel 1 (
-  echo ERROR: Failed to read the active Windows power scheme.
-  exit /b 8
-)
-
-
-echo [7/8] Running strict dry-run preflight (%MODE%)...
-python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
+echo [6/9] Verifying frozen bundle before the run...
+python "%FREEZER%" --bundle-dir "%FROZEN_BUNDLE%" --viewer-exe "%VIEWER%" --verify-only
 if errorlevel 1 exit /b %errorlevel%
 
+echo [7/9] Running strict static and hardware dry-run preflight (%MODE%)...
+python "%GATE%" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG% %HARDWARE_ARG%
+if errorlevel 1 exit /b %errorlevel%
 
-echo [8/8] Running Release x64 suite (%MODE%)...
-python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
-exit /b %errorlevel%
+echo [8/9] Running Release x64 suite through the final environment gate (%MODE%)...
+python "%GATE%" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG% %HARDWARE_ARG%
+if errorlevel 1 exit /b %errorlevel%
+
+echo [9/9] Formal environment gate PASS.
+exit /b 0
 
 :prepare_asset
 if not defined HAIRGPU_FREEZE_OPERATOR (
@@ -159,8 +158,8 @@ if not defined HAIRGPU_FREEZE_OPERATOR (
   exit /b 10
 )
 
-echo [6/8] Exporting canonical 100k Hair Asset and topology from the Release viewer...
-python "%~dp0freeze_novelty01_asset.py" ^
+echo [6/9] Exporting canonical 100k Hair Asset, guide topology, and settings...
+python "%FREEZER%" ^
   --template-manifest "%CONFIG%" ^
   --bundle-dir "%FROZEN_BUNDLE%" ^
   --viewer-exe "%VIEWER%" ^
@@ -170,15 +169,14 @@ python "%~dp0freeze_novelty01_asset.py" ^
   --force
 if errorlevel 1 exit /b %errorlevel%
 
-
-echo [7/8] Verifying portable bundle hashes and Viewer round trip...
-python "%~dp0freeze_novelty01_asset.py" ^
-  --bundle-dir "%FROZEN_BUNDLE%" ^
-  --viewer-exe "%VIEWER%" ^
-  --verify-only
+echo [7/9] Verifying portable bundle hashes and native round trip...
+python "%FREEZER%" --bundle-dir "%FROZEN_BUNDLE%" --viewer-exe "%VIEWER%" --verify-only
 if errorlevel 1 exit /b %errorlevel%
 
+echo [8/9] Running post-generation native self-test...
+"%VIEWER%" --native-self-test
+if errorlevel 1 exit /b %errorlevel%
 
-echo [8/8] Frozen Asset preparation completed.
+echo [9/9] Frozen Asset preparation completed.
 echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
 exit /b 0
