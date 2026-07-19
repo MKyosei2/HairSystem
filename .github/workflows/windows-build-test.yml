@@ -1,0 +1,87 @@
+name: Windows Build and Test
+
+on:
+  push:
+    branches:
+      - Novelty
+      - "agent/**"
+  pull_request:
+    branches:
+      - Novelty
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-x64:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+      HAIRGPU_ALLOW_REVIEW_BRANCH: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: cmd
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+
+      - name: Native ABI and workload self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
+
+      - name: Compile Python tools
+        shell: cmd
+        run: >-
+          python -m py_compile
+          tools\final_stage\freeze_novelty01_asset.py
+          tools\final_stage\hairgpu_final_run.py
+          tools\final_stage\hairgpu_runtime_suite.py
+          tools\final_stage\hairgpu_safe_runtime_suite.py
+          tools\final_stage\hairgpu_final_db.py
+          tools\final_stage\hairgpu_final_excel.py
+          tools\final_stage\hairgpu_formal_gate.py
+
+      - name: Run Python self-tests
+        shell: cmd
+        run: |
+          python tools\final_stage\hairgpu_final_run.py --self-test
+          python tools\final_stage\hairgpu_runtime_suite.py --self-test
+          python tools\final_stage\hairgpu_formal_gate.py --self-test
+
+      - name: Run final-stage unit tests
+        shell: cmd
+        run: python -m unittest discover -s tests\final_stage -p "test_*.py" -v
+
+      - name: Upload build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-diagnostics-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            bin\Release\HairSystem\*.log
+            bin-int\Release\HairSystem\**\*.log
+            out\**
