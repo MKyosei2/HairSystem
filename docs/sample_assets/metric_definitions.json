@@ -1,295 +1,72 @@
 {
-  "schemaVersion": "metric-definitions-v1.2",
-  "editMetrics": [
-    {
-      "name": "rmsPositionError",
-      "category": "shape",
-      "formula": "sqrt(mean(||p_ref(t)-p_edit(t)||^2)) over all sampled strand points",
-      "interpretation": "Lower is better; measures average spatial deviation after editing."
+  "schemaVersion": "novelty01-metrics-v3.4",
+  "frameBudgetMilliseconds": 16.666666666666668,
+  "statusSeparation": {
+    "evidenceStatus": "Whether the recorded evidence is complete, internally consistent and reproducible.",
+    "stable60FpsStatus": "Whether valid evidence satisfies all stable-60 performance gates.",
+    "hypothesisSupportStatus": "Whether the valid result supports the stated performance hypothesis."
+  },
+  "metrics": {
+    "averageFps": {
+      "definition": "1000 * measured frame count / sum(frameMilliseconds)",
+      "unit": "frames/second",
+      "gate": { "direction": "minimum", "value": 60.0 }
     },
-    {
-      "name": "silhouetteError",
-      "category": "shape",
-      "formula": "sqrt(mean((x_ref-x_edit)^2 + (z_ref-z_edit)^2)) over sampled points",
-      "interpretation": "Lower is better; approximates screen-space outer contour change using the XZ projection."
+    "sixtyFpsRatio": {
+      "definition": "Fraction of measured frames with frameMilliseconds <= 16.6666666667",
+      "unit": "ratio",
+      "gate": { "direction": "minimum", "value": 0.95 }
     },
-    {
-      "name": "clumpPreservationScore",
-      "category": "shape",
-      "formula": "clamp(1 - averageLengthDelta / (0.35 * averageReferenceLength + eps), 0, 1)",
-      "interpretation": "Higher is better; rewards edits that preserve strand-group length structure."
+    "frameBudgetOverrunRate": {
+      "definition": "Fraction of measured frames with frameMilliseconds > 16.6666666667",
+      "unit": "ratio",
+      "gate": { "direction": "maximum", "value": 0.05 }
     },
-    {
-      "name": "rootLocalityScore",
-      "category": "shape",
-      "formula": "clamp(1 - averageRootDisplacement / (0.10 * assetBoundsDiagonal + eps), 0, 1)",
-      "interpretation": "Higher is better; indicates how stable root positions stay after editing."
+    "p95FrameMilliseconds": {
+      "definition": "Linear-interpolated 95th percentile of frameMilliseconds",
+      "unit": "ms",
+      "gate": { "direction": "maximum", "value": 16.6667 }
     },
-    {
-      "name": "editLocalityScore",
-      "category": "editing",
-      "formula": "1 - editedStrandRatio, where a strand is edited when RMS strand delta > 0.01 * averageReferenceLength",
-      "interpretation": "Higher is better; estimates how much of the hairstyle remained untouched outside the intended region."
+    "p99FrameMilliseconds": {
+      "definition": "Linear-interpolated 99th percentile of frameMilliseconds",
+      "unit": "ms",
+      "gate": { "direction": "maximum", "value": 20.0 }
     },
-    {
-      "name": "boundaryNaturalnessScore",
-      "category": "editing",
-      "formula": "clamp(1 - averageNeighborDisplacementJump / (0.08 * averageReferenceLength + eps), 0, 1)",
-      "interpretation": "Higher is better; compares nearby guide strands across UV-space boundaries to penalize visible discontinuities."
+    "p999FrameMilliseconds": {
+      "definition": "Linear-interpolated 99.9th percentile of frameMilliseconds",
+      "unit": "ms",
+      "suiteGoal": { "direction": "maximum", "value": 20.0 }
     },
-    {
-      "name": "editedStrandRatio",
-      "category": "editing",
-      "formula": "changedStrandCount / min(referenceStrands, editedStrands)",
-      "interpretation": "Lower is better when locality is important; reports the fraction of strands whose sampled deformation exceeds the edit threshold."
+    "maximumFrameMilliseconds": {
+      "definition": "Maximum frameMilliseconds in the measured interval",
+      "unit": "ms",
+      "gate": { "direction": "maximum", "value": 50.0 }
     },
-    {
-      "name": "editToRunLatencyMilliseconds",
-      "category": "timing",
-      "formula": "wall-clock milliseconds spent applying the edit stack and preparing runtime state",
-      "interpretation": "Lower is better; approximates interactive response time from edit commit to runtime-ready output."
+    "gpuTimingCoverage": {
+      "definition": "Frames with a finite non-negative gpuHairMilliseconds value / measured frames",
+      "unit": "ratio",
+      "gate": { "direction": "minimum", "value": 0.99 }
+    },
+    "vramSlopeMbPerMin": {
+      "definition": "Least-squares slope of sampled GPU memory usage against elapsed minutes",
+      "unit": "MiB/min",
+      "longRunGate": { "direction": "maximum", "value": 1.0 }
+    },
+    "ramSlopeMbPerMin": {
+      "definition": "Least-squares slope of sampled system memory usage against elapsed minutes",
+      "unit": "MiB/min",
+      "longRunGate": { "direction": "maximum", "value": 2.0 }
+    },
+    "p99DegradationRatio": {
+      "definition": "p99 of final 10 percent of measured frames / p99 of first 10 percent",
+      "unit": "ratio",
+      "longRunGate": { "direction": "maximum", "value": 1.1 }
+    },
+    "queryUnresolvedSlope": {
+      "definition": "Unresolved GPU timing query count normalized per measured hour",
+      "unit": "count/hour",
+      "longRunGate": { "direction": "maximum", "value": 0.0 }
     }
-  ],
-  "runtimeMetrics": [
-    {
-      "name": "selectedClusterCount",
-      "formula": "number of active-set clusters selected under the current budget",
-      "interpretation": "Higher generally means more corrective work scheduled this frame."
-    },
-    {
-      "name": "selectedGuideCount",
-      "formula": "total guide strands promoted to full corrective simulation",
-      "interpretation": "Higher means more of the hairstyle receives high-cost correction."
-    },
-    {
-      "name": "estimatedFrameMilliseconds",
-      "formula": "estimatedFixedCostMilliseconds + selectedClusterCount * estimatedClusterCostMilliseconds",
-      "interpretation": "Predicted frame cost only; it must never be reported as measured FPS evidence."
-    },
-    {
-      "name": "recommendedSolverIterations",
-      "formula": "budget-adapted iteration recommendation derived from the current budget scale",
-      "interpretation": "Higher means the runtime can afford more local corrective iterations this frame."
-    },
-    {
-      "name": "falseStaticRate",
-      "formula": "falseStaticCount / max(staticCachedGroupCount + staticTransformedGroupCount, 1)",
-      "interpretation": "Lower is better; measures how often a static classification was contradicted by the full-dynamic reference or repair escalation."
-    },
-    {
-      "name": "groupStaticReuseRate",
-      "formula": "(staticCachedGroupCount + staticTransformedGroupCount) / max(totalSegmentGroupCount, 1)",
-      "interpretation": "Higher is better only when quality gates remain satisfied."
-    },
-    {
-      "name": "groupDynamicRate",
-      "formula": "dynamicGroupCount / max(totalSegmentGroupCount, 1)",
-      "interpretation": "Reports how much of the hairstyle required full group-level dynamic solving."
-    },
-    {
-      "name": "deferredCorrectionRate",
-      "formula": "deferredCorrectionGroupCount / max(totalSegmentGroupCount, 1)",
-      "interpretation": "Reports how often temporary correction was used before full solve or repair."
-    },
-    {
-      "name": "deferredCorrectionSuccessRate",
-      "formula": "successfulDeferredCorrections / max(deferredCorrectionGroupCount, 1)",
-      "interpretation": "Higher means temporary correction preserved continuity until full work ran."
-    },
-    {
-      "name": "staticDynamicBoundaryErrorMm",
-      "formula": "mean and maximum shared-point discontinuity at Static/Dynamic boundaries",
-      "interpretation": "Lower is better; verifies that mixed states do not create visible or physical discontinuities."
-    },
-    {
-      "name": "watchdogRepairCount",
-      "formula": "number of watchdog checks escalating a group to Repair or Dynamic",
-      "interpretation": "Shows whether the safety net detected frozen-cache artifacts."
-    },
-    {
-      "name": "directionCacheMemorySavingRate",
-      "formula": "1 - directionCacheMemoryMb / max(fullPositionMemoryMb, eps)",
-      "interpretation": "Higher is better; estimates memory saved by the direction cache."
-    },
-    {
-      "name": "wakeDelayFrames",
-      "formula": "frame(wake committed) - frame(ground-truth wake became necessary)",
-      "interpretation": "Lower is better; zero or one frame is the normal target."
-    },
-    {
-      "name": "predictiveWakePrecision",
-      "formula": "truePositive / max(truePositive + falsePositive, 1)",
-      "interpretation": "Higher is better; penalizes unnecessary wake requests."
-    },
-    {
-      "name": "predictiveWakeRecall",
-      "formula": "truePositive / max(truePositive + falseNegative, 1)",
-      "interpretation": "Higher is better; penalizes missed future motion or contact."
-    },
-    {
-      "name": "wakePositionErrorMm",
-      "formula": "distance between recovered state and full-dynamic reference at wake",
-      "interpretation": "Lower is better; exposes visible popping after cache reuse."
-    },
-    {
-      "name": "wakeVelocityError",
-      "formula": "norm(v_recovered - v_reference) at wake",
-      "interpretation": "Lower is better; exposes energy injection or frozen-looking recovery."
-    },
-    {
-      "name": "repairSuccessRate",
-      "formula": "repairSuccessCount / max(repairAttemptCount, 1)",
-      "interpretation": "Higher is better; a repair counts only after the invariant remains valid for the hold window."
-    },
-    {
-      "name": "repairLatencyFrames",
-      "formula": "frame(repair accepted) - frame(repair requested)",
-      "interpretation": "Lower is better; measures bounded recovery delay."
-    },
-    {
-      "name": "repairRecurrenceRate",
-      "formula": "repairRecurrenceCount / max(repairSuccessCount, 1)",
-      "interpretation": "Lower is better; detects repairs that immediately fail again."
-    },
-    {
-      "name": "stateOscillationRate",
-      "formula": "stateOscillationCount / max(stateTransitionCount, 1)",
-      "interpretation": "Lower is better; detects per-frame Static/Dynamic thrashing."
-    },
-    {
-      "name": "collisionMissRate",
-      "formula": "collisionMissCount / max(collisionCandidateCount, 1)",
-      "interpretation": "Lower is better; uses the full-dynamic or high-accuracy collision reference."
-    },
-    {
-      "name": "meanPenetrationMm",
-      "formula": "mean penetration depth over accepted penetration events",
-      "interpretation": "Lower is better; report together with maximum penetration."
-    },
-    {
-      "name": "referenceRmsPositionErrorMm",
-      "formula": "RMS point-position difference against CPU or full-dynamic reference",
-      "interpretation": "Lower is better; primary physical-correctness comparison."
-    },
-    {
-      "name": "determinismMismatchCount",
-      "formula": "count of repeated identical-seed runs whose canonical result hash differs",
-      "interpretation": "Must be zero for deterministic benchmark evidence."
-    },
-    {
-      "name": "p99FrameMilliseconds",
-      "formula": "99th percentile of measured frameMilliseconds after warm-up",
-      "interpretation": "Lower is better; primary tail-latency metric."
-    },
-    {
-      "name": "p999FrameMilliseconds",
-      "formula": "99.9th percentile of measured frameMilliseconds after warm-up",
-      "interpretation": "Lower is better; detects rare but visible stalls."
-    },
-    {
-      "name": "frameBudgetOverrunRate",
-      "formula": "count(frameMilliseconds > 16.67) / measuredFrameCount",
-      "interpretation": "Lower is better; direct 60 FPS stability measure."
-    },
-    {
-      "name": "realMeasurementAccepted",
-      "formula": "1 only when the executable actually ran and telemetry is neither pending nor synthetic",
-      "interpretation": "Must equal one before performance results are publishable."
-    },
-    {
-      "name": "scenarioMethodCoverageRate",
-      "formula": "present required scenario-method-seed cells / total required cells",
-      "interpretation": "Must equal one for the final comparison table."
-    },
-    {
-      "name": "blockClassificationGpuMilliseconds",
-      "formula": "GPU timestamp duration of block classification",
-      "interpretation": "Pass-level cost; collect with delayed timestamp readback."
-    },
-    {
-      "name": "groupClassificationGpuMilliseconds",
-      "formula": "GPU timestamp duration of group certificate and state classification",
-      "interpretation": "Pass-level cost; exposes the mandatory O(N) classification overhead."
-    },
-    {
-      "name": "wakePropagationGpuMilliseconds",
-      "formula": "GPU timestamp duration of predictive wake propagation",
-      "interpretation": "Pass-level cost of safety-driven wake expansion."
-    },
-    {
-      "name": "compactionGpuMilliseconds",
-      "formula": "GPU timestamp duration of scan, compaction, and indirect-argument generation",
-      "interpretation": "Pass-level cost required to turn skipped work into real savings."
-    },
-    {
-      "name": "dynamicSolveGpuMilliseconds",
-      "formula": "GPU timestamp duration of Dynamic group solve",
-      "interpretation": "Primary variable physical-simulation cost."
-    },
-    {
-      "name": "repairSolveGpuMilliseconds",
-      "formula": "GPU timestamp duration of Repair solve",
-      "interpretation": "Must be bounded during wake storms and collision-heavy scenes."
-    },
-    {
-      "name": "followerReconstructionGpuMilliseconds",
-      "formula": "GPU timestamp duration of follower reconstruction",
-      "interpretation": "Required to prevent claiming simulation-only savings as whole-hair savings."
-    },
-    {
-      "name": "renderPreparationGpuMilliseconds",
-      "formula": "GPU timestamp duration of draw-data and render preparation",
-      "interpretation": "Required for end-to-end 60 FPS analysis."
-    },
-    {
-      "name": "hairDrawGpuMilliseconds",
-      "formula": "GPU timestamp duration of hair drawing",
-      "interpretation": "Separates simulation gains from overdraw and shading cost."
-    },
-    {
-      "name": "totalHairGpuMilliseconds",
-      "formula": "sum of all hair-specific GPU passes measured by timestamps",
-      "interpretation": "Use with total frame time; never substitute an estimate."
-    },
-    {
-      "name": "matchedBaselineCoverageRate",
-      "formula": "valid matched pairs / required scenario-seed-asset-hardware pairs for every non-baseline method",
-      "interpretation": "Must equal one; missing baseline pairs invalidate comparative claims instead of being silently skipped."
-    },
-    {
-      "name": "sourceCommitMatch",
-      "formula": "1 when telemetry commitSha exactly equals the clean Git HEAD resolved by the suite",
-      "interpretation": "Must equal one; stale or dirty source states are not admissible."
-    },
-    {
-      "name": "methodSettingsAcknowledgementRate",
-      "formula": "acknowledged requested method settings / requested method settings",
-      "interpretation": "Must equal one and the canonical method-settings SHA-256 must match."
-    },
-    {
-      "name": "invalidFrameSampleRate",
-      "formula": "missing, non-positive, or non-finite frame samples / all frame rows",
-      "interpretation": "Must equal zero for final evidence."
-    },
-    {
-      "name": "assetFreezeIntegrity",
-      "formula": "1 when freezeStatus is FROZEN and the local asset, topology, and generator settings hashes match the manifest",
-      "interpretation": "Must equal one before any paper-quality measurement is accepted."
-    },
-    {
-      "name": "thermalSpreadCelsius",
-      "formula": "maximum GPU temperature - minimum GPU temperature during the accepted measurement window",
-      "interpretation": "Report with clock range; excessive spread indicates thermal order bias."
-    },
-    {
-      "name": "evidenceIntegrityPassed",
-      "formula": "1 only when run validity, matrix coverage, matched baselines, deterministic replay, and source/asset identity all pass",
-      "interpretation": "Separates evidence validity from whether a scientific hypothesis is supported."
-    },
-    {
-      "name": "hypothesisSupportStatus",
-      "formula": "supported, not_supported, or not_evaluable after the evidence-integrity gate",
-      "interpretation": "A failed hypothesis remains a valid result and must not be rewritten as an evidence error."
-    }
-  ]
+  },
+  "missingEvidencePolicy": "A missing required metric is unavailable evidence and must never be replaced with a proxy or zero."
 }

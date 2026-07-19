@@ -1,6 +1,6 @@
 {
   "scenario": "S06_Teleport",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -28,6 +28,7 @@
   "colliders": [],
   "events": [
     {
+      "id": "teleport_root_1800",
       "frame": 1800,
       "type": "teleport_root",
       "positionDeltaMeters": [
@@ -41,5 +42,11 @@
         0
       ]
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumWakeRequests": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
 }

@@ -1,1509 +1,639 @@
 from __future__ import annotations
 
+"""Cartesian formal-suite orchestrator for Novelty01 stable-runtime evaluation."""
+
 import argparse
-import copy
 import csv
-import hashlib
 import json
 import math
 import os
 import random
 import re
 import shutil
-import subprocess
+import sqlite3
 import statistics
+import subprocess
 import sys
+import tempfile
+import time
 import zipfile
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
-THIS_DIR = Path(__file__).resolve().parent
-if str(THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(THIS_DIR))
-
-from hairgpu_final_db import FinalStageDatabase, RuntimeRunMetadata
-from hairgpu_final_excel import export_workbook
 from hairgpu_final_run import (
+    EXIT_COMPLETE_VALID,
+    EXIT_FORMAL_CONTRACT_INVALID,
+    EXIT_QUALITY_GATE_FAILED,
     FormalRunError,
-    _validate_asset_manifest,
     canonical_json_sha256,
+    execute_case,
+    normalize_case,
     normalize_method_code,
-    run_viewer,
+    output_paths,
+    read_json,
     sha256_file,
+    validate_timeline,
     write_json,
 )
 
-try:
-    import matplotlib.pyplot as plt
-except Exception:
-    plt = None
-
-DEFAULT_METHOD_ORDER = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "P"]
-PRIMARY_BASELINE = "B8"
-PERFORMANCE_BASELINE = "B6"
-QUALITY_BASELINE = "B0"
-
-PAIR_METRICS = (
-    "avg_frame_ms",
-    "p95_frame_ms",
-    "p99_frame_ms",
-    "avg_hair_gpu_ms",
-    "sixty_fps_ratio",
-    "false_static_rate",
-    "predictive_wake_recall",
-    "repair_verified_success_rate",
-    "collision_miss_rate",
-    "state_oscillation_rate",
-    "max_boundary_error_mm",
-)
+SUITE_VERSION = "3.4-stable-runtime"
 
 
-def read_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"Expected JSON object: {path}")
+def resolve_path(base: Path, value: Any) -> Path | None:
+    if value in (None, ""):
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = base / path
+    return path.resolve()
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=path.name + ".tmp.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_csv(path: Path, rows: list[Mapping[str, Any]], fieldnames: Iterable[str] | None = None) -> None:
+    names = list(fieldnames or sorted({key for row in rows for key in row}))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=path.name + ".tmp.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=names, extrasaction="ignore")
+            writer.writeheader(); writer.writerows(rows); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def git_value(repo_root: Path, *args: str) -> str:
+    try:
+        run = subprocess.run(["git", *args], cwd=repo_root, capture_output=True,
+                             text=True, timeout=20, check=False)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return ""
+    return run.stdout.strip() if run.returncode == 0 else ""
+
+
+def load_config(config_path: Path, output_override: Path | None = None) -> tuple[dict[str, Any], Path, Path]:
+    config_path = config_path.resolve()
+    config = read_json(config_path)
+    base = config_path.parent
+    repo_root = Path(__file__).resolve().parents[2]
+    outputs = output_override.resolve() if output_override else resolve_path(base, config.get("outputs_dir"))
+    if outputs is None:
+        raise ValueError("outputs_dir is required")
+    config["outputs_dir"] = str(outputs)
+    config["telemetry_dir"] = str(outputs / "telemetry")
+    source = config.setdefault("source", {})
+    for key in ("viewer_exe", "schema", "asset_manifest", "shader_root"):
+        if source.get(key):
+            source[key] = str(resolve_path(base, source[key]))
+    profile_path = resolve_path(base, config.get("hardware_profiles"))
+    if profile_path is None or not profile_path.is_file():
+        raise ValueError(f"hardware_profiles file not found: {profile_path}")
+    profile_payload = read_json(profile_path)
+    profiles = profile_payload.get("profiles", {}) if isinstance(profile_payload.get("profiles"), dict) else {}
+    defaults = config.setdefault("run_defaults", {})
+    profile_name = str(defaults.get("hardware_profile", ""))
+    if not profile_name or profile_name not in profiles:
+        raise ValueError(f"Unknown or missing hardware profile: {profile_name}")
+    defaults["hardware_profile_contract"] = profiles[profile_name]
+    defaults["hardware_profiles_sha256"] = sha256_file(profile_path)
+    return config, outputs, repo_root
+
+
+def scenario_assertions(timeline_path: Path) -> dict[str, Any]:
+    timeline = read_json(timeline_path)
+    assertions = timeline.get("assertions", {})
+    if not isinstance(assertions, dict):
+        raise ValueError(f"Scenario assertions must be an object: {timeline_path}")
+    return assertions
+
+
+def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Path) -> list[dict[str, Any]]:
+    defaults = dict(config.get("run_defaults", {}))
+    source = dict(config.get("source", {}))
+    methods = config.get("methods", [])
+    scenarios = config.get("scenarios", [])
+    seeds = config.get("seeds", [])
+    repetitions = int(config.get("repetitions_per_seed", 1))
+    if not all((isinstance(methods, list), isinstance(scenarios, list), isinstance(seeds, list))):
+        raise ValueError("methods, scenarios and seeds must be arrays")
+    runs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for method_entry in methods:
+        if not isinstance(method_entry, dict):
+            raise ValueError("method entry must be an object")
+        method_code = normalize_method_code(str(method_entry.get("code", "")))
+        for scenario_entry in scenarios:
+            if not isinstance(scenario_entry, dict):
+                raise ValueError("scenario entry must be an object")
+            scenario_code = str(scenario_entry.get("code", ""))
+            timeline = resolve_path(config_dir, scenario_entry.get("timeline"))
+            if timeline is None or not timeline.is_file():
+                raise ValueError(f"Scenario timeline missing: {scenario_code}: {timeline}")
+            assertions = scenario_assertions(timeline)
+            config_assertions = scenario_entry.get("assertions")
+            if config_assertions and config_assertions != assertions:
+                raise ValueError(f"Scenario assertion drift: {scenario_code}")
+            for seed in seeds:
+                for repetition in range(repetitions):
+                    run_name = f"{defaults.get('run_name_prefix', 'novelty01')}_{method_code}_{scenario_code}_{int(seed)}_r{repetition:02d}"
+                    if run_name in seen:
+                        raise ValueError(f"Duplicate generated run name: {run_name}")
+                    seen.add(run_name)
+                    run = dict(defaults)
+                    run.update({
+                        "run_name": run_name,
+                        "case_id": run_name,
+                        "method": method_code,
+                        "variant": method_code,
+                        "scenario": scenario_code,
+                        "scenario_timeline": str(timeline),
+                        "seed": int(seed),
+                        "repetition_index": repetition,
+                        "measurement_mode": scenario_entry.get("measurement_mode", defaults.get("measurement_mode", "performance")),
+                        "assertions": assertions,
+                        "asset_manifest": source.get("asset_manifest"),
+                        "shader_root": source.get("shader_root"),
+                    })
+                    method_settings = dict(method_entry.get("settings", {}))
+                    run["method_settings"] = method_settings
+                    runs.append(normalize_case(run))
+    return runs
+
+
+def add_special_runs(config: Mapping[str, Any], runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key = {(run["method"], run["scenario"], int(run["seed"])): run for run in runs}
+    result = list(runs)
+    for replay in config.get("determinism_replays", []):
+        key = (normalize_method_code(str(replay.get("method", ""))), str(replay.get("scenario", "")), int(replay.get("seed", 0)))
+        template = by_key.get(key)
+        if template is None:
+            raise ValueError(f"Determinism template not found: {key}")
+        for index in range(int(replay.get("repetitions", 1))):
+            run = dict(template)
+            run["run_name"] = f"{replay['id']}_r{index:02d}"
+            run["case_id"] = run["run_name"]
+            run["repetition_index"] = index
+            run["measurement_mode"] = "determinism"
+            run["special_kind"] = "determinism"
+            run["settings_hash"] = ""
+            result.append(normalize_case(run))
+    for soak in config.get("long_runs", []):
+        key = (normalize_method_code(str(soak.get("method", ""))), str(soak.get("scenario", "")), int(soak.get("seed", 0)))
+        template = by_key.get(key)
+        if template is None:
+            raise ValueError(f"Long-run template not found: {key}")
+        run = dict(template)
+        run["run_name"] = str(soak["id"]); run["case_id"] = run["run_name"]
+        run["measurement_frames"] = int(soak["measurement_frames"])
+        run["timeout_seconds"] = int(soak["timeout_seconds"])
+        run["timeline_repeat"] = bool(soak.get("timeline_repeat", True))
+        run["special_kind"] = "long_run"
+        run["settings_hash"] = ""
+        result.append(normalize_case(run))
+    names = [run["run_name"] for run in result]
+    if len(names) != len(set(names)):
+        raise ValueError("Special runs created duplicate run names")
+    return result
+
+
+def filter_runs(runs: list[dict[str, Any]], methods: set[str], scenarios: set[str], seeds: set[int]) -> list[dict[str, Any]]:
+    return [run for run in runs
+            if (not methods or run["method"] in methods)
+            and (not scenarios or run["scenario"] in scenarios)
+            and (not seeds or int(run["seed"]) in seeds)]
+
+
+def is_network_path(path: Path) -> bool:
+    text = str(path)
+    return text.startswith("\\\\") or text.startswith("//")
+
+
+def run_preflight(config: Mapping[str, Any], output_dir: Path, viewer_exe: Path, repo_root: Path) -> list[dict[str, Any]]:
+    problems: list[dict[str, Any]] = []
+    preflight = config.get("preflight", {}) if isinstance(config.get("preflight"), dict) else {}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(output_dir).free
+    required = int(float(preflight.get("minimum_free_disk_gib", 20.0)) * (1024 ** 3))
+    if free < required:
+        problems.append({"code": "disk_space_low", "expected": required, "observed": free})
+    if bool(preflight.get("reject_network_output_path", True)) and is_network_path(output_dir):
+        problems.append({"code": "network_output_rejected", "observed": str(output_dir)})
+    if not viewer_exe.is_file():
+        problems.append({"code": "viewer_missing", "observed": str(viewer_exe)})
+    branch = git_value(repo_root, "branch", "--show-current")
+    required_branch = str(config.get("source", {}).get("required_branch", "Novelty"))
+    if branch and branch != required_branch:
+        problems.append({"code": "branch_mismatch", "expected": required_branch, "observed": branch})
+    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=no")
+    if bool(preflight.get("require_clean_git", True)) and dirty:
+        problems.append({"code": "dirty_worktree", "observed": dirty.splitlines()[:10]})
+    if sys.version_info < (3, 10):
+        problems.append({"code": "python_too_old", "expected": ">=3.10", "observed": sys.version})
+    return problems
+
+
+def read_validation(paths: Mapping[str, Path]) -> dict[str, Any]:
+    return read_json(paths["validation"]) if paths["validation"].is_file() else {}
+
+
+def verify_run_manifest(paths: Mapping[str, Path]) -> bool:
+    if not paths["manifest"].is_file() or not paths["complete"].is_file() or paths["running"].exists():
+        return False
+    manifest = read_json(paths["manifest"])
+    for entry in manifest.get("artifacts", []):
+        path = paths["manifest"].parent / str(entry.get("path", ""))
+        if not path.is_file() or path.stat().st_size != int(entry.get("sizeBytes", -1)):
+            return False
+        if sha256_file(path).lower() != str(entry.get("sha256", "")).lower():
+            return False
+    expected_hash = str(manifest.get("manifestSha256", ""))
+    copy = dict(manifest); copy.pop("manifestSha256", None)
+    return expected_hash == canonical_json_sha256(copy)
+
+
+def resume_fingerprint(run: Mapping[str, Any], viewer_exe: Path, output_dir: Path, repo_root: Path) -> str:
+    # Never write dry-run snapshots into an already completed run directory.
+    # Fingerprints are content-based, so a temporary materialized timeline has
+    # the same identity as the completed run's timeline.
+    with tempfile.TemporaryDirectory(prefix="hairgpu_resume_") as temporary:
+        probe = execute_case(run, viewer_exe, Path(temporary), repo_root, dry_run=True)
+    return str(probe.get("executionFingerprint", ""))
+
+
+def is_completed_case(run: Mapping[str, Any], viewer_exe: Path, output_dir: Path, repo_root: Path) -> bool:
+    paths = output_paths(output_dir, str(run["run_name"]))
+    if not verify_run_manifest(paths):
+        return False
+    complete = read_json(paths["complete"])
+    observed = str(complete.get("executionFingerprint", ""))
+    if not observed:
+        return False
+    try:
+        expected = resume_fingerprint(run, viewer_exe, output_dir, repo_root)
+    except FormalRunError:
+        return False
+    return observed.lower() == expected.lower()
+
+
+def metric_row(run: Mapping[str, Any], validation: Mapping[str, Any], exit_code: int, reused: bool) -> dict[str, Any]:
+    aggregate = validation.get("aggregate", {}) if isinstance(validation.get("aggregate"), dict) else {}
+    row = {
+        "run_name": run["run_name"], "method": run["method"], "scenario": run["scenario"],
+        "seed": run["seed"], "repetition_index": run.get("repetition_index", 0),
+        "special_kind": run.get("special_kind", "formal"), "exit_code": exit_code, "reused": reused,
+        "evidence_status": validation.get("evidenceStatus", "missing"),
+        "stable_60fps_status": validation.get("stable60FpsStatus", "not_achieved"),
+        "integrity_issue_count": len(validation.get("integrityIssues", [])),
+        "goal_failure_count": len(validation.get("goalFailures", [])),
+    }
+    for key, value in aggregate.items():
+        if not isinstance(value, (dict, list)):
+            row[key] = value
+    return row
+
+
+def aggregate_rows(rows: list[dict[str, Any]], group_key: str) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row.get("special_kind") == "formal":
+            groups[str(row.get(group_key, ""))].append(row)
+    numeric_keys = ["averageFps", "sixtyFpsRatio", "frameBudgetOverrunRate", "p95FrameMilliseconds",
+                    "p99FrameMilliseconds", "p999FrameMilliseconds", "gpuTimingCoverage",
+                    "falseStaticRate", "collisionMissRate", "repairVerifiedSuccessRate",
+                    "repairRecurrenceRate", "stateOscillationRate", "staticDynamicBoundaryMaxErrorMm"]
+    output: list[dict[str, Any]] = []
+    for name, group in sorted(groups.items()):
+        item: dict[str, Any] = {group_key: name, "run_count": len(group),
+                                "valid_count": sum(row.get("evidence_status") == "complete_valid" for row in group),
+                                "stable_60_count": sum(row.get("stable_60fps_status") == "achieved" for row in group)}
+        for key in numeric_keys:
+            values = [float(row[key]) for row in group if isinstance(row.get(key), (int, float))]
+            item[f"avg_{key}"] = statistics.fmean(values) if values else None
+            item[f"max_{key}"] = max(values) if values else None
+        output.append(item)
+    return output
+
+
+def evaluate_goals(config: Mapping[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    goals = config.get("goals", {}) if isinstance(config.get("goals"), dict) else {}
+    formal = [row for row in rows if row.get("special_kind") == "formal" and row.get("evidence_status") == "complete_valid"]
+    mapping = {
+        "frame_time_p999_ms_max": ("p999FrameMilliseconds", "maximum"),
+        "frame_budget_overrun_rate_max": ("frameBudgetOverrunRate", "maximum"),
+        "false_static_rate_max": ("falseStaticRate", "maximum"),
+        "collision_miss_rate_max": ("collisionMissRate", "maximum"),
+        "repair_failure_rate_max": ("repairVerifiedSuccessRate", "failure_from_success"),
+        "state_oscillation_rate_max": ("stateOscillationRate", "maximum"),
+        "static_dynamic_boundary_max_error_mm_max": ("staticDynamicBoundaryMaxErrorMm", "maximum"),
+        "determinism_mismatch_count_max": ("determinismMismatchCount", "maximum"),
+        "minimum_gpu_timing_coverage": ("gpuTimingCoverage", "minimum"),
+        "minimum_sixty_fps_ratio": ("sixtyFpsRatio", "minimum"),
+        "minimum_average_fps": ("averageFps", "minimum"),
+    }
+    result: list[dict[str, Any]] = []
+    for goal_name, threshold in goals.items():
+        if goal_name not in mapping:
+            result.append({"goal": goal_name, "passed": "no", "reason": "unsupported_goal", "threshold": threshold})
+            continue
+        metric, mode = mapping[goal_name]
+        values = [float(row[metric]) for row in formal if isinstance(row.get(metric), (int, float))]
+        if not values:
+            result.append({"goal": goal_name, "passed": "no", "reason": "metric_unavailable", "threshold": threshold})
+            continue
+        if mode == "maximum": observed = max(values); passed = observed <= float(threshold)
+        elif mode == "minimum": observed = min(values); passed = observed >= float(threshold)
+        else: observed = max(1.0 - value for value in values); passed = observed <= float(threshold)
+        result.append({"goal": goal_name, "metric": metric, "mode": mode, "threshold": threshold,
+                       "observed": observed, "passed": "yes" if passed else "no"})
+    return result
+
+
+def validate_determinism(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row.get("special_kind") == "determinism":
+            groups[re.sub(r"_r\d+$", "", str(row["run_name"]))].append(row)
+    result = []
+    for name, group in sorted(groups.items()):
+        hashes = {(row.get("stateSequenceHash"), row.get("compactionSequenceHash"), row.get("finalPositionHash")) for row in group}
+        valid = all(row.get("evidence_status") == "complete_valid" for row in group)
+        result.append({"id": name, "run_count": len(group), "hash_set_count": len(hashes),
+                       "passed": "yes" if valid and len(hashes) == 1 else "no"})
+    return result
+
+
+def validate_long_runs(config: Mapping[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    gates = config.get("long_run_gates", {}) if isinstance(config.get("long_run_gates"), dict) else {}
+    result: list[dict[str, Any]] = []
+
+    def finite_number(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    for row in rows:
+        if row.get("special_kind") != "long_run":
+            continue
+        checks: list[dict[str, Any]] = []
+        checks.append({"name": "evidence", "passed": row.get("evidence_status") == "complete_valid",
+                       "observed": row.get("evidence_status"), "expected": "complete_valid"})
+        definitions = [
+            ("peakVramMb", "max_peak_vram_mb"),
+            ("vramSlopeMbPerMin", "max_vram_slope_mb_per_min"),
+            ("ramSlopeMbPerMin", "max_ram_slope_mb_per_min"),
+            ("p99DegradationRatio", "max_p99_degradation_ratio"),
+            ("queryUnresolvedSlope", "max_query_unresolved_slope"),
+        ]
+        for metric, gate_name in definitions:
+            observed = finite_number(row.get(metric))
+            threshold = finite_number(gates.get(gate_name))
+            passed = observed is not None and threshold is not None and observed <= threshold
+            checks.append({"name": metric, "passed": passed, "observed": observed, "expected": threshold})
+        result.append({
+            "id": row["run_name"],
+            "passed": "yes" if all(check["passed"] for check in checks) else "no",
+            "evidence_status": row.get("evidence_status"),
+            "checks_json": json.dumps(checks, ensure_ascii=False, allow_nan=False),
+        })
+    return result
+
+
+def write_database(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as database:
+        database.execute("DROP TABLE IF EXISTS runtime_runs")
+        database.execute("CREATE TABLE runtime_runs (run_name TEXT PRIMARY KEY, method TEXT, scenario TEXT, seed INTEGER, repetition_index INTEGER, special_kind TEXT, exit_code INTEGER, evidence_status TEXT, stable_60fps_status TEXT, payload_json TEXT NOT NULL)")
+        database.executemany("INSERT INTO runtime_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            (row["run_name"], row.get("method"), row.get("scenario"), int(row.get("seed", 0)),
+             int(row.get("repetition_index", 0)), row.get("special_kind"), int(row.get("exit_code", 0)),
+             row.get("evidence_status"), row.get("stable_60fps_status"), json.dumps(row, ensure_ascii=False, allow_nan=False))
+            for row in rows
+        ])
+        database.commit()
+
+
+def write_repro_manifest(path: Path, files: list[Path], source_config: Path) -> dict[str, Any]:
+    entries = []
+    for file in sorted({item.resolve() for item in files if item.is_file()}, key=lambda item: item.as_posix().lower()):
+        entries.append({"path": str(file), "sizeBytes": file.stat().st_size, "sha256": sha256_file(file)})
+    payload = {"manifestVersion": SUITE_VERSION, "sourceConfig": str(source_config.resolve()),
+               "sourceConfigSha256": sha256_file(source_config), "generatedFiles": entries}
+    payload["manifestSha256"] = canonical_json_sha256(payload)
+    write_json(path, payload)
     return payload
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".tmp.{os.getpid()}")
-    try:
-        with temporary.open("w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        _atomic_write_text(path, "")
-        return
-    headers: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        for key in row:
-            if key not in seen:
-                headers.append(key)
-                seen.add(key)
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".tmp.{os.getpid()}")
-    try:
-        with temporary.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=headers, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(rows)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def resolve_path(base_dir: Path, value: str | Path | None) -> Path | None:
-    if value in (None, ""):
-        return None
-    path = Path(value)
-    return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
-
-
-def prepare_suite_config(
-    config: dict[str, Any],
-    *,
-    only_methods: list[str] | None = None,
-    only_scenarios: list[str] | None = None,
-    only_seeds: list[int] | None = None,
-) -> dict[str, Any]:
-    """Normalize legacy paths/keys and optionally select a stable partial suite.
-
-    The returned dictionary is independent from the caller's configuration so a
-    smoke/baseline invocation never mutates the full formal-suite definition.
-    """
-    prepared = copy.deepcopy(config)
-    source = dict(prepared.get("source", {}))
-    defaults = prepared.setdefault("run_defaults", {})
-
-    for key in ("viewer_exe", "asset_manifest"):
-        if not defaults.get(key) and source.get(key):
-            defaults[key] = source[key]
-    if not prepared.get("schema") and source.get("schema"):
-        prepared["schema"] = source["schema"]
-
-    # One canonical key is used by hairgpu_final_run.py and the Viewer contract.
-    if "guide_count" in defaults and "guide_strand_count" not in defaults:
-        defaults["guide_strand_count"] = defaults.pop("guide_count")
-
-    selected_methods = {normalize_method_code(value) for value in (only_methods or [])}
-    selected_scenarios = {str(value) for value in (only_scenarios or [])}
-    selected_seeds = {int(value) for value in (only_seeds or [])}
-
-    if selected_methods:
-        prepared["methods"] = [
-            entry for entry in prepared.get("methods", [])
-            if normalize_method_code(str(entry.get("code") if isinstance(entry, dict) else entry))
-            in selected_methods
-        ]
-    if selected_scenarios:
-        prepared["scenarios"] = [
-            entry for entry in prepared.get("scenarios", [])
-            if str(entry.get("code") if isinstance(entry, dict) else entry)
-            in selected_scenarios
-        ]
-    if selected_seeds:
-        prepared["seeds"] = [
-            int(seed) for seed in prepared.get("seeds", [])
-            if int(seed) in selected_seeds
-        ]
-
-    if not prepared.get("methods"):
-        raise ValueError("Method selection produced an empty suite")
-    if not prepared.get("scenarios"):
-        raise ValueError("Scenario selection produced an empty suite")
-    if not prepared.get("seeds"):
-        raise ValueError("Seed selection produced an empty suite")
-
-    # Partial runs are first-class suites: preflight and coverage must validate
-    # the selected cells, not demand methods that were intentionally excluded.
-    method_codes = [
-        normalize_method_code(str(entry.get("code") if isinstance(entry, dict) else entry))
-        for entry in prepared.get("methods", [])
-    ]
-    scenario_codes = [
-        str(entry.get("code") if isinstance(entry, dict) else entry)
-        for entry in prepared.get("scenarios", [])
-    ]
-    preflight = prepared.setdefault("preflight", {})
-    preflight["required_method_codes"] = method_codes
-    preflight["required_scenario_codes"] = scenario_codes
-    preflight["minimum_seed_count"] = len(set(int(seed) for seed in prepared.get("seeds", [])))
-
-    prepared["scenario_matrix"] = [
-        {
-            "scenario": scenario,
-            "required_methods": list(method_codes),
-            "category": "selected_formal",
-        }
-        for scenario in scenario_codes
-    ]
-    prepared["selection"] = {
-        "methods": method_codes,
-        "scenarios": scenario_codes,
-        "seeds": list(prepared.get("seeds", [])),
-    }
-    return prepared
-
-
-def _safe_name(value: Any) -> str:
-    text = str(value)
-    return "".join(
-        character if character.isalnum() or character in ("-", "_") else "_"
-        for character in text
-    ).strip("_")
-
-
-def canonical_run_hash(
-    method: dict[str, Any],
-    scenario: dict[str, Any],
-    seed: int,
-    repetition: int,
-    defaults: dict[str, Any],
-) -> str:
-    return canonical_json_sha256(
-        {
-            "method": method,
-            "scenario": scenario,
-            "seed": seed,
-            "repetition": repetition,
-            "defaults": defaults,
-        }
-    )
-
-
-def _normalize_method_entry(value: Any) -> dict[str, Any]:
-    if isinstance(value, str):
-        return {"code": normalize_method_code(value), "settings": {}}
-    if not isinstance(value, dict):
-        raise ValueError(f"Invalid method entry: {value!r}")
-    result = dict(value)
-    result["code"] = normalize_method_code(str(result.get("code") or result.get("method") or ""))
-    result.setdefault("settings", {})
-    return result
-
-
-def _normalize_scenario_entry(value: Any) -> dict[str, Any]:
-    if isinstance(value, str):
-        return {"code": value, "timeline": ""}
-    if not isinstance(value, dict):
-        raise ValueError(f"Invalid scenario entry: {value!r}")
-    result = dict(value)
-    result["code"] = str(result.get("code") or result.get("scenario") or "")
-    return result
-
-
-def expand_run_matrix(config: dict[str, Any], base_dir: Path) -> list[dict[str, Any]]:
-    explicit = config.get("runs")
-    generation = config.get("run_generation", {})
-    if explicit and generation.get("mode") != "cartesian_product":
-        return [dict(run) for run in explicit]
-
-    methods = [_normalize_method_entry(item) for item in config.get("methods", [])]
-    scenarios = [_normalize_scenario_entry(item) for item in config.get("scenarios", [])]
-    seeds = [int(seed) for seed in config.get("seeds", [])]
-    repetitions = max(int(config.get("repetitions_per_seed", 1)), 1)
-    defaults = dict(config.get("run_defaults", {}))
-    experiment = str(config.get("experiment_name", config.get("suite_name", "runtime_suite")))
-    if not methods or not scenarios or not seeds:
-        raise ValueError(
-            "Cartesian run generation requires non-empty methods, scenarios, and seeds"
-        )
-
-    telemetry_dir = resolve_path(base_dir, config.get("telemetry_dir")) or (
-        base_dir / "runtime_telemetry"
-    )
-    statistics_config = dict(config.get("statistics", {}))
-    randomize = bool(statistics_config.get("randomize_execution_order", True))
-    random_seed = int(statistics_config.get("execution_order_seed", 20260716))
-    rng = random.Random(random_seed)
-
-    # Block by scenario × seed × repetition, then randomize only method order
-    # inside each block. This prevents thermal drift from being confounded with
-    # one method while retaining matched-pair structure.
-    blocks: list[list[dict[str, Any]]] = []
-    for scenario in scenarios:
-        scenario_code = str(scenario["code"])
-        for seed in seeds:
-            for repetition in range(repetitions):
-                ordered_methods = list(methods)
-                if randomize:
-                    rng.shuffle(ordered_methods)
-                block: list[dict[str, Any]] = []
-                for method in ordered_methods:
-                    method_code = normalize_method_code(str(method["code"]))
-                    case_id = (
-                        f"{_safe_name(method_code)}__{_safe_name(scenario_code)}__"
-                        f"seed{seed}__r{repetition:02d}"
-                    )
-                    run = dict(defaults)
-                    run.update(
-                        {
-                            "experiment": experiment,
-                            "case_id": case_id,
-                            "run_name": case_id,
-                            "method": method_code,
-                            "method_settings": dict(method.get("settings", {})),
-                            "scenario": scenario_code,
-                            "scenario_timeline": scenario.get("timeline", ""),
-                            "assertions": dict(
-                                scenario.get("assertions", {})
-                            ),
-                            "measurement_mode": scenario.get(
-                                "measurement_mode",
-                                defaults.get("measurement_mode", "performance"),
-                            ),
-                            "seed": seed,
-                            "repeat_index": repetition,
-                            "execution_block": (
-                                f"{_safe_name(scenario_code)}__seed{seed}__r{repetition:02d}"
-                            ),
-                            "settings_hash": canonical_run_hash(
-                                method, scenario, seed, repetition, defaults
-                            ),
-                        }
-                    )
-                    by_method = scenario.get("assertions_by_method", {})
-                    if isinstance(by_method, dict) and method_code in by_method:
-                        run["assertions"].update(by_method[method_code])
-                    if method_code == "B0":
-                        # Full-dynamic baseline has no sleep/wake/repair state
-                        # transition contract. Keep only the timeline event gate.
-                        original = dict(run.get("assertions", {}))
-                        run["assertions"] = {
-                            "min_applied_events": max(
-                                int(original.get("min_applied_events", original.get("minAppliedEvents", 0))),
-                                0,
-                            )
-                        }
-                    assertions = run.get("assertions")
-                    if not isinstance(assertions, dict) or not assertions:
-                        raise ValueError(f"{case_id}: formal run requires scenario assertions")
-                    minimum_events = int(assertions.get(
-                        "min_applied_events", assertions.get("minAppliedEvents", 0)
-                    ))
-                    if minimum_events < 0:
-                        raise ValueError(f"{case_id}: min_applied_events must be zero or greater")
-                    run_telemetry_dir = (
-                        resolve_path(base_dir, run.get("telemetry_dir"))
-                        or telemetry_dir
-                    )
-                    run.setdefault(
-                        "summary_json",
-                        str(run_telemetry_dir / f"{case_id}_summary.json"),
-                    )
-                    run.setdefault(
-                        "frame_csv",
-                        str(run_telemetry_dir / f"{case_id}_frames.csv"),
-                    )
-                    run.setdefault(
-                        "frame_jsonl",
-                        str(run_telemetry_dir / f"{case_id}_frames.jsonl"),
-                    )
-                    run.setdefault(
-                        "settings_json",
-                        str(run_telemetry_dir / f"{case_id}_settings.json"),
-                    )
-                    block.append(run)
-                blocks.append(block)
-    if bool(statistics_config.get("randomize_block_order", True)):
-        rng.shuffle(blocks)
-    base_runs = [run for block in blocks for run in block]
-    return _append_special_runs(config, base_dir, base_runs)
-
-
-
-def _append_special_runs(config: dict[str, Any], base_dir: Path, base_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    output = list(base_runs)
-
-    def clone_base(method: str, scenario: str, seed: int) -> dict[str, Any] | None:
-        method = normalize_method_code(method)
-        for candidate in base_runs:
-            if (normalize_method_code(str(candidate.get("method"))) == method and
-                str(candidate.get("scenario")) == str(scenario) and
-                int(candidate.get("seed", -1)) == int(seed)):
-                result = copy.deepcopy(candidate)
-                for key in ("summary_json", "frame_csv", "frame_jsonl", "settings_json"):
-                    result.pop(key, None)
-                return result
-        return None
-
-    for replay in config.get("determinism_replays", []):
-        if not isinstance(replay, dict):
-            continue
-        method = normalize_method_code(str(replay.get("method", "")))
-        scenario = str(replay.get("scenario", ""))
-        seed = int(replay.get("seed", 0))
-        group_id = str(replay.get("id") or f"DET__{method}__{scenario}__seed{seed}")
-        repetitions = max(int(replay.get("repetitions", 0)), 0)
-        for repetition in range(repetitions):
-            run = clone_base(method, scenario, seed)
-            if run is None:
-                continue
-            case_id = f"{_safe_name(group_id)}__rep{repetition:02d}"
-            run.update({
-                "case_id": case_id,
-                "run_name": case_id,
-                "repeat_index": repetition,
-                "measurement_mode": "determinism",
-                "special_run_kind": "determinism",
-                "special_run_id": group_id,
-                "execution_block": group_id,
-            })
-            run["settings_hash"] = canonical_json_sha256({
-                "base": run.get("settings_hash"), "special": "determinism",
-                "group": group_id, "repetition": repetition,
-            })
-            output.append(run)
-
-    for entry in config.get("long_runs", []):
-        if not isinstance(entry, dict):
-            continue
-        method = normalize_method_code(str(entry.get("method", "")))
-        scenario = str(entry.get("scenario", ""))
-        seed = int(entry.get("seed", 0))
-        run = clone_base(method, scenario, seed)
-        if run is None:
-            continue
-        special_id = str(entry.get("id") or f"LONG__{method}__{scenario}__seed{seed}")
-        run.update({
-            "case_id": special_id,
-            "run_name": special_id,
-            "measurement_mode": "robustness",
-            "measurement_frames": int(entry.get("measurement_frames", run.get("measurement_frames", 6000))),
-            "timeout_seconds": int(entry.get("timeout_seconds", run.get("timeout_seconds", 900))),
-            "timeline_repeat": bool(entry.get("timeline_repeat", True)),
-            "special_run_kind": "long_run",
-            "special_run_id": special_id,
-            "execution_block": special_id,
-        })
-        long_run_limits = dict(config.get("long_run_gates", {}))
-        for key in (
-            "max_peak_vram_mb",
-            "max_vram_slope_mb_per_min",
-            "max_ram_slope_mb_per_min",
-            "max_p99_degradation_ratio",
-            "max_query_unresolved_slope",
-        ):
-            if key in entry:
-                run[key] = entry[key]
-            elif key in long_run_limits:
-                run[key] = long_run_limits[key]
-        run["settings_hash"] = canonical_json_sha256({
-            "base": run.get("settings_hash"), "special": "long_run",
-            "id": special_id, "measurement_frames": run["measurement_frames"],
-            "limits": {key: run.get(key) for key in long_run_limits},
-        })
-        output.append(run)
-    return output
-
-def expected_telemetry_paths(
-    base_dir: Path,
-    run: dict[str, Any],
-    default_telemetry_dir: Path,
-) -> dict[str, Path]:
-    run_name = str(run["run_name"])
-    telemetry_dir = resolve_path(base_dir, run.get("telemetry_dir")) or default_telemetry_dir
-    return {
-        "summary": resolve_path(base_dir, run.get("summary_json"))
-        or telemetry_dir / f"{run_name}_summary.json",
-        "frame_csv": resolve_path(base_dir, run.get("frame_csv"))
-        or telemetry_dir / f"{run_name}_frames.csv",
-        "frame_jsonl": resolve_path(base_dir, run.get("frame_jsonl"))
-        or telemetry_dir / f"{run_name}_frames.jsonl",
-        "settings": resolve_path(base_dir, run.get("settings_json"))
-        or telemetry_dir / f"{run_name}_settings.json",
-        "environment": telemetry_dir / f"{run_name}_environment.json",
-        "validation": telemetry_dir / f"{run_name}_validation.json",
-        "manifest": telemetry_dir / f"{run_name}_manifest.json",
-        "case": telemetry_dir / f"{run_name}_case.json",
-        "preflight": telemetry_dir / f"{run_name}_preflight.json",
-        "hardware": telemetry_dir / f"{run_name}_hardware_timeseries.csv",
-        "error": telemetry_dir / f"{run_name}_error.json",
-    }
-
-
-def _verify_manifest(
-    manifest_path: Path,
-    expected_paths: Iterable[Path],
-    canonical_hash: str | None = None,
-) -> bool:
-    try:
-        manifest = read_json(manifest_path)
-        entries = manifest.get("artifacts")
-        if not isinstance(entries, list):
-            return False
-        lookup = {
-            str(entry.get("path")): entry
-            for entry in entries
-            if isinstance(entry, dict) and entry.get("path")
-        }
-        if canonical_hash and str(manifest.get("canonicalResultSha256") or "").lower() != canonical_hash.lower():
-            return False
-        for path in expected_paths:
-            path = Path(path)
-            if not path.is_file():
-                return False
-            entry = lookup.get(path.name)
-            if not entry:
-                return False
-            if str(entry.get("sha256") or "").lower() != sha256_file(path).lower():
-                return False
-            if int(entry.get("sizeBytes", -1)) != path.stat().st_size:
-                return False
-        return True
-    except Exception:
+def verify_repro_manifest(path: Path) -> bool:
+    payload = read_json(path)
+    expected = str(payload.get("manifestSha256", "")); copy = dict(payload); copy.pop("manifestSha256", None)
+    if expected != canonical_json_sha256(copy):
         return False
-
-
-def is_completed_case(
-    base_dir: Path,
-    run: dict[str, Any],
-    default_telemetry_dir: Path,
-) -> bool:
-    paths = expected_telemetry_paths(base_dir, run, default_telemetry_dir)
-    if paths["error"].exists():
-        return False
-    required = [
-        paths["summary"],
-        paths["frame_csv"],
-        paths["frame_jsonl"],
-        paths["settings"],
-        paths["environment"],
-        paths["validation"],
-        paths["manifest"],
-    ]
-    if any(not path.is_file() for path in required):
-        return False
-    try:
-        validation = read_json(paths["validation"])
-        summary = read_json(paths["summary"])
-        allowed_statuses = {"complete_valid", "quality_gate_failed"}
-        validation_status = str(validation.get("status") or "")
-        summary_status = str(summary.get("validationStatus") or summary.get("status") or "")
-        evidence_valid = bool(
-            validation.get(
-                "evidenceIntegrityPassed",
-                validation.get("formalContractValid", validation.get("isValid", False)),
-            )
-        )
-        if validation_status not in allowed_statuses or not evidence_valid:
+    for entry in payload.get("generatedFiles", []):
+        file = Path(str(entry.get("path", "")))
+        if not file.is_file() or file.stat().st_size != int(entry.get("sizeBytes", -1)):
             return False
-        if summary_status not in allowed_statuses:
+        if sha256_file(file) != str(entry.get("sha256", "")):
             return False
-        if str(summary.get("caseId") or summary.get("case_id") or "") != str(
-            run.get("case_id", "")
-        ):
-            return False
-        if str(summary.get("settingsSha256") or "").lower() != str(
-            run.get("settings_hash", "")
-        ).lower():
-            return False
-        return _verify_manifest(
-            paths["manifest"],
-            required[:-1],
-            str(summary.get("canonicalResultSha256") or "") or None,
-        )
-    except Exception:
-        return False
+    return True
 
 
-def validate_suite_manifest(
-    config: dict[str, Any], runs: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    preflight = dict(config.get("preflight", {}))
-    method_codes = {
-        normalize_method_code(str(item.get("code") if isinstance(item, dict) else item))
-        for item in config.get("methods", [])
-    }
-    scenario_codes = {
-        str(item.get("code") if isinstance(item, dict) else item)
-        for item in config.get("scenarios", [])
-    }
-    seeds = {int(seed) for seed in config.get("seeds", [])}
-
-    def issue(code: str, message: str, expected: Any = None, observed: Any = None) -> None:
-        issues.append(
-            {
-                "code": code,
-                "message": message,
-                "expected": expected,
-                "observed": observed,
-            }
-        )
-
-    required_methods = {
-        normalize_method_code(value)
-        for value in preflight.get("required_method_codes", ["B0", "B6", "B8", "P"])
-    }
-    missing_methods = sorted(required_methods - method_codes)
-    if missing_methods:
-        issue("missing_methods", "Required methods are absent.", sorted(required_methods), sorted(method_codes))
-    required_scenarios = set(preflight.get("required_scenario_codes", []))
-    missing_scenarios = sorted(required_scenarios - scenario_codes)
-    if missing_scenarios:
-        issue("missing_scenarios", "Required scenarios are absent.", sorted(required_scenarios), sorted(scenario_codes))
-    minimum_seed_count = int(preflight.get("minimum_seed_count", 5))
-    if len(seeds) < minimum_seed_count:
-        issue("seed_count", "Insufficient distinct seeds.", minimum_seed_count, len(seeds))
-
-    repetitions = max(int(config.get("repetitions_per_seed", 1)), 1)
-    expected_count = len(method_codes) * len(scenario_codes) * len(seeds) * repetitions
-    normal_runs = [run for run in runs if not run.get("special_run_kind")]
-    if len(normal_runs) != expected_count:
-        issue("run_count", "Expanded normal run matrix is incomplete.", expected_count, len(normal_runs))
-    configured_specials = sum(
-        max(int(item.get("repetitions", 0)), 0)
-        for item in config.get("determinism_replays", []) if isinstance(item, dict)
-    ) + sum(1 for item in config.get("long_runs", []) if isinstance(item, dict))
-    selected_specials = sum(1 for run in runs if run.get("special_run_kind"))
-    if selected_specials > configured_specials:
-        issue("special_run_count", "Expanded special run matrix exceeds the configured count.", configured_specials, selected_specials)
-    identities = [str(run.get("case_id") or run.get("run_name") or "") for run in runs]
-    if len(identities) != len(set(identities)):
-        issue("duplicate_case_id", "Run matrix contains duplicate case identities.")
-
-    defaults = dict(config.get("run_defaults", {}))
-    if [int(defaults.get("width", 0)), int(defaults.get("height", 0))] != [1920, 1080]:
-        issue("resolution", "Formal suite requires 1920x1080.")
-    if abs(float(defaults.get("fixed_timestep_seconds", 0.0)) - 1.0 / 60.0) > 1.0e-6:
-        issue("fixed_timestep", "Formal suite requires a 1/60 second fixed timestep.")
-    if int(defaults.get("warmup_frames", 0)) < 600:
-        issue("warmup_frames", "Warm-up frame count is too low.")
-    if int(defaults.get("measurement_frames", 0)) < 6000:
-        issue("measurement_frames", "Measurement frame count is too low.")
-    if int(defaults.get("display_strand_count", 0)) != 100000:
-        issue("display_strands", "Formal suite requires exactly 100000 displayed strands.")
-    return issues
+def package_outputs(path: Path, files: list[Path], base: Path) -> None:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for file in sorted({item.resolve() for item in files if item.is_file()}, key=lambda item: item.as_posix().lower()):
+            try: name = file.relative_to(base.resolve()).as_posix()
+            except ValueError: name = file.name
+            archive.write(file, name)
 
 
-
-def _repository_hygiene_issues(config: dict[str, Any]) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    repo_root = Path(__file__).resolve().parents[2]
-    critical_files = [
-        ".gitignore", "Directory.Build.targets", "HairSystem.vcxproj",
-        "tools/final_stage/hairgpu_final_run.py",
-        "tools/final_stage/hairgpu_runtime_suite.py",
-        "docs/sample_assets/final_runtime_suite_template.json",
-        "docs/sample_assets/novelty01_100k_asset_manifest.json",
-    ]
-    for relative in critical_files:
-        path = repo_root / relative
-        if not path.is_file() or path.stat().st_size == 0:
-            issues.append({"code": "critical_file_missing_or_empty", "message": relative})
-            continue
-        for line_number, line in enumerate(path.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
-            if re.match(r"^(<<<<<<<|=======|>>>>>>>)", line):
-                issues.append({"code": "merge_conflict_marker", "message": f"{relative}:{line_number}"})
-    try:
-        branch = subprocess.run(["git", "branch", "--show-current"], cwd=repo_root, capture_output=True, text=True, timeout=10).stdout.strip()
-        expected_branch = str(config.get("source", {}).get("required_branch", ""))
-        if expected_branch and branch != expected_branch:
-            issues.append({"code": "wrong_branch", "message": "Formal suite must run from the required branch.", "expected": expected_branch, "observed": branch})
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=repo_root, capture_output=True, text=True, timeout=10).stdout.strip()
-        if bool(config.get("preflight", {}).get("require_clean_git", True)) and dirty:
-            issues.append({"code": "dirty_worktree", "message": "Formal suite requires a clean Git worktree.", "observed": dirty.splitlines()[:20]})
-    except Exception as exc:
-        issues.append({"code": "git_probe_failed", "message": str(exc)})
-    viewer = repo_root / "bin" / "Release" / "HairSystem"
-    for name in ("PENDING_STEP0_REAL.ini", "STEP0_FORCE_RUN.ini", "STEP0_REAL_MEASUREMENT_PENDING.txt", "STEP0_REAL_MEASUREMENT_READY.txt"):
-        if (viewer / name).exists() or (viewer / "profile_results" / name).exists():
-            issues.append({"code": "step0_pending_collision", "message": name})
-    return issues
-
-def run_preflight(
-    config: dict[str, Any],
-    config_path: Path,
-    runs: list[dict[str, Any]],
-    viewer_override: Path | None = None,
-) -> dict[str, Any]:
-    issues = validate_suite_manifest(config, runs)
-    issues.extend(_repository_hygiene_issues(config))
-    base_dir = config_path.parent
-    defaults = dict(config.get("run_defaults", {}))
-    viewer = viewer_override or resolve_path(base_dir, defaults.get("viewer_exe"))
-    if sys.platform == "win32" and (viewer is None or not viewer.is_file()):
-        issues.append(
-            {
-                "code": "viewer_missing",
-                "message": "Viewer executable is missing.",
-                "observed": str(viewer),
-            }
-        )
-    asset_manifest = resolve_path(base_dir, defaults.get("asset_manifest"))
-    if bool(config.get("preflight", {}).get("require_frozen_asset", True)):
-        if asset_manifest is None or not asset_manifest.is_file():
-            issues.append(
-                {
-                    "code": "asset_manifest_missing",
-                    "message": "Frozen asset manifest is required.",
-                }
-            )
-        else:
-            manifest = read_json(asset_manifest)
-            if manifest.get("freezeStatus") != "FROZEN":
-                issues.append(
-                    {
-                        "code": "asset_not_frozen",
-                        "message": "Asset manifest is not frozen.",
-                    }
-                )
-            for asset_issue in _validate_asset_manifest(asset_manifest):
-                issues.append({
-                    "code": asset_issue.get("code", "asset_manifest_invalid"),
-                    "message": asset_issue.get("message", "Frozen asset manifest validation failed."),
-                    "expected": asset_issue.get("expected"),
-                    "observed": asset_issue.get("observed"),
-                })
-    for scenario in config.get("scenarios", []):
-        entry = _normalize_scenario_entry(scenario)
-        timeline = resolve_path(base_dir, entry.get("timeline"))
-        if timeline is None or not timeline.is_file():
-            issues.append(
-                {
-                    "code": "timeline_missing",
-                    "message": f"Timeline is missing for {entry.get('code')}",
-                    "observed": str(timeline),
-                }
-            )
-    return {
-        "status": "passed" if not issues else "failed",
-        "isValid": not issues,
-        "expandedRunCount": len(runs),
-        "issues": issues,
-    }
+def write_markdown(path: Path, payload: Mapping[str, Any]) -> None:
+    lines = ["# Novelty01 Runtime Suite", "", f"- Suite status: `{payload['suiteStatus']}`",
+             f"- Evidence status: `{payload['evidenceStatus']}`",
+             f"- Stable 60 FPS: `{payload['stable60FpsStatus']}`",
+             f"- Runs: {payload['runCount']}", f"- Valid evidence: {payload['validEvidenceCount']}",
+             f"- Goal-achieved runs: {payload['stable60RunCount']}", "", "## Goal evaluation", "",
+             "| Goal | Observed | Threshold | Passed |", "|---|---:|---:|---|"]
+    for row in payload.get("goalRows", []):
+        lines.append(f"| {row.get('goal')} | {row.get('observed', '')} | {row.get('threshold', '')} | {row.get('passed')} |")
+    atomic_write_text(path, "\n".join(lines) + "\n")
 
 
-def import_run(
-    db: FinalStageDatabase,
-    base_dir: Path,
-    run: dict[str, Any],
-    default_telemetry_dir: Path,
-    viewer_override: Path | None = None,
-) -> int:
-    run_name = str(run["run_name"])
-    paths = expected_telemetry_paths(base_dir, run, default_telemetry_dir)
-    viewer_exe = viewer_override or resolve_path(base_dir, run.get("viewer_exe"))
-    timeout_seconds = int(run.get("timeout_seconds", 900))
-
-    if not is_completed_case(base_dir, run, default_telemetry_dir):
-        if viewer_exe is None:
-            raise ValueError(f"Run '{run_name}' must provide valid telemetry or viewer_exe")
-        if sys.platform != "win32":
-            raise RuntimeError(
-                f"Run '{run_name}' requires viewer launch, which is Windows-only"
-            )
-        run_viewer(viewer_exe, paths["summary"].parent, run_name, timeout_seconds, run)
-
-    if not is_completed_case(base_dir, run, default_telemetry_dir):
-        raise RuntimeError(
-            f"Run '{run_name}' does not contain intact importable evidence"
-        )
-
-    metadata = RuntimeRunMetadata(
-        experiment_name=str(run["experiment"]),
-        method_code=normalize_method_code(str(run["method"])),
-        scenario_code=str(run["scenario"]),
-        asset_name=str(run.get("asset", "")),
-        run_name=run_name,
-        runtime_source=str(run.get("runtime_source", "dx11_viewer")),
-        operator_name=str(run.get("operator", "")),
-        notes=str(run.get("notes", "")),
-    )
-    return db.import_runtime_run(
-        metadata,
-        paths["summary"],
-        paths["frame_csv"],
-        frame_jsonl_path=paths["frame_jsonl"],
-        settings_json_path=paths["settings"],
-        environment_json_path=paths["environment"],
-        validation_json_path=paths["validation"],
-        manifest_json_path=paths["manifest"],
-    )
-
-
-def build_pairwise_rows(
-    comparison_rows: list[dict[str, Any]], baseline_method: str
-) -> list[dict[str, Any]]:
-    lookup = {
-        (str(row["scenario_code"]), str(row["method_code"])): row
-        for row in comparison_rows
-    }
-    scenarios = sorted({str(row["scenario_code"]) for row in comparison_rows})
-    methods = sorted(
-        {str(row["method_code"]) for row in comparison_rows if row["method_code"] != baseline_method}
-    )
-    output: list[dict[str, Any]] = []
-    for scenario in scenarios:
-        baseline = lookup.get((scenario, baseline_method))
-        if not baseline:
-            continue
-        for method in methods:
-            row = lookup.get((scenario, method))
-            if not row:
-                continue
-            result: dict[str, Any] = {
-                "scenario_code": scenario,
-                "method_code": method,
-                "baseline_method": baseline_method,
-            }
-            for metric in (
-                "avg_frame_ms",
-                "avg_p95_frame_ms",
-                "avg_p99_frame_ms",
-                "avg_hair_gpu_ms",
-                "avg_sixty_fps_ratio",
-                "avg_false_static_rate",
-                "avg_predictive_wake_recall",
-                "avg_repair_verified_success_rate",
-                "avg_collision_miss_rate",
-                "avg_state_oscillation_rate",
-                "avg_max_boundary_error_mm",
-            ):
-                target = row.get(metric)
-                reference = baseline.get(metric)
-                result[f"method_{metric}"] = target
-                result[f"baseline_{metric}"] = reference
-                result[f"delta_{metric}"] = (
-                    float(target) - float(reference)
-                    if target is not None and reference is not None
-                    else None
-                )
-            output.append(result)
-    return output
-
-
-def paired_bootstrap_ci(
-    values: list[float],
-    iterations: int,
-    confidence: float,
-    seed: int = 20260716,
-) -> tuple[float | None, float | None]:
-    if not values:
-        return None, None
-    rng = random.Random(seed)
-    means = [
-        statistics.fmean(values[rng.randrange(len(values))] for _ in values)
-        for _ in range(max(iterations, 1))
-    ]
-    means.sort()
-    alpha = (1.0 - confidence) / 2.0
-    low_index = min(max(int(alpha * len(means)), 0), len(means) - 1)
-    high_index = min(max(int((1.0 - alpha) * len(means)) - 1, 0), len(means) - 1)
-    return means[low_index], means[high_index]
-
-
-def _paired_effect_size(values: list[float]) -> float | None:
-    if len(values) < 2:
-        return None
-    deviation = statistics.stdev(values)
-    return statistics.fmean(values) / deviation if deviation > 0 else None
-
-
-def _holm_adjust(p_values: list[float]) -> list[float]:
-    if not p_values:
-        return []
-    order = sorted(range(len(p_values)), key=lambda index: p_values[index])
-    adjusted = [1.0] * len(p_values)
-    running = 0.0
-    count = len(p_values)
-    for rank, index in enumerate(order):
-        value = min(1.0, (count - rank) * p_values[index])
-        running = max(running, value)
-        adjusted[index] = running
-    return adjusted
-
-
-def build_matched_pair_rows(
-    raw_runs: list[dict[str, Any]],
-    baseline_method: str,
-    statistics_config: dict[str, Any],
-) -> list[dict[str, Any]]:
-    by_key: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = {}
-    for row in raw_runs:
-        key = (
-            row.get("scenario_code"),
-            row.get("seed"),
-            row.get("asset_sha256"),
-            row.get("hardware_profile"),
-            row.get("repetition_index"),
-            row.get("measurement_mode"),
-        )
-        by_key.setdefault(key, {})[str(row.get("method_code"))] = row
-
-    iterations = int(statistics_config.get("bootstrap_iterations", 5000))
-    confidence = float(statistics_config.get("confidence_level", 0.95))
-    output: list[dict[str, Any]] = []
-    pseudo_p_values: list[float] = []
-    for scenario in sorted({str(key[0]) for key in by_key}):
-        methods = sorted(
-            {
-                method
-                for key, values in by_key.items()
-                if str(key[0]) == scenario
-                for method in values
-                if method != baseline_method
-            }
-        )
-        for method in methods:
-            for metric in PAIR_METRICS:
-                deltas: list[float] = []
-                for key, methods_by_code in by_key.items():
-                    if str(key[0]) != scenario:
-                        continue
-                    baseline = methods_by_code.get(baseline_method)
-                    target = methods_by_code.get(method)
-                    if not baseline or not target:
-                        continue
-                    baseline_value = baseline.get(metric)
-                    target_value = target.get(metric)
-                    if baseline_value is None or target_value is None:
-                        continue
-                    deltas.append(float(target_value) - float(baseline_value))
-                if not deltas:
-                    continue
-                low, high = paired_bootstrap_ci(deltas, iterations, confidence)
-                # Bootstrap sign probability is recorded as a conservative
-                # two-sided pseudo-p value for Holm ordering.
-                positive = sum(delta >= 0 for delta in deltas) / len(deltas)
-                pseudo_p = min(1.0, 2.0 * min(positive, 1.0 - positive))
-                pseudo_p_values.append(pseudo_p)
-                output.append(
-                    {
-                        "scenario_code": scenario,
-                        "method_code": method,
-                        "baseline_method": baseline_method,
-                        "metric": metric,
-                        "matched_pair_count": len(deltas),
-                        "mean_delta": statistics.fmean(deltas),
-                        "median_delta": statistics.median(deltas),
-                        "ci_low": low,
-                        "ci_high": high,
-                        "paired_effect_size_dz": _paired_effect_size(deltas),
-                        "bootstrap_sign_p": pseudo_p,
-                    }
-                )
-    adjusted = _holm_adjust(pseudo_p_values)
-    for row, value in zip(output, adjusted):
-        row["holm_adjusted_p"] = value
-        row["ci_excludes_zero"] = (
-            row["ci_low"] is not None
-            and row["ci_high"] is not None
-            and (row["ci_low"] > 0 or row["ci_high"] < 0)
-        )
-    return output
-
-
-def build_determinism_rows(
-    raw_runs: list[dict[str, Any]], statistics_config: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Verify repeated determinism runs without treating a missing hash as zero."""
-    minimum_repetitions = max(int(statistics_config.get("determinism_min_repetitions", 3)), 2)
-    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-    for row in raw_runs:
-        if str(row.get("measurement_mode") or "").lower() != "determinism":
-            continue
-        key = (
-            row.get("method_code"), row.get("scenario_code"), row.get("seed"),
-            row.get("asset_sha256"), row.get("hardware_profile"),
-        )
-        groups.setdefault(key, []).append(row)
-    output: list[dict[str, Any]] = []
-    for key, rows in sorted(groups.items(), key=lambda item: tuple(str(v) for v in item[0])):
-        state_hashes = {str(row.get("state_sequence_sha256") or "") for row in rows}
-        compaction_hashes = {str(row.get("compaction_sequence_sha256") or "") for row in rows}
-        position_hashes = {str(row.get("final_position_sha256") or "") for row in rows}
-        missing = "" in state_hashes or "" in compaction_hashes or "" in position_hashes
-        mismatch = any(len(values - {""}) != 1 for values in (state_hashes, compaction_hashes, position_hashes))
-        run_flags_valid = all(int(row.get("determinism_valid") or 0) == 1 for row in rows)
-        passed = len(rows) >= minimum_repetitions and not missing and not mismatch and run_flags_valid
-        output.append({
-            "method_code": key[0], "scenario_code": key[1], "seed": key[2],
-            "asset_sha256": key[3], "hardware_profile": key[4],
-            "run_count": len(rows), "required_run_count": minimum_repetitions,
-            "state_hash_count": len(state_hashes - {""}),
-            "compaction_hash_count": len(compaction_hashes - {""}),
-            "position_hash_count": len(position_hashes - {""}),
-            "missing_hash": "yes" if missing else "no",
-            "mismatch": "yes" if mismatch else "no",
-            "passed": "yes" if passed else "no",
-        })
-    return output
-
-
-def build_long_run_rows(
-    raw_runs: list[dict[str, Any]], limits: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Apply leak/degradation gates to robustness and explicitly named long runs."""
-    max_peak_vram = float(limits.get("max_peak_vram_mb", 6144.0))
-    max_vram_slope = float(limits.get("max_vram_slope_mb_per_min", 1.0))
-    max_ram_slope = float(limits.get("max_ram_slope_mb_per_min", 2.0))
-    max_p99_ratio = float(limits.get("max_p99_degradation_ratio", 1.10))
-    max_query_slope = float(limits.get("max_query_unresolved_slope", 0.0))
-    output: list[dict[str, Any]] = []
-    for row in raw_runs:
-        mode = str(row.get("measurement_mode") or "").lower()
-        run_name = str(row.get("run_name") or "").lower()
-        if mode not in {"robustness", "long_run"} and "long" not in run_name:
-            continue
-        checks = {
-            "peak_vram_mb": (row.get("peak_vram_mb"), max_peak_vram),
-            "vram_slope_mb_per_min": (row.get("vram_slope_mb_per_min"), max_vram_slope),
-            "ram_slope_mb_per_min": (row.get("ram_slope_mb_per_min"), max_ram_slope),
-            "p99_degradation_ratio": (row.get("p99_degradation_ratio"), max_p99_ratio),
-            "query_unresolved_slope": (row.get("query_unresolved_slope"), max_query_slope),
-        }
-        unavailable = [name for name, (value, _) in checks.items() if value is None]
-        failed = [name for name, (value, limit) in checks.items() if value is not None and float(value) > limit]
-        passed = not unavailable and not failed and int(row.get("long_run_valid") or 0) == 1
-        output.append({
-            "run_name": row.get("run_name"), "method_code": row.get("method_code"),
-            "scenario_code": row.get("scenario_code"),
-            **{name: value for name, (value, _) in checks.items()},
-            "unavailable_metrics": ";".join(unavailable),
-            "failed_metrics": ";".join(failed),
-            "passed": "yes" if passed else "no",
-        })
-    return output
-
-
-def build_scenario_coverage_rows(
-    config: dict[str, Any],
-    comparison_rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    present = {
-        (str(row["scenario_code"]), str(row["method_code"]))
-        for row in comparison_rows
-    }
-    matrix = config.get("scenario_matrix", [])
-    if not matrix:
-        matrix = [
-            {
-                "scenario": str(item.get("code") if isinstance(item, dict) else item),
-                "required_methods": ["B0", "B6", "B8", "P"],
-                "category": "formal",
-            }
-            for item in config.get("scenarios", [])
-        ]
-    rows: list[dict[str, Any]] = []
-    for item in matrix:
-        scenario = str(item.get("scenario", ""))
-        methods = [normalize_method_code(value) for value in item.get("required_methods", [])]
-        for method in methods:
-            rows.append(
-                {
-                    "scenario_code": scenario,
-                    "category": item.get("category", ""),
-                    "required_method_code": method,
-                    "present": "yes" if (scenario, method) in present else "no",
-                    "notes": item.get("notes", ""),
-                }
-            )
-    return rows
-
-
-def build_goal_rows(
-    summary: dict[str, Any], goals: dict[str, Any]
-) -> list[dict[str, Any]]:
-    mapping = (
-        ("avg_p95_frame_ms", "max_avg_p95_frame_ms", "le"),
-        ("avg_p99_frame_ms", "max_avg_p99_frame_ms", "le"),
-        ("avg_frame_ms", "max_avg_frame_ms", "le"),
-        ("avg_sixty_fps_ratio", "min_avg_sixty_fps_ratio", "ge"),
-        ("avg_fps", "min_avg_fps", "ge"),
-    )
-    rows: list[dict[str, Any]] = []
-    for actual_key, threshold_key, comparator in mapping:
-        if threshold_key not in goals:
-            continue
-        actual = summary.get(actual_key)
-        threshold = float(goals[threshold_key])
-        passed = actual is not None and (
-            float(actual) <= threshold if comparator == "le" else float(actual) >= threshold
-        )
-        rows.append(
-            {
-                "goal": threshold_key,
-                "actual": actual,
-                "threshold": threshold,
-                "passed": "yes" if passed else "no",
-            }
-        )
-    return rows
-
-
-def write_markdown(
-    path: Path,
-    summary: dict[str, Any],
-    method_rows: list[dict[str, Any]],
-    coverage_rows: list[dict[str, Any]],
-    failed_runs: list[dict[str, Any]],
-) -> None:
-    lines = [
-        "# HairSystem Formal Runtime Suite",
-        "",
-        f"- Valid runs: {summary.get('run_count', 0)}",
-        f"- Methods: {summary.get('method_count', 0)}",
-        f"- Scenarios: {summary.get('scenario_count', 0)}",
-        f"- Average p95 frame time: {float(summary.get('avg_p95_frame_ms') or 0.0):.3f} ms",
-        f"- Average p99 frame time: {float(summary.get('avg_p99_frame_ms') or 0.0):.3f} ms",
-        f"- Failed runs: {len(failed_runs)}",
-        "",
-        "## Method summary",
-        "",
-        "| Method | Runs | Avg ms | P95 ms | P99 ms | Hair GPU ms | 60 FPS ratio | False static | Wake recall | Repair verified | Collision miss |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for row in method_rows:
-        lines.append(
-            "| {method_code} | {run_count} | {avg_frame_ms:.3f} | "
-            "{avg_p95_frame_ms:.3f} | {avg_p99_frame_ms:.3f} | "
-            "{avg_hair_gpu_ms:.3f} | {avg_sixty_fps_ratio:.3f} | "
-            "{avg_false_static_rate:.5f} | {avg_predictive_wake_recall:.5f} | "
-            "{avg_repair_verified_success_rate:.5f} | {avg_collision_miss_rate:.5f} |".format(
-                **{
-                    key: (float(row.get(key) or 0.0) if key != "method_code" else row.get(key))
-                    for key in (
-                        "method_code", "run_count", "avg_frame_ms",
-                        "avg_p95_frame_ms", "avg_p99_frame_ms", "avg_hair_gpu_ms",
-                        "avg_sixty_fps_ratio", "avg_false_static_rate",
-                        "avg_predictive_wake_recall",
-                        "avg_repair_verified_success_rate", "avg_collision_miss_rate",
-                    )
-                }
-            )
-        )
-    missing = [row for row in coverage_rows if row["present"] != "yes"]
-    lines.extend(["", "## Coverage", "", f"- Missing required cells: {len(missing)}"])
-    if failed_runs:
-        lines.extend(["", "## Failed runs", ""])
-        for row in failed_runs:
-            lines.append(f"- `{row.get('run_name')}`: {row.get('error')}")
-    _atomic_write_text(path, "\n".join(lines) + "\n")
-
-
-def emit_charts(
-    charts_dir: Path,
-    method_rows: list[dict[str, Any]],
-) -> list[Path]:
-    if plt is None or not method_rows:
-        return []
-    charts_dir.mkdir(parents=True, exist_ok=True)
-    ordered = sorted(
-        method_rows,
-        key=lambda row: (
-            DEFAULT_METHOD_ORDER.index(row["method_code"])
-            if row["method_code"] in DEFAULT_METHOD_ORDER
-            else len(DEFAULT_METHOD_ORDER)
-        ),
-    )
-    labels = [row["method_code"] for row in ordered]
-    outputs: list[Path] = []
-    for metric, title, ylabel, filename in (
-        ("avg_p95_frame_ms", "P95 frame time by method", "P95 frame ms", "method_p95_frame_ms.png"),
-        ("avg_p99_frame_ms", "P99 frame time by method", "P99 frame ms", "method_p99_frame_ms.png"),
-        ("avg_hair_gpu_ms", "Hair GPU time by method", "Hair GPU ms", "method_hair_gpu_ms.png"),
-        ("avg_sixty_fps_ratio", "60 FPS ratio by method", "60 FPS ratio", "method_sixty_fps_ratio.png"),
-    ):
-        values = [float(row.get(metric) or 0.0) for row in ordered]
-        plt.figure(figsize=(9, 4.8))
-        plt.bar(labels, values)
-        plt.ylabel(ylabel)
-        plt.title(title)
-        plt.xticks(rotation=20, ha="right")
-        plt.tight_layout()
-        output = charts_dir / filename
-        plt.savefig(output, dpi=160)
-        plt.close()
-        outputs.append(output)
-    return outputs
-
-
-def write_repro_manifest(
-    path: Path,
-    config_path: Path,
-    generated_files: list[Path],
-    telemetry_files: list[Path],
-) -> dict[str, Any]:
-    files = []
-    for item in sorted(set(generated_files + telemetry_files)):
-        if item.is_file():
-            files.append(
-                {
-                    "path": str(item),
-                    "sha256": sha256_file(item),
-                    "sizeBytes": item.stat().st_size,
-                }
-            )
-    manifest = {
-        "manifestVersion": "01-safe-v3.2-suite",
-        "configPath": str(config_path),
-        "configSha256": sha256_file(config_path),
-        "generatedFiles": files,
-    }
-    manifest["manifestSha256"] = canonical_json_sha256(manifest)
-    write_json(path, manifest)
-    return manifest
-
-
-def _zip_add_tree(
-    archive: zipfile.ZipFile,
-    source: Path,
-    archive_root: str,
-    seen: set[str],
-) -> None:
-    source = Path(source)
-    if not source.exists():
-        return
-    files = [source] if source.is_file() else [path for path in source.rglob("*") if path.is_file()]
-    for path in sorted(files):
-        relative = path.name if source.is_file() else path.relative_to(source).as_posix()
-        arcname = f"{archive_root.rstrip('/')}/{relative}" if archive_root else relative
-        if arcname in seen:
-            continue
-        archive.write(path, arcname=arcname)
-        seen.add(arcname)
-
-
-def package_complete_results(
-    zip_path: Path,
-    outputs_dir: Path,
-    telemetry_dir: Path,
-    db_path: Path,
-    excel_path: Path,
-    config_path: Path,
-) -> None:
-    zip_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = zip_path.with_name(zip_path.name + ".tmp")
-    seen: set[str] = set()
-    with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        _zip_add_tree(archive, outputs_dir, "outputs", seen)
-        _zip_add_tree(archive, telemetry_dir, "runtime_telemetry", seen)
-        _zip_add_tree(archive, db_path, "database", seen)
-        _zip_add_tree(archive, excel_path, "reports", seen)
-        _zip_add_tree(archive, config_path, "config", seen)
-    os.replace(temporary, zip_path)
+def self_test() -> int:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        file = root / "a.json"; write_json(file, {"a": 1})
+        manifest = root / "manifest.json"
+        write_repro_manifest(manifest, [file], file)
+        assert verify_repro_manifest(manifest)
+        file.write_text('{"a":2}\n', encoding="utf-8")
+        assert not verify_repro_manifest(manifest)
+    sample = [{"special_kind": "formal", "evidence_status": "complete_valid", "averageFps": 61.0,
+               "sixtyFpsRatio": 0.97, "frameBudgetOverrunRate": 0.03, "p999FrameMilliseconds": 18.0,
+               "gpuTimingCoverage": 1.0}]
+    goals = evaluate_goals({"goals": {"minimum_sixty_fps_ratio": 0.95}}, sample)
+    assert goals[0]["passed"] == "yes"
+    print("hairgpu_runtime_suite self-test: PASS")
+    return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Run/import a formal HairSystem runtime suite."
-    )
-    parser.add_argument("--config", required=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config")
+    parser.add_argument("--output")
+    parser.add_argument("--viewer-exe")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--rerun-failed", action="store_true")
-    parser.add_argument("--viewer-exe")
-    parser.add_argument("--output")
+    parser.add_argument("--fail-policy", choices=("stop", "continue"), default="stop")
     parser.add_argument("--only-method", action="append", default=[])
     parser.add_argument("--only-scenario", action="append", default=[])
     parser.add_argument("--only-seed", action="append", type=int, default=[])
-    parser.add_argument(
-        "--fail-policy",
-        choices=("stop", "continue"),
-        default="stop",
-    )
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
-
+    if args.self_test:
+        return self_test()
+    if not args.config:
+        parser.error("--config is required")
     config_path = Path(args.config).resolve()
-    raw_config = read_json(config_path)
-    config = prepare_suite_config(
-        raw_config,
-        only_methods=args.only_method,
-        only_scenarios=args.only_scenario,
-        only_seeds=args.only_seed,
-    )
-    base_dir = config_path.parent
-    if args.viewer_exe:
-        config.setdefault("run_defaults", {})["viewer_exe"] = str(
-            Path(args.viewer_exe).resolve()
-        )
-    if args.output:
-        config["outputs_dir"] = str(Path(args.output).resolve())
+    try:
+        config, outputs_dir, repo_root = load_config(config_path, Path(args.output) if args.output else None)
+        source = config.get("source", {})
+        viewer_exe = Path(args.viewer_exe).resolve() if args.viewer_exe else Path(str(source.get("viewer_exe", ""))).resolve()
+        problems = run_preflight(config, outputs_dir, viewer_exe, repo_root)
+        write_json(outputs_dir / "runtime_suite_preflight.json", {"status": "passed" if not problems else "failed", "issues": problems})
+        if problems:
+            print(json.dumps(problems, ensure_ascii=False, indent=2), file=sys.stderr)
+            return EXIT_FORMAL_CONTRACT_INVALID
+        runs = expand_run_matrix(config, config_path.parent, repo_root)
+        runs = add_special_runs(config, runs)
+        runs = filter_runs(runs, {normalize_method_code(item) for item in args.only_method}, set(args.only_scenario), set(args.only_seed))
+        if bool(config.get("statistics", {}).get("randomize_execution_order", True)):
+            random.Random(int(config.get("statistics", {}).get("execution_order_seed", 20260716))).shuffle(runs)
+        telemetry_dir = Path(str(config["telemetry_dir"])); telemetry_dir.mkdir(parents=True, exist_ok=True)
+        rows: list[dict[str, Any]] = []
+        if args.dry_run:
+            # Validate every timeline/config cheaply, but hash the executable,
+            # shaders, frozen asset and hardware only once. Long runs are also
+            # materialized once each to validate their repeated timelines.
+            representative_validated = False
+            for index, run in enumerate(runs, 1):
+                print(f"[{index}/{len(runs)}] preflight {run['run_name']}")
+                try:
+                    if run.get("special_kind") == "long_run" or not representative_validated:
+                        validation = execute_case(run, viewer_exe, telemetry_dir, repo_root, dry_run=True)
+                        representative_validated = True
+                    else:
+                        timeline = Path(str(run["scenario_timeline"]))
+                        timeline_issues = validate_timeline(timeline, run)
+                        if timeline_issues:
+                            raise FormalRunError("Timeline preflight failed.", EXIT_FORMAL_CONTRACT_INVALID, timeline_issues)
+                        validation = {
+                            "evidenceStatus": "preflight_valid",
+                            "stable60FpsStatus": "not_evaluated",
+                            "aggregate": {},
+                            "integrityIssues": [],
+                            "goalFailures": [],
+                        }
+                    rows.append(metric_row(run, validation, EXIT_COMPLETE_VALID, False))
+                except FormalRunError as exc:
+                    validation = {
+                        "evidenceStatus": "complete_invalid",
+                        "stable60FpsStatus": "not_achieved",
+                        "integrityIssues": exc.issues,
+                        "goalFailures": [],
+                    }
+                    rows.append(metric_row(run, validation, exc.exit_code, False))
+                    if args.fail_policy == "stop":
+                        break
+            write_json(outputs_dir / "runtime_suite_dry_run.json", {
+                "suiteVersion": SUITE_VERSION,
+                "runCount": len(rows),
+                "expectedRunCount": len(runs),
+                "runs": rows,
+            })
+            return 0 if len(rows) == len(runs) and all(row["exit_code"] == 0 for row in rows) else EXIT_FORMAL_CONTRACT_INVALID
 
-    runs = expand_run_matrix(config, base_dir)
-    viewer_override = Path(args.viewer_exe).resolve() if args.viewer_exe else None
-    preflight = run_preflight(config, config_path, runs, viewer_override)
-
-    db_path = resolve_path(base_dir, config.get("db")) or (
-        base_dir / "runtime_suite.sqlite"
-    )
-    excel_path = resolve_path(base_dir, config.get("excel")) or db_path.with_suffix(
-        ".xlsx"
-    )
-    telemetry_dir = resolve_path(base_dir, config.get("telemetry_dir")) or (
-        base_dir / "runtime_telemetry"
-    )
-    schema_path = resolve_path(base_dir, config.get("schema")) or (
-        THIS_DIR / "schema.sql"
-    )
-    outputs_dir = resolve_path(base_dir, config.get("outputs_dir")) or (
-        base_dir / "runtime_suite_outputs"
-    )
-    outputs_dir.mkdir(parents=True, exist_ok=True)
-    write_json(
-        outputs_dir / "expanded_run_matrix.json",
-        {"runCount": len(runs), "runs": runs},
-    )
-    write_json(outputs_dir / "preflight_result.json", preflight)
-    if not preflight["isValid"]:
-        raise RuntimeError(f"Suite preflight failed: {preflight['issues']}")
-    if args.dry_run:
-        print(f"Expanded {len(runs)} valid runs")
-        return 0
-
-    suite_name = str(config.get("suite_name", config_path.stem))
-    imported_ids: list[int] = []
-    skipped_names: list[str] = []
-    failed_runs: list[dict[str, Any]] = []
-    db = FinalStageDatabase(db_path)
-    db.initialize(schema_path)
-    db.clear_suite_rows(suite_name)
-
-    for run in runs:
-        paths = expected_telemetry_paths(base_dir, run, telemetry_dir)
-        if args.rerun_failed and paths["error"].exists():
-            paths["error"].unlink()
-        if args.resume and is_completed_case(base_dir, run, telemetry_dir):
-            skipped_names.append(str(run["run_name"]))
-            # Completed telemetry still needs importing if it is not already in
-            # the current database. Duplicate identities are handled below.
-        try:
-            imported_ids.append(
-                import_run(db, base_dir, run, telemetry_dir, viewer_override)
-            )
-        except Exception as exc:
-            failed_runs.append(
-                {
-                    "run_name": run.get("run_name"),
-                    "method": run.get("method"),
-                    "scenario": run.get("scenario"),
-                    "seed": run.get("seed"),
-                    "repeat_index": run.get("repeat_index"),
-                    "error": str(exc),
-                }
-            )
-            if args.fail_policy == "stop":
-                db.close()
-                raise
-
-    method_rows = db.fetch_method_summary_rows()
-    scenario_rows = db.fetch_scenario_summary_rows()
-    summary = db.fetch_experiment_summary()
-    comparison_rows = [dict(row) for row in db.fetch_comparison_rows()]
-    raw_valid_runs = [
-        dict(row) for row in db.fetch_runs() if int(row["is_valid"] or 0) == 1
-    ]
-    quality_failed_runs = [
-        row for row in raw_valid_runs
-        if int(row.get("quality_gate_passed") or 0) != 1
-    ]
-
-    baselines = {
-        "representation": normalize_method_code(
-            config.get("baseline_method", PRIMARY_BASELINE)
-        ),
-        "performance": normalize_method_code(
-            config.get("performance_baseline_method", PERFORMANCE_BASELINE)
-        ),
-        "quality": normalize_method_code(
-            config.get("quality_baseline_method", QUALITY_BASELINE)
-        ),
-    }
-    pairwise_by_purpose = {
-        purpose: build_pairwise_rows(comparison_rows, baseline)
-        for purpose, baseline in baselines.items()
-    }
-    matched_by_purpose = {
-        purpose: build_matched_pair_rows(
-            raw_valid_runs, baseline, dict(config.get("statistics", {}))
-        )
-        for purpose, baseline in baselines.items()
-    }
-    coverage_rows = build_scenario_coverage_rows(config, comparison_rows)
-    for row in coverage_rows:
-        db.add_scenario_coverage(
-            suite_name,
-            row["scenario_code"],
-            row["required_method_code"],
-            row["present"] == "yes",
-            category=row.get("category", ""),
-            notes=row.get("notes", ""),
-        )
-    goal_rows = build_goal_rows(summary, dict(config.get("goals", {})))
-    determinism_rows = build_determinism_rows(raw_valid_runs, dict(config.get("statistics", {})))
-    long_run_rows = build_long_run_rows(raw_valid_runs, dict(config.get("long_run_gates", {})))
-    valid_run_names = {str(row.get("run_name") or "") for row in raw_valid_runs}
-    expected_determinism_names = {str(run["run_name"]) for run in runs if run.get("special_run_kind") == "determinism"}
-    expected_long_run_names = {str(run["run_name"]) for run in runs if run.get("special_run_kind") == "long_run"}
-    missing_determinism_runs = sorted(expected_determinism_names - valid_run_names)
-    missing_long_runs = sorted(expected_long_run_names - valid_run_names)
-    db.close()
-
-    export_workbook(db_path, excel_path)
-    charts = emit_charts(outputs_dir / "charts", method_rows)
-
-    summary_path = outputs_dir / "runtime_suite_summary.json"
-    method_csv = outputs_dir / "runtime_suite_method_summary.csv"
-    scenario_csv = outputs_dir / "runtime_suite_scenario_summary.csv"
-    coverage_csv = outputs_dir / "runtime_suite_scenario_coverage.csv"
-    goals_csv = outputs_dir / "runtime_suite_goal_checks.csv"
-    failures_csv = outputs_dir / "runtime_suite_failed_runs.csv"
-    determinism_csv = outputs_dir / "runtime_suite_determinism.csv"
-    long_run_csv = outputs_dir / "runtime_suite_long_run.csv"
-    markdown_path = outputs_dir / "runtime_suite_summary.md"
-
-    write_csv(method_csv, method_rows)
-    write_csv(scenario_csv, scenario_rows)
-    write_csv(coverage_csv, coverage_rows)
-    write_csv(goals_csv, goal_rows)
-    write_csv(failures_csv, failed_runs)
-    write_csv(determinism_csv, determinism_rows)
-    write_csv(long_run_csv, long_run_rows)
-    for purpose, rows in pairwise_by_purpose.items():
-        write_csv(outputs_dir / f"runtime_suite_pairwise_{purpose}.csv", rows)
-    for purpose, rows in matched_by_purpose.items():
-        write_csv(outputs_dir / f"runtime_suite_matched_pairs_{purpose}.csv", rows)
-    write_markdown(markdown_path, summary, method_rows, coverage_rows, failed_runs)
-
-    missing_coverage = [row for row in coverage_rows if row["present"] != "yes"]
-    failed_determinism = [row for row in determinism_rows if row["passed"] != "yes"]
-    failed_long_runs = [row for row in long_run_rows if row["passed"] != "yes"]
-    suite_status = (
-        "complete_valid"
-        if not failed_runs and not quality_failed_runs and not missing_coverage and not failed_determinism and not failed_long_runs and not missing_determinism_runs and not missing_long_runs
-        else "complete_invalid"
-    )
-    payload: dict[str, Any] = {
-        "suiteName": suite_name,
-        "validationStatus": suite_status,
-        "expandedRunCount": len(runs),
-        "importedRunIds": imported_ids,
-        "skippedRunNames": skipped_names,
-        "invalidRunCount": len(failed_runs),
-        "failedRuns": failed_runs,
-        "qualityGateFailedRuns": [
-            {
-                "run_name": row.get("run_name"),
-                "method_code": row.get("method_code"),
-                "scenario_code": row.get("scenario_code"),
-                "validation_status": row.get("validation_status"),
-            }
-            for row in quality_failed_runs
-        ],
-        "summary": summary,
-        "methodSummary": method_rows,
-        "scenarioSummary": scenario_rows,
-        "baselines": baselines,
-        "pairwise": pairwise_by_purpose,
-        "matchedPairs": matched_by_purpose,
-        "scenarioCoverage": coverage_rows,
-        "goalChecks": goal_rows,
-        "determinismChecks": determinism_rows,
-        "longRunChecks": long_run_rows,
-        "missingDeterminismRuns": missing_determinism_runs,
-        "missingLongRuns": missing_long_runs,
-        "preflight": preflight,
-        "databasePath": str(db_path),
-        "excelPath": str(excel_path),
-        "charts": [str(path) for path in charts],
-    }
-    write_json(summary_path, payload)
-
-    telemetry_files = [path for path in telemetry_dir.rglob("*") if path.is_file()]
-    generated_files = [
-        summary_path,
-        method_csv,
-        scenario_csv,
-        coverage_csv,
-        goals_csv,
-        failures_csv,
-        determinism_csv,
-        long_run_csv,
-        markdown_path,
-        db_path,
-        excel_path,
-        *charts,
-    ]
-    generated_files.extend(outputs_dir.glob("runtime_suite_pairwise_*.csv"))
-    generated_files.extend(outputs_dir.glob("runtime_suite_matched_pairs_*.csv"))
-    repro_manifest_path = outputs_dir / "runtime_suite_repro_manifest.json"
-    repro_manifest = write_repro_manifest(
-        repro_manifest_path, config_path, list(generated_files), telemetry_files
-    )
-    payload["reproManifest"] = repro_manifest
-    write_json(summary_path, payload)
-
-    package_zip = resolve_path(base_dir, config.get("package_zip"))
-    if package_zip:
-        package_complete_results(
-            package_zip,
-            outputs_dir,
-            telemetry_dir,
-            db_path,
-            excel_path,
-            config_path,
-        )
-
-    print(f"Imported {len(imported_ids)} runs")
-    print(f"Failed {len(failed_runs)} runs")
-    print(f"Database: {db_path}")
-    print(f"Excel: {excel_path}")
-    return 0 if suite_status == "complete_valid" else 2
+        for index, run in enumerate(runs, 1):
+            print(f"[{index}/{len(runs)}] {run['run_name']}")
+            if args.resume and is_completed_case(run, viewer_exe, telemetry_dir, repo_root):
+                paths = output_paths(telemetry_dir, str(run["run_name"])); validation = read_validation(paths)
+                rows.append(metric_row(run, validation, EXIT_COMPLETE_VALID, True)); continue
+            try:
+                validation = execute_case(run, viewer_exe, telemetry_dir, repo_root, dry_run=args.dry_run)
+                exit_code = EXIT_COMPLETE_VALID if args.dry_run or validation.get("stable60FpsStatus") == "achieved" else EXIT_QUALITY_GATE_FAILED
+            except FormalRunError as exc:
+                validation = {"evidenceStatus": "complete_invalid", "stable60FpsStatus": "not_achieved",
+                              "integrityIssues": exc.issues, "goalFailures": []}
+                exit_code = exc.exit_code
+                if args.fail_policy == "stop":
+                    rows.append(metric_row(run, validation, exit_code, False)); break
+            rows.append(metric_row(run, validation, exit_code, False))
+        method_rows = aggregate_rows(rows, "method"); scenario_rows = aggregate_rows(rows, "scenario")
+        goal_rows = evaluate_goals(config, rows); determinism_rows = validate_determinism(rows); long_run_rows = validate_long_runs(config, rows)
+        evidence_valid = len(rows) == len(runs) and all(row.get("evidence_status") == "complete_valid" for row in rows)
+        determinism_passed = all(row.get("passed") == "yes" for row in determinism_rows)
+        long_runs_passed = all(row.get("passed") == "yes" for row in long_run_rows)
+        evidence_status = "complete_valid" if evidence_valid and determinism_passed and long_runs_passed else "complete_invalid"
+        full_matrix_requested = not (args.only_method or args.only_scenario or args.only_seed)
+        if full_matrix_requested:
+            goals_passed = bool(goal_rows) and all(row.get("passed") == "yes" for row in goal_rows)
+        else:
+            # A smoke/baseline subset cannot produce every scenario-specific metric.
+            # Its status is based on the selected runs' own stable-60 gates.
+            goals_passed = bool(rows) and all(row.get("stable_60fps_status") == "achieved" for row in rows)
+        stable_status = "achieved" if evidence_status == "complete_valid" and goals_passed else "not_achieved"
+        if not full_matrix_requested and evidence_status == "complete_valid":
+            suite_status = "partial_valid_goal_achieved" if stable_status == "achieved" else "partial_valid_goal_not_achieved"
+        else:
+            suite_status = "complete_valid_goal_achieved" if stable_status == "achieved" else ("complete_valid_goal_not_achieved" if evidence_status == "complete_valid" else "complete_invalid")
+        summary_path = outputs_dir / "runtime_suite_summary.json"
+        files = {
+            "runs": outputs_dir / "runtime_suite_runs.csv", "methods": outputs_dir / "runtime_suite_methods.csv",
+            "scenarios": outputs_dir / "runtime_suite_scenarios.csv", "goals": outputs_dir / "runtime_suite_goals.csv",
+            "determinism": outputs_dir / "runtime_suite_determinism.csv", "long_runs": outputs_dir / "runtime_suite_long_runs.csv",
+            "markdown": outputs_dir / "runtime_suite_report.md", "database": outputs_dir / "runtime_suite.sqlite3",
+            "preflight": outputs_dir / "runtime_suite_preflight.json",
+        }
+        write_csv(files["runs"], rows); write_csv(files["methods"], method_rows); write_csv(files["scenarios"], scenario_rows)
+        write_csv(files["goals"], goal_rows); write_csv(files["determinism"], determinism_rows); write_csv(files["long_runs"], long_run_rows)
+        write_database(files["database"], rows)
+        payload = {"suiteVersion": SUITE_VERSION, "suiteName": config.get("suite_name"), "suiteStatus": suite_status,
+                   "evidenceStatus": evidence_status, "stable60FpsStatus": stable_status,
+                   "hypothesisSupportStatus": "supported" if stable_status == "achieved" else "not_supported",
+                   "runCount": len(rows), "expectedRunCount": len(runs),
+                   "fullMatrixRequested": full_matrix_requested,
+                   "validEvidenceCount": sum(row.get("evidence_status") == "complete_valid" for row in rows),
+                   "stable60RunCount": sum(row.get("stable_60fps_status") == "achieved" for row in rows),
+                   "goalRows": goal_rows, "determinismRows": determinism_rows, "longRunRows": long_run_rows,
+                   "reproManifestPath": str(outputs_dir / "runtime_suite_repro_manifest.json")}
+        write_markdown(files["markdown"], payload)
+        write_json(summary_path, payload)  # final summary write: never mutate after this line
+        generated = [summary_path, *files.values()]
+        repro_path = outputs_dir / "runtime_suite_repro_manifest.json"
+        write_repro_manifest(repro_path, generated, config_path)
+        if not verify_repro_manifest(repro_path):
+            print("Reproducibility manifest verification failed.", file=sys.stderr); return EXIT_FORMAL_CONTRACT_INVALID
+        archive = outputs_dir / "runtime_suite_results.zip"
+        package_outputs(archive, generated + [repro_path], outputs_dir)
+        if evidence_status != "complete_valid":
+            return EXIT_FORMAL_CONTRACT_INVALID
+        return EXIT_COMPLETE_VALID if stable_status == "achieved" else EXIT_QUALITY_GATE_FAILED
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        print(f"Configuration failure: {exc}", file=sys.stderr)
+        return EXIT_FORMAL_CONTRACT_INVALID
 
 
 if __name__ == "__main__":

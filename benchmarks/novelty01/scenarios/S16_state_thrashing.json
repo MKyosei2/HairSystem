@@ -1,6 +1,6 @@
 {
   "scenario": "S16_StateThrashing",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -31,8 +31,14 @@
   "colliders": [],
   "events": [
     {
+      "id": "stress_hysteresis_0",
       "frame": 0,
       "type": "stress_hysteresis"
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumStateTransitions": 4,
+    "timelineFinalFrameRequired": true
+  }
 }

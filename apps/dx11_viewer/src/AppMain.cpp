@@ -27,13 +27,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     hairgpu::viewer::GpuHairViewer app;
     if (!app.Initialize(instance, showCommand))
     {
-        MessageBoxW(nullptr,
-  L"GpuHairViewer::Initialize returned false.
-
-Startup failed before the normal viewer loop began.
-A startup diagnostic dialog should already have been shown.",
-  L"Hair GPU Viewer Startup Failure",
-  MB_OK | MB_ICONERROR);
+        MessageBoxW(
+            nullptr,
+            L"GpuHairViewer::Initialize returned false.\r\n\r\n"
+            L"Startup failed before the normal viewer loop began.\r\n"
+            L"A startup diagnostic dialog should already have been shown.",
+            L"Hair GPU Viewer Startup Failure",
+            MB_OK | MB_ICONERROR);
         return 1;
     }
 

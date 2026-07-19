@@ -1,6 +1,6 @@
 {
   "scenario": "S13_RepairStorm",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -50,8 +50,15 @@
   ],
   "events": [
     {
+      "id": "repair_stress_600",
       "frame": 600,
       "type": "enable_repair_stress"
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumRepairAttempts": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
 }

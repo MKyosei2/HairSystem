@@ -1,6 +1,6 @@
 {
   "scenario": "S04_SuddenStop",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -48,8 +48,15 @@
   "colliders": [],
   "events": [
     {
+      "id": "hard_stop_1800",
       "frame": 1800,
       "type": "hard_stop"
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumWakeRequests": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
 }

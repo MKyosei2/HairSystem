@@ -1,6 +1,6 @@
 {
   "scenario": "S17_CloseCamera100k",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -39,5 +39,9 @@
     ]
   },
   "colliders": [],
-  "events": []
+  "events": [],
+  "assertions": {
+    "exactAppliedEventCount": 0,
+    "timelineFinalFrameRequired": true
+  }
 }

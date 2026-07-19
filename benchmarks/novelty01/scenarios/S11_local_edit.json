@@ -1,6 +1,6 @@
 {
   "scenario": "S11_LocalEdit",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -28,6 +28,7 @@
   "colliders": [],
   "events": [
     {
+      "id": "local_edit_1200",
       "frame": 1200,
       "type": "local_groom_edit",
       "regionUv": [
@@ -42,8 +43,14 @@
       ]
     },
     {
+      "id": "undo_edit_2400",
       "frame": 2400,
       "type": "undo_edit"
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 2,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
 }

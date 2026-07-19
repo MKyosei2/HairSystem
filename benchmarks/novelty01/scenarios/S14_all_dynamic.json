@@ -1,6 +1,6 @@
 {
   "scenario": "S14_AllDynamic",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -51,8 +51,14 @@
   ],
   "events": [
     {
+      "id": "force_all_dynamic_0",
       "frame": 0,
       "type": "force_all_groups_dynamic"
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
 }

@@ -1,20 +1,31 @@
 from __future__ import annotations
 
-"""Authoritative formal-run launcher and validator for HairSystem.
+"""Strict, viewer-compatible formal-run launcher for Novelty01.
 
-This module intentionally treats missing evidence as unavailable.  It never
-replaces a missing quality metric with a proxy.  ``hairgpu_runtime_suite.py``
-imports the public helpers defined here.
+The runner preserves the environment-variable contract already consumed by the
+DirectX 11 viewer while adding stable-60 gates, frozen-evidence checks, resume
+fingerprints, failure containment and long-run environment sampling.
+
+Exit codes:
+  0: evidence valid and stable-60 target achieved
+  1: evidence valid but stable-60 target not achieved
+  2: formal contract invalid
+  3: viewer/runtime failure
+  4: output-integrity failure
+  5: configuration failure
 """
 
 import argparse
 import csv
+import ctypes
 import hashlib
 import json
 import math
 import os
 import platform
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -30,55 +41,26 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.3-existing-source-only"
+VALIDATION_VERSION = "01-safe-v3.4-stable-runtime"
+FRAME_BUDGET_MS = 1000.0 / 60.0
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 FORMAL_METHOD_CODES = {"B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "P"}
 METHOD_ALIASES = {
-    "b0": "B0", "b0_fulldynamic": "B0", "full_dynamic": "B0",
-    "full-physics": "B0", "full_physics": "B0", "baseline_currentproject": "B0",
-    "b1": "B1", "b1_strandsleep": "B1", "strand_sleep": "B1",
-    "b2": "B2", "b2_blocksleep": "B2", "block_sleep": "B2",
-    "b3": "B3", "b3_segmentthresholdsleep": "B3", "segment_threshold_sleep": "B3",
-    "prediction_only": "B3", "prediction-only": "B3",
-    "b4": "B4", "b4_segmenthysteresissleep": "B4", "segment_hysteresis_sleep": "B4",
-    "b5": "B5", "b5_segmentcache": "B5", "segment_cache": "B5",
-    "b6": "B6", "b6_segmentgpucompaction": "B6", "segment_gpu_compaction": "B6",
-    "b7": "B7", "b7_activesetonly": "B7", "active_set_only": "B7",
-    "active-set-runtime": "B7", "active_set_runtime": "B7",
-    "b8": "B8", "b8_externalstatearray": "B8", "external_state_array": "B8",
-    "p": "P", "p_integratedsegmentgroup": "P",
-    "proposed_integrated_segment_group": "P", "proposal-hybrid": "P",
-    "proposal_hybrid": "P", "proposed_fullsystem": "P", "proposed_full_system": "P",
+    "b0_fulldynamic": "B0", "full_dynamic": "B0", "full-physics": "B0", "full_physics": "B0",
+    "b1_strandsleep": "B1", "strand_sleep": "B1",
+    "b2_blocksleep": "B2", "block_sleep": "B2",
+    "b3_segmentthresholdsleep": "B3", "segment_threshold_sleep": "B3", "prediction_only": "B3",
+    "b4_segmenthysteresissleep": "B4", "segment_hysteresis_sleep": "B4",
+    "b5_segmentcache": "B5", "segment_cache": "B5",
+    "b6_segmentgpucompaction": "B6", "segment_gpu_compaction": "B6",
+    "b7_activesetonly": "B7", "active_set_only": "B7", "active-set-runtime": "B7",
+    "b8_externalstatearray": "B8", "external_state_array": "B8",
+    "p_integratedsegmentgroup": "P", "proposed_integrated_segment_group": "P",
+    "proposal-hybrid": "P", "proposal_hybrid": "P", "proposed_full_system": "P",
 }
 
-METHOD_FLAG_KEYS = (
-    "enableNoNoveltyBaseline", "enableMicrotype", "enableBudgetedPhysics",
-    "enableCertificateRender", "enablePerStrandEdit", "enableCBMA",
-    "enablePhysicsIslands", "enableRodRepair", "enableGpuResident",
-    "enableSegmentGroupSleep", "enableSegmentGroupIntegratedState",
-    "enableExternalStateArray", "enableSharedPointOwnership",
-    "enableDirectionalResponsibility", "enableStaticCertificate",
-    "enablePredictiveWake", "enableVelocityRecovery", "enableRepair",
-    "enableGpuCompaction", "enableActiveSet", "enableStrandSleep",
-    "enableBlockSleep", "enableSleepHysteresis", "enableStaticCache",
-)
-RUNTIME_SETTING_KEYS = (
-    "renderWidth", "renderHeight", "displayStrandCount", "guideCount",
-    "particlesPerGuide", "solverIterations", "vsync", "presentSyncInterval",
-)
-# Formal runs require the complete requested/applied/observed flag set.
-# A viewer acknowledgement is supplemental evidence, never a substitute.
-APPLIED_METHOD_EVIDENCE_KEYS = METHOD_FLAG_KEYS
-
-REQUIRED_FRAME_COLUMNS = (
-    "caseId", "variant", "scenario", "seed", "sourceFrameIndex",
-    "globalFrameIndex", "measuredFrameIndex", "frameMilliseconds",
-    "gpuHairMilliseconds", "totalStrandCount", "availabilityMask",
-    "metricAvailabilityMask", "unavailableMetricCount", "syntheticMetricCount",
-    "sameFrameReadbackCount", "nanStateCount", "infiniteStateCount",
-    "fatalFailure", "fatalFailureCode",
-)
-
-_BASE_SAFE_FLAGS: dict[str, Any] = {
+_BASE_FLAGS: dict[str, Any] = {
     "enableNoNoveltyBaseline": False,
     "enableMicrotype": True,
     "enableBudgetedPhysics": False,
@@ -104,11 +86,12 @@ _BASE_SAFE_FLAGS: dict[str, Any] = {
     "enableSleepHysteresis": True,
     "enableStaticCache": True,
 }
+METHOD_FLAG_KEYS = tuple(_BASE_FLAGS)
 
 
-def _preset(**overrides: Any) -> dict[str, Any]:
-    result = dict(_BASE_SAFE_FLAGS)
-    result.update(overrides)
+def _preset(**changes: Any) -> dict[str, Any]:
+    result = dict(_BASE_FLAGS)
+    result.update(changes)
     return result
 
 
@@ -195,60 +178,73 @@ METHOD_PRESETS: dict[str, dict[str, Any]] = {
     ),
 }
 
+DIRECT_FLAG_ENV = {
+    "enableNoNoveltyBaseline": "HAIRGPU_ENABLE_NO_NOVELTY_BASELINE",
+    "enableMicrotype": "HAIRGPU_ENABLE_MICROTYPE",
+    "enableBudgetedPhysics": "HAIRGPU_ENABLE_BUDGETED_PHYSICS",
+    "enableCertificateRender": "HAIRGPU_ENABLE_CERTIFICATE_RENDER",
+    "enablePerStrandEdit": "HAIRGPU_ENABLE_PER_STRAND_EDIT",
+    "enableCBMA": "HAIRGPU_ENABLE_CBMA",
+    "enablePhysicsIslands": "HAIRGPU_ENABLE_PHYSICS_ISLANDS",
+    "enableRodRepair": "HAIRGPU_ENABLE_ROD_REPAIR",
+    "enableGpuResident": "HAIRGPU_ENABLE_GPU_RESIDENT",
+    "enableSegmentGroupSleep": "HAIRGPU_ENABLE_SEGMENT_GROUP_SLEEP",
+    "enableSegmentGroupIntegratedState": "HAIRGPU_ENABLE_SEGMENT_GROUP_INTEGRATED_STATE",
+    "enableExternalStateArray": "HAIRGPU_ENABLE_EXTERNAL_STATE_ARRAY",
+    "enableSharedPointOwnership": "HAIRGPU_ENABLE_SHARED_POINT_OWNERSHIP",
+    "enableDirectionalResponsibility": "HAIRGPU_ENABLE_DIRECTIONAL_RESPONSIBILITY",
+    "enableStaticCertificate": "HAIRGPU_ENABLE_STATIC_CERTIFICATE",
+    "enablePredictiveWake": "HAIRGPU_ENABLE_PREDICTIVE_WAKE",
+    "enableVelocityRecovery": "HAIRGPU_ENABLE_VELOCITY_RECOVERY",
+    "enableRepair": "HAIRGPU_ENABLE_REPAIR",
+    "enableGpuCompaction": "HAIRGPU_ENABLE_GPU_COMPACTION",
+    "enableActiveSet": "HAIRGPU_ENABLE_ACTIVE_SET",
+    "enableStrandSleep": "HAIRGPU_ENABLE_STRAND_SLEEP",
+    "enableBlockSleep": "HAIRGPU_ENABLE_BLOCK_SLEEP",
+    "enableSleepHysteresis": "HAIRGPU_ENABLE_SLEEP_HYSTERESIS",
+    "enableStaticCache": "HAIRGPU_ENABLE_STATIC_CACHE",
+}
+
+REQUIRED_FRAME_COLUMNS = {
+    "caseId", "scenario", "seed", "sourceFrameIndex", "frameMilliseconds",
+    "gpuHairMilliseconds", "totalStrandCount", "availabilityMask",
+    "metricAvailabilityMask", "syntheticMetricCount", "sameFrameReadbackCount",
+    "nanStateCount", "infiniteStateCount", "fatalFailure", "fatalFailureCode",
+}
+
 REQUIRED_METRICS_BY_SCENARIO: dict[str, set[str]] = {
     "S07_ColliderApproach": {"predictiveWakeRecall", "wakeDelayFrameMax", "collisionCandidateCount"},
     "S08_StaticDynamicBoundaryContact": {"staticDynamicBoundaryMaxErrorMm", "sharedPointConflictCount"},
     "S12_FalseStaticTrap": {"falseStaticRate"},
     "S13_RepairStorm": {"repairVerifiedSuccessRate", "repairRecurrenceRate"},
     "S16_StateThrashing": {"stateOscillationRate"},
-    "S17_CloseCamera100k": {"gpuTimingCoverage", "displayStrandCount"},
-    "S18_FarCamera100k": {"gpuTimingCoverage", "displayStrandCount"},
-}
-
-AVAILABILITY_BITS = {
-    "gpuTiming": 1 << 2,
-    "collision": 1 << 6,
-    "wake": 1 << 7,
-    "repair": 1 << 8,
-    "boundary": 1 << 9,
-    "determinism": 1 << 10,
-    "adapterIdentity": 1 << 11,
-    "falseStatic": 1 << 12,
-    "performanceEnvironment": 1 << 13,
-    "resultIntegrity": 1 << 14,
-}
-
-METRIC_AVAILABILITY = {
-    "collisionMissRate": "collision",
-    "collisionCandidateCount": "collision",
-    "predictiveWakePrecision": "wake",
-    "predictiveWakeRecall": "wake",
-    "wakeDelayFrameMax": "wake",
-    "repairExecutionSuccessRate": "repair",
-    "repairVerifiedSuccessRate": "repair",
-    "repairRecurrenceRate": "repair",
-    "staticDynamicBoundaryMaxErrorMm": "boundary",
-    "sharedPointConflictCount": "boundary",
-    "falseStaticRate": "falseStatic",
 }
 
 
 class FormalRunError(RuntimeError):
-    def __init__(self, message: str, exit_code: int, issues: list[dict[str, Any]] | None = None):
+    def __init__(self, message: str, exit_code: int,
+                 issues: list[dict[str, Any]] | None = None):
         super().__init__(message)
         self.exit_code = int(exit_code)
         self.issues = list(issues or [])
 
 
-def _issue(code: str, message: str, *, expected: Any = None, observed: Any = None, severity: str = "error") -> dict[str, Any]:
-    return {"severity": severity, "code": code, "message": message, "expected": expected, "observed": observed}
+def issue(code: str, message: str, *, expected: Any = None,
+          observed: Any = None, severity: str = "error") -> dict[str, Any]:
+    return {
+        "severity": severity,
+        "code": code,
+        "message": message,
+        "expected": expected,
+        "observed": observed,
+    }
 
 
-def normalize_method_code(method_code: str) -> str:
-    raw = str(method_code or "").strip()
+def normalize_method_code(value: str) -> str:
+    raw = str(value or "").strip()
     if raw in FORMAL_METHOD_CODES:
         return raw
-    return METHOD_ALIASES.get(raw, METHOD_ALIASES.get(raw.lower(), raw))
+    return METHOD_ALIASES.get(raw.lower(), raw)
 
 
 def sha256_file(path: Path) -> str:
@@ -260,15 +256,17 @@ def sha256_file(path: Path) -> str:
 
 
 def sha256_tree(paths: Iterable[Path], *, base_path: Path | None = None) -> str:
-    roots = [Path(path).resolve() for path in paths]
+    roots = [Path(item).resolve() for item in paths if item is not None]
     files: list[Path] = []
     for root in roots:
         if root.is_file():
             files.append(root)
         elif root.exists():
-            files.extend(path for path in root.rglob("*") if path.is_file())
+            files.extend(item for item in root.rglob("*") if item.is_file())
+    if not files:
+        return hashlib.sha256(b"").hexdigest()
     if base_path is None:
-        base_path = Path(os.path.commonpath([str(path.parent) for path in files])) if files else Path.cwd()
+        base_path = Path(os.path.commonpath([str(item.parent) for item in files]))
     base_path = Path(base_path).resolve()
     digest = hashlib.sha256()
     for path in sorted(files, key=lambda item: item.as_posix().lower()):
@@ -278,22 +276,31 @@ def sha256_tree(paths: Iterable[Path], *, base_path: Path | None = None) -> str:
             relative = path.name
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest()
 
 
 def canonical_json_sha256(payload: Any) -> str:
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
+def atomic_write_bytes(path: Path, data: bytes) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".tmp.{os.getpid()}.{threading.get_ident()}")
+    fd, name = tempfile.mkstemp(prefix=path.name + ".tmp.", dir=path.parent)
+    temporary = Path(name)
     try:
-        with temporary.open("wb") as handle:
+        with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
@@ -302,203 +309,49 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def write_json(path: Path, payload: Mapping[str, Any]) -> None:
-    data = (json.dumps(dict(payload), ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
-    _atomic_write_bytes(Path(path), data)
+def write_json(path: Path, payload: Any) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    atomic_write_bytes(Path(path), text.encode("utf-8"))
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise FormalRunError(f"Invalid JSON: {path}: {exc}", EXIT_OUTPUT_INTEGRITY_FAILURE) from exc
+def read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(value, dict):
-        raise FormalRunError(f"Expected JSON object: {path}", EXIT_OUTPUT_INTEGRITY_FAILURE)
+        raise ValueError(f"Expected a JSON object: {path}")
     return value
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with Path(path).open("r", encoding="utf-8-sig") as handle:
         for line_number, line in enumerate(handle, 1):
             if not line.strip():
                 continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise FormalRunError(f"Invalid JSONL at {path}:{line_number}: {exc}", EXIT_OUTPUT_INTEGRITY_FAILURE) from exc
+            value = json.loads(line)
             if not isinstance(value, dict):
-                raise FormalRunError(f"JSONL row {line_number} is not an object", EXIT_OUTPUT_INTEGRITY_FAILURE)
+                raise ValueError(f"JSONL row {line_number} is not an object: {path}")
             rows.append(value)
     return rows
 
 
-def _parse_csv_scalar(value: str) -> Any:
-    text = value.strip()
-    if text == "":
-        return None
-    lower = text.lower()
-    if lower in {"true", "false"}:
-        return lower == "true"
+def _to_float(value: Any) -> float | None:
     try:
-        if re.fullmatch(r"[-+]?\d+", text):
-            return int(text)
-        number = float(text)
-        return number if math.isfinite(number) else None
-    except ValueError:
-        return text
-
-
-def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
-    with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if not reader.fieldnames:
-            return []
-        return [{key: _parse_csv_scalar(value or "") for key, value in row.items()} for row in reader]
-
-
-def _frame_values_equal(left: Any, right: Any) -> bool:
-    left_number = _optional_float(left)
-    right_number = _optional_float(right)
-    if left_number is not None and right_number is not None:
-        return math.isclose(left_number, right_number, rel_tol=1.0e-6, abs_tol=1.0e-6)
-    if isinstance(left, bool) or isinstance(right, bool):
-        return _as_bool(left) == _as_bool(right)
-    return str(left) == str(right)
-
-
-def _validate_frame_schema_and_parity(
-    jsonl_rows: list[dict[str, Any]], csv_rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    required = set(REQUIRED_FRAME_COLUMNS)
-    json_keys = set(jsonl_rows[0]) if jsonl_rows else set()
-    csv_keys = set(csv_rows[0]) if csv_rows else set()
-    missing_json = sorted(required - json_keys)
-    missing_csv = sorted(required - csv_keys)
-    if missing_json:
-        issues.append(_issue(
-            "E_JSONL_SCHEMA_MISSING", "JSONL frame schema is incomplete.",
-            expected=sorted(required), observed=sorted(json_keys),
-        ))
-    if missing_csv:
-        issues.append(_issue(
-            "E_CSV_SCHEMA_MISSING", "CSV frame schema is incomplete.",
-            expected=sorted(required), observed=sorted(csv_keys),
-        ))
-    if len(jsonl_rows) != len(csv_rows) or missing_json or missing_csv:
-        return issues
-    for index, (json_row, csv_row) in enumerate(zip(jsonl_rows, csv_rows)):
-        for key in REQUIRED_FRAME_COLUMNS:
-            if not _frame_values_equal(json_row.get(key), csv_row.get(key)):
-                issues.append(_issue(
-                    "E_FRAME_FORMAT_MISMATCH",
-                    f"CSV/JSONL mismatch at frame {index}: {key}",
-                    expected=json_row.get(key), observed=csv_row.get(key),
-                ))
-                if len(issues) >= 32:
-                    return issues
-    return issues
-
-
-def _merge_frame_rows(jsonl_rows: list[dict[str, Any]], csv_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(jsonl_rows) != len(csv_rows):
-        return list(jsonl_rows)
-    merged: list[dict[str, Any]] = []
-    for json_row, csv_row in zip(jsonl_rows, csv_rows):
-        row = dict(csv_row)
-        for key, value in json_row.items():
-            if value is not None or key not in row:
-                row[key] = value
-        merged.append(row)
-    return merged
-
-
-def _merge_formal_evidence(
-    rows: list[dict[str, Any]], evidence_rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Merge dedicated repair/false-static evidence by source frame index."""
-    if not evidence_rows:
-        return list(rows)
-    by_source: dict[int, dict[str, Any]] = {}
-    for evidence in evidence_rows:
-        source = _optional_int(evidence.get("sourceFrameIndex"))
-        if source is not None:
-            by_source[source] = evidence
-    merged: list[dict[str, Any]] = []
-    evidence_keys = (
-        "availabilityMask", "metricAvailabilityMask",
-        "falseStaticCount", "staticCachedGroupCount", "staticTransformedGroupCount",
-        "predictiveWakeEvaluatedCount", "predictiveWakeTruePositiveCount",
-        "predictiveWakeFalsePositiveCount", "predictiveWakeFalseNegativeCount",
-        "wakeDelayFrameSum", "wakeDelayFrameMax",
-        "wakePositionErrorMeanMm", "wakePositionErrorMaxMm",
-        "wakeVelocityErrorMean", "wakeVelocityErrorMax",
-        "collisionCandidateCount", "collisionMissCount", "penetrationEventCount",
-        "meanPenetrationMm", "maxPenetrationMm",
-        "repairAttemptCount", "repairSuccessCount", "repairVerifiedCount",
-        "repairUnverifiedCount", "repairFailureCount", "repairRecurrenceCount",
-        "repairLatencyFrameSum", "repairLatencyFrameMax",
-        "sharedPointConflictCount", "staticDynamicBoundaryMeanErrorMm",
-        "staticDynamicBoundaryMaxErrorMm", "stateTransitionCount",
-        "stateOscillationCount", "determinismMismatchCount",
-        "dynamicCompactionInputCount", "dynamicCompactionOutputCount",
-        "repairCompactionOutputCount", "blockClassificationGpuMilliseconds",
-        "groupClassificationGpuMilliseconds", "predictiveWakeGpuMilliseconds",
-        "wakePropagationGpuMilliseconds", "compactionGpuMilliseconds",
-        "staticTransformGpuMilliseconds", "dynamicSolveGpuMilliseconds",
-        "velocityRecoveryGpuMilliseconds", "repairSolveGpuMilliseconds",
-        "boundaryRepairGpuMilliseconds", "cacheUpdateGpuMilliseconds",
-        "watchdogGpuMilliseconds", "followerReconstructionGpuMilliseconds",
-        "renderPreparationGpuMilliseconds", "hairDrawGpuMilliseconds",
-        "telemetryReductionGpuMilliseconds", "totalHairGpuMilliseconds",
-    )
-    for row in rows:
-        output = dict(row)
-        source = _optional_int(_metric(row, "sourceFrameIndex", "globalFrameIndex"))
-        evidence = by_source.get(source) if source is not None else None
-        if evidence:
-            for key in evidence_keys:
-                if key in evidence and evidence[key] is not None:
-                    output[key] = evidence[key]
-            output["formalEvidenceMerged"] = True
-        merged.append(output)
-    return merged
-
-
-def _optional_float(value: Any) -> float | None:
-    if value in (None, "", "null") or isinstance(value, bool):
-        return None
-    try:
-        parsed = float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
-    return parsed if math.isfinite(parsed) else None
+    return number if math.isfinite(number) else None
 
 
-def _optional_int(value: Any) -> int | None:
-    value_float = _optional_float(value)
-    return int(value_float) if value_float is not None else None
-
-
-def _required_int(value: Any, default: int = 0) -> int:
-    parsed = _optional_int(value)
-    return parsed if parsed is not None else default
-
-
-def _optional_u64(value: Any) -> int | None:
-    if value in (None, "", "null") or isinstance(value, bool):
-        return None
+def _to_int(value: Any, default: int = 0) -> int:
     try:
-        parsed = int(value, 0) if isinstance(value, str) else int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if 0 <= parsed <= 0xFFFFFFFFFFFFFFFF else None
-
-
-def _required_float(value: Any, default: float = 0.0) -> float:
-    parsed = _optional_float(value)
-    return parsed if parsed is not None else default
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return default
 
 
 def _as_bool(value: Any) -> bool:
@@ -507,46 +360,80 @@ def _as_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _metric(row: Mapping[str, Any], *keys: str, default: Any = None) -> Any:
-    for key in keys:
-        if key in row and row[key] is not None:
-            return row[key]
-    return default
+def _settings_match(expected: Any, observed: Any) -> bool:
+    if isinstance(expected, bool):
+        return _as_bool(observed) == expected
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        actual = _to_float(observed)
+        tolerance = 1.0e-6 * max(1.0, abs(float(expected)))
+        return actual is not None and abs(actual - float(expected)) <= tolerance
+    return str(observed) == str(expected)
 
 
-def _percentile(values: list[float], percentile: float) -> float | None:
+def percentile(values: list[float], p: float) -> float | None:
     if not values:
         return None
     ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
-    position = (len(ordered) - 1) * percentile / 100.0
+    position = (len(ordered) - 1) * p / 100.0
     lower = int(math.floor(position))
     upper = int(math.ceil(position))
     fraction = position - lower
-    return ordered[lower] if lower == upper else ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
 
 
-def _safe_rate(numerator: int | float, denominator: int | float) -> float | None:
-    return float(numerator) / float(denominator) if denominator else None
-
-
-def _resolve_case_path(value: Any, base_dir: Path | None = None) -> Path | None:
+def resolve_path(value: Any, base: Path | None = None) -> Path | None:
     if value in (None, ""):
         return None
     path = Path(str(value))
-    if not path.is_absolute() and base_dir is not None:
-        path = base_dir / path
+    if not path.is_absolute() and base is not None:
+        path = base / path
     return path.resolve()
 
 
-def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
+def git_value(repo_root: Path, *args: str) -> str:
+    try:
+        run = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return ""
+    return run.stdout.strip() if run.returncode == 0 else ""
+
+
+def _env_token(name: str) -> str:
+    step1 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return re.sub(r"[^A-Za-z0-9]+", "_", step1).strip("_").upper()
+
+
+def _env_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def _set_if_present(environment: dict[str, str], key: str, value: Any) -> None:
+    if value not in (None, ""):
+        environment[key] = _env_value(value)
+
+
+def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(case)
     method = normalize_method_code(str(result.get("method", result.get("variant", ""))))
     result["method"] = method
     result.setdefault("variant", method)
-    result.setdefault("case_id", result.get("run_name", ""))
-    result.setdefault("run_name", result.get("case_id", ""))
+    result.setdefault("run_name", result.get("case_id", "formal_case"))
+    result.setdefault("case_id", result["run_name"])
     result.setdefault("build_configuration", "Release")
     result.setdefault("platform", "x64")
     result.setdefault("width", 1920)
@@ -558,431 +445,410 @@ def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
     result.setdefault("warmup_frames", 600)
     result.setdefault("measurement_frames", 6000)
     result.setdefault("guide_strand_count", 4000)
+    result.setdefault("followers_per_guide", 24)
     result.setdefault("display_strand_count", 100000)
     result.setdefault("particles_per_guide", 128)
     result.setdefault("solver_iterations", 6)
+    result.setdefault("gpu_timestamp_delay_frames", 6)
+    result.setdefault("minimum_average_fps", 60.0)
+    result.setdefault("minimum_sixty_fps_ratio", 0.95)
+    result.setdefault("maximum_frame_budget_overrun_rate", 0.05)
+    result.setdefault("maximum_p95_frame_ms", FRAME_BUDGET_MS)
+    result.setdefault("maximum_p99_frame_ms", 20.0)
+    result.setdefault("maximum_single_frame_ms", 50.0)
+    result.setdefault("maximum_frames_over_100ms", 0)
     result.setdefault("minimum_gpu_timing_coverage", 0.99)
-    result.setdefault("minimum_metric_coverage", 0.99)
-    result.setdefault("hardware_adapter_required", True)
-    result.setdefault("formal", True)
-    requested = dict(METHOD_PRESETS.get(method, {}))
-    requested.update(dict(result.get("method_settings", {})))
-    result["method_settings"] = requested
-    result.setdefault("settings_hash", canonical_json_sha256({
-        "method": method,
-        "method_settings": requested,
-        "scenario": result.get("scenario", ""),
-        "seed": result.get("seed", 0),
-        "repeat_index": result.get("repeat_index", 0),
-        "timeline": result.get("scenario_timeline", ""),
-        "asset_manifest": result.get("asset_manifest", ""),
-        "runtime": {
-            "width": result["width"], "height": result["height"],
-            "fixed_timestep_seconds": result["fixed_timestep_seconds"],
-            "warmup_frames": result["warmup_frames"],
-            "measurement_frames": result["measurement_frames"],
-            "guide_strand_count": result["guide_strand_count"],
-            "display_strand_count": result["display_strand_count"],
-            "particles_per_guide": result["particles_per_guide"],
-            "solver_iterations": result["solver_iterations"],
-        },
-    }))
-    required = set(result.get("required_quality_metrics", []))
-    if method != "B0":
-        required.update(REQUIRED_METRICS_BY_SCENARIO.get(str(result.get("scenario", "")), set()))
-    result["required_quality_metrics"] = sorted(required)
+    result.setdefault("timeout_seconds", 900)
+    result.setdefault("hardware_sample_interval_seconds", 1.0)
+    flags = dict(METHOD_PRESETS.get(method, {}))
+    flags.update(dict(result.get("method_settings", {})))
+    result["method_settings"] = flags
+    if not result.get("settings_hash"):
+        timeline_path = resolve_path(result.get("scenario_timeline"))
+        asset_manifest_path = resolve_path(result.get("asset_manifest"))
+        timeline_identity = (
+            sha256_file(timeline_path)
+            if timeline_path is not None and timeline_path.is_file()
+            else str(result.get("scenario_timeline", ""))
+        )
+        asset_manifest_identity = (
+            sha256_file(asset_manifest_path)
+            if asset_manifest_path is not None and asset_manifest_path.is_file()
+            else str(result.get("asset_manifest", ""))
+        )
+        result["settings_hash"] = canonical_json_sha256({
+            "method": method,
+            "method_settings": flags,
+            "scenario": result.get("scenario"),
+            "seed": result.get("seed"),
+            "repetition_index": result.get("repetition_index", 0),
+            "timelineSha256": timeline_identity,
+            "assetManifestSha256": asset_manifest_identity,
+            "runtime": {
+                key: result[key] for key in (
+                    "width", "height", "fixed_timestep_seconds", "warmup_frames",
+                    "measurement_frames", "guide_strand_count", "followers_per_guide",
+                    "display_strand_count", "particles_per_guide", "solver_iterations",
+                )
+            },
+        })
     return result
 
 
-def _validate_timeline(path: Path, case: Mapping[str, Any]) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    timeline = _read_json(path)
-    expected_scenario = str(case.get("scenario") or "")
-    scenario = str(timeline.get("scenario") or timeline.get("scenarioId") or "")
-    if scenario and scenario != expected_scenario:
-        issues.append(_issue("E_TIMELINE_SCENARIO", "Timeline scenario mismatch.", expected=expected_scenario, observed=scenario))
-    duration = _required_int(timeline.get("durationFrames", timeline.get("duration_frames")))
-    required_duration = _required_int(case.get("warmup_frames")) + _required_int(case.get("measurement_frames"))
+def materialize_repeated_timeline(case: Mapping[str, Any], output_dir: Path,
+                                  repo_root: Path) -> dict[str, Any]:
+    result = dict(case)
+    if not _as_bool(result.get("timeline_repeat")):
+        return result
+    source = resolve_path(result.get("scenario_timeline"), repo_root)
+    if source is None or not source.is_file():
+        raise FormalRunError(
+            "Repeated timeline source is missing.",
+            EXIT_FORMAL_CONTRACT_INVALID,
+            [issue("E_TIMELINE_REPEAT_SOURCE", "Repeated timeline source is missing.", observed=str(source))],
+        )
+    payload = read_json(source)
+    base_duration = _to_int(payload.get("durationFrames"), -1)
+    if base_duration <= 0:
+        raise FormalRunError("Repeated timeline duration is invalid.", EXIT_FORMAL_CONTRACT_INVALID)
+    source_events = payload.get("events")
+    if not isinstance(source_events, list):
+        raise FormalRunError("Repeated timeline events are invalid.", EXIT_FORMAL_CONTRACT_INVALID)
+    required_duration = _to_int(result.get("warmup_frames")) + _to_int(result.get("measurement_frames"))
+    expanded: list[dict[str, Any]] = []
+    for cycle_index, offset in enumerate(range(0, required_duration, base_duration)):
+        for event_index, raw in enumerate(source_events):
+            if not isinstance(raw, dict):
+                continue
+            frame = _to_int(raw.get("frame"), -1)
+            if frame < 0:
+                continue
+            expanded_frame = offset + frame
+            if expanded_frame >= required_duration:
+                continue
+            event = dict(raw)
+            event["frame"] = expanded_frame
+            base_id = str(event.get("id") or f"{event.get('type', 'event')}_{event_index:03d}")
+            event["id"] = f"{base_id}_cycle_{cycle_index:05d}"
+            expanded.append(event)
+    payload["events"] = expanded
+    payload["durationFrames"] = required_duration
+    payload["materializedFrom"] = str(source)
+    payload["timelineRepeat"] = True
+    assertions = payload.get("assertions") if isinstance(payload.get("assertions"), dict) else {}
+    assertions = dict(assertions)
+    assertions["exactAppliedEventCount"] = len(expanded)
+    assertions["timelineFinalFrameRequired"] = True
+    payload["assertions"] = assertions
+    output = Path(output_dir) / f"{result['run_name']}_timeline_materialized.json"
+    write_json(output, payload)
+    result["scenario_timeline"] = str(output)
+    result["timeline_materialized_from"] = str(source)
+    result["settings_hash"] = ""
+    return normalize_case(result)
+
+
+def validate_timeline(path: Path, case: Mapping[str, Any]) -> list[dict[str, Any]]:
+    timeline = read_json(path)
+    problems: list[dict[str, Any]] = []
+    expected_scenario = str(case.get("scenario", ""))
+    if str(timeline.get("scenario", "")) != expected_scenario:
+        problems.append(issue(
+            "E_TIMELINE_SCENARIO",
+            "Timeline scenario mismatch.",
+            expected=expected_scenario,
+            observed=timeline.get("scenario"),
+        ))
+    required_duration = _to_int(case.get("warmup_frames")) + _to_int(case.get("measurement_frames"))
+    duration = _to_int(timeline.get("durationFrames"), -1)
     if duration < required_duration:
-        issues.append(_issue("E_TIMELINE_DURATION", "Timeline is shorter than the formal run.", expected=required_duration, observed=duration))
-    fixed_dt = _required_float(timeline.get("fixedTimeStepSeconds", timeline.get("fixed_timestep_seconds")), -1.0)
-    expected_dt = _required_float(case.get("fixed_timestep_seconds"))
-    if abs(fixed_dt - expected_dt) > 1.0e-6:
-        issues.append(_issue("E_TIMELINE_TIMESTEP", "Timeline fixed timestep mismatch.", expected=expected_dt, observed=fixed_dt))
+        problems.append(issue(
+            "E_TIMELINE_DURATION",
+            "Timeline is shorter than the formal run.",
+            expected=required_duration,
+            observed=duration,
+        ))
+    observed_dt = _to_float(timeline.get("fixedTimeStepSeconds"))
+    expected_dt = _to_float(case.get("fixed_timestep_seconds"))
+    if observed_dt is None or expected_dt is None or abs(observed_dt - expected_dt) > 1.0e-8:
+        problems.append(issue(
+            "E_TIMELINE_TIMESTEP",
+            "Timeline fixed timestep mismatch.",
+            expected=expected_dt,
+            observed=observed_dt,
+        ))
     events = timeline.get("events")
-    assertions = case.get("assertions", case.get("scenario_assertions", {}))
-    minimum_events = _required_int(
-        assertions.get("min_applied_events", assertions.get("minAppliedEvents"))
-        if isinstance(assertions, Mapping) else 0
-    )
     if not isinstance(events, list):
-        issues.append(_issue("E_TIMELINE_EVENTS", "Formal timeline events must be an array."))
-        return issues
-    if not events:
-        if minimum_events > 0:
-            issues.append(_issue("E_TIMELINE_EVENTS", "Formal timeline must contain events when the scenario requires applied events."))
-        return issues
+        return problems + [issue("E_TIMELINE_EVENTS", "Timeline events must be an array.")]
     previous = -1
-    measurement_events = 0
+    event_ids: set[str] = set()
     for index, event in enumerate(events):
         if not isinstance(event, dict):
-            issues.append(_issue("E_TIMELINE_EVENT_TYPE", f"Timeline event {index} is not an object."))
+            problems.append(issue("E_TIMELINE_EVENT_TYPE", f"Event {index} is not an object."))
             continue
-        frame = _optional_int(event.get("frame"))
-        if frame is None or frame < 0 or frame >= duration:
-            issues.append(_issue("E_TIMELINE_EVENT_FRAME", f"Timeline event {index} has an invalid frame.", observed=frame))
-        elif frame < previous:
-            issues.append(_issue("E_TIMELINE_ORDER", "Timeline events are not ordered."))
+        frame = _to_int(event.get("frame"), -1)
+        if frame < 0 or frame >= duration or frame < previous:
+            problems.append(issue(
+                "E_TIMELINE_EVENT_FRAME",
+                f"Invalid event frame at index {index}.",
+                observed=frame,
+            ))
+        previous = max(previous, frame)
+        if not str(event.get("type", "")):
+            problems.append(issue("E_TIMELINE_EVENT_TYPE_NAME", f"Event {index} has no type."))
+        event_id = str(event.get("id", ""))
+        if not event_id:
+            problems.append(issue("E_TIMELINE_EVENT_ID", f"Event {index} has no stable id."))
+        elif event_id in event_ids:
+            problems.append(issue("E_TIMELINE_EVENT_ID_DUPLICATE", "Timeline event id is duplicated.", observed=event_id))
         else:
-            previous = frame
-            if frame >= _required_int(case.get("warmup_frames")):
-                measurement_events += 1
-        if not str(event.get("type") or ""):
-            issues.append(_issue("E_TIMELINE_EVENT_NAME", f"Timeline event {index} has no type."))
-    if minimum_events > 0 and measurement_events == 0:
-        issues.append(_issue("E_TIMELINE_MEASUREMENT_EVENT", "Timeline has no event in the measured interval."))
-    return issues
+            event_ids.add(event_id)
+    assertions = timeline.get("assertions")
+    if not isinstance(assertions, dict):
+        problems.append(issue("E_TIMELINE_ASSERTIONS", "Timeline assertions must be an object."))
+    else:
+        if "exactAppliedEventCount" not in assertions:
+            problems.append(issue("E_TIMELINE_EVENT_ASSERTION", "exactAppliedEventCount is required."))
+        elif _to_int(assertions.get("exactAppliedEventCount"), -1) != len(events):
+            problems.append(issue(
+                "E_TIMELINE_EVENT_ASSERTION",
+                "exactAppliedEventCount must equal the number of materialized events.",
+                expected=len(events),
+                observed=assertions.get("exactAppliedEventCount"),
+            ))
+        if assertions.get("timelineFinalFrameRequired") is not True:
+            problems.append(issue("E_TIMELINE_FINAL_FRAME_ASSERTION", "timelineFinalFrameRequired must be true."))
+    return problems
 
 
-def _validate_asset_manifest(path: Path) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    manifest = _read_json(path)
-
-    manifest_version = str(manifest.get("manifestVersion") or "")
-    if manifest_version != "novelty01-100k-v1.4":
-        issues.append(_issue(
+def validate_asset_manifest(path: Path, repo_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    manifest = read_json(path)
+    problems: list[dict[str, Any]] = []
+    if str(manifest.get("manifestVersion", "")) != "novelty01-100k-v1.4":
+        problems.append(issue(
             "E_ASSET_MANIFEST_VERSION",
             "Frozen asset manifest version is incompatible.",
             expected="novelty01-100k-v1.4",
-            observed=manifest_version,
+            observed=manifest.get("manifestVersion"),
         ))
-    if str(manifest.get("freezeStatus") or "") != "FROZEN":
-        issues.append(_issue(
+    if manifest.get("freezeStatus") != "FROZEN":
+        problems.append(issue(
             "E_ASSET_NOT_FROZEN",
-            "Asset manifest must be FROZEN.",
+            "Formal asset manifest must be FROZEN.",
             expected="FROZEN",
             observed=manifest.get("freezeStatus"),
         ))
-
     generation = manifest.get("generation") if isinstance(manifest.get("generation"), dict) else {}
-    expected_generation = {
+    expected = {
         "displayStrandCount": 100000,
         "primaryGuideStrandCount": 4000,
         "followersPerGuide": 24,
         "particlesPerGuide": 128,
         "solverIterations": 6,
     }
-    for key, expected_value in expected_generation.items():
-        if _required_int(generation.get(key), -1) != expected_value:
-            issues.append(_issue(
+    for key, expected_value in expected.items():
+        if _to_int(generation.get(key), -1) != expected_value:
+            problems.append(issue(
                 "E_ASSET_GENERATION_CONTRACT",
                 f"Frozen asset generation value is invalid: {key}",
                 expected=expected_value,
                 observed=generation.get(key),
             ))
-
-    def valid_sha256(value: Any) -> bool:
-        return re.fullmatch(r"[0-9a-fA-F]{64}", str(value or "")) is not None
-
-    expected_hash = str(manifest.get("sourceAssetSha256") or "")
-    if not valid_sha256(expected_hash):
-        issues.append(_issue(
-            "E_ASSET_HASH_FORMAT",
-            "sourceAssetSha256 must be exactly 64 hexadecimal characters.",
-            observed=expected_hash,
-        ))
-    asset_value = manifest.get("sourceAssetPath") or manifest.get("assetPath") or manifest.get("sourceAsset")
-    asset_path = _resolve_case_path(asset_value, path.parent) if asset_value else None
+    asset_path = resolve_path(manifest.get("sourceAssetPath"), path.parent)
+    asset_hash = str(manifest.get("sourceAssetSha256", ""))
     if asset_path is None or not asset_path.is_file():
-        issues.append(_issue("E_ASSET_FILE_MISSING", "Frozen asset file is missing.", observed=str(asset_path)))
+        problems.append(issue("E_ASSET_FILE_MISSING", "Frozen asset file is missing.", observed=str(asset_path)))
+    elif not SHA256_RE.fullmatch(asset_hash):
+        problems.append(issue("E_ASSET_HASH_FORMAT", "sourceAssetSha256 is invalid.", observed=asset_hash))
     else:
         actual_hash = sha256_file(asset_path)
-        if valid_sha256(expected_hash) and actual_hash.lower() != expected_hash.lower():
-            issues.append(_issue(
+        if actual_hash.lower() != asset_hash.lower():
+            problems.append(issue(
                 "E_ASSET_FILE_HASH",
-                "Frozen asset bytes do not match sourceAssetSha256.",
-                expected=expected_hash,
+                "Frozen asset SHA-256 mismatch.",
+                expected=asset_hash,
                 observed=actual_hash,
             ))
-        expected_size = _required_int(manifest.get("sourceAssetSizeBytes"), -1)
+        expected_size = _to_int(manifest.get("sourceAssetSizeBytes"), -1)
         if expected_size < 1 or asset_path.stat().st_size != expected_size:
-            issues.append(_issue(
+            problems.append(issue(
                 "E_ASSET_FILE_SIZE",
-                "Frozen asset size does not match sourceAssetSizeBytes.",
+                "Frozen asset size mismatch.",
                 expected=expected_size,
                 observed=asset_path.stat().st_size,
             ))
-
-    if not str(manifest.get("assetFormatVersion") or ""):
-        issues.append(_issue("E_ASSET_FORMAT_VERSION", "Frozen asset manifest lacks assetFormatVersion."))
-
-    topology_hash = str(manifest.get("generatedTopologySha256") or manifest.get("topologyHash") or "")
-    if not valid_sha256(topology_hash):
-        issues.append(_issue(
-            "E_ASSET_TOPOLOGY_HASH",
-            "generatedTopologySha256 must be exactly 64 hexadecimal characters.",
-            observed=topology_hash,
-        ))
-    topology_value = manifest.get("generatedTopologyPath")
-    if topology_value:
-        topology_path = _resolve_case_path(topology_value, path.parent)
-        if topology_path is None or not topology_path.is_file():
-            issues.append(_issue("E_ASSET_TOPOLOGY_FILE", "Frozen topology file is missing.", observed=str(topology_path)))
-        elif valid_sha256(topology_hash) and sha256_file(topology_path).lower() != topology_hash.lower():
-            issues.append(_issue(
-                "E_ASSET_TOPOLOGY_FILE_HASH",
-                "Frozen topology bytes do not match generatedTopologySha256.",
-                expected=topology_hash,
-                observed=sha256_file(topology_path),
-            ))
-
-    settings_value = manifest.get("generatorSettingsPath")
-    settings_hash = str(manifest.get("generatorSettingsSha256") or "")
-    settings_path = _resolve_case_path(settings_value, path.parent) if settings_value else None
+    topology_hash = str(manifest.get("generatedTopologySha256", ""))
+    if not SHA256_RE.fullmatch(topology_hash):
+        problems.append(issue("E_TOPOLOGY_HASH_FORMAT", "Topology SHA-256 is invalid.", observed=topology_hash))
+    topology_path = resolve_path(manifest.get("generatedTopologyPath"), path.parent)
+    if topology_path is not None:
+        if not topology_path.is_file():
+            problems.append(issue("E_TOPOLOGY_FILE_MISSING", "Topology file is missing.", observed=str(topology_path)))
+        elif SHA256_RE.fullmatch(topology_hash) and sha256_file(topology_path).lower() != topology_hash.lower():
+            problems.append(issue("E_TOPOLOGY_HASH", "Topology SHA-256 mismatch."))
+    settings_path = resolve_path(manifest.get("generatorSettingsPath"), path.parent)
+    settings_hash = str(manifest.get("generatorSettingsSha256", ""))
     if settings_path is None or not settings_path.is_file():
-        issues.append(_issue("E_GENERATOR_SETTINGS_FILE", "Generator settings file is missing.", observed=str(settings_path)))
-    elif not valid_sha256(settings_hash):
-        issues.append(_issue(
-            "E_GENERATOR_SETTINGS_HASH_FORMAT",
-            "generatorSettingsSha256 must be exactly 64 hexadecimal characters.",
-            observed=settings_hash,
-        ))
+        problems.append(issue("E_GENERATOR_SETTINGS_MISSING", "Generator settings are missing.", observed=str(settings_path)))
+    elif not SHA256_RE.fullmatch(settings_hash):
+        problems.append(issue("E_GENERATOR_SETTINGS_HASH_FORMAT", "Generator settings SHA-256 is invalid."))
     elif sha256_file(settings_path).lower() != settings_hash.lower():
-        issues.append(_issue(
-            "E_GENERATOR_SETTINGS_HASH",
-            "Generator settings bytes do not match generatorSettingsSha256.",
-            expected=settings_hash,
-            observed=sha256_file(settings_path),
+        problems.append(issue("E_GENERATOR_SETTINGS_HASH", "Generator settings SHA-256 mismatch."))
+    commit = str(manifest.get("sourceCommitSha", ""))
+    current = git_value(repo_root, "rev-parse", "HEAD")
+    if not COMMIT_RE.fullmatch(commit):
+        problems.append(issue("E_ASSET_SOURCE_COMMIT_FORMAT", "sourceCommitSha is invalid.", observed=commit))
+    elif current and current.lower() != commit.lower():
+        problems.append(issue(
+            "E_ASSET_SOURCE_COMMIT_MISMATCH",
+            "Frozen asset commit differs from current HEAD.",
+            expected=commit,
+            observed=current,
         ))
-
-    source_commit = str(manifest.get("sourceCommitSha") or "")
-    if re.fullmatch(r"[0-9a-fA-F]{40}", source_commit) is None:
-        issues.append(_issue("E_ASSET_SOURCE_COMMIT_FORMAT", "sourceCommitSha must be a 40-character Git SHA.", observed=source_commit))
-    else:
-        repo_root = Path(__file__).resolve().parents[2]
-        current_commit = _git_commit_sha(repo_root)
-        if current_commit and current_commit.lower() != source_commit.lower():
-            issues.append(_issue(
-                "E_ASSET_SOURCE_COMMIT_MISMATCH",
-                "Frozen asset sourceCommitSha does not match the current Git HEAD.",
-                expected=source_commit,
-                observed=current_commit,
-            ))
-    if str(manifest.get("sourceBranch") or "") != "Novelty":
-        issues.append(_issue(
+    if manifest.get("sourceBranch") != "Novelty":
+        problems.append(issue(
             "E_ASSET_SOURCE_BRANCH",
-            "Frozen asset must be captured from Novelty.",
+            "Frozen asset must come from Novelty.",
             expected="Novelty",
             observed=manifest.get("sourceBranch"),
         ))
-    return issues
+    manifest["_resolvedAssetPath"] = str(asset_path) if asset_path else ""
+    return manifest, problems
 
 
-def _formal_shader_paths(viewer_exe: Path) -> tuple[Path, Path]:
-    return (
-        viewer_exe.parent / "HairSegmentGroupRuntime.hlsl",
-        viewer_exe.parent / "shaders" / "HairSegmentGroupRuntime.hlsl",
-    )
+def _powershell_value(script: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return ""
+    return completed.stdout.strip() if completed.returncode == 0 else ""
 
 
-def validate_case_contract(case: Mapping[str, Any], viewer_exe: Path | None = None) -> dict[str, Any]:
-    normalized = _normalize_case(case)
-    issues: list[dict[str, Any]] = []
-    for key in ("case_id", "method", "scenario", "seed", "asset_manifest", "scenario_timeline"):
-        if normalized.get(key) in (None, ""):
-            issues.append(_issue("E_CONFIG_REQUIRED", f"Required formal case field is missing: {key}"))
-    assertions = normalized.get("assertions", normalized.get("scenario_assertions"))
-    if not isinstance(assertions, dict) or not assertions:
-        issues.append(_issue("E_SCENARIO_ASSERTIONS", "Formal scenario assertions are required."))
-    else:
-        minimum_events = _required_int(assertions.get("min_applied_events", assertions.get("minAppliedEvents")))
-        if minimum_events < 0:
-            issues.append(_issue(
-                "E_SCENARIO_ASSERTION_EVENTS",
-                "Formal scenario min_applied_events must be zero or greater.",
-                expected=">=0", observed=minimum_events,
-            ))
-    method = normalize_method_code(str(normalized.get("method", "")))
-    if method not in FORMAL_METHOD_CODES:
-        issues.append(_issue("E_METHOD_UNKNOWN", "Formal method must be B0-B8 or P.", expected=sorted(FORMAL_METHOD_CODES), observed=method))
-    if str(normalized.get("build_configuration", "")).lower() != "release":
-        issues.append(_issue("E_BUILD_CONFIGURATION", "Formal run requires Release.", expected="Release", observed=normalized.get("build_configuration")))
-    if str(normalized.get("platform", "")).lower() != "x64":
-        issues.append(_issue("E_PLATFORM", "Formal run requires x64.", expected="x64", observed=normalized.get("platform")))
-    if [_required_int(normalized.get("width")), _required_int(normalized.get("height"))] != [1920, 1080]:
-        issues.append(_issue("E_RESOLUTION", "Formal run requires 1920x1080."))
-    if _as_bool(normalized.get("vsync")) or _required_int(normalized.get("present_sync_interval")) != 0:
-        issues.append(_issue("E_VSYNC", "Formal run requires VSync OFF and sync interval 0."))
-    if not _as_bool(normalized.get("fixed_timestep")) or abs(_required_float(normalized.get("fixed_timestep_seconds")) - 1.0 / 60.0) > 1.0e-6:
-        issues.append(_issue("E_FIXED_TIMESTEP", "Formal run requires a fixed 1/60 second timestep."))
-    if _required_int(normalized.get("warmup_frames")) < 600:
-        issues.append(_issue("E_WARMUP", "Warm-up must be at least 600 frames."))
-    if _required_int(normalized.get("measurement_frames")) < 6000:
-        issues.append(_issue("E_MEASUREMENT_FRAMES", "Measurement must be at least 6000 frames."))
-    guide_count = _required_int(normalized.get("guide_strand_count"))
-    display_count = _required_int(normalized.get("display_strand_count"))
-    if guide_count != 4000:
-        issues.append(_issue(
-            "E_GUIDE_COUNT",
-            "Formal evaluation requires exactly 4000 guide strands.",
-            expected=4000,
-            observed=guide_count,
-        ))
-    if display_count != 100000:
-        issues.append(_issue(
-            "E_DISPLAY_STRANDS",
-            "Formal evaluation requires exactly 100000 displayed strands.",
-            expected=100000,
-            observed=display_count,
-        ))
-    if guide_count > 0 and display_count >= guide_count:
-        remainder = display_count % guide_count
-        if remainder != 0:
-            issues.append(_issue(
-                "E_STRAND_COUNT_NOT_DIVISIBLE",
-                "Display strand count must be exactly divisible by guide count so every guide owns the same follower count.",
-                expected={"displayStrandCount": display_count, "validGuideCountExample": 4000},
-                observed={"guideCount": guide_count, "remainder": remainder},
-            ))
-        else:
-            followers_per_guide = display_count // guide_count - 1
-            if followers_per_guide > 64:
-                issues.append(_issue(
-                    "E_FOLLOWERS_PER_GUIDE_LIMIT",
-                    "Followers per guide exceeds the Viewer-supported limit.",
-                    expected="<=64",
-                    observed=followers_per_guide,
-                ))
-    else:
-        issues.append(_issue(
-            "E_STRAND_COUNT_RELATION",
-            "Display strand count must be at least the guide count and guide count must be positive.",
-            expected={"guideCount": ">0", "displayStrandCount": ">=guideCount"},
-            observed={"guideCount": guide_count, "displayStrandCount": display_count},
-        ))
-    particles = _required_int(normalized.get("particles_per_guide"))
-    if particles != 128:
-        issues.append(_issue(
-            "E_POINTS_PER_GUIDE",
-            "Formal evaluation requires exactly 128 particles per strand.",
-            expected=128,
-            observed=particles,
-        ))
-    iterations = _required_int(normalized.get("solver_iterations"))
-    if iterations != 6:
-        issues.append(_issue(
-            "E_SOLVER_ITERATIONS",
-            "Formal evaluation requires exactly 6 solver iterations.",
-            expected=6,
-            observed=iterations,
-        ))
-
-    timeline = _resolve_case_path(normalized.get("scenario_timeline"))
-    if timeline is None or not timeline.is_file():
-        issues.append(_issue("E_TIMELINE_MISSING", "Scenario timeline file is missing.", observed=str(timeline)))
-    else:
-        issues.extend(_validate_timeline(timeline, normalized))
-    asset_manifest = _resolve_case_path(normalized.get("asset_manifest"))
-    if asset_manifest is None or not asset_manifest.is_file():
-        issues.append(_issue("E_ASSET_MANIFEST_MISSING", "Frozen asset manifest is missing.", observed=str(asset_manifest)))
-    else:
-        issues.extend(_validate_asset_manifest(asset_manifest))
-
-    if viewer_exe is not None:
-        viewer_exe = Path(viewer_exe).resolve()
-        if not viewer_exe.is_file():
-            issues.append(_issue("E_VIEWER_MISSING", "Viewer executable is missing.", observed=str(viewer_exe)))
-        else:
-            root_shader, bundled_shader = _formal_shader_paths(viewer_exe)
-            if not root_shader.is_file() or not bundled_shader.is_file():
-                issues.append(_issue(
-                    "E_FORMAL_SHADER_MISSING",
-                    "HairSegmentGroupRuntime.hlsl must exist beside the executable and in the shaders directory.",
-                    observed={"root": str(root_shader), "bundle": str(bundled_shader)},
-                ))
-            elif sha256_file(root_shader) != sha256_file(bundled_shader):
-                issues.append(_issue("E_FORMAL_SHADER_DIVERGED", "The two formal shader copies differ."))
-
-    if method in {"B8", "P"}:
-        flags = normalized["method_settings"]
-        if _as_bool(flags.get("enableSegmentGroupIntegratedState")) != (method == "P"):
-            issues.append(_issue("E_STORAGE_MODE", "Integrated state flag does not match method."))
-        if _as_bool(flags.get("enableExternalStateArray")) != (method == "B8"):
-            issues.append(_issue("E_STORAGE_MODE", "External state flag does not match method."))
-        common = set(_BASE_SAFE_FLAGS) - {"enableSegmentGroupIntegratedState", "enableExternalStateArray"}
-        mismatches = {key: flags.get(key) for key in common if flags.get(key) != METHOD_PRESETS[method].get(key)}
-        if mismatches:
-            issues.append(_issue("E_B8_P_COMMON_FLAGS", "B8/P must differ only in storage representation.", observed=mismatches))
-
-    result = {"status": "passed" if not issues else "failed", "isValid": not issues, "normalizedCase": normalized, "issues": issues}
-    if issues:
-        raise FormalRunError("Formal case contract failed: " + ", ".join(item["code"] for item in issues[:10]), EXIT_CONFIGURATION_FAILURE, issues)
-    return result
+_PREFLIGHT_PROBE_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def collect_hardware_probe(profile_name: str = "", phase: str = "") -> dict[str, Any]:
-    payload: dict[str, Any] = {
+    if phase == "preflight" and profile_name in _PREFLIGHT_PROBE_CACHE:
+        return dict(_PREFLIGHT_PROBE_CACHE[profile_name])
+    result: dict[str, Any] = {
         "profile": profile_name,
         "phase": phase,
         "timestampUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "sampleTimeUnix": time.time(),
         "platform": platform.platform(),
         "osBuild": platform.version(),
         "machine": platform.machine(),
         "processor": platform.processor(),
-        "python": platform.python_version(),
+        "pythonVersion": platform.python_version(),
+        "pythonExecutable": sys.executable,
         "logicalCpuCount": os.cpu_count(),
         "gpu": {},
         "power": {},
+        "systemMemory": {},
+        "capture": {},
     }
     if sys.platform != "win32":
-        return payload
+        return result
     try:
-        result = subprocess.run([
+        command = [
             "nvidia-smi",
             "--query-gpu=name,driver_version,temperature.gpu,clocks.current.graphics,clocks.current.memory,power.draw,power.limit,memory.total,memory.used",
             "--format=csv,noheader,nounits",
-        ], capture_output=True, text=True, timeout=10, check=False)
-        fields = [item.strip() for item in result.stdout.strip().splitlines()[0].split(",")] if result.stdout.strip() else []
+        ]
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+        fields = [item.strip() for item in completed.stdout.splitlines()[0].split(",")] if completed.stdout.strip() else []
         if len(fields) >= 9:
-            payload["gpu"] = {
-                "name": fields[0], "driverVersion": fields[1],
-                "temperatureC": _optional_float(fields[2]),
-                "graphicsClockMHz": _optional_float(fields[3]),
-                "memoryClockMHz": _optional_float(fields[4]),
-                "powerDrawW": _optional_float(fields[5]),
-                "powerLimitW": _optional_float(fields[6]),
-                "memoryTotalMiB": _optional_float(fields[7]),
-                "memoryUsedMiB": _optional_float(fields[8]),
+            result["gpu"] = {
+                "name": fields[0],
+                "driverVersion": fields[1],
+                "temperatureC": _to_float(fields[2]),
+                "graphicsClockMHz": _to_float(fields[3]),
+                "memoryClockMHz": _to_float(fields[4]),
+                "powerDrawW": _to_float(fields[5]),
+                "powerLimitW": _to_float(fields[6]),
+                "memoryTotalMiB": _to_float(fields[7]),
+                "memoryUsedMiB": _to_float(fields[8]),
             }
-    except Exception as exc:
-        payload["gpuProbeError"] = str(exc)
+    except Exception as exc:  # hardware tooling differs by machine
+        result["gpuProbeError"] = str(exc)
     try:
-        result = subprocess.run(["powercfg", "/GETACTIVESCHEME"], capture_output=True, text=True, timeout=10, check=False)
-        payload["power"] = {"activeScheme": result.stdout.strip()}
+        completed = subprocess.run(
+            ["powercfg", "/GETACTIVESCHEME"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        result["power"]["activeScheme"] = completed.stdout.strip()
     except Exception as exc:
-        payload["powerProbeError"] = str(exc)
+        result["powerProbeError"] = str(exc)
     try:
-        import ctypes
-
-        class _MemoryStatusEx(ctypes.Structure):
+        class PowerStatus(ctypes.Structure):
             _fields_ = [
-                ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ACLineStatus", ctypes.c_ubyte),
+                ("BatteryFlag", ctypes.c_ubyte),
+                ("BatteryLifePercent", ctypes.c_ubyte),
+                ("SystemStatusFlag", ctypes.c_ubyte),
+                ("BatteryLifeTime", ctypes.c_ulong),
+                ("BatteryFullLifeTime", ctypes.c_ulong),
+            ]
+        status = PowerStatus()
+        if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+            result["power"]["acLineStatus"] = int(status.ACLineStatus)
+            result["power"]["onAcPower"] = int(status.ACLineStatus) == 1
+    except Exception as exc:
+        result["acProbeError"] = str(exc)
+    try:
+        class MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
                 ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
             ]
-        memory = _MemoryStatusEx()
-        memory.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        memory = MemoryStatusEx()
+        memory.dwLength = ctypes.sizeof(MemoryStatusEx)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory)):
-            payload["systemMemory"] = {
+            result["systemMemory"] = {
                 "totalMiB": memory.ullTotalPhys / (1024.0 * 1024.0),
                 "usedMiB": (memory.ullTotalPhys - memory.ullAvailPhys) / (1024.0 * 1024.0),
-                "loadPercent": memory.dwMemoryLoad,
+                "loadPercent": int(memory.dwMemoryLoad),
             }
     except Exception as exc:
-        payload["memoryProbeError"] = str(exc)
-    return payload
+        result["memoryProbeError"] = str(exc)
+    cores = _powershell_value("(Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum")
+    if cores:
+        result["physicalCpuCoreCount"] = _to_int(cores, 0)
+    try:
+        import winreg
+        values: list[int] = []
+        for key_path, value_name in (
+            (r"System\GameConfigStore", "GameDVR_Enabled"),
+            (r"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled"),
+        ):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                    values.append(int(winreg.QueryValueEx(key, value_name)[0]))
+            except OSError:
+                pass
+        result["capture"]["gameDvrValues"] = values
+        result["capture"]["backgroundCaptureDisabled"] = bool(values) and all(value == 0 for value in values)
+    except Exception as exc:
+        result["captureProbeError"] = str(exc)
+    if phase == "preflight":
+        _PREFLIGHT_PROBE_CACHE[profile_name] = dict(result)
+    return result
 
 
 class HardwareSampler:
@@ -1000,14 +866,12 @@ class HardwareSampler:
     def stop(self) -> list[dict[str, Any]]:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=self.interval_seconds + 5.0)
+            self._thread.join(timeout=self.interval_seconds + 10.0)
         return list(self.samples)
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            sample = collect_hardware_probe(self.profile_name, "sample")
-            sample["sampleTimeUnix"] = time.time()
-            self.samples.append(sample)
+            self.samples.append(collect_hardware_probe(self.profile_name, "sample"))
             self._stop.wait(self.interval_seconds)
 
 
@@ -1022,24 +886,29 @@ def write_hardware_timeseries(path: Path, samples: list[dict[str, Any]]) -> None
     for sample in samples:
         gpu = sample.get("gpu", {}) if isinstance(sample.get("gpu"), dict) else {}
         power = sample.get("power", {}) if isinstance(sample.get("power"), dict) else {}
-        system_memory = sample.get("systemMemory", {}) if isinstance(sample.get("systemMemory"), dict) else {}
+        memory = sample.get("systemMemory", {}) if isinstance(sample.get("systemMemory"), dict) else {}
         rows.append({
             "sampleTimeUnix": sample.get("sampleTimeUnix"),
-            "gpuName": gpu.get("name"), "driverVersion": gpu.get("driverVersion"),
-            "temperatureC": gpu.get("temperatureC"), "graphicsClockMHz": gpu.get("graphicsClockMHz"),
-            "memoryClockMHz": gpu.get("memoryClockMHz"), "powerDrawW": gpu.get("powerDrawW"),
-            "powerLimitW": gpu.get("powerLimitW"), "memoryTotalMiB": gpu.get("memoryTotalMiB"),
+            "gpuName": gpu.get("name"),
+            "driverVersion": gpu.get("driverVersion"),
+            "temperatureC": gpu.get("temperatureC"),
+            "graphicsClockMHz": gpu.get("graphicsClockMHz"),
+            "memoryClockMHz": gpu.get("memoryClockMHz"),
+            "powerDrawW": gpu.get("powerDrawW"),
+            "powerLimitW": gpu.get("powerLimitW"),
+            "memoryTotalMiB": gpu.get("memoryTotalMiB"),
             "memoryUsedMiB": gpu.get("memoryUsedMiB"),
-            "systemMemoryTotalMiB": system_memory.get("totalMiB"),
-            "systemMemoryUsedMiB": system_memory.get("usedMiB"),
-            "systemMemoryLoadPercent": system_memory.get("loadPercent"),
+            "systemMemoryTotalMiB": memory.get("totalMiB"),
+            "systemMemoryUsedMiB": memory.get("usedMiB"),
+            "systemMemoryLoadPercent": memory.get("loadPercent"),
             "activePowerScheme": power.get("activeScheme"),
         })
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + f".tmp.{os.getpid()}")
+    fd, name = tempfile.mkstemp(prefix=output.name + ".tmp.", dir=output.parent)
+    temporary = Path(name)
     try:
-        with temporary.open("w", encoding="utf-8", newline="") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=headers)
             writer.writeheader()
             writer.writerows(rows)
@@ -1050,1072 +919,948 @@ def write_hardware_timeseries(path: Path, samples: list[dict[str, Any]]) -> None
         temporary.unlink(missing_ok=True)
 
 
-def _settings_match(expected: Any, observed: Any) -> bool:
-    if isinstance(expected, bool):
-        return _as_bool(observed) == expected
-    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
-        number = _optional_float(observed)
-        tolerance = 1.0e-6 * max(1.0, abs(float(expected)))
-        return number is not None and abs(number - float(expected)) <= tolerance
-    return str(observed) == str(expected)
+def evaluate_hardware_profile(probe: Mapping[str, Any], contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    problems: list[dict[str, Any]] = []
+    target = contract.get("target", {}) if isinstance(contract.get("target"), dict) else {}
+    execution = contract.get("executionContract", {}) if isinstance(contract.get("executionContract"), dict) else {}
+    gpu = probe.get("gpu", {}) if isinstance(probe.get("gpu"), dict) else {}
+    power = probe.get("power", {}) if isinstance(probe.get("power"), dict) else {}
+    memory = probe.get("systemMemory", {}) if isinstance(probe.get("systemMemory"), dict) else {}
+    capture = probe.get("capture", {}) if isinstance(probe.get("capture"), dict) else {}
+    gpu_name = str(gpu.get("name", ""))
+    gpu_regex = str(target.get("gpuNameRegex", ""))
+    if gpu_regex and re.search(gpu_regex, gpu_name, re.IGNORECASE) is None:
+        problems.append(issue("E_HARDWARE_GPU_PROFILE", "GPU does not match profile.", expected=gpu_regex, observed=gpu_name))
+    vram = _to_float(gpu.get("memoryTotalMiB"))
+    minimum_vram = _to_float(target.get("minimumDedicatedVramMiB"))
+    maximum_vram = _to_float(target.get("maximumDedicatedVramMiB"))
+    if minimum_vram is not None and (vram is None or vram < minimum_vram):
+        problems.append(issue("E_HARDWARE_VRAM_MIN", "Dedicated VRAM is below profile minimum.", expected=minimum_vram, observed=vram))
+    if maximum_vram is not None and (vram is None or vram > maximum_vram):
+        problems.append(issue("E_HARDWARE_VRAM_MAX", "Dedicated VRAM is outside profile maximum.", expected=maximum_vram, observed=vram))
+    minimum_cores = _to_int(target.get("minimumCpuPhysicalCoreCount"), 0)
+    observed_cores = _to_int(probe.get("physicalCpuCoreCount"), 0)
+    if minimum_cores and observed_cores < minimum_cores:
+        problems.append(issue("E_HARDWARE_CPU_CORES", "Physical CPU core count is below profile minimum.", expected=minimum_cores, observed=observed_cores))
+    maximum_ram = _to_float(target.get("maximumSystemRamMiB"))
+    observed_ram = _to_float(memory.get("totalMiB"))
+    if maximum_ram is not None and (observed_ram is None or observed_ram > maximum_ram + 256.0):
+        problems.append(issue("E_HARDWARE_SYSTEM_RAM", "System RAM is outside the formal profile.", expected=maximum_ram, observed=observed_ram))
+    if _as_bool(execution.get("acPowerRequired", False)) and power.get("onAcPower") is not True:
+        problems.append(issue("E_HARDWARE_AC_POWER", "Formal run requires AC power.", expected=True, observed=power.get("onAcPower")))
+    required_scheme_regex = str(execution.get("requiredPowerSchemeRegex", ""))
+    required_scheme_text = str(execution.get("requiredPowerSchemeContains", ""))
+    active_scheme = str(power.get("activeScheme", ""))
+    scheme_mismatch = False
+    expected_scheme: str | None = None
+    if required_scheme_regex:
+        expected_scheme = required_scheme_regex
+        scheme_mismatch = re.search(required_scheme_regex, active_scheme, re.IGNORECASE) is None
+    elif required_scheme_text:
+        expected_scheme = required_scheme_text
+        scheme_mismatch = required_scheme_text.lower() not in active_scheme.lower()
+    if scheme_mismatch:
+        problems.append(issue("E_HARDWARE_POWER_SCHEME", "Active power scheme does not match profile.", expected=expected_scheme, observed=active_scheme))
+    if _as_bool(execution.get("backgroundCaptureDisabled", False)) and capture.get("backgroundCaptureDisabled") is not True:
+        problems.append(issue("E_HARDWARE_BACKGROUND_CAPTURE", "Background capture must be disabled.", expected=True, observed=capture))
+    return problems
 
 
-def derive_method_code(flags: Mapping[str, Any]) -> str:
-    candidates: list[str] = []
-    present = {key for key in METHOD_FLAG_KEYS if key in flags}
-    if not present:
-        return "UNKNOWN"
-    for code, preset in METHOD_PRESETS.items():
-        if all(_settings_match(preset.get(key), flags.get(key)) for key in present):
-            candidates.append(code)
-    return candidates[0] if len(candidates) == 1 else "UNKNOWN"
-
-
-def _expected_runtime_settings(case: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "renderWidth": _required_int(case.get("width")),
-        "renderHeight": _required_int(case.get("height")),
-        "displayStrandCount": _required_int(case.get("display_strand_count")),
-        "guideCount": _required_int(case.get("guide_strand_count")),
-        "particlesPerGuide": _required_int(case.get("particles_per_guide")),
-        "solverIterations": _required_int(case.get("solver_iterations")),
-        "vsync": _as_bool(case.get("vsync")),
-        "presentSyncInterval": _required_int(case.get("present_sync_interval")),
-    }
-
-
-def _compare_settings(settings: dict[str, Any], case: Mapping[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    requested = dict(settings.get("requested", {})) if isinstance(settings.get("requested"), dict) else {}
-    applied = dict(settings.get("applied", {})) if isinstance(settings.get("applied"), dict) else {}
-    observed_flags = dict(settings.get("observedFlags", {})) if isinstance(settings.get("observedFlags"), dict) else {}
-    observed = dict(settings.get("observed", {})) if isinstance(settings.get("observed"), dict) else {}
-
-    expected_settings = dict(case.get("method_settings", {}))
-    expected_flags = {key: expected_settings.get(key) for key in METHOD_FLAG_KEYS}
-    for evidence_name, evidence in (
-        ("requested", requested), ("applied", applied), ("observed", observed_flags)
-    ):
-        for key in METHOD_FLAG_KEYS:
-            if key not in expected_settings:
-                issues.append(_issue(
-                    "E_EXPECTED_FLAG_MISSING",
-                    f"Formal method preset lacks required flag: {key}",
-                ))
-                continue
-            if key not in evidence:
-                issues.append(_issue(
-                    f"E_{evidence_name.upper()}_FLAG_MISSING",
-                    f"{evidence_name.capitalize()} method flag is missing: {key}",
-                ))
-                continue
-            if not _settings_match(expected_flags[key], evidence[key]):
-                issues.append(_issue(
-                    f"E_{evidence_name.upper()}_SETTING_MISMATCH",
-                    f"{evidence_name.capitalize()} feature flag mismatch: {key}",
-                    expected=expected_flags[key], observed=evidence[key],
-                ))
-
-    runtime_expected = _expected_runtime_settings(case)
-    for key, expected in runtime_expected.items():
-        if key not in observed:
-            issues.append(_issue(
-                "E_OBSERVED_SETTING_MISSING",
-                f"Observed runtime setting is missing: {key}",
-            ))
-        elif not _settings_match(expected, observed[key]):
-            issues.append(_issue(
-                "E_OBSERVED_SETTING_MISMATCH",
-                f"Observed runtime setting mismatch: {key}",
-                expected=expected, observed=observed[key],
-            ))
-
-    expected_hash = canonical_json_sha256(expected_settings)
-    hash_fields = {
-        "requested": str(settings.get("requestedMethodSettingsSha256") or ""),
-        "applied": str(settings.get("appliedMethodSettingsSha256") or settings.get("methodSettingsSha256") or ""),
-        "observed": str(settings.get("observedMethodSettingsSha256") or ""),
-    }
-    for name, value in hash_fields.items():
-        if not value:
-            issues.append(_issue(
-                f"E_{name.upper()}_METHOD_HASH_MISSING",
-                f"{name.capitalize()} method-settings hash is missing.",
-            ))
-        elif value.lower() != expected_hash.lower():
-            issues.append(_issue(
-                f"E_{name.upper()}_METHOD_HASH_MISMATCH",
-                f"{name.capitalize()} method-settings hash mismatch.",
-                expected=expected_hash, observed=value,
-            ))
-
-    requested_method = normalize_method_code(str(case.get("method", "")))
-    applied_method = derive_method_code(applied)
-    observed_method = derive_method_code(observed_flags)
-    if applied_method != requested_method:
-        issues.append(_issue(
-            "E_APPLIED_METHOD_MISMATCH",
-            "Applied method differs from requested method.",
-            expected=requested_method, observed=applied_method,
-        ))
-    if observed_method != requested_method:
-        issues.append(_issue(
-            "E_OBSERVED_METHOD_MISMATCH",
-            "Observed method differs from requested method.",
-            expected=requested_method, observed=observed_method,
-        ))
-    if not _as_bool(settings.get("methodFlagsMatched")):
-        issues.append(_issue(
-            "E_VIEWER_METHOD_ACKNOWLEDGEMENT",
-            "Viewer did not acknowledge the complete method flag set.",
-        ))
-
-    expected_asset_path = _resolve_case_path(case.get("formalAssetPath"))
-    observed_asset_path = _resolve_case_path(settings.get("observedAssetPath"))
-    if expected_asset_path is not None:
-        if not _as_bool(settings.get("formalAssetLoaded")):
-            issues.append(_issue(
-                "E_FORMAL_ASSET_NOT_LOADED",
-                "Viewer did not certify loading the frozen formal asset.",
-            ))
-        if observed_asset_path is None:
-            issues.append(_issue(
-                "E_FORMAL_ASSET_OBSERVED_PATH_MISSING",
-                "Viewer did not export the observed formal asset path.",
-            ))
-        elif os.path.normcase(str(observed_asset_path)) != os.path.normcase(str(expected_asset_path)):
-            issues.append(_issue(
-                "E_FORMAL_ASSET_PATH_MISMATCH",
-                "Viewer loaded a different asset path than the frozen manifest requested.",
-                expected=str(expected_asset_path),
-                observed=str(observed_asset_path),
-            ))
-        for settings_key, case_key, code in (
-            ("formalAssetSha256", "formalAssetSha256", "E_FORMAL_ASSET_HASH_MISMATCH"),
-            ("formalTopologySha256", "formalTopologySha256", "E_FORMAL_TOPOLOGY_HASH_MISMATCH"),
-            ("generatorSettingsSha256", "generatorSettingsSha256", "E_GENERATOR_SETTINGS_HASH_MISMATCH"),
-        ):
-            expected_value = str(case.get(case_key) or "").lower()
-            observed_value = str(settings.get(settings_key) or "").lower()
-            if not expected_value or observed_value != expected_value:
-                issues.append(_issue(
-                    code,
-                    f"Viewer formal identity mismatch: {settings_key}",
-                    expected=expected_value,
-                    observed=observed_value,
-                ))
-
-    normalized = dict(settings)
-    normalized.update({
-        "requested": requested,
-        "applied": applied,
-        "observedFlags": observed_flags,
-        "observed": observed,
-        "requestedMethodCode": requested_method,
-        "appliedMethodCode": applied_method,
-        "observedMethodCode": observed_method,
-        "methodFlagsMatched": not any(
-            item["code"].startswith(("E_REQUESTED", "E_APPLIED", "E_OBSERVED", "E_VIEWER"))
-            for item in issues
-        ),
-        "methodCodeEvidence": "full_requested_applied_observed_flags",
-        "unexportedAppliedFlags": [],
-        "evidenceWarnings": [],
-    })
-    return issues, normalized
-
-
-def _availability_coverage(rows: list[dict[str, Any]], bit: int) -> float:
-    if not rows:
-        return 0.0
-    available = 0
-    for row in rows:
-        mask = _required_int(_metric(row, "metricAvailabilityMask", "availabilityMask", default=0))
-        available += 1 if mask & bit else 0
-    return available / len(rows)
-
-
-def _available_values(rows: list[dict[str, Any]], keys: tuple[str, ...], bit: int | None = None) -> list[float]:
-    values: list[float] = []
-    for row in rows:
-        if bit is not None:
-            mask = _required_int(_metric(row, "metricAvailabilityMask", "availabilityMask", default=0))
-            if not mask & bit:
-                continue
-        value = _optional_float(_metric(row, *keys))
-        if value is not None:
-            values.append(value)
-    return values
-
-
-def _sum_available(rows: list[dict[str, Any]], keys: tuple[str, ...], bit: int | None = None) -> tuple[int, bool]:
-    total = 0
-    found = False
-    for row in rows:
-        if bit is not None:
-            mask = _required_int(_metric(row, "metricAvailabilityMask", "availabilityMask", default=0))
-            if not mask & bit:
-                continue
-        value = _optional_int(_metric(row, *keys))
-        if value is not None:
-            total += value
-            found = True
-    return total, found
-
-
-def _aggregate_frame_metrics(rows: list[dict[str, Any]], summary: Mapping[str, Any]) -> dict[str, Any]:
-    frame_ms = [value for value in _available_values(rows, ("frameMilliseconds", "frame_ms")) if value > 0.0]
-    gpu_ms = _available_values(rows, ("totalHairGpuMilliseconds", "gpuHairMilliseconds", "total_hair_gpu_ms"), AVAILABILITY_BITS["gpuTiming"])
-    static_cached, _ = _sum_available(rows, ("staticCachedGroupCount",))
-    static_transformed, _ = _sum_available(rows, ("staticTransformedGroupCount",))
-    static_count = static_cached + static_transformed
-    false_static, false_static_found = _sum_available(rows, ("falseStaticCount",), AVAILABILITY_BITS["falseStatic"])
-    repair_attempts, repair_attempts_found = _sum_available(rows, ("repairAttemptCount",))
-    repair_success, repair_success_found = _sum_available(rows, ("repairSuccessCount", "repairExecutionSuccessCount"), AVAILABILITY_BITS["repair"])
-    repair_verified, repair_verified_found = _sum_available(rows, ("repairVerifiedCount",), AVAILABILITY_BITS["repair"])
-    repair_recurrence, repair_recurrence_found = _sum_available(rows, ("repairRecurrenceCount",), AVAILABILITY_BITS["repair"])
-
-    repair_source = "frames"
-    if not repair_verified_found and _optional_int(summary.get("repairVerifiedCount")) is not None:
-        repair_verified = _required_int(summary.get("repairVerifiedCount"))
-        repair_verified_found = True
-        repair_source = "summary_final_counter"
-    if not repair_recurrence_found and _optional_int(summary.get("repairRecurrenceCount")) is not None:
-        repair_recurrence = _required_int(summary.get("repairRecurrenceCount"))
-        repair_recurrence_found = True
-        repair_source = "summary_final_counter"
-    if repair_source == "summary_final_counter" and _optional_int(summary.get("repairAttemptCount")) is not None:
-        repair_attempts = _required_int(summary.get("repairAttemptCount"))
-        repair_attempts_found = True
-    if repair_source == "summary_final_counter" and _optional_int(summary.get("repairSuccessCount")) is not None:
-        repair_success = _required_int(summary.get("repairSuccessCount"))
-        repair_success_found = True
-
-    wake_tp, _ = _sum_available(rows, ("predictiveWakeTruePositiveCount",), AVAILABILITY_BITS["wake"])
-    wake_fp, _ = _sum_available(rows, ("predictiveWakeFalsePositiveCount",), AVAILABILITY_BITS["wake"])
-    wake_fn, _ = _sum_available(rows, ("predictiveWakeFalseNegativeCount",), AVAILABILITY_BITS["wake"])
-    collision_candidates, _ = _sum_available(rows, ("collisionCandidateCount",))
-    collision_misses, _ = _sum_available(rows, ("collisionMissCount",), AVAILABILITY_BITS["collision"])
-    transitions, _ = _sum_available(rows, ("stateTransitionCount",))
-    oscillations, _ = _sum_available(rows, ("stateOscillationCount",))
-    boundary_values = _available_values(rows, ("staticDynamicBoundaryMaxErrorMm",), AVAILABILITY_BITS["boundary"])
-    wake_delays = _available_values(rows, ("wakeDelayFrameMax",), AVAILABILITY_BITS["wake"])
-    shared_conflicts, shared_found = _sum_available(rows, ("sharedPointConflictCount",), AVAILABILITY_BITS["boundary"])
-    display_counts = _available_values(rows, ("totalStrandCount", "displayStrandCount"))
-    determinism_mismatches, determinism_found = _sum_available(
-        rows, ("determinismMismatchCount",), AVAILABILITY_BITS["determinism"]
-    )
-    state_hashes = [_optional_u64(row.get("stateSequenceHash")) for row in rows]
-    compaction_hashes = [_optional_u64(row.get("compactionSequenceHash")) for row in rows]
-    position_hashes = [_optional_u64(row.get("finalPositionHash")) for row in rows]
-    final_state_hash = next((value for value in reversed(state_hashes) if value is not None), None)
-    final_compaction_hash = next((value for value in reversed(compaction_hashes) if value is not None), None)
-    final_position_hash = next((value for value in reversed(position_hashes) if value is not None), None)
-
-    repair_available = _availability_coverage(rows, AVAILABILITY_BITS["repair"]) > 0.0
-    false_static_available = _availability_coverage(rows, AVAILABILITY_BITS["falseStatic"]) > 0.0
-    window = max(len(frame_ms) // 10, 1) if frame_ms else 0
-    initial_p99 = _percentile(frame_ms[:window], 99.0) if window else None
-    final_p99 = _percentile(frame_ms[-window:], 99.0) if window else None
-    p99_degradation_ratio = (
-        final_p99 / initial_p99
-        if final_p99 is not None and initial_p99 is not None and initial_p99 > 0.0
-        else None
-    )
-    return {
-        "sampleCount": len(rows),
-        "averageFrameMilliseconds": sum(frame_ms) / len(frame_ms) if frame_ms else None,
-        "averageFps": (1000.0 / (sum(frame_ms) / len(frame_ms))) if frame_ms and sum(frame_ms) > 0.0 else None,
-        "framesOver100Milliseconds": sum(value > 100.0 for value in frame_ms),
-        "p50FrameMilliseconds": _percentile(frame_ms, 50.0),
-        "p95FrameMilliseconds": _percentile(frame_ms, 95.0),
-        "p99FrameMilliseconds": _percentile(frame_ms, 99.0),
-        "p999FrameMilliseconds": _percentile(frame_ms, 99.9),
-        "maximumFrameMilliseconds": max(frame_ms) if frame_ms else None,
-        "initialWindowP99Milliseconds": initial_p99,
-        "finalWindowP99Milliseconds": final_p99,
-        "p99DegradationRatio": p99_degradation_ratio,
-        "frameBudgetOverrunRate": _safe_rate(sum(value > 16.67 for value in frame_ms), len(frame_ms)),
-        "averageHairGpuMilliseconds": sum(gpu_ms) / len(gpu_ms) if gpu_ms else None,
-        "p95HairGpuMilliseconds": _percentile(gpu_ms, 95.0),
-        "p99HairGpuMilliseconds": _percentile(gpu_ms, 99.0),
-        "falseStaticRate": _safe_rate(false_static, static_count) if false_static_available and false_static_found else None,
-        "repairExecutionSuccessRate": _safe_rate(repair_success, repair_attempts) if repair_available and repair_success_found and repair_attempts_found else None,
-        "repairVerifiedSuccessRate": _safe_rate(repair_verified, repair_attempts) if repair_available and repair_verified_found and repair_attempts_found else None,
-        "repairRecurrenceRate": _safe_rate(repair_recurrence, repair_attempts) if repair_available and repair_recurrence_found and repair_attempts_found else None,
-        "predictiveWakePrecision": _safe_rate(wake_tp, wake_tp + wake_fp) if _availability_coverage(rows, AVAILABILITY_BITS["wake"]) > 0 else None,
-        "predictiveWakeRecall": _safe_rate(wake_tp, wake_tp + wake_fn) if _availability_coverage(rows, AVAILABILITY_BITS["wake"]) > 0 else None,
-        "wakeDelayFrameMax": max(wake_delays) if wake_delays else None,
-        "collisionCandidateCount": collision_candidates if _availability_coverage(rows, AVAILABILITY_BITS["collision"]) > 0 else None,
-        "collisionMissRate": _safe_rate(collision_misses, collision_candidates) if _availability_coverage(rows, AVAILABILITY_BITS["collision"]) > 0 else None,
-        "stateOscillationRate": _safe_rate(oscillations, transitions),
-        "staticDynamicBoundaryMaxErrorMm": max(boundary_values) if boundary_values else None,
-        "sharedPointConflictCount": shared_conflicts if shared_found else None,
-        "determinismMismatchCount": determinism_mismatches if determinism_found else None,
-        "stateSequenceHash": final_state_hash,
-        "compactionSequenceHash": final_compaction_hash,
-        "finalPositionHash": final_position_hash,
-        "displayStrandCount": int(round(max(display_counts))) if display_counts else None,
-        "gpuTimingCoverage": _availability_coverage(rows, AVAILABILITY_BITS["gpuTiming"]),
-        "availabilityCoverage": {name: _availability_coverage(rows, bit) for name, bit in AVAILABILITY_BITS.items()},
-        "evidenceProvenance": {
-            "falseStatic": "dedicated_bit12_only",
-            "repair": repair_source if repair_verified_found or repair_recurrence_found else "unavailable",
-            "csvJsonlMerge": True,
-            "formalEvidenceSidecarMerged": any(_as_bool(row.get("formalEvidenceMerged")) for row in rows),
-            "proxyMetricsUsed": False,
-        },
-        "counts": {
-            "falseStatic": false_static, "staticGroups": static_count,
-            "repairAttempts": repair_attempts, "repairSuccess": repair_success,
-            "repairVerified": repair_verified if repair_verified_found else None,
-            "repairRecurrence": repair_recurrence if repair_recurrence_found else None,
-            "wakeTruePositive": wake_tp, "wakeFalsePositive": wake_fp, "wakeFalseNegative": wake_fn,
-            "collisionCandidates": collision_candidates, "collisionMisses": collision_misses,
-            "stateTransitions": transitions, "stateOscillations": oscillations,
-        },
-    }
-
-
-def _evaluate_quality_gates(aggregate: Mapping[str, Any], case: Mapping[str, Any]) -> list[dict[str, Any]]:
-    thresholds: dict[str, float] = {
-        "falseStaticRate": 0.05,
-        "repairVerifiedSuccessRate": 0.95,
-        "repairRecurrenceRate": 0.05,
-        "predictiveWakeRecall": 0.95,
-        "collisionMissRate": 0.01,
-        "stateOscillationRate": 0.02,
-        "staticDynamicBoundaryMaxErrorMm": 1.0,
-    }
-    thresholds.update({key: float(value) for key, value in dict(case.get("quality_gates", {})).items()})
-    required = set(case.get("required_quality_metrics", []))
-    issues: list[dict[str, Any]] = []
-    minimum_average_fps = _required_float(case.get("minimum_average_fps"), 24.0)
-    maximum_p95_frame_ms = _required_float(case.get("maximum_p95_frame_ms"), 1000.0 / 24.0)
-    maximum_p99_frame_ms = _required_float(case.get("maximum_p99_frame_ms"), 50.0)
-    maximum_single_frame_ms = _required_float(case.get("maximum_single_frame_ms"), 100.0)
-    maximum_frames_over_100ms = _required_int(case.get("maximum_frames_over_100ms"), 0)
-
-    performance_gates = (
-        ("averageFps", minimum_average_fps, "minimum"),
-        ("p95FrameMilliseconds", maximum_p95_frame_ms, "maximum"),
-        ("p99FrameMilliseconds", maximum_p99_frame_ms, "maximum"),
-        ("maximumFrameMilliseconds", maximum_single_frame_ms, "maximum"),
-        ("framesOver100Milliseconds", float(maximum_frames_over_100ms), "maximum"),
-    )
-    for key, threshold, direction in performance_gates:
-        observed = aggregate.get(key)
-        if observed is None:
-            issues.append(_issue("E_PERFORMANCE_METRIC_UNAVAILABLE", f"Performance metric is unavailable: {key}"))
-        elif direction == "minimum" and float(observed) < threshold:
-            issues.append(_issue("E_PERFORMANCE_GATE", f"Performance metric is below minimum: {key}", expected=threshold, observed=observed))
-        elif direction == "maximum" and float(observed) > threshold:
-            issues.append(_issue("E_PERFORMANCE_GATE", f"Performance metric exceeds maximum: {key}", expected=threshold, observed=observed))
-
-    maximum = {"falseStaticRate", "repairRecurrenceRate", "collisionMissRate", "stateOscillationRate", "staticDynamicBoundaryMaxErrorMm"}
-    minimum = {"repairVerifiedSuccessRate", "predictiveWakeRecall"}
-    for key in sorted(set(thresholds) | required):
-        observed = aggregate.get(key)
-        if observed is None:
-            if key in required:
-                issues.append(_issue("E_QUALITY_METRIC_UNAVAILABLE", f"Required quality metric is unavailable: {key}"))
-            continue
-        threshold = thresholds.get(key)
-        if threshold is None:
-            continue
-        if key in maximum and float(observed) > threshold:
-            issues.append(_issue("E_QUALITY_GATE", f"Quality metric exceeds maximum: {key}", expected=threshold, observed=observed))
-        elif key in minimum and float(observed) < threshold:
-            issues.append(_issue("E_QUALITY_GATE", f"Quality metric is below minimum: {key}", expected=threshold, observed=observed))
-    return issues
-
-
-def _linear_slope_per_minute(samples: list[tuple[float, float]]) -> float | None:
-    if len(samples) < 3:
+def _linear_slope_per_minute(points: list[tuple[float, float]]) -> float | None:
+    if len(points) < 3:
         return None
-    origin = samples[0][0]
-    points = [((timestamp - origin) / 60.0, value) for timestamp, value in samples]
-    mean_x = sum(point[0] for point in points) / len(points)
-    mean_y = sum(point[1] for point in points) / len(points)
-    denominator = sum((point[0] - mean_x) ** 2 for point in points)
+    origin = points[0][0]
+    normalized = [((timestamp - origin) / 60.0, value) for timestamp, value in points]
+    mean_x = sum(x for x, _ in normalized) / len(normalized)
+    mean_y = sum(y for _, y in normalized) / len(normalized)
+    denominator = sum((x - mean_x) ** 2 for x, _ in normalized)
     if denominator <= 0.0:
         return None
-    return sum((x - mean_x) * (y - mean_y) for x, y in points) / denominator
+    return sum((x - mean_x) * (y - mean_y) for x, y in normalized) / denominator
 
 
-def _environment_runtime_metrics(environment: Mapping[str, Any]) -> dict[str, Any]:
+def environment_metrics(environment: Mapping[str, Any], case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     samples = environment.get("samples", []) if isinstance(environment.get("samples"), list) else []
     vram_points: list[tuple[float, float]] = []
     ram_points: list[tuple[float, float]] = []
+    temperatures: list[float] = []
+    clocks: list[float] = []
     for sample in samples:
         if not isinstance(sample, dict):
             continue
-        timestamp = _optional_float(sample.get("sampleTimeUnix"))
+        timestamp = _to_float(sample.get("sampleTimeUnix"))
         gpu = sample.get("gpu", {}) if isinstance(sample.get("gpu"), dict) else {}
         memory = sample.get("systemMemory", {}) if isinstance(sample.get("systemMemory"), dict) else {}
-        vram = _optional_float(gpu.get("memoryUsedMiB"))
-        ram = _optional_float(memory.get("usedMiB"))
+        vram = _to_float(gpu.get("memoryUsedMiB"))
+        ram = _to_float(memory.get("usedMiB"))
+        temperature = _to_float(gpu.get("temperatureC"))
+        clock = _to_float(gpu.get("graphicsClockMHz"))
         if timestamp is not None and vram is not None:
             vram_points.append((timestamp, vram))
         if timestamp is not None and ram is not None:
             ram_points.append((timestamp, ram))
-    return {
-        "peakVramMb": max((value for _, value in vram_points), default=None),
-        "peakRamMb": max((value for _, value in ram_points), default=None),
-        "vramSlopeMbPerMin": _linear_slope_per_minute(vram_points),
-        "ramSlopeMbPerMin": _linear_slope_per_minute(ram_points),
-    }
-
-
-def _evaluate_environment(environment: Mapping[str, Any], case: Mapping[str, Any]) -> tuple[bool, bool, list[dict[str, Any]]]:
-    issues: list[dict[str, Any]] = []
-    if not environment:
-        return False, False, [_issue("E_ENVIRONMENT_MISSING", "Hardware environment evidence is missing.")]
-    start = environment.get("start", {}) if isinstance(environment.get("start"), dict) else {}
-    end = environment.get("end", {}) if isinstance(environment.get("end"), dict) else {}
-    samples = environment.get("samples", []) if isinstance(environment.get("samples"), list) else []
-    gpu = start.get("gpu", {}) if isinstance(start.get("gpu"), dict) else {}
-    if not gpu and isinstance(end.get("gpu"), dict):
-        gpu = end.get("gpu", {})
-    viewer_adapter = environment.get("viewerAdapter", {}) if isinstance(environment.get("viewerAdapter"), dict) else {}
-    gpu_name = gpu.get("name") or viewer_adapter.get("name")
-    driver_version = gpu.get("driverVersion") or viewer_adapter.get("driverVersion")
-    memory_total = gpu.get("memoryTotalMiB") or viewer_adapter.get("dedicatedVideoMemoryMiB")
-    vendor_id = viewer_adapter.get("vendorId")
-    device_id = viewer_adapter.get("deviceId")
-    environment_valid = bool(gpu_name and memory_total and (driver_version or (vendor_id and device_id)))
-    if sys.platform == "win32" and not environment_valid:
-        issues.append(_issue("E_ENVIRONMENT_FIELDS", "GPU identity, driver or DXGI IDs, and dedicated VRAM are required."))
-    temperatures: list[float] = []
-    clocks: list[float] = []
-    for sample in samples:
-        sample_gpu = sample.get("gpu", {}) if isinstance(sample, dict) and isinstance(sample.get("gpu"), dict) else {}
-        temperature = _optional_float(sample_gpu.get("temperatureC"))
-        clock = _optional_float(sample_gpu.get("graphicsClockMHz"))
         if temperature is not None:
             temperatures.append(temperature)
         if clock is not None:
             clocks.append(clock)
-    thermal_evidence_available = bool(temperatures and len(clocks) >= 3)
-    thermal_valid = thermal_evidence_available
-    if not thermal_evidence_available and not _as_bool(case.get("allow_missing_thermal_evidence", False)):
-        issues.append(_issue(
-            "E_THERMAL_EVIDENCE_UNAVAILABLE",
-            "Formal performance evidence requires temperature and at least three GPU clock samples.",
-            expected={"temperatureSamples": ">=1", "clockSamples": ">=3"},
-            observed={"temperatureSamples": len(temperatures), "clockSamples": len(clocks)},
-        ))
-    elif not thermal_evidence_available:
-        thermal_valid = True
-    maximum_temperature = _required_float(case.get("maximum_gpu_temperature_c"), 88.0)
-    if temperatures and max(temperatures) > maximum_temperature:
-        thermal_valid = False
-        issues.append(_issue("E_THERMAL_TEMPERATURE", "GPU temperature exceeded the formal limit.", expected=maximum_temperature, observed=max(temperatures)))
-    maximum_drop = _required_float(case.get("maximum_gpu_clock_drop_ratio"), 0.15)
-    if len(clocks) >= 3:
+    metrics = {
+        "hardwareSampleCount": len(samples),
+        "peakVramMb": max((value for _, value in vram_points), default=None),
+        "peakRamMb": max((value for _, value in ram_points), default=None),
+        "vramSlopeMbPerMin": _linear_slope_per_minute(vram_points),
+        "ramSlopeMbPerMin": _linear_slope_per_minute(ram_points),
+        "maximumGpuTemperatureC": max(temperatures, default=None),
+        "gpuTemperatureSpreadC": (max(temperatures) - min(temperatures)) if temperatures else None,
+        "gpuClockDropRatio": None,
+    }
+    if clocks:
         reference = sorted(clocks)[len(clocks) // 2]
-        drop = (reference - min(clocks)) / reference if reference > 0 else 0.0
-        if drop > maximum_drop:
-            thermal_valid = False
-            issues.append(_issue("E_THERMAL_CLOCK_DROP", "GPU clock drop exceeded the formal limit.", expected=maximum_drop, observed=drop))
-    return environment_valid, thermal_valid, issues
+        metrics["gpuClockDropRatio"] = (reference - min(clocks)) / reference if reference > 0.0 else 0.0
+    problems: list[dict[str, Any]] = []
+    contract = case.get("hardware_profile_contract", {}) if isinstance(case.get("hardware_profile_contract"), dict) else {}
+    execution = contract.get("executionContract", {}) if isinstance(contract.get("executionContract"), dict) else {}
+    minimum_samples = _to_int(execution.get("minimumGpuClockSamples"), 0)
+    if minimum_samples and len(clocks) < minimum_samples:
+        problems.append(issue("E_THERMAL_SAMPLE_COVERAGE", "Insufficient GPU clock samples.", expected=minimum_samples, observed=len(clocks)))
+    maximum_temperature = _to_float(execution.get("maximumGpuTemperatureCelsius"))
+    if maximum_temperature is not None and (metrics["maximumGpuTemperatureC"] is None or float(metrics["maximumGpuTemperatureC"]) > maximum_temperature):
+        problems.append(issue("E_THERMAL_TEMPERATURE", "GPU temperature exceeded the profile limit.", expected=maximum_temperature, observed=metrics["maximumGpuTemperatureC"]))
+    maximum_spread = _to_float(execution.get("maximumGpuTemperatureSpreadCelsius"))
+    if maximum_spread is not None and (metrics["gpuTemperatureSpreadC"] is None or float(metrics["gpuTemperatureSpreadC"]) > maximum_spread):
+        problems.append(issue("E_THERMAL_SPREAD", "GPU temperature spread exceeded the profile limit.", expected=maximum_spread, observed=metrics["gpuTemperatureSpreadC"]))
+    maximum_drop = _to_float(execution.get("maximumGpuClockDropRatio"))
+    if maximum_drop is not None and (metrics["gpuClockDropRatio"] is None or float(metrics["gpuClockDropRatio"]) > maximum_drop):
+        problems.append(issue("E_THERMAL_CLOCK_DROP", "GPU clock drop exceeded the profile limit.", expected=maximum_drop, observed=metrics["gpuClockDropRatio"]))
+    return metrics, problems
 
 
-def _canonical_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
-    result = dict(summary)
-    for key in ("canonicalResultSha256", "validationReasons", "formalAggregateMetrics", "resultManifestSha256", "resultManifestPath", "formalExitCode", "validationStatus", "status"):
-        result.pop(key, None)
-    return result
+def build_execution_fingerprint(case: Mapping[str, Any], viewer_exe: Path,
+                                repo_root: Path, manifest: Mapping[str, Any],
+                                probe: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    timeline = resolve_path(case.get("scenario_timeline"), repo_root)
+    shader_root = resolve_path(case.get("shader_root"), repo_root)
+    gpu = probe.get("gpu", {}) if isinstance(probe.get("gpu"), dict) else {}
+    profile_contract = case.get("hardware_profile_contract", {})
+    payload = {
+        "commitSha": git_value(repo_root, "rev-parse", "HEAD"),
+        "executableSha256": sha256_file(viewer_exe),
+        "shaderBundleSha256": sha256_tree([shader_root], base_path=shader_root) if shader_root and shader_root.exists() else "",
+        "assetSha256": manifest.get("sourceAssetSha256", ""),
+        "topologySha256": manifest.get("generatedTopologySha256", ""),
+        "generatorSettingsSha256": manifest.get("generatorSettingsSha256", ""),
+        "assetManifestSha256": sha256_file(Path(str(case["asset_manifest"]))),
+        "timelineSha256": sha256_file(timeline) if timeline and timeline.is_file() else "",
+        "settingsSha256": case.get("settings_hash", ""),
+        "hardwareProfile": case.get("hardware_profile", ""),
+        "hardwareProfileContractSha256": canonical_json_sha256(profile_contract),
+        "gpuName": gpu.get("name", ""),
+        "driverVersion": gpu.get("driverVersion", ""),
+        "osBuild": probe.get("osBuild", ""),
+        "pythonVersion": probe.get("pythonVersion", ""),
+    }
+    return canonical_json_sha256(payload), payload
 
 
-def _write_artifact_manifest(directory: Path, run_name: str, artifact_paths: list[Path], canonical_result_sha256: str) -> Path:
-    entries = []
-    for path in artifact_paths:
-        path = Path(path)
-        if path.is_file():
-            entries.append({"path": path.name, "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)})
-    payload: dict[str, Any] = {
+def output_paths(output_dir: Path, run_name: str) -> dict[str, Path]:
+    base = Path(output_dir)
+    return {
+        "case": base / f"{run_name}_case.json",
+        "frames_csv": base / f"{run_name}_frames.csv",
+        "frames_jsonl": base / f"{run_name}_frames.jsonl",
+        "summary": base / f"{run_name}_summary.json",
+        "settings": base / f"{run_name}_settings.json",
+        "environment": base / f"{run_name}_environment.json",
+        "hardware": base / f"{run_name}_hardware.json",
+        "hardware_timeseries": base / f"{run_name}_hardware_timeseries.csv",
+        "validation": base / f"{run_name}_validation.json",
+        "manifest": base / f"{run_name}_manifest.json",
+        "error": base / f"{run_name}_error.json",
+        "stdout": base / f"{run_name}_viewer_stdout.log",
+        "stderr": base / f"{run_name}_viewer_stderr.log",
+        "running": base / f"{run_name}_RUNNING.json",
+        "complete": base / f"{run_name}_COMPLETE.json",
+        "lock": base / f"{run_name}.run.lock",
+    }
+
+
+def set_execution_state(active: bool) -> None:
+    if sys.platform != "win32":
+        return
+    flags = (0x80000000 | 0x00000001 | 0x00000002) if active else 0x80000000
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+    except Exception:
+        pass
+
+
+def run_process(command: list[str], cwd: Path, environment: Mapping[str, str],
+                timeout_seconds: int) -> tuple[int, str, str]:
+    creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=dict(environment),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
+        creationflags=creation_flags,
+        start_new_session=(sys.platform != "win32"),
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=max(int(timeout_seconds), 1))
+    except subprocess.TimeoutExpired as exc:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        stdout, stderr = process.communicate(timeout=30)
+        raise FormalRunError(
+            f"Viewer timed out after {timeout_seconds} seconds.",
+            EXIT_RUNTIME_FAILURE,
+            [issue("E_VIEWER_TIMEOUT", "Viewer exceeded the formal timeout.", expected=timeout_seconds, observed=timeout_seconds)],
+        ) from exc
+    return int(process.returncode), (stdout or "")[-1_000_000:], (stderr or "")[-1_000_000:]
+
+
+def aggregate_frames(rows: list[Mapping[str, Any]], summary: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    summary = summary or {}
+    frame_ms = [value for row in rows if (value := _to_float(row.get("frameMilliseconds"))) is not None]
+    gpu_ms = [value for row in rows if (value := _to_float(row.get("gpuHairMilliseconds"))) is not None and value >= 0.0]
+    overrun = sum(value > FRAME_BUDGET_MS for value in frame_ms)
+    first_count = max(1, len(frame_ms) // 10) if frame_ms else 0
+    first_p99 = percentile(frame_ms[:first_count], 99.0) if first_count else None
+    last_p99 = percentile(frame_ms[-first_count:], 99.0) if first_count else None
+    p99_degradation = (last_p99 / first_p99) if first_p99 and last_p99 is not None else None
+
+    def max_metric(key: str, default: Any = None) -> Any:
+        values = [_to_float(row.get(key)) for row in rows]
+        finite = [value for value in values if value is not None]
+        return max(finite) if finite else default
+
+    def min_metric(key: str, default: Any = None) -> Any:
+        values = [_to_float(row.get(key)) for row in rows]
+        finite = [value for value in values if value is not None]
+        return min(finite) if finite else default
+
+    def max_int(key: str, default: int = 0) -> int:
+        return max((_to_int(row.get(key), default) for row in rows), default=default)
+
+    return {
+        "frameCount": len(rows),
+        "averageFrameMilliseconds": sum(frame_ms) / len(frame_ms) if frame_ms else None,
+        "averageFps": (1000.0 * len(frame_ms) / sum(frame_ms)) if frame_ms and sum(frame_ms) > 0.0 else None,
+        "p95FrameMilliseconds": percentile(frame_ms, 95.0),
+        "p99FrameMilliseconds": percentile(frame_ms, 99.0),
+        "p999FrameMilliseconds": percentile(frame_ms, 99.9),
+        "maximumFrameMilliseconds": max(frame_ms) if frame_ms else None,
+        "framesOver100Milliseconds": sum(value > 100.0 for value in frame_ms),
+        "frameBudgetOverrunRate": overrun / len(frame_ms) if frame_ms else None,
+        "sixtyFpsRatio": 1.0 - (overrun / len(frame_ms)) if frame_ms else None,
+        "gpuTimingCoverage": len(gpu_ms) / len(rows) if rows else 0.0,
+        "maximumGpuHairMilliseconds": max(gpu_ms) if gpu_ms else None,
+        "falseStaticRate": max_metric("falseStaticRate"),
+        "collisionMissRate": max_metric("collisionMissRate"),
+        "repairVerifiedSuccessRate": min_metric("repairVerifiedSuccessRate"),
+        "repairRecurrenceRate": max_metric("repairRecurrenceRate"),
+        "predictiveWakeRecall": min_metric("predictiveWakeRecall"),
+        "wakeDelayFrameMax": max_metric("wakeDelayFrameMax"),
+        "sharedPointConflictCount": max_int("sharedPointConflictCount"),
+        "stateOscillationRate": max_metric("stateOscillationRate"),
+        "staticDynamicBoundaryMaxErrorMm": max_metric("staticDynamicBoundaryMaxErrorMm"),
+        "determinismMismatchCount": max_int("determinismMismatchCount"),
+        "scenarioAppliedEventCount": max_int("scenarioAppliedEventCount"),
+        "collisionCandidateCount": max_int("collisionCandidateCount"),
+        "wakeRequestGroupCount": max_int("wakeRequestGroupCount"),
+        "repairAttemptCount": max_int("repairAttemptCount"),
+        "stateTransitionCount": max_int("stateTransitionCount"),
+        "stateOscillationCount": max_int("stateOscillationCount"),
+        "stateSequenceHash": max_int("stateSequenceHash"),
+        "compactionSequenceHash": max_int("compactionSequenceHash"),
+        "finalPositionHash": max_int("finalPositionHash"),
+        "p99DegradationRatio": p99_degradation,
+        "queryUnresolvedSlope": (
+            _to_int(summary.get("gpuTimingUnresolvedFrameCount"), 0)
+            / max(len(rows) / 3600.0, 1.0 / 60.0)
+        ),
+        "availableFrameFields": sorted({key for row in rows for key in row.keys()}),
+    }
+
+
+def validate_scenario_assertions(case: Mapping[str, Any], aggregate: Mapping[str, Any]) -> list[dict[str, Any]]:
+    timeline_path = resolve_path(case.get("scenario_timeline"))
+    timeline = read_json(timeline_path) if timeline_path else {}
+    assertions = timeline.get("assertions", {}) if isinstance(timeline.get("assertions"), dict) else {}
+    problems: list[dict[str, Any]] = []
+    checks = [
+        ("exactAppliedEventCount", "scenarioAppliedEventCount", "equal"),
+        ("minimumCollisionCandidates", "collisionCandidateCount", "minimum"),
+        ("minimumWakeRequests", "wakeRequestGroupCount", "minimum"),
+        ("minimumRepairAttempts", "repairAttemptCount", "minimum"),
+        ("minimumStateTransitions", "stateTransitionCount", "minimum"),
+        ("maximumStateOscillations", "stateOscillationCount", "maximum"),
+    ]
+    available_fields = set(aggregate.get("availableFrameFields", []))
+    for expected_key, observed_key, mode in checks:
+        if expected_key not in assertions:
+            continue
+        if observed_key not in available_fields:
+            problems.append(issue(
+                "E_SCENARIO_METRIC_UNAVAILABLE",
+                f"Scenario assertion metric is unavailable: {observed_key}",
+            ))
+            continue
+        expected = float(assertions[expected_key])
+        observed = float(aggregate.get(observed_key) or 0.0)
+        failed = (
+            (mode == "equal" and observed != expected)
+            or (mode == "minimum" and observed < expected)
+            or (mode == "maximum" and observed > expected)
+        )
+        if failed:
+            problems.append(issue(
+                "E_SCENARIO_ASSERTION",
+                f"Scenario assertion failed: {expected_key}",
+                expected=expected,
+                observed=observed,
+            ))
+    return problems
+
+
+def validate_settings(case: Mapping[str, Any], summary: Mapping[str, Any],
+                      settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+    problems: list[dict[str, Any]] = []
+    expected_case_id = str(case.get("case_id", ""))
+    if str(summary.get("caseId") or summary.get("case_id") or "") != expected_case_id:
+        problems.append(issue("E_CASE_ID", "Summary case id mismatch.", expected=expected_case_id, observed=summary.get("caseId")))
+    if str(summary.get("settingsSha256") or "").lower() != str(case.get("settings_hash") or "").lower():
+        problems.append(issue("E_SETTINGS_HASH", "Summary settings hash mismatch.", expected=case.get("settings_hash"), observed=summary.get("settingsSha256")))
+    if not _as_bool(summary.get("realMeasurement")):
+        problems.append(issue("E_NOT_REAL_MEASUREMENT", "Viewer did not certify a real measurement."))
+    requested = settings.get("requested", {}) if isinstance(settings.get("requested"), dict) else {}
+    applied = settings.get("applied", {}) if isinstance(settings.get("applied"), dict) else {}
+    observed_flags = settings.get("observedFlags", {}) if isinstance(settings.get("observedFlags"), dict) else {}
+    expected_flags = case.get("method_settings", {}) if isinstance(case.get("method_settings"), dict) else {}
+    for evidence_name, evidence in (("requested", requested), ("applied", applied), ("observed", observed_flags)):
+        for key in METHOD_FLAG_KEYS:
+            if key not in evidence:
+                problems.append(issue(f"E_{evidence_name.upper()}_FLAG_MISSING", f"{evidence_name} flag missing: {key}"))
+            elif not _settings_match(expected_flags.get(key), evidence.get(key)):
+                problems.append(issue(
+                    f"E_{evidence_name.upper()}_SETTING_MISMATCH",
+                    f"{evidence_name} flag mismatch: {key}",
+                    expected=expected_flags.get(key),
+                    observed=evidence.get(key),
+                ))
+    if not _as_bool(settings.get("methodFlagsMatched")):
+        problems.append(issue("E_VIEWER_METHOD_ACK", "Viewer did not acknowledge the complete method flag set."))
+    observed = settings.get("observed", {}) if isinstance(settings.get("observed"), dict) else {}
+    runtime_expected = {
+        "renderWidth": _to_int(case.get("width")),
+        "renderHeight": _to_int(case.get("height")),
+        "displayStrandCount": _to_int(case.get("display_strand_count")),
+        "guideCount": _to_int(case.get("guide_strand_count")),
+        "particlesPerGuide": _to_int(case.get("particles_per_guide")),
+        "solverIterations": _to_int(case.get("solver_iterations")),
+        "vsync": _as_bool(case.get("vsync")),
+        "presentSyncInterval": _to_int(case.get("present_sync_interval")),
+    }
+    for key, expected in runtime_expected.items():
+        if key not in observed or not _settings_match(expected, observed.get(key)):
+            problems.append(issue("E_OBSERVED_RUNTIME_SETTING", f"Observed runtime setting mismatch: {key}", expected=expected, observed=observed.get(key)))
+    expected_method_hash = canonical_json_sha256(dict(expected_flags))
+    for key in ("requestedMethodSettingsSha256", "appliedMethodSettingsSha256", "observedMethodSettingsSha256"):
+        value = str(settings.get(key) or "")
+        if not value or value.lower() != expected_method_hash.lower():
+            problems.append(issue("E_METHOD_SETTINGS_HASH", f"Method-settings hash mismatch: {key}", expected=expected_method_hash, observed=value))
+    if not _as_bool(settings.get("formalAssetLoaded")):
+        problems.append(issue("E_FORMAL_ASSET_NOT_LOADED", "Viewer did not certify loading the frozen formal asset."))
+    expected_asset_path = resolve_path(case.get("formalAssetPath"))
+    observed_asset_path = resolve_path(settings.get("observedAssetPath"))
+    if expected_asset_path and (observed_asset_path is None or os.path.normcase(str(expected_asset_path)) != os.path.normcase(str(observed_asset_path))):
+        problems.append(issue("E_FORMAL_ASSET_PATH", "Observed formal asset path mismatch.", expected=str(expected_asset_path), observed=str(observed_asset_path)))
+    return problems
+
+
+def validate_outputs(case: Mapping[str, Any], paths: Mapping[str, Path]) -> dict[str, Any]:
+    required = ("frames_csv", "frames_jsonl", "summary", "settings", "environment")
+    missing = [str(paths[key]) for key in required if not paths[key].is_file() or paths[key].stat().st_size == 0]
+    if missing:
+        raise FormalRunError(
+            "Required outputs are missing.",
+            EXIT_OUTPUT_INTEGRITY_FAILURE,
+            [issue("E_OUTPUT_MISSING", "Required outputs are missing.", observed=missing)],
+        )
+    csv_rows = read_csv_rows(paths["frames_csv"])
+    json_rows = read_jsonl(paths["frames_jsonl"])
+    summary = read_json(paths["summary"])
+    settings = read_json(paths["settings"])
+    environment = read_json(paths["environment"])
+    problems: list[dict[str, Any]] = []
+    expected_frames = _to_int(case.get("measurement_frames"))
+    if len(csv_rows) != expected_frames:
+        problems.append(issue("E_CSV_FRAME_COUNT", "CSV frame count mismatch.", expected=expected_frames, observed=len(csv_rows)))
+    if len(json_rows) != expected_frames:
+        problems.append(issue("E_JSONL_FRAME_COUNT", "JSONL frame count mismatch.", expected=expected_frames, observed=len(json_rows)))
+    if csv_rows:
+        missing_columns = sorted(REQUIRED_FRAME_COLUMNS - set(csv_rows[0]))
+        if missing_columns:
+            problems.append(issue("E_FRAME_SCHEMA", "Required CSV columns are missing.", observed=missing_columns))
+    if json_rows:
+        missing_columns = sorted(REQUIRED_FRAME_COLUMNS - set(json_rows[0]))
+        if missing_columns:
+            problems.append(issue("E_JSONL_SCHEMA", "Required JSONL fields are missing.", observed=missing_columns))
+    if len(csv_rows) == len(json_rows):
+        for index, (csv_row, json_row) in enumerate(zip(csv_rows, json_rows)):
+            for key in ("caseId", "sourceFrameIndex"):
+                if str(csv_row.get(key)) != str(json_row.get(key)):
+                    problems.append(issue("E_CSV_JSONL_PARITY", f"Frame parity mismatch at row {index}: {key}."))
+                    break
+            if problems and problems[-1].get("code") == "E_CSV_JSONL_PARITY":
+                break
+    rows: list[Mapping[str, Any]] = json_rows if json_rows else csv_rows
+    source_indices = [_to_int(row.get("sourceFrameIndex"), -1) for row in rows]
+    if any(value < 0 for value in source_indices):
+        problems.append(issue("E_SOURCE_FRAME_MISSING", "Source frame index is missing."))
+    elif any(current <= previous for previous, current in zip(source_indices, source_indices[1:])):
+        problems.append(issue("E_SOURCE_FRAME_SEQUENCE", "Source frame indices are not strictly increasing."))
+    expected_case_id = str(case.get("case_id", ""))
+    for index, row in enumerate(rows):
+        if str(row.get("caseId", "")) != expected_case_id:
+            problems.append(issue("E_FRAME_CASE_ID", f"Frame {index} case id mismatch.", expected=expected_case_id, observed=row.get("caseId")))
+            break
+        if _to_int(row.get("fatalFailure")) != 0 or _to_int(row.get("fatalFailureCode")) != 0:
+            problems.append(issue("E_FATAL_FRAME", f"Fatal failure reported at frame {index}."))
+            break
+        if _to_int(row.get("syntheticMetricCount")) != 0:
+            problems.append(issue("E_SYNTHETIC_METRIC", f"Synthetic metric reported at frame {index}."))
+            break
+        if _to_int(row.get("nanStateCount")) or _to_int(row.get("infiniteStateCount")):
+            problems.append(issue("E_NONFINITE_STATE", f"NaN/Inf state reported at frame {index}."))
+            break
+        frame_time = _to_float(row.get("frameMilliseconds"))
+        if frame_time is None or frame_time < 0.0:
+            problems.append(issue("E_NONFINITE_FRAME_TIME", f"Invalid frame time at frame {index}."))
+            break
+    problems.extend(validate_settings(case, summary, settings))
+    aggregate = aggregate_frames(rows, summary)
+    available_fields = set(aggregate.get("availableFrameFields", []))
+    required_metrics = (
+        REQUIRED_METRICS_BY_SCENARIO.get(str(case.get("scenario", "")), set())
+        if normalize_method_code(str(case.get("method", ""))) != "B0"
+        else set()
+    )
+    for required_metric in sorted(required_metrics):
+        if required_metric not in available_fields or aggregate.get(required_metric) is None:
+            problems.append(issue(
+                "E_REQUIRED_SCENARIO_METRIC",
+                f"Required scenario metric is unavailable: {required_metric}",
+            ))
+    problems.extend(validate_scenario_assertions(case, aggregate))
+    runtime_metrics, environment_problems = environment_metrics(environment, case)
+    aggregate.update(runtime_metrics)
+    problems.extend(environment_problems)
+    evidence_status = "complete_valid" if not problems else "complete_invalid"
+    gates = {
+        "averageFps": (aggregate.get("averageFps"), float(case.get("minimum_average_fps")), "minimum"),
+        "sixtyFpsRatio": (aggregate.get("sixtyFpsRatio"), float(case.get("minimum_sixty_fps_ratio")), "minimum"),
+        "frameBudgetOverrunRate": (aggregate.get("frameBudgetOverrunRate"), float(case.get("maximum_frame_budget_overrun_rate")), "maximum"),
+        "p95FrameMilliseconds": (aggregate.get("p95FrameMilliseconds"), float(case.get("maximum_p95_frame_ms")), "maximum"),
+        "p99FrameMilliseconds": (aggregate.get("p99FrameMilliseconds"), float(case.get("maximum_p99_frame_ms")), "maximum"),
+        "maximumFrameMilliseconds": (aggregate.get("maximumFrameMilliseconds"), float(case.get("maximum_single_frame_ms")), "maximum"),
+        "framesOver100Milliseconds": (aggregate.get("framesOver100Milliseconds"), float(case.get("maximum_frames_over_100ms")), "maximum"),
+        "gpuTimingCoverage": (aggregate.get("gpuTimingCoverage"), float(case.get("minimum_gpu_timing_coverage")), "minimum"),
+    }
+    goal_failures: list[dict[str, Any]] = []
+    for name, (observed, threshold, direction) in gates.items():
+        failed = (
+            observed is None
+            or (direction == "minimum" and float(observed) < threshold)
+            or (direction == "maximum" and float(observed) > threshold)
+        )
+        if failed:
+            goal_failures.append(issue("E_GOAL_GATE", f"Goal gate failed: {name}", expected=threshold, observed=observed))
+    stable_status = "achieved" if evidence_status == "complete_valid" and not goal_failures else "not_achieved"
+    return {
+        "validationVersion": VALIDATION_VERSION,
+        "runName": case.get("run_name"),
+        "evidenceStatus": evidence_status,
+        "stable60FpsStatus": stable_status,
+        "hypothesisSupportStatus": "supported" if stable_status == "achieved" else "not_supported",
+        "aggregate": aggregate,
+        "integrityIssues": problems,
+        "goalFailures": goal_failures,
+    }
+
+
+def write_artifact_manifest(paths: Mapping[str, Path], run_name: str,
+                            fingerprint: str) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    for name, path in paths.items():
+        if name in {"manifest", "lock", "running"} or not path.is_file():
+            continue
+        entries.append({
+            "key": name,
+            "path": path.name,
+            "sizeBytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        })
+    payload = {
         "manifestVersion": VALIDATION_VERSION,
         "runName": run_name,
-        "canonicalResultSha256": canonical_result_sha256,
+        "executionFingerprint": fingerprint,
         "artifacts": sorted(entries, key=lambda item: item["path"]),
     }
     payload["manifestSha256"] = canonical_json_sha256(payload)
-    path = Path(directory) / f"{run_name}_manifest.json"
-    write_json(path, payload)
-    return path
+    write_json(paths["manifest"], payload)
+    return payload
 
 
-def validate_required_outputs(
-    summary_json: Path,
-    frame_csv: Path,
-    frame_jsonl: Path,
-    settings_json: Path,
-    run_name: str,
-    *,
-    case: Mapping[str, Any] | None = None,
-    environment_json: Path | None = None,
-) -> dict[str, Any]:
-    normalized = _normalize_case(case or {})
-    required_paths = [Path(summary_json), Path(frame_csv), Path(frame_jsonl), Path(settings_json)]
-    for path in required_paths:
-        if not path.is_file() or path.stat().st_size <= 0:
-            raise FormalRunError(f"Required output is missing or empty: {path}", EXIT_OUTPUT_INTEGRITY_FAILURE)
-
-    summary = _read_json(Path(summary_json))
-    settings = _read_json(Path(settings_json))
-    json_rows = _read_jsonl(Path(frame_jsonl))
-    csv_rows = _read_csv_rows(Path(frame_csv))
-    evidence_path = Path(summary_json).parent / f"{run_name}_formal_evidence.jsonl"
-    evidence_rows = _read_jsonl(evidence_path) if evidence_path.is_file() else []
-    issues: list[dict[str, Any]] = []
-    integrity_issues: list[dict[str, Any]] = _validate_frame_schema_and_parity(json_rows, csv_rows)
-    rows = _merge_formal_evidence(_merge_frame_rows(json_rows, csv_rows), evidence_rows)
-
-    expected_frames = _required_int(normalized.get("measurement_frames"), _required_int(summary.get("measurement_frames", summary.get("measurementFrames"))))
-    if len(json_rows) != expected_frames:
-        integrity_issues.append(_issue("E_JSONL_FRAME_COUNT", "JSONL row count is not exact.", expected=expected_frames, observed=len(json_rows)))
-    if len(csv_rows) != expected_frames:
-        integrity_issues.append(_issue("E_CSV_FRAME_COUNT", "CSV row count is not exact.", expected=expected_frames, observed=len(csv_rows)))
-
-    expected_case_id = str(normalized.get("case_id", ""))
-    observed_case_id = str(summary.get("caseId") or summary.get("case_id") or "")
-    if observed_case_id != expected_case_id:
-        issues.append(_issue("E_CASE_ID", "Summary case id mismatch.", expected=expected_case_id, observed=observed_case_id))
-    if str(summary.get("settingsSha256") or "").lower() != str(normalized.get("settings_hash") or "").lower():
-        issues.append(_issue("E_SETTINGS_HASH", "Summary settings hash mismatch.", expected=normalized.get("settings_hash"), observed=summary.get("settingsSha256")))
-    if not _as_bool(summary.get("realMeasurement")):
-        issues.append(_issue("E_NOT_REAL_MEASUREMENT", "Viewer did not certify this as a real measurement."))
-
-    settings_issues, normalized_settings = _compare_settings(settings, normalized)
-    issues.extend(settings_issues)
-    write_json(Path(settings_json), normalized_settings)
-
-    source_indices = [_optional_int(_metric(row, "sourceFrameIndex", "globalFrameIndex")) for row in rows]
-    if any(value is None for value in source_indices):
-        integrity_issues.append(_issue("E_SOURCE_FRAME_MISSING", "One or more source frame indices are missing."))
-    elif any(current <= previous for previous, current in zip(source_indices, source_indices[1:])):
-        integrity_issues.append(_issue("E_SOURCE_FRAME_SEQUENCE", "Source frame indices are not strictly increasing."))
-
-    for index, row in enumerate(rows):
-        if _required_int(row.get("fatalFailure")) != 0 or _required_int(row.get("fatalFailureCode")) != 0:
-            integrity_issues.append(_issue("E_FATAL_FRAME", f"Frame {index} reports a fatal failure."))
-            break
-        if _required_int(row.get("syntheticMetricCount")) != 0:
-            integrity_issues.append(_issue("E_SYNTHETIC_METRIC", f"Frame {index} contains synthetic metrics."))
-            break
-
-    aggregate = _aggregate_frame_metrics(rows, summary)
-    minimum_gpu_coverage = _required_float(normalized.get("minimum_gpu_timing_coverage"), 0.99)
-    if _required_float(aggregate.get("gpuTimingCoverage")) < minimum_gpu_coverage:
-        issues.append(_issue("E_GPU_TIMING_COVERAGE", "GPU timing coverage is below the formal minimum.", expected=minimum_gpu_coverage, observed=aggregate.get("gpuTimingCoverage")))
-
-    minimum_metric_coverage = _required_float(normalized.get("minimum_metric_coverage"), 0.99)
-    for metric in normalized.get("required_quality_metrics", []):
-        availability_name = METRIC_AVAILABILITY.get(metric)
-        if availability_name:
-            coverage = aggregate.get("availabilityCoverage", {}).get(availability_name, 0.0)
-            if float(coverage) < minimum_metric_coverage:
-                issues.append(_issue("E_REQUIRED_METRIC_COVERAGE", f"Required evidence coverage is too low: {metric}", expected=minimum_metric_coverage, observed=coverage))
-
-    if str(normalized.get("measurement_mode", "")).lower() == "determinism":
-        for key in ("stateSequenceHash", "compactionSequenceHash", "finalPositionHash"):
-            if aggregate.get(key) in (None, 0):
-                issues.append(_issue("E_DETERMINISM_HASH_MISSING", f"Determinism mode requires {key}."))
-        if aggregate.get("determinismMismatchCount") not in (0, None):
-            issues.append(_issue(
-                "E_DETERMINISM_MISMATCH", "Determinism mismatch was observed.",
-                expected=0, observed=aggregate.get("determinismMismatchCount"),
-            ))
-
-    environment: dict[str, Any] = {}
-    if environment_json and Path(environment_json).is_file():
-        environment = _read_json(Path(environment_json))
-    environment_valid, thermal_valid, environment_issues = _evaluate_environment(environment, normalized)
-    issues.extend(environment_issues)
-    runtime_environment_metrics = _environment_runtime_metrics(environment)
-    aggregate.update(runtime_environment_metrics)
-    unresolved_queries = _required_int(summary.get("gpuTimingUnresolvedFrameCount"), 0)
-    aggregate["queryUnresolvedSlope"] = 0.0 if unresolved_queries == 0 else (
-        unresolved_queries / max(float(len(rows)) / 3600.0, 1.0 / 60.0)
-    )
-    quality_issues = _evaluate_quality_gates(aggregate, normalized)
-    if str(normalized.get("measurement_mode", "")).lower() in {"robustness", "long_run"}:
-        long_run_limits = {
-            "peakVramMb": _required_float(normalized.get("max_peak_vram_mb"), 6144.0),
-            "vramSlopeMbPerMin": _required_float(normalized.get("max_vram_slope_mb_per_min"), 1.0),
-            "ramSlopeMbPerMin": _required_float(normalized.get("max_ram_slope_mb_per_min"), 2.0),
-            "p99DegradationRatio": _required_float(normalized.get("max_p99_degradation_ratio"), 1.10),
-            "queryUnresolvedSlope": _required_float(normalized.get("max_query_unresolved_slope"), 0.0),
-        }
-        for metric, limit in long_run_limits.items():
-            observed = aggregate.get(metric)
-            if observed is None:
-                quality_issues.append(_issue("E_LONG_RUN_METRIC_UNAVAILABLE", f"Long-run metric is unavailable: {metric}"))
-            elif float(observed) > limit:
-                quality_issues.append(_issue("E_LONG_RUN_GATE", f"Long-run metric exceeds limit: {metric}", expected=limit, observed=observed))
-
-
-    canonical_payload = {
-        "summary": _canonical_summary(summary),
-        "settings": normalized_settings,
-        "frameCsvSha256": sha256_file(Path(frame_csv)),
-        "frameJsonlSha256": sha256_file(Path(frame_jsonl)),
-        "environmentSha256": sha256_file(Path(environment_json)) if environment_json and Path(environment_json).is_file() else "",
-        "formalEvidenceSha256": sha256_file(evidence_path) if evidence_path.is_file() else "",
-        "aggregate": aggregate,
-    }
-    try:
-        canonical_result_sha256 = canonical_json_sha256(canonical_payload)
-    except (TypeError, ValueError) as exc:
-        integrity_issues.append(_issue("E_CANONICAL_JSON", "Canonical result could not be serialized.", observed=str(exc)))
-        canonical_result_sha256 = ""
-
-    if integrity_issues:
-        status, exit_code = "complete_invalid", EXIT_OUTPUT_INTEGRITY_FAILURE
-    elif issues:
-        status, exit_code = "complete_invalid", EXIT_FORMAL_CONTRACT_INVALID
-    elif quality_issues:
-        status, exit_code = "quality_gate_failed", EXIT_QUALITY_GATE_FAILED
-    else:
-        status, exit_code = "complete_valid", EXIT_COMPLETE_VALID
-
-    summary.update({
-        "validationStatus": status, "status": status, "formalExitCode": exit_code,
-        "canonicalResultSha256": canonical_result_sha256,
-        "formalAggregateMetrics": aggregate,
-        "validationReasons": issues + integrity_issues + quality_issues,
-        "requestedMethodCode": normalized_settings.get("requestedMethodCode"),
-        "appliedMethodCode": normalized_settings.get("appliedMethodCode"),
-        "observedMethodCode": normalized_settings.get("observedMethodCode"),
-        "gpuTimingCoverage": aggregate.get("gpuTimingCoverage"),
-        "avg_frame_ms": aggregate.get("averageFrameMilliseconds"),
-        "p50_frame_ms": aggregate.get("p50FrameMilliseconds"),
-        "p95_frame_ms": aggregate.get("p95FrameMilliseconds"),
-        "p99_frame_ms": aggregate.get("p99FrameMilliseconds"),
-        "p999_frame_ms": aggregate.get("p999FrameMilliseconds"),
-        "worst_frame_ms": aggregate.get("maximumFrameMilliseconds"),
-        "frameOverrunRate": aggregate.get("frameBudgetOverrunRate"),
-        "avg_hair_gpu_ms": aggregate.get("averageHairGpuMilliseconds"),
-        "p95_hair_gpu_ms": aggregate.get("p95HairGpuMilliseconds"),
-        "p99_hair_gpu_ms": aggregate.get("p99HairGpuMilliseconds"),
-        "falseStaticRate": aggregate.get("falseStaticRate"),
-        "predictiveWakePrecision": aggregate.get("predictiveWakePrecision"),
-        "predictiveWakeRecall": aggregate.get("predictiveWakeRecall"),
-        "repairExecutionSuccessRate": aggregate.get("repairExecutionSuccessRate"),
-        "repairVerifiedSuccessRate": aggregate.get("repairVerifiedSuccessRate"),
-        "repairRecurrenceRate": aggregate.get("repairRecurrenceRate"),
-        "collisionMissRate": aggregate.get("collisionMissRate"),
-        "stateOscillationRate": aggregate.get("stateOscillationRate"),
-        "staticDynamicBoundaryMaxErrorMm": aggregate.get("staticDynamicBoundaryMaxErrorMm"),
-        "determinismMismatchCount": aggregate.get("determinismMismatchCount"),
-        "stateSequenceHash": aggregate.get("stateSequenceHash"),
-        "compactionSequenceHash": aggregate.get("compactionSequenceHash"),
-        "finalPositionHash": aggregate.get("finalPositionHash"),
-        "peakVramMb": aggregate.get("peakVramMb"),
-        "peakRamMb": aggregate.get("peakRamMb"),
-        "vramSlopeMbPerMin": aggregate.get("vramSlopeMbPerMin"),
-        "ramSlopeMbPerMin": aggregate.get("ramSlopeMbPerMin"),
-        "p99DegradationRatio": aggregate.get("p99DegradationRatio"),
-        "queryUnresolvedSlope": aggregate.get("queryUnresolvedSlope"),
-        "longRunValid": not any(item["code"].startswith("E_LONG_RUN") for item in quality_issues),
+def _case_snapshot(case: Mapping[str, Any], viewer_exe: Path, repo_root: Path,
+                   manifest: Mapping[str, Any], fingerprint: str,
+                   fingerprint_payload: Mapping[str, Any]) -> dict[str, Any]:
+    snapshot = dict(case)
+    timeline = resolve_path(snapshot.get("scenario_timeline"), repo_root)
+    asset_manifest = resolve_path(snapshot.get("asset_manifest"), repo_root)
+    asset_path = resolve_path(manifest.get("_resolvedAssetPath"))
+    shader_root = resolve_path(snapshot.get("shader_root"), repo_root)
+    snapshot.update({
+        "commitSha": git_value(repo_root, "rev-parse", "HEAD"),
+        "viewerExecutable": str(viewer_exe),
+        "executableSha256": sha256_file(viewer_exe),
+        "shaderBundleSha256": sha256_tree([shader_root], base_path=shader_root) if shader_root and shader_root.exists() else "",
+        "scenarioTimelinePath": str(timeline) if timeline else "",
+        "scenarioTimelineSha256": sha256_file(timeline) if timeline and timeline.is_file() else "",
+        "assetManifestPath": str(asset_manifest) if asset_manifest else "",
+        "assetManifestSha256": sha256_file(asset_manifest) if asset_manifest and asset_manifest.is_file() else "",
+        "assetSha256": str(manifest.get("sourceAssetSha256", "")),
+        "formalAssetPath": str(asset_path) if asset_path else "",
+        "formalAssetSha256": str(manifest.get("sourceAssetSha256", "")),
+        "formalTopologySha256": str(manifest.get("generatedTopologySha256", "")),
+        "generatorSettingsSha256": str(manifest.get("generatorSettingsSha256", "")),
+        "assetFrozen": str(manifest.get("freezeStatus", "")) == "FROZEN",
+        "requestedMethodSettingsSha256": canonical_json_sha256(snapshot.get("method_settings", {})),
+        "executionFingerprint": fingerprint,
+        "executionFingerprintPayload": dict(fingerprint_payload),
     })
-    write_json(Path(summary_json), summary)
-
-    validation_path = Path(summary_json).parent / f"{run_name}_validation.json"
-    validation: dict[str, Any] = {
-        "validationVersion": VALIDATION_VERSION,
-        "runName": run_name,
-        "status": status,
-        "isValid": exit_code == EXIT_COMPLETE_VALID,
-        "formalContractValid": not (issues or integrity_issues),
-        "evidenceIntegrityPassed": not (issues or integrity_issues),
-        "qualityGatePassed": not quality_issues,
-        "thermalValid": thermal_valid,
-        "environmentValid": environment_valid,
-        "requiredMetricCoverageValid": not any(item["code"] == "E_REQUIRED_METRIC_COVERAGE" for item in issues),
-        "exitCode": exit_code,
-        "realMeasurement": _as_bool(summary.get("realMeasurement")),
-        "frameCount": len(json_rows), "csvFrameCount": len(csv_rows), "expectedFrameCount": expected_frames,
-        "gpuTimingCoverage": aggregate.get("gpuTimingCoverage"),
-        "canonicalResultSha256": canonical_result_sha256,
-        "aggregateMetrics": aggregate,
-        "issues": issues + integrity_issues,
-        "qualityGateIssues": quality_issues,
-        "resultManifestPath": f"{run_name}_manifest.json",
-    }
-    write_json(validation_path, validation)
-
-    artifact_directory = Path(summary_json).parent
-    artifacts = [Path(summary_json), Path(frame_csv), Path(frame_jsonl), Path(settings_json), validation_path]
-    for auxiliary in (
-        artifact_directory / f"{run_name}_case.json",
-        artifact_directory / f"{run_name}_preflight.json",
-        _resolve_case_path(normalized.get("scenario_timeline")),
-        _resolve_case_path(normalized.get("asset_manifest")),
-    ):
-        if auxiliary is not None and Path(auxiliary).is_file():
-            artifacts.append(Path(auxiliary))
-    if environment_json and Path(environment_json).is_file():
-        artifacts.append(Path(environment_json))
-    if evidence_path.is_file():
-        artifacts.append(evidence_path)
-    hardware_csv = Path(summary_json).parent / f"{run_name}_hardware_timeseries.csv"
-    if hardware_csv.is_file():
-        artifacts.append(hardware_csv)
-    _write_artifact_manifest(Path(summary_json).parent, run_name, artifacts, canonical_result_sha256)
-
-    if exit_code not in (EXIT_COMPLETE_VALID, EXIT_QUALITY_GATE_FAILED):
-        reasons = issues + integrity_issues + quality_issues
-        raise FormalRunError(f"Run '{run_name}' failed formal validation: " + ", ".join(item["code"] for item in reasons[:10]), exit_code, reasons)
-    return validation
+    return snapshot
 
 
-def _env_token(name: str) -> str:
-    step1 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
-    return re.sub(r"[^A-Za-z0-9]+", "_", step1).strip("_").upper()
-
-
-def _env_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return str(value)
-
-
-def _set_if_present(env: dict[str, str], key: str, value: Any) -> None:
-    if value not in (None, ""):
-        env[key] = _env_value(value)
-
-
-def _git_commit_sha(repo_root: Path) -> str:
-    try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, timeout=10, check=False).stdout.strip()
-    except Exception:
-        return ""
-
-
-def _write_case_snapshot(telemetry_dir: Path, run_name: str, case: Mapping[str, Any], viewer_exe: Path) -> Path:
-    snapshot = _normalize_case(case)
-    repo_root = Path(__file__).resolve().parents[2]
-    snapshot["run_name"] = run_name
-    snapshot["commitSha"] = str(snapshot.get("commitSha") or snapshot.get("commit_sha") or _git_commit_sha(repo_root))
-    snapshot["viewerExecutable"] = str(viewer_exe)
-    snapshot["executableSha256"] = sha256_file(viewer_exe)
-    root_shader, bundled_shader = _formal_shader_paths(viewer_exe)
-    snapshot["segmentGroupShaderPath"] = str(root_shader)
-    snapshot["segmentGroupShaderSha256"] = sha256_file(root_shader)
-    snapshot["shaderBundleSha256"] = sha256_tree([root_shader, viewer_exe.parent / "shaders"], base_path=viewer_exe.parent)
-    snapshot["requestedMethodSettingsSha256"] = canonical_json_sha256(snapshot.get("method_settings", {}))
-    timeline = _resolve_case_path(snapshot.get("scenario_timeline"))
-    if timeline and timeline.is_file():
-        snapshot["scenario_timeline"] = str(timeline)
-        snapshot["scenarioTimelinePath"] = str(timeline)
-        snapshot["scenarioTimelineSha256"] = sha256_file(timeline)
-    asset_manifest = _resolve_case_path(snapshot.get("asset_manifest"))
-    if asset_manifest and asset_manifest.is_file():
-        snapshot["asset_manifest"] = str(asset_manifest)
-        snapshot["assetManifestPath"] = str(asset_manifest)
-        snapshot["assetManifestSha256"] = sha256_file(asset_manifest)
-        manifest = _read_json(asset_manifest)
-        snapshot["assetSha256"] = str(manifest.get("sourceAssetSha256") or "")
-        source_asset = _resolve_case_path(manifest.get("sourceAssetPath"), asset_manifest.parent)
-        snapshot["formalAssetPath"] = str(source_asset) if source_asset else ""
-        snapshot["formalAssetSha256"] = str(manifest.get("sourceAssetSha256") or "")
-        snapshot["formalTopologySha256"] = str(manifest.get("generatedTopologySha256") or manifest.get("topologyHash") or "")
-        snapshot["generatorSettingsSha256"] = str(manifest.get("generatorSettingsSha256") or "")
-        snapshot["assetFrozen"] = str(manifest.get("freezeStatus") or "") == "FROZEN"
-    path = Path(telemetry_dir) / f"{run_name}_case.json"
-    write_json(path, snapshot)
-    return path
-
-
-
-def _materialize_repeated_timeline(case: Mapping[str, Any], telemetry_dir: Path, run_name: str) -> dict[str, Any]:
-    result = dict(case)
-    if not _as_bool(result.get("timeline_repeat")):
-        return result
-    source = _resolve_case_path(result.get("scenario_timeline"))
-    if source is None or not source.is_file():
-        raise FormalRunError("Repeated timeline source is missing.", EXIT_FORMAL_CONTRACT_INVALID)
-    payload = _read_json(source)
-    base_duration = _required_int(payload.get("durationFrames", payload.get("duration_frames")))
-    if base_duration <= 0:
-        raise FormalRunError("Repeated timeline duration must be positive.", EXIT_FORMAL_CONTRACT_INVALID)
-    events = payload.get("events")
-    if not isinstance(events, list):
-        raise FormalRunError("Repeated timeline events must be an array.", EXIT_FORMAL_CONTRACT_INVALID)
-    required_duration = _required_int(result.get("warmup_frames")) + _required_int(result.get("measurement_frames"))
-    expanded: list[dict[str, Any]] = []
-    for offset in range(0, required_duration, base_duration):
-        for raw_event in events:
-            if not isinstance(raw_event, dict):
-                continue
-            event = dict(raw_event)
-            frame = _required_int(event.get("frame"), -1)
-            if frame < 0:
-                continue
-            expanded_frame = frame + offset
-            if expanded_frame < required_duration:
-                event["frame"] = expanded_frame
-                expanded.append(event)
-    payload["events"] = expanded
-    payload["durationFrames"] = required_duration
-    payload["materializedFrom"] = str(source)
-    payload["timelineRepeat"] = True
-    output = telemetry_dir / f"{run_name}_timeline_materialized.json"
-    write_json(output, payload)
-    result["scenario_timeline"] = str(output)
-    result["timeline_materialized_from"] = str(source)
-    return result
-
-def run_viewer(viewer_exe: Path, telemetry_dir: Path, run_name: str, timeout_seconds: int, case: Mapping[str, Any] | None = None) -> tuple[Path, Path, Path, Path, Path]:
+def execute_case(case: Mapping[str, Any], viewer_exe: Path, output_dir: Path,
+                 repo_root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     viewer_exe = Path(viewer_exe).resolve()
-    telemetry_dir = Path(telemetry_dir).resolve()
-    telemetry_dir.mkdir(parents=True, exist_ok=True)
-    normalized_case = _normalize_case(case or {})
-    normalized_case = _materialize_repeated_timeline(normalized_case, telemetry_dir, run_name)
-    preflight = validate_case_contract(normalized_case, viewer_exe)
-    if sys.platform != "win32":
-        raise FormalRunError("The DirectX 11 formal viewer can only be launched on Windows.", EXIT_RUNTIME_FAILURE)
-    paths = {
-        "summary": telemetry_dir / f"{run_name}_summary.json",
-        "csv": telemetry_dir / f"{run_name}_frames.csv",
-        "jsonl": telemetry_dir / f"{run_name}_frames.jsonl",
-        "settings": telemetry_dir / f"{run_name}_settings.json",
-        "environment": telemetry_dir / f"{run_name}_environment.json",
-        "validation": telemetry_dir / f"{run_name}_validation.json",
-        "manifest": telemetry_dir / f"{run_name}_manifest.json",
-        "formal_evidence": telemetry_dir / f"{run_name}_formal_evidence.jsonl",
-        "error": telemetry_dir / f"{run_name}_error.json",
+    output_dir = Path(output_dir).resolve()
+    repo_root = Path(repo_root).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    normalized = normalize_case(case)
+    normalized = materialize_repeated_timeline(normalized, output_dir, repo_root)
+    paths = output_paths(output_dir, str(normalized["run_name"]))
+    contract_issues: list[dict[str, Any]] = []
+    if normalized["method"] not in FORMAL_METHOD_CODES:
+        contract_issues.append(issue("E_METHOD", "Unknown formal method.", observed=normalized["method"]))
+    if not viewer_exe.is_file():
+        contract_issues.append(issue("E_VIEWER_MISSING", "Release x64 viewer is missing.", observed=str(viewer_exe)))
+    if normalized.get("build_configuration") != "Release" or normalized.get("platform") != "x64":
+        contract_issues.append(issue("E_BUILD_CONTRACT", "Formal run requires Release x64."))
+    exact = {
+        "guide_strand_count": 4000,
+        "followers_per_guide": 24,
+        "display_strand_count": 100000,
+        "particles_per_guide": 128,
+        "solver_iterations": 6,
+        "width": 1920,
+        "height": 1080,
     }
-    for key in ("summary", "csv", "jsonl", "settings", "environment", "validation", "manifest", "formal_evidence", "error"):
+    for key, expected in exact.items():
+        if _to_int(normalized.get(key), -1) != expected:
+            contract_issues.append(issue("E_FIXED_WORKLOAD", f"Fixed workload mismatch: {key}", expected=expected, observed=normalized.get(key)))
+    if _as_bool(normalized.get("vsync")) or _to_int(normalized.get("present_sync_interval")) != 0:
+        contract_issues.append(issue("E_VSYNC", "Formal run requires VSync off and present interval 0."))
+    timeline = resolve_path(normalized.get("scenario_timeline"), repo_root)
+    if timeline is None or not timeline.is_file():
+        contract_issues.append(issue("E_TIMELINE_MISSING", "Scenario timeline is missing.", observed=str(timeline)))
+    else:
+        normalized["scenario_timeline"] = str(timeline)
+        contract_issues.extend(validate_timeline(timeline, normalized))
+    asset_manifest_path = resolve_path(normalized.get("asset_manifest"), repo_root)
+    manifest: dict[str, Any] = {}
+    if asset_manifest_path is None or not asset_manifest_path.is_file():
+        contract_issues.append(issue("E_ASSET_MANIFEST_MISSING", "Frozen asset manifest is missing.", observed=str(asset_manifest_path)))
+    else:
+        normalized["asset_manifest"] = str(asset_manifest_path)
+        manifest, manifest_issues = validate_asset_manifest(asset_manifest_path, repo_root)
+        contract_issues.extend(manifest_issues)
+    probe = collect_hardware_probe(str(normalized.get("hardware_profile", "")), "preflight")
+    contract_issues.extend(evaluate_hardware_profile(probe, normalized.get("hardware_profile_contract", {})))
+    if contract_issues:
+        validation = {
+            "validationVersion": VALIDATION_VERSION,
+            "evidenceStatus": "complete_invalid",
+            "stable60FpsStatus": "not_achieved",
+            "contractIssues": contract_issues,
+        }
+        write_json(paths["validation"], validation)
+        raise FormalRunError("Formal contract failed.", EXIT_FORMAL_CONTRACT_INVALID, contract_issues)
+    fingerprint, fingerprint_payload = build_execution_fingerprint(normalized, viewer_exe, repo_root, manifest, probe)
+    normalized["execution_fingerprint"] = fingerprint
+    normalized["execution_fingerprint_payload"] = fingerprint_payload
+    snapshot = _case_snapshot(normalized, viewer_exe, repo_root, manifest, fingerprint, fingerprint_payload)
+    write_json(paths["case"], snapshot)
+    write_json(paths["hardware"], probe)
+    if dry_run:
+        return {
+            "runName": normalized["run_name"],
+            "dryRun": True,
+            "executionFingerprint": fingerprint,
+            "evidenceStatus": "preflight_valid",
+            "stable60FpsStatus": "not_evaluated",
+        }
+    for key in ("frames_csv", "frames_jsonl", "summary", "settings", "environment", "validation", "manifest", "error", "stdout", "stderr", "complete"):
         paths[key].unlink(missing_ok=True)
-    write_json(telemetry_dir / f"{run_name}_preflight.json", preflight)
-    case_snapshot_path = _write_case_snapshot(telemetry_dir, run_name, normalized_case, viewer_exe)
-    snapshot = _read_json(case_snapshot_path)
-
-    env = os.environ.copy()
-    env.update({
-        "HAIRGPU_AUTO_TELEMETRY": "1",
-        "HAIRGPU_TELEMETRY_DIR": str(telemetry_dir),
-        "HAIRGPU_TELEMETRY_RUN_NAME": run_name,
-        "HAIRGPU_CASE_JSON": str(case_snapshot_path),
-        "HAIRGPU_EXPERIMENT_CASE_ID": str(snapshot.get("case_id", "")),
-        "HAIRGPU_VARIANT": str(snapshot.get("method", "")),
-        "HAIRGPU_SCENARIO": str(snapshot.get("scenario", "")),
-        "HAIRGPU_SEED": str(snapshot.get("seed", 0)),
-        "HAIRGPU_WARMUP_FRAMES": str(snapshot.get("warmup_frames", 600)),
-        "HAIRGPU_MEASUREMENT_FRAMES": str(snapshot.get("measurement_frames", 6000)),
-        "HAIRGPU_AUTO_EXIT_AFTER_CAPTURE": "1",
-        "HAIRGPU_SETTINGS_HASH": str(snapshot.get("settings_hash", "")),
-        "HAIRGPU_EXECUTABLE_SHA256": str(snapshot.get("executableSha256", "")),
-        "HAIRGPU_COMMIT_SHA": str(snapshot.get("commitSha", "")),
-        "HAIRGPU_BUILD_CONFIGURATION": str(snapshot.get("build_configuration", "Release")),
-        "HAIRGPU_PLATFORM": str(snapshot.get("platform", "x64")),
-        "HAIRGPU_HARDWARE_PROFILE": str(snapshot.get("hardware_profile", "")),
-        "HAIRGPU_MEASUREMENT_MODE": str(snapshot.get("measurement_mode", "performance")),
-        "HAIRGPU_REPEAT_INDEX": str(snapshot.get("repeat_index", 0)),
-        "HAIRGPU_SCENARIO_TIMELINE_SHA256": str(snapshot.get("scenarioTimelineSha256", "")),
-        "HAIRGPU_ASSET_MANIFEST_SHA256": str(snapshot.get("assetManifestSha256", "")),
-        "HAIRGPU_ASSET_SHA256": str(snapshot.get("assetSha256", "")),
-        "HAIRGPU_SHADER_BUNDLE_SHA256": str(snapshot.get("shaderBundleSha256", "")),
-        "HAIRGPU_ASSET_FROZEN": "1" if snapshot.get("assetFrozen") else "0",
-        "HAIRGPU_FORMAL_ASSET_PATH": str(snapshot.get("formalAssetPath", "")),
-        "HAIRGPU_FORMAL_ASSET_SHA256": str(snapshot.get("formalAssetSha256", "")),
-        "HAIRGPU_FORMAL_TOPOLOGY_SHA256": str(snapshot.get("formalTopologySha256", "")),
-        "HAIRGPU_GENERATOR_SETTINGS_SHA256": str(snapshot.get("generatorSettingsSha256", "")),
-        "HAIRGPU_REQUESTED_METHOD_SETTINGS_SHA256": str(snapshot.get("requestedMethodSettingsSha256", "")),
-    })
-    direct_flags = {
-        "enableNoNoveltyBaseline": "HAIRGPU_ENABLE_NO_NOVELTY_BASELINE",
-        "enableMicrotype": "HAIRGPU_ENABLE_MICROTYPE",
-        "enableBudgetedPhysics": "HAIRGPU_ENABLE_BUDGETED_PHYSICS",
-        "enableCertificateRender": "HAIRGPU_ENABLE_CERTIFICATE_RENDER",
-        "enablePerStrandEdit": "HAIRGPU_ENABLE_PER_STRAND_EDIT",
-        "enableCBMA": "HAIRGPU_ENABLE_CBMA",
-        "enablePhysicsIslands": "HAIRGPU_ENABLE_PHYSICS_ISLANDS",
-        "enableRodRepair": "HAIRGPU_ENABLE_ROD_REPAIR",
-        "enableGpuResident": "HAIRGPU_ENABLE_GPU_RESIDENT",
-        "enableSegmentGroupSleep": "HAIRGPU_ENABLE_SEGMENT_GROUP_SLEEP",
-        "enableSegmentGroupIntegratedState": "HAIRGPU_ENABLE_SEGMENT_GROUP_INTEGRATED_STATE",
-        "enableExternalStateArray": "HAIRGPU_ENABLE_EXTERNAL_STATE_ARRAY",
-        "enableSharedPointOwnership": "HAIRGPU_ENABLE_SHARED_POINT_OWNERSHIP",
-        "enableDirectionalResponsibility": "HAIRGPU_ENABLE_DIRECTIONAL_RESPONSIBILITY",
-        "enableStaticCertificate": "HAIRGPU_ENABLE_STATIC_CERTIFICATE",
-        "enablePredictiveWake": "HAIRGPU_ENABLE_PREDICTIVE_WAKE",
-        "enableVelocityRecovery": "HAIRGPU_ENABLE_VELOCITY_RECOVERY",
-        "enableRepair": "HAIRGPU_ENABLE_REPAIR",
-        "enableGpuCompaction": "HAIRGPU_ENABLE_GPU_COMPACTION",
-        "enableActiveSet": "HAIRGPU_ENABLE_ACTIVE_SET",
-        "enableStrandSleep": "HAIRGPU_ENABLE_STRAND_SLEEP",
-        "enableBlockSleep": "HAIRGPU_ENABLE_BLOCK_SLEEP",
-        "enableSleepHysteresis": "HAIRGPU_ENABLE_SLEEP_HYSTERESIS",
-        "enableStaticCache": "HAIRGPU_ENABLE_STATIC_CACHE",
-    }
-    for key, value in dict(snapshot.get("method_settings", {})).items():
-        env[f"HAIRGPU_SETTING_{_env_token(key)}"] = _env_value(value)
-        if key in direct_flags:
-            env[direct_flags[key]] = _env_value(value)
-    _set_if_present(env, "HAIRGPU_SCENARIO_TIMELINE", snapshot.get("scenario_timeline"))
-    _set_if_present(env, "HAIRGPU_ASSET_MANIFEST", snapshot.get("asset_manifest"))
-    _set_if_present(env, "HAIRGPU_RENDER_WIDTH", snapshot.get("width"))
-    _set_if_present(env, "HAIRGPU_RENDER_HEIGHT", snapshot.get("height"))
-    _set_if_present(env, "HAIRGPU_VSYNC", snapshot.get("vsync"))
-    _set_if_present(env, "HAIRGPU_PRESENT_SYNC_INTERVAL", snapshot.get("present_sync_interval", 0))
-    _set_if_present(env, "HAIRGPU_FIXED_TIMESTEP_ENABLED", snapshot.get("fixed_timestep"))
-    _set_if_present(env, "HAIRGPU_FIXED_TIMESTEP_SECONDS", snapshot.get("fixed_timestep_seconds"))
-    _set_if_present(env, "HAIRGPU_GUIDE_STRAND_COUNT", snapshot.get("guide_strand_count"))
-    _set_if_present(env, "HAIRGPU_GUIDE_COUNT", snapshot.get("guide_strand_count"))
-    _set_if_present(env, "HAIRGPU_DISPLAY_STRAND_COUNT", snapshot.get("display_strand_count"))
-    _set_if_present(env, "HAIRGPU_PARTICLES_PER_GUIDE", snapshot.get("particles_per_guide"))
-    _set_if_present(env, "HAIRGPU_SOLVER_ITERATIONS", snapshot.get("solver_iterations"))
-    _set_if_present(env, "HAIRGPU_GPU_TIMESTAMP_DELAY_FRAMES", snapshot.get("gpu_timestamp_delay_frames", 6))
-
-    environment_payload: dict[str, Any] = {"start": collect_hardware_probe(str(snapshot.get("hardware_profile", "")), "start")}
-    write_json(paths["environment"], environment_payload)
-    sampler = HardwareSampler(str(snapshot.get("hardware_profile", "")), _required_float(snapshot.get("hardware_sample_interval_seconds"), 1.0))
-    sampler.start()
-    process_return_code: int | None = None
-    process_stdout = ""
-    process_stderr = ""
     try:
-        completed = subprocess.run(
-            [str(viewer_exe)], cwd=viewer_exe.parent, env=env,
-            timeout=max(int(timeout_seconds), 1), check=False,
-            capture_output=True, text=True, errors="replace",
+        lock_fd = os.open(paths["lock"], os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise FormalRunError(
+            "Run lock already exists.",
+            EXIT_RUNTIME_FAILURE,
+            [issue("E_RUN_LOCK", "Another run or stale lock exists.", observed=str(paths["lock"]))],
+        ) from exc
+    os.write(lock_fd, json.dumps({
+        "pid": os.getpid(),
+        "runName": normalized["run_name"],
+        "startedUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }).encode("utf-8"))
+    write_json(paths["running"], {
+        "runName": normalized["run_name"],
+        "executionFingerprint": fingerprint,
+        "startedUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
+    environment = os.environ.copy()
+    environment.update({
+        "PYTHONHASHSEED": "0",
+        "HAIRGPU_AUTO_TELEMETRY": "1",
+        "HAIRGPU_TELEMETRY_DIR": str(output_dir),
+        "HAIRGPU_TELEMETRY_RUN_NAME": str(normalized["run_name"]),
+        "HAIRGPU_CASE_JSON": str(paths["case"]),
+        "HAIRGPU_EXPERIMENT_CASE_ID": str(normalized["case_id"]),
+        "HAIRGPU_VARIANT": str(normalized["method"]),
+        "HAIRGPU_SCENARIO": str(normalized.get("scenario", "")),
+        "HAIRGPU_SEED": str(normalized.get("seed", 0)),
+        "HAIRGPU_WARMUP_FRAMES": str(normalized["warmup_frames"]),
+        "HAIRGPU_MEASUREMENT_FRAMES": str(normalized["measurement_frames"]),
+        "HAIRGPU_AUTO_EXIT_AFTER_CAPTURE": "1",
+        "HAIRGPU_SETTINGS_HASH": str(normalized["settings_hash"]),
+        "HAIRGPU_EXECUTABLE_SHA256": str(snapshot["executableSha256"]),
+        "HAIRGPU_COMMIT_SHA": str(snapshot["commitSha"]),
+        "HAIRGPU_BUILD_CONFIGURATION": str(normalized["build_configuration"]),
+        "HAIRGPU_PLATFORM": str(normalized["platform"]),
+        "HAIRGPU_HARDWARE_PROFILE": str(normalized.get("hardware_profile", "")),
+        "HAIRGPU_MEASUREMENT_MODE": str(normalized.get("measurement_mode", "performance")),
+        "HAIRGPU_REPEAT_INDEX": str(normalized.get("repetition_index", 0)),
+        "HAIRGPU_SCENARIO_TIMELINE_SHA256": str(snapshot["scenarioTimelineSha256"]),
+        "HAIRGPU_ASSET_MANIFEST_SHA256": str(snapshot["assetManifestSha256"]),
+        "HAIRGPU_ASSET_SHA256": str(snapshot["assetSha256"]),
+        "HAIRGPU_SHADER_BUNDLE_SHA256": str(snapshot["shaderBundleSha256"]),
+        "HAIRGPU_ASSET_FROZEN": "1",
+        "HAIRGPU_FORMAL_ASSET_PATH": str(snapshot["formalAssetPath"]),
+        "HAIRGPU_FORMAL_ASSET_SHA256": str(snapshot["formalAssetSha256"]),
+        "HAIRGPU_FORMAL_TOPOLOGY_SHA256": str(snapshot["formalTopologySha256"]),
+        "HAIRGPU_GENERATOR_SETTINGS_SHA256": str(snapshot["generatorSettingsSha256"]),
+        "HAIRGPU_REQUESTED_METHOD_SETTINGS_SHA256": str(snapshot["requestedMethodSettingsSha256"]),
+        "HAIRGPU_EXECUTION_FINGERPRINT": fingerprint,
+    })
+    for key, value in normalized["method_settings"].items():
+        environment[f"HAIRGPU_SETTING_{_env_token(key)}"] = _env_value(value)
+        if key in DIRECT_FLAG_ENV:
+            environment[DIRECT_FLAG_ENV[key]] = _env_value(value)
+    _set_if_present(environment, "HAIRGPU_SCENARIO_TIMELINE", normalized.get("scenario_timeline"))
+    _set_if_present(environment, "HAIRGPU_ASSET_MANIFEST", normalized.get("asset_manifest"))
+    _set_if_present(environment, "HAIRGPU_RENDER_WIDTH", normalized.get("width"))
+    _set_if_present(environment, "HAIRGPU_RENDER_HEIGHT", normalized.get("height"))
+    _set_if_present(environment, "HAIRGPU_VSYNC", normalized.get("vsync"))
+    _set_if_present(environment, "HAIRGPU_PRESENT_SYNC_INTERVAL", normalized.get("present_sync_interval"))
+    _set_if_present(environment, "HAIRGPU_FIXED_TIMESTEP_ENABLED", normalized.get("fixed_timestep"))
+    _set_if_present(environment, "HAIRGPU_FIXED_TIMESTEP_SECONDS", normalized.get("fixed_timestep_seconds"))
+    _set_if_present(environment, "HAIRGPU_GUIDE_STRAND_COUNT", normalized.get("guide_strand_count"))
+    _set_if_present(environment, "HAIRGPU_GUIDE_COUNT", normalized.get("guide_strand_count"))
+    _set_if_present(environment, "HAIRGPU_DISPLAY_STRAND_COUNT", normalized.get("display_strand_count"))
+    _set_if_present(environment, "HAIRGPU_PARTICLES_PER_GUIDE", normalized.get("particles_per_guide"))
+    _set_if_present(environment, "HAIRGPU_SOLVER_ITERATIONS", normalized.get("solver_iterations"))
+    _set_if_present(environment, "HAIRGPU_GPU_TIMESTAMP_DELAY_FRAMES", normalized.get("gpu_timestamp_delay_frames"))
+    start_probe = collect_hardware_probe(str(normalized.get("hardware_profile", "")), "start")
+    sampler = HardwareSampler(str(normalized.get("hardware_profile", "")), float(normalized.get("hardware_sample_interval_seconds", 1.0)))
+    sampler.start()
+    return_code: int | None = None
+    stdout = ""
+    stderr = ""
+    set_execution_state(True)
+    try:
+        return_code, stdout, stderr = run_process(
+            [str(viewer_exe)],
+            viewer_exe.parent,
+            environment,
+            _to_int(normalized.get("timeout_seconds"), 900),
         )
-        process_return_code = int(completed.returncode)
-        process_stdout = (completed.stdout or "")[-1_000_000:]
-        process_stderr = (completed.stderr or "")[-1_000_000:]
-    except subprocess.TimeoutExpired as exc:
-        process_stdout = ((exc.stdout or "").decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or ""))[-1_000_000:]
-        process_stderr = ((exc.stderr or "").decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or ""))[-1_000_000:]
-        error = FormalRunError(f"Viewer timed out after {timeout_seconds} seconds.", EXIT_RUNTIME_FAILURE, [
-            _issue("E_VIEWER_TIMEOUT", "Viewer exceeded the formal timeout.", expected=timeout_seconds, observed=timeout_seconds)
-        ])
+        atomic_write_bytes(paths["stdout"], stdout.encode("utf-8"))
+        atomic_write_bytes(paths["stderr"], stderr.encode("utf-8"))
+        if return_code != 0:
+            raise FormalRunError(
+                f"Viewer exited with code {return_code}.",
+                EXIT_RUNTIME_FAILURE,
+                [issue("E_VIEWER_EXIT", "Viewer returned a nonzero exit code.", observed=return_code)],
+            )
+        asset_path = resolve_path(snapshot.get("formalAssetPath"))
+        expected_asset_hash = str(snapshot.get("formalAssetSha256", "")).lower()
+        if asset_path is None or not asset_path.is_file() or sha256_file(asset_path).lower() != expected_asset_hash:
+            raise FormalRunError(
+                "Formal asset bytes changed or disappeared during the run.",
+                EXIT_OUTPUT_INTEGRITY_FAILURE,
+                [issue("E_ASSET_POST_RUN_HASH", "Formal asset failed post-run hash verification.")],
+            )
+    except FormalRunError as exc:
         write_json(paths["error"], {
-            "runName": run_name, "exitCode": error.exit_code, "error": str(error),
-            "issues": error.issues, "stdoutTail": process_stdout, "stderrTail": process_stderr,
+            "runName": normalized["run_name"],
+            "exitCode": exc.exit_code,
+            "error": str(exc),
+            "issues": exc.issues,
+            "stdoutTail": stdout,
+            "stderrTail": stderr,
         })
-        raise error from exc
+        raise
     finally:
         samples = sampler.stop()
-        environment_payload["end"] = collect_hardware_probe(str(snapshot.get("hardware_profile", "")), "end")
-        environment_payload["samples"] = samples
-        environment_payload["viewerReturnCode"] = process_return_code
-        environment_payload["stdoutTail"] = process_stdout
-        environment_payload["stderrTail"] = process_stderr
-        if paths["settings"].is_file():
-            try:
-                viewer_settings = _read_json(paths["settings"])
-                observed_adapter = viewer_settings.get("observed", {}) if isinstance(viewer_settings.get("observed"), dict) else {}
-                dedicated_bytes = _optional_float(observed_adapter.get("dedicatedVideoMemoryBytes"))
-                environment_payload["viewerAdapter"] = {
-                    "name": observed_adapter.get("gpuName") or viewer_settings.get("gpuName") or viewer_settings.get("observedGpuName"),
-                    "driverVersion": viewer_settings.get("gpuDriver") or viewer_settings.get("driverVersion"),
-                    "vendorId": observed_adapter.get("gpuVendorId") or viewer_settings.get("gpuVendorId"),
-                    "deviceId": observed_adapter.get("gpuDeviceId") or viewer_settings.get("gpuDeviceId"),
-                    "dedicatedVideoMemoryMiB": dedicated_bytes / (1024.0 * 1024.0) if dedicated_bytes is not None else viewer_settings.get("dedicatedVideoMemoryMiB"),
-                    "adapterType": observed_adapter.get("adapterType") or viewer_settings.get("actualAdapterType"),
-                }
-            except Exception as adapter_exc:
-                environment_payload["viewerAdapterProbeError"] = str(adapter_exc)
-        write_json(paths["environment"], environment_payload)
-        write_hardware_timeseries(telemetry_dir / f"{run_name}_hardware_timeseries.csv", samples)
-
-    formal_asset = _resolve_case_path(snapshot.get("formalAssetPath"))
-    expected_asset_hash = str(snapshot.get("formalAssetSha256") or "").lower()
-    if formal_asset is None or not formal_asset.is_file() or not expected_asset_hash:
-        error = FormalRunError("Formal asset disappeared or lost its expected hash.", EXIT_OUTPUT_INTEGRITY_FAILURE)
-        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error)})
-        raise error
-    observed_asset_hash = sha256_file(formal_asset).lower()
-    if observed_asset_hash != expected_asset_hash:
-        error = FormalRunError("Formal asset bytes changed during the run.", EXIT_OUTPUT_INTEGRITY_FAILURE, [
-            _issue("E_ASSET_POST_RUN_HASH", "Formal asset SHA-256 changed during execution.", expected=expected_asset_hash, observed=observed_asset_hash)
-        ])
-        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error), "issues": error.issues})
-        raise error
-
-    if process_return_code not in (0, None):
-        error = FormalRunError(f"Viewer exited with code {process_return_code}.", EXIT_RUNTIME_FAILURE)
-        write_json(paths["error"], {"runName": run_name, "exitCode": error.exit_code, "error": str(error), "issues": error.issues})
-        raise error
+        end_probe = collect_hardware_probe(str(normalized.get("hardware_profile", "")), "end")
+        write_hardware_timeseries(paths["hardware_timeseries"], samples)
+        write_json(paths["environment"], {
+            "start": start_probe,
+            "end": end_probe,
+            "samples": samples,
+            "viewerReturnCode": return_code,
+            "stdoutTail": stdout,
+            "stderrTail": stderr,
+            "deviceRemovedDetected": bool(re.search(r"DXGI_ERROR_DEVICE_(REMOVED|RESET)|device removed", stderr, re.IGNORECASE)),
+            "executionFingerprint": fingerprint,
+        })
+        set_execution_state(False)
     try:
-        validate_required_outputs(paths["summary"], paths["csv"], paths["jsonl"], paths["settings"], run_name, case=snapshot, environment_json=paths["environment"])
+        validation = validate_outputs(snapshot, paths)
+        validation["executionFingerprint"] = fingerprint
+        write_json(paths["validation"], validation)
+        if validation["evidenceStatus"] != "complete_valid":
+            raise FormalRunError(
+                "Run outputs failed evidence validation.",
+                EXIT_OUTPUT_INTEGRITY_FAILURE,
+                list(validation.get("integrityIssues", [])),
+            )
+        manifest_payload = write_artifact_manifest(paths, str(normalized["run_name"]), fingerprint)
+        write_json(paths["complete"], {
+            "runName": normalized["run_name"],
+            "executionFingerprint": fingerprint,
+            "evidenceStatus": validation["evidenceStatus"],
+            "stable60FpsStatus": validation["stable60FpsStatus"],
+            "manifestSha256": manifest_payload["manifestSha256"],
+        })
+        paths["running"].unlink(missing_ok=True)
+        return validation
     except FormalRunError as exc:
-        write_json(paths["error"], {"runName": run_name, "exitCode": exc.exit_code, "error": str(exc), "issues": exc.issues})
+        write_json(paths["error"], {
+            "runName": normalized["run_name"],
+            "exitCode": exc.exit_code,
+            "error": str(exc),
+            "issues": exc.issues,
+        })
         raise
-    return paths["summary"], paths["csv"], paths["jsonl"], paths["settings"], paths["validation"]
+    finally:
+        try:
+            os.close(lock_fd)
+        finally:
+            paths["lock"].unlink(missing_ok=True)
 
 
-def _self_test() -> None:
-    assert derive_method_code({key: METHOD_PRESETS["P"][key] for key in METHOD_FLAG_KEYS}) == "P"
-    assert derive_method_code({key: METHOD_PRESETS["B8"][key] for key in METHOD_FLAG_KEYS}) == "B8"
-    case = _normalize_case({"method": "P", "width": 1920, "height": 1080, "display_strand_count": 100000, "guide_strand_count": 4000, "particles_per_guide": 128, "solver_iterations": 6, "vsync": False, "present_sync_interval": 0})
-    requested = dict(METHOD_PRESETS["P"])
-    applied = {key: requested[key] for key in METHOD_FLAG_KEYS}
-    observed_flags = dict(applied)
-    observed = _expected_runtime_settings(case)
-    expected_hash = canonical_json_sha256(requested)
-    issues, evidence = _compare_settings({
-        "requested": requested,
-        "applied": applied,
-        "observedFlags": observed_flags,
-        "observed": observed,
-        "requestedMethodSettingsSha256": expected_hash,
-        "appliedMethodSettingsSha256": expected_hash,
-        "observedMethodSettingsSha256": expected_hash,
+def _write_test_frame_outputs(paths: Mapping[str, Path], case: Mapping[str, Any],
+                              rows: list[dict[str, Any]]) -> None:
+    headers = sorted({key for row in rows for key in row})
+    with paths["frames_csv"].open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+    with paths["frames_jsonl"].open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+    write_json(paths["summary"], {
+        "caseId": case["case_id"],
+        "settingsSha256": case["settings_hash"],
+        "realMeasurement": True,
+        "gpuTimingUnresolvedFrameCount": 0,
+    })
+    expected_flags = case["method_settings"]
+    method_hash = canonical_json_sha256(expected_flags)
+    write_json(paths["settings"], {
+        "requested": {key: expected_flags[key] for key in METHOD_FLAG_KEYS},
+        "applied": {key: expected_flags[key] for key in METHOD_FLAG_KEYS},
+        "observedFlags": {key: expected_flags[key] for key in METHOD_FLAG_KEYS},
         "methodFlagsMatched": True,
-    }, case)
-    assert not issues, issues
-    assert evidence["observedMethodCode"] == "P"
-    rows = [{
-        "frameMilliseconds": 10.0,
-        "gpuHairMilliseconds": 3.0,
-        "metricAvailabilityMask": AVAILABILITY_BITS["gpuTiming"] | AVAILABILITY_BITS["falseStatic"] | AVAILABILITY_BITS["repair"],
-        "staticCachedGroupCount": 10,
-        "staticTransformedGroupCount": 0,
-        "falseStaticCount": 1,
-        "repairAttemptCount": 4,
-        "repairSuccessCount": 4,
-        "totalStrandCount": 100000,
-    }]
-    aggregate = _aggregate_frame_metrics(rows, {"repairAttemptCount": 4, "repairSuccessCount": 4, "repairVerifiedCount": 4, "repairRecurrenceCount": 0})
-    assert abs(float(aggregate["falseStaticRate"]) - 0.1) < 1.0e-9
-    assert aggregate["repairVerifiedSuccessRate"] == 1.0
-    assert aggregate["repairRecurrenceRate"] == 0.0
-    assert aggregate["evidenceProvenance"]["proxyMetricsUsed"] is False
+        "requestedMethodSettingsSha256": method_hash,
+        "appliedMethodSettingsSha256": method_hash,
+        "observedMethodSettingsSha256": method_hash,
+        "formalAssetLoaded": True,
+        "observedAssetPath": case["formalAssetPath"],
+        "observed": {
+            "renderWidth": 1920,
+            "renderHeight": 1080,
+            "displayStrandCount": 100000,
+            "guideCount": 4000,
+            "particlesPerGuide": 128,
+            "solverIterations": 6,
+            "vsync": False,
+            "presentSyncInterval": 0,
+        },
+    })
+    write_json(paths["environment"], {"start": {}, "end": {}, "samples": []})
+
+
+def self_test() -> int:
+    assert normalize_method_code("B0_FullDynamic") == "B0"
+    assert normalize_method_code("P_IntegratedSegmentGroup") == "P"
+    assert abs(FRAME_BUDGET_MS - 16.6666666667) < 1.0e-6
+    good_rows = [{
+        "frameMilliseconds": 16.0,
+        "gpuHairMilliseconds": 10.0,
+        "falseStaticRate": 0.0,
+        "collisionMissRate": 0.0,
+        "scenarioAppliedEventCount": 0,
+    } for _ in range(100)]
+    aggregate = aggregate_frames(good_rows)
+    assert aggregate["sixtyFpsRatio"] == 1.0
+    bad_rows = list(good_rows)
+    bad_rows[0] = {**bad_rows[0], "frameMilliseconds": 30.0}
+    assert aggregate_frames(bad_rows)["frameBudgetOverrunRate"] == 0.01
     with tempfile.TemporaryDirectory() as temporary:
-        path = Path(temporary) / "test.json"
-        write_json(path, {"ok": True})
-        assert _read_json(path) == {"ok": True}
+        root = Path(temporary)
+        atomic = root / "atomic.json"
+        write_json(atomic, {"ok": True})
+        assert read_json(atomic)["ok"] is True
+        original_hash = sha256_file(atomic)
+        atomic.write_text('{"ok":false}\n', encoding="utf-8")
+        assert sha256_file(atomic) != original_hash
+
+        timeline = root / "timeline.json"
+        write_json(timeline, {
+            "scenario": "S01_Idle",
+            "durationFrames": 3,
+            "fixedTimeStepSeconds": 1.0 / 60.0,
+            "events": [],
+            "assertions": {"exactAppliedEventCount": 0, "timelineFinalFrameRequired": True},
+        })
+        formal_asset = root / "asset.hairbin"
+        formal_asset.write_bytes(b"asset")
+        case = normalize_case({
+            "method": "P",
+            "run_name": "self_test",
+            "case_id": "self_test",
+            "scenario": "S01_Idle",
+            "scenario_timeline": str(timeline),
+            "measurement_frames": 3,
+            "warmup_frames": 0,
+            "hardware_profile_contract": {},
+            "formalAssetPath": str(formal_asset),
+        })
+        paths = output_paths(root, "self_test")
+        rows: list[dict[str, Any]] = []
+        for index in range(3):
+            rows.append({
+                "caseId": "self_test",
+                "scenario": "S01_Idle",
+                "seed": 1,
+                "sourceFrameIndex": index,
+                "frameMilliseconds": 16.0,
+                "gpuHairMilliseconds": 10.0,
+                "totalStrandCount": 100000,
+                "availabilityMask": 0,
+                "metricAvailabilityMask": 0,
+                "syntheticMetricCount": 0,
+                "sameFrameReadbackCount": 0,
+                "nanStateCount": 0,
+                "infiniteStateCount": 0,
+                "fatalFailure": 0,
+                "fatalFailureCode": 0,
+                "scenarioAppliedEventCount": 0,
+                "stateOscillationCount": 0,
+            })
+        _write_test_frame_outputs(paths, case, rows)
+        result = validate_outputs(case, paths)
+        assert result["evidenceStatus"] == "complete_valid", result
+
+        _write_test_frame_outputs(paths, case, rows[:-1])
+        result = validate_outputs(case, paths)
+        assert result["evidenceStatus"] == "complete_invalid"
+        assert any(item["code"] in {"E_CSV_FRAME_COUNT", "E_JSONL_FRAME_COUNT"} for item in result["integrityIssues"])
+
+        _write_test_frame_outputs(paths, case, rows)
+        json_rows = read_jsonl(paths["frames_jsonl"])
+        json_rows[1]["sourceFrameIndex"] = 999
+        with paths["frames_jsonl"].open("w", encoding="utf-8") as handle:
+            for row in json_rows:
+                handle.write(json.dumps(row, allow_nan=False) + "\n")
+        result = validate_outputs(case, paths)
+        assert any(item["code"] == "E_CSV_JSONL_PARITY" for item in result["integrityIssues"])
+
+        rows[0]["syntheticMetricCount"] = 1
+        _write_test_frame_outputs(paths, case, rows)
+        result = validate_outputs(case, paths)
+        assert any(item["code"] == "E_SYNTHETIC_METRIC" for item in result["integrityIssues"])
     print("hairgpu_final_run self-test: PASS")
+    return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Launch or validate a formal HairSystem runtime case.")
+    parser = argparse.ArgumentParser(description="Launch one strict HairSystem formal case.")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--case", "--case-json", dest="case_json")
     parser.add_argument("--viewer-exe")
-    parser.add_argument("--telemetry-dir")
+    parser.add_argument("--output-dir", "--telemetry-dir", dest="output_dir")
     parser.add_argument("--run-name")
-    parser.add_argument("--case-json")
-    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--repo-root")
+    parser.add_argument("--timeout-seconds", type=int)
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        _self_test()
-        return 0
-    if not all((args.viewer_exe, args.telemetry_dir, args.run_name, args.case_json)):
-        parser.error("--viewer-exe, --telemetry-dir, --run-name and --case-json are required unless --self-test is used")
-    case = _read_json(Path(args.case_json))
+        return self_test()
+    if not all((args.case_json, args.viewer_exe, args.output_dir)):
+        parser.error("--case-json, --viewer-exe and --telemetry-dir are required")
+    case = read_json(Path(args.case_json))
+    if args.run_name:
+        case["run_name"] = args.run_name
+        case["case_id"] = args.run_name
+    if args.timeout_seconds is not None:
+        case["timeout_seconds"] = args.timeout_seconds
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[2]
     try:
-        run_viewer(Path(args.viewer_exe), Path(args.telemetry_dir), args.run_name, args.timeout_seconds, case)
-        return EXIT_COMPLETE_VALID
+        result = execute_case(
+            case,
+            Path(args.viewer_exe),
+            Path(args.output_dir),
+            repo_root,
+            dry_run=args.dry_run,
+        )
     except FormalRunError as exc:
         print(str(exc), file=sys.stderr)
+        for item in exc.issues:
+            print(f"[{item.get('code')}] {item.get('message')}", file=sys.stderr)
         return exc.exit_code
+    if args.dry_run:
+        return 0
+    if result.get("evidenceStatus") != "complete_valid":
+        return EXIT_OUTPUT_INTEGRITY_FAILURE
+    return EXIT_COMPLETE_VALID if result.get("stable60FpsStatus") == "achieved" else EXIT_QUALITY_GATE_FAILED
 
 
 if __name__ == "__main__":

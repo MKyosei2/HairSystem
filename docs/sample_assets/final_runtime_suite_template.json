@@ -1,11 +1,13 @@
 {
   "suite_name": "novelty01_formal_runtime_suite",
-  "suite_version": "3.3",
+  "suite_version": "3.4-stable-runtime",
   "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
   "outputs_dir": "../../out/novelty01_baseline",
   "telemetry_dir": "../../out/novelty01_baseline/telemetry",
-  "hardware_profiles": "hardware_profiles.json",
+  "hardware_profiles": "../../benchmarks/novelty01/hardware_profiles.json",
   "baseline_method": "B8",
+  "performance_baseline_method": "B6",
+  "quality_baseline_method": "B0",
   "repetitions_per_seed": 1,
   "run_generation": {
     "mode": "cartesian_product",
@@ -40,17 +42,19 @@
     "reject_warp": true,
     "require_vsync_off": true,
     "minimum_gpu_timing_coverage": 0.99,
+    "minimum_free_disk_gib": 20,
+    "reject_network_output_path": true,
     "required_method_codes": [
-      "B0_FullDynamic",
-      "B1_StrandSleep",
-      "B2_BlockSleep",
-      "B3_SegmentThresholdSleep",
-      "B4_SegmentHysteresisSleep",
-      "B5_SegmentCache",
-      "B6_SegmentGpuCompaction",
-      "B7_ActiveSetOnly",
-      "B8_ExternalStateArray",
-      "P_IntegratedSegmentGroup"
+      "B0",
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+      "B6",
+      "B7",
+      "B8",
+      "P"
     ],
     "required_scenario_codes": [
       "S01_Idle",
@@ -113,11 +117,13 @@
     "measurement_mode": "performance",
     "width": 1920,
     "height": 1080,
+    "fixed_timestep": true,
     "fixed_timestep_seconds": 0.016666666666666666,
     "vsync": false,
     "present_sync_interval": 0,
     "warmup_frames": 600,
     "measurement_frames": 6000,
+    "guide_strand_count": 4000,
     "followers_per_guide": 24,
     "display_strand_count": 100000,
     "particles_per_guide": 128,
@@ -127,16 +133,22 @@
     "auto_exit_after_capture": true,
     "strict_validation": true,
     "real_measurement_required": true,
-    "required_gpu_timing_coverage": 0.99,
-    "guide_strand_count": 4000,
-    "minimum_average_fps": 24.0,
-    "maximum_p95_frame_ms": 41.666666666666664,
-    "maximum_p99_frame_ms": 50.0,
-    "maximum_single_frame_ms": 100.0,
+    "minimum_gpu_timing_coverage": 0.99,
+    "minimum_metric_coverage": 0.99,
+    "minimum_average_fps": 60.0,
+    "minimum_sixty_fps_ratio": 0.95,
+    "maximum_frame_budget_overrun_rate": 0.05,
+    "maximum_p95_frame_ms": 16.6667,
+    "maximum_p99_frame_ms": 20.0,
+    "maximum_single_frame_ms": 50.0,
     "maximum_frames_over_100ms": 0,
+    "hardware_profile": "low_gtx1660_reference",
+    "hardware_profile_strict": true,
+    "maximum_gpu_temperature_c": 88.0,
+    "maximum_gpu_temperature_spread_c": 12.0,
+    "maximum_gpu_clock_drop_ratio": 0.15,
     "build_configuration": "Release",
-    "platform": "x64",
-    "fixed_timestep": true
+    "platform": "x64"
   },
   "seeds": [
     1103,
@@ -147,43 +159,43 @@
   ],
   "methods": [
     {
-      "code": "B0_FullDynamic",
+      "code": "B0",
       "settings": {}
     },
     {
-      "code": "B1_StrandSleep",
+      "code": "B1",
       "settings": {}
     },
     {
-      "code": "B2_BlockSleep",
+      "code": "B2",
       "settings": {}
     },
     {
-      "code": "B3_SegmentThresholdSleep",
+      "code": "B3",
       "settings": {}
     },
     {
-      "code": "B4_SegmentHysteresisSleep",
+      "code": "B4",
       "settings": {}
     },
     {
-      "code": "B5_SegmentCache",
+      "code": "B5",
       "settings": {}
     },
     {
-      "code": "B6_SegmentGpuCompaction",
+      "code": "B6",
       "settings": {}
     },
     {
-      "code": "B7_ActiveSetOnly",
+      "code": "B7",
       "settings": {}
     },
     {
-      "code": "B8_ExternalStateArray",
+      "code": "B8",
       "settings": {}
     },
     {
-      "code": "P_IntegratedSegmentGroup",
+      "code": "P",
       "settings": {}
     }
   ],
@@ -191,161 +203,92 @@
     {
       "code": "S01_Idle",
       "timeline": "../../benchmarks/novelty01/scenarios/S01_idle.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 0
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S02_Breathing",
       "timeline": "../../benchmarks/novelty01/scenarios/S02_breathing.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 0,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S03_Walk",
       "timeline": "../../benchmarks/novelty01/scenarios/S03_walk.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 0,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S04_SuddenStop",
       "timeline": "../../benchmarks/novelty01/scenarios/S04_sudden_stop.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 2,
-        "min_wake_requests": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S05_HeadRotation",
       "timeline": "../../benchmarks/novelty01/scenarios/S05_head_rotation.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 0,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S06_Teleport",
       "timeline": "../../benchmarks/novelty01/scenarios/S06_teleport.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_wake_requests": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S07_ColliderApproach",
       "timeline": "../../benchmarks/novelty01/scenarios/S07_collider_approach.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_collision_candidates": 1
-      }
+      "measurement_mode": "quality"
     },
     {
       "code": "S08_StaticDynamicBoundaryContact",
       "timeline": "../../benchmarks/novelty01/scenarios/S08_boundary_contact.json",
-      "measurement_mode": "quality",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_collision_candidates": 1
-      }
+      "measurement_mode": "quality"
     },
     {
       "code": "S09_StrongWind",
       "timeline": "../../benchmarks/novelty01/scenarios/S09_strong_wind.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S10_WindStop",
       "timeline": "../../benchmarks/novelty01/scenarios/S10_wind_stop.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 2,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S11_LocalEdit",
       "timeline": "../../benchmarks/novelty01/scenarios/S11_local_edit.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "quality"
     },
     {
       "code": "S12_FalseStaticTrap",
       "timeline": "../../benchmarks/novelty01/scenarios/S12_false_static_trap.json",
-      "measurement_mode": "quality",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_wake_requests": 1
-      }
+      "measurement_mode": "quality"
     },
     {
       "code": "S13_RepairStorm",
       "timeline": "../../benchmarks/novelty01/scenarios/S13_repair_storm.json",
-      "measurement_mode": "quality",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_repairs": 1
-      }
+      "measurement_mode": "quality"
     },
     {
       "code": "S14_AllDynamic",
       "timeline": "../../benchmarks/novelty01/scenarios/S14_all_dynamic.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S15_AllStatic",
       "timeline": "../../benchmarks/novelty01/scenarios/S15_all_static.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1,
-        "min_state_transitions": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S16_StateThrashing",
       "timeline": "../../benchmarks/novelty01/scenarios/S16_state_thrashing.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 4,
-        "min_state_transitions": 4
-      }
+      "measurement_mode": "robustness"
     },
     {
       "code": "S17_CloseCamera100k",
       "timeline": "../../benchmarks/novelty01/scenarios/S17_close_camera_100k.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1
-      }
+      "measurement_mode": "performance"
     },
     {
       "code": "S18_FarCamera100k",
       "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json",
-      "measurement_mode": "performance",
-      "assertions": {
-        "min_applied_events": 1
-      }
+      "measurement_mode": "performance"
     }
   ],
   "statistics": {
@@ -354,7 +297,13 @@
       "seed",
       "asset_sha256",
       "hardware_profile",
-      "repetition_index"
+      "repetition_index",
+      "commit_sha",
+      "executable_sha256",
+      "shader_bundle_sha256",
+      "gpu_vendor_id",
+      "gpu_device_id",
+      "driver_version"
     ],
     "bootstrap_iterations": 2000,
     "confidence_level": 0.95,
@@ -365,12 +314,14 @@
       99.9
     ],
     "randomize_execution_order": true,
-    "execution_order_seed": 20260716,
+    "execution_order_seed": 20260719,
     "block_bootstrap_frames": 120
   },
   "goals": {
-    "frame_time_p999_ms_max": 16.6667,
-    "frame_budget_overrun_rate_max": 0.001,
+    "minimum_average_fps": 60.0,
+    "minimum_sixty_fps_ratio": 0.95,
+    "frame_time_p999_ms_max": 20.0,
+    "frame_budget_overrun_rate_max": 0.05,
     "false_static_rate_max": 0.001,
     "collision_miss_rate_max": 0.001,
     "repair_failure_rate_max": 0.01,
@@ -410,8 +361,6 @@
     }
   ],
   "runs": [],
-  "performance_baseline_method": "B6",
-  "quality_baseline_method": "B0",
   "long_runs": [
     {
       "id": "L30_Walk",

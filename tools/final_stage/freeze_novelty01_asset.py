@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -32,10 +33,8 @@ def sha256_file(path: Path) -> str:
 
 def git_value(repo_root: Path, *args: str) -> str:
     try:
-        completed = subprocess.run(
-            ["git", *args], cwd=repo_root, check=False,
-            capture_output=True, text=True, timeout=20,
-        )
+        completed = subprocess.run(["git", *args], cwd=repo_root, check=False,
+                                   capture_output=True, text=True, timeout=20)
     except (FileNotFoundError, subprocess.SubprocessError):
         return ""
     return completed.stdout.strip() if completed.returncode == 0 else ""
@@ -51,21 +50,28 @@ def find_repo_root(start: Path) -> Path | None:
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     encoded = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        handle.write(encoded)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                     delete=False, newline="\n") as handle:
+        handle.write(encoded); handle.flush(); os.fsync(handle.fileno())
         temporary = Path(handle.name)
-    temporary.replace(path)
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    verified = read_json(path)
+    if verified != payload:
+        raise SystemExit(f"Frozen manifest verification failed after atomic replace: {path}")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Freeze the real Novelty01 100k asset without mutating the tracked template manifest.")
+    parser = argparse.ArgumentParser(description="Freeze the Novelty01 canonical 100k asset.")
     parser.add_argument("--template-manifest", "--manifest", dest="template_manifest", required=True)
     parser.add_argument("--output-manifest", required=True)
     parser.add_argument("--asset", required=True)
     parser.add_argument("--generator-settings", required=True)
-    topology_group = parser.add_mutually_exclusive_group(required=True)
-    topology_group.add_argument("--topology-file")
-    topology_group.add_argument("--topology-sha256")
+    topology = parser.add_mutually_exclusive_group(required=True)
+    topology.add_argument("--topology-file")
+    topology.add_argument("--topology-sha256")
     parser.add_argument("--operator", required=True)
     parser.add_argument("--repo-root")
     parser.add_argument("--allow-dirty-worktree", action="store_true")
@@ -77,13 +83,14 @@ def main() -> int:
     asset_path = Path(args.asset).resolve()
     settings_path = Path(args.generator_settings).resolve()
     topology_path = Path(args.topology_file).resolve() if args.topology_file else None
-    for path, label in ((template_path, "template manifest"), (asset_path, "asset"), (settings_path, "generator settings")):
+    for path, label in ((template_path, "template manifest"), (asset_path, "asset"),
+                        (settings_path, "generator settings")):
         if not path.is_file():
             raise SystemExit(f"Missing {label}: {path}")
     if topology_path is not None and not topology_path.is_file():
         raise SystemExit(f"Missing topology file: {topology_path}")
     if output_path.exists() and not args.force:
-        raise SystemExit(f"Output manifest already exists: {output_path}. Use --force to replace it intentionally.")
+        raise SystemExit(f"Output manifest already exists: {output_path}. Use --force intentionally.")
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(template_path.parent)
     if repo_root is None:
@@ -104,14 +111,10 @@ def main() -> int:
 
     payload = read_json(template_path)
     generation = payload.setdefault("generation", {})
-    expected = {
-        "displayStrandCount": 100000,
-        "primaryGuideStrandCount": 4000,
-        "followersPerGuide": 24,
-        "particlesPerGuide": 128,
-        "solverIterations": 6,
-    }
-    mismatches = {key: (expected_value, generation.get(key)) for key, expected_value in expected.items() if generation.get(key) != expected_value}
+    expected = {"displayStrandCount": 100000, "primaryGuideStrandCount": 4000,
+                "followersPerGuide": 24, "particlesPerGuide": 128, "solverIterations": 6}
+    mismatches = {key: (value, generation.get(key)) for key, value in expected.items()
+                  if generation.get(key) != value}
     if mismatches:
         raise SystemExit(f"Template generation contract mismatch: {mismatches}")
 
@@ -122,7 +125,7 @@ def main() -> int:
         "sourceAssetSha256": sha256_file(asset_path),
         "sourceAssetSizeBytes": asset_path.stat().st_size,
         "generatedTopologySha256": topology_sha256,
-        "generatedTopologyPath": str(topology_path) if topology_path is not None else "",
+        "generatedTopologyPath": str(topology_path) if topology_path else "",
         "generatorSettingsPath": str(settings_path),
         "generatorSettingsSha256": sha256_file(settings_path),
         "frozenAtUtc": datetime.now(timezone.utc).isoformat(),
@@ -130,10 +133,9 @@ def main() -> int:
         "sourceCommitSha": head.lower(),
         "sourceBranch": branch,
         "freezeTool": "tools/final_stage/freeze_novelty01_asset.py",
-        "freezeToolVersion": "1.4",
+        "freezeToolVersion": "1.5",
     })
-    gate = payload.setdefault("evidenceGate", {})
-    gate.update({
+    payload.setdefault("evidenceGate", {}).update({
         "rejectWhenFreezeStatusIsNot": "FROZEN",
         "rejectPlaceholderHashes": True,
         "requireExactSha256Format": True,
@@ -145,6 +147,8 @@ def main() -> int:
         "requirePreAndPostRunAssetHashMatch": True,
     })
     atomic_write_json(output_path, payload)
+    if sha256_file(asset_path) != payload["sourceAssetSha256"]:
+        raise SystemExit("Asset changed during manifest creation.")
     print(f"Frozen manifest: {output_path}")
     print(f"Asset SHA-256: {payload['sourceAssetSha256']}")
     print(f"Topology SHA-256: {payload['generatedTopologySha256']}")

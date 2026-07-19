@@ -1,6 +1,6 @@
 {
   "scenario": "S12_FalseStaticTrap",
-  "version": 1,
+  "version": 2,
   "durationFrames": 7200,
   "fixedTimeStepSeconds": 0.016666666666666666,
   "seedDriven": true,
@@ -50,8 +50,15 @@
   ],
   "events": [
     {
+      "id": "ground_truth_wake_1800",
       "frame": 1800,
       "type": "ground_truth_wake_required"
     }
-  ]
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumWakeRequests": 1,
+    "minimumCollisionCandidates": 1,
+    "timelineFinalFrameRequired": true
+  }
 }
