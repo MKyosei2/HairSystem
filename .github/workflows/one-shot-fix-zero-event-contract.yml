@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.pull_request.head.sha, 'never-match') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,28 +17,37 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      # This workflow exists only to make one exact edit in a large split INL.
+      # This workflow exists only to make one structurally exact edit in a large split INL.
       - name: Apply exact source patch
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl")
           text = path.read_text(encoding="utf-8")
-          old = '''        m_experimentCase.scenarioAssertionMinAppliedEvents = std::max<uint32_t>(1u,
-              assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u));'''
-          new = '''        // Zero-event scenarios such as Idle, Breathing and Walk are valid.
-          // Event-bearing scenarios declare their own positive minimum in the case JSON.
-          m_experimentCase.scenarioAssertionMinAppliedEvents =
-              assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u);'''
-          count = text.count(old)
-          if count == 0 and "Zero-event scenarios such as Idle" in text:
+          pattern = re.compile(
+              r"(?P<indent>^[ \t]*)m_experimentCase\.scenarioAssertionMinAppliedEvents\s*=\s*"
+              r"std::max<uint32_t>\(\s*1u\s*,\s*"
+              r"assertions->UInt\(\s*\{\s*\"min_applied_events\"\s*,\s*"
+              r"\"minAppliedEvents\"\s*\}\s*,\s*0u\s*\)\s*\)\s*;",
+              re.MULTILINE,
+          )
+          matches = list(pattern.finditer(text))
+          if not matches and "Zero-event scenarios such as Idle" in text:
               print("Native event contract is already fixed.")
-          elif count == 1:
-              path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+          elif len(matches) == 1:
+              indent = matches[0].group("indent")
+              replacement = (
+                  f"{indent}// Zero-event scenarios such as Idle, Breathing and Walk are valid.\n"
+                  f"{indent}// Event-bearing scenarios declare their own positive minimum in the case JSON.\n"
+                  f"{indent}m_experimentCase.scenarioAssertionMinAppliedEvents =\n"
+                  f"{indent}    assertions->UInt({{ \"min_applied_events\", \"minAppliedEvents\" }}, 0u);"
+              )
+              path.write_text(pattern.sub(replacement, text, count=1), encoding="utf-8", newline="\n")
           else:
-              raise SystemExit(f"Expected zero or one native event-contract target, found {count}")
+              raise SystemExit(f"Expected zero or one native event-contract target, found {len(matches)}")
           PY
 
       - name: Commit exact patch when needed
