@@ -1,0 +1,44 @@
+name: One Shot Fix Zero Event Contract
+
+on:
+  push:
+    branches:
+      - agent/complete-test-environment
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[zero-event-contract-fixed]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact source patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl")
+          text = path.read_text(encoding="utf-8")
+          old = '''        m_experimentCase.scenarioAssertionMinAppliedEvents = std::max<uint32_t>(1u,
+              assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u));'''
+          new = '''        // Zero-event scenarios such as Idle, Breathing and Walk are valid.
+          // Event-bearing scenarios declare their own positive minimum in the case JSON.
+          m_experimentCase.scenarioAssertionMinAppliedEvents =
+              assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u);'''
+          if text.count(old) != 1:
+              raise SystemExit(f"Expected exactly one native event-contract target, found {text.count(old)}")
+          path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+
+      - name: Commit exact patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
+          git commit -m "[zero-event-contract-fixed] Allow valid zero-event scenarios"
+          git push origin HEAD:agent/complete-test-environment
