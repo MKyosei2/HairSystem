@@ -44,11 +44,11 @@ using Microsoft::WRL::ComPtr;
 #include "GpuHairViewer_parts/00_preamble_helpers_and_phase1_hooks.inl"  // preamble_helpers_and_phase1_hooks
 #include "GpuHairViewer_parts/01_window_device_and_ui_setup.inl"  // window_device_and_ui_setup
 #include "GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"  // resource_creation_and_shader_loading
-#include "GpuHairViewer_parts/02a_required_runtime_foundation.inl"  // functions recovered from the original monolithic source
 #include "GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"  // simulation_reset_and_frame_step
 #include "GpuHairViewer_parts/04_constant_buffers_and_active_set_sync.inl"  // constant_buffers_and_active_set_sync
 #include "GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl"  // active_set_scoring_and_runtime_update
 #include "GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"  // render_mesh_and_visibility_recovery
+#include "GpuHairViewer_parts/02a_required_runtime_foundation.inl"  // recovered definitions inserted at a complete function boundary
 #include "GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl"  // draw_path_and_gpu_timing
 #include "GpuHairViewer_parts/08_ui_state_sync_and_controls.inl"  // ui_state_sync_and_controls
 #include "GpuHairViewer_parts/09_settings_load_save_and_export.inl"  // settings_load_save_and_export
