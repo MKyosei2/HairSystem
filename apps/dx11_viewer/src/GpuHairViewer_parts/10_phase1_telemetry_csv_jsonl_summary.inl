@@ -1025,8 +1025,10 @@ return true;
             m_experimentCase.appliedMethodSettingsSha256 = m_experimentCase.requestedMethodSettingsSha256;
         m_experimentCase.assetFrozen = envBool(L"HAIRGPU_ASSET_FROZEN", root.Boolean({ "assetFrozen" }, false));
 
-        m_experimentCase.scenarioAssertionMinAppliedEvents = std::max<uint32_t>(1u,
-            assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u));
+        // Zero-event scenarios such as Idle, Breathing and Walk are valid.
+        // Event-bearing scenarios declare their own positive minimum in the case JSON.
+        m_experimentCase.scenarioAssertionMinAppliedEvents =
+            assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u);
         m_experimentCase.scenarioAssertionMinCollisionCandidates = assertions->UInt(
             { "min_collision_candidates", "minCollisionCandidates" }, 0u);
         m_experimentCase.scenarioAssertionMinWakeRequests = assertions->UInt(
