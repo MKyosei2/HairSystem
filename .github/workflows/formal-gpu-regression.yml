@@ -33,8 +33,9 @@ jobs:
       PYTHONUTF8: "1"
       PYTHONHASHSEED: "0"
       HAIRGPU_FREEZE_OPERATOR: GitHub_Actions
+      HAIRGPU_ALLOW_REVIEW_BRANCH: "1"
     steps:
-      - name: Checkout clean Novelty state
+      - name: Checkout clean source state
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
