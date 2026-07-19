@@ -251,9 +251,9 @@ namespace
         {
             return 78;
         }
-        const std::string text(
-            std::istreambuf_iterator<char>(settings),
-            std::istreambuf_iterator<char>());
+        const std::string text{
+            std::istreambuf_iterator<char>{settings},
+            std::istreambuf_iterator<char>{}};
         if (!TextContainsKeyValue(text, "schemaVersion", "\"novelty01-generator-settings-v1\"") ||
             !TextContainsKeyValue(text, "guideStrandCount", "4000") ||
             !TextContainsKeyValue(text, "followersPerGuide", "24") ||
