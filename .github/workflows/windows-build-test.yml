@@ -20,7 +20,7 @@ concurrency:
 jobs:
   release-x64:
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PYTHONUTF8: "1"
       PYTHONHASHSEED: "0"
@@ -49,6 +49,18 @@ jobs:
         shell: cmd
         run: bin\Release\HairSystem\HairSystem.exe --native-self-test
 
+      - name: Export canonical frozen source
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --export-frozen-source build_check\canonical_source
+
+      - name: Validate canonical frozen source round trip
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --validate-frozen-source build_check\canonical_source
+
+      - name: HLSL load and compile self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
+
       - name: Compile Python tools
         shell: cmd
         run: >-
@@ -60,6 +72,8 @@ jobs:
           tools\final_stage\hairgpu_final_db.py
           tools\final_stage\hairgpu_final_excel.py
           tools\final_stage\hairgpu_formal_gate.py
+          tools\final_stage\hairgpu_final_run\__init__.py
+          tools\final_stage\hairgpu_runtime_suite\__init__.py
 
       - name: Run Python self-tests
         shell: cmd
