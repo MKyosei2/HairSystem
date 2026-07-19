@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 if "%~1"=="" (
-  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h] [output_dir]
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [prepare-asset^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h] [output_dir]
   exit /b 1
 )
 
@@ -14,8 +14,13 @@ if "%MODE%"=="" set "MODE=proposal-smoke"
 set "OUTPUT_ARG="
 if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
 
-if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" (
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" (
   echo ERROR: unsupported mode "%MODE%".
+  exit /b 2
+)
+
+if not exist "%CONFIG%" (
+  echo ERROR: suite config was not found: "%CONFIG%"
   exit /b 2
 )
 
@@ -76,16 +81,23 @@ if /I "%MODE%"=="soak8h" (
   set "FILTER_ARGS=--only-run-name L8H_StateThrashing"
 )
 
-rem Resolve the portable frozen bundle. Formal measurement never auto-generates it.
+set "FROZEN_BUNDLE=%ROOT%\benchmarks\novelty01\frozen_asset_bundle"
 if not defined HAIRGPU_FROZEN_ASSET_MANIFEST (
   for /f "usebackq delims=" %%M in (`python -c "import json,pathlib; c=pathlib.Path(r'%CONFIG%').resolve(); j=json.loads(c.read_text(encoding='utf-8-sig')); p=pathlib.Path(j['source']['asset_manifest']); print((p if p.is_absolute() else c.parent/p).resolve())"`) do set "HAIRGPU_FROZEN_ASSET_MANIFEST=%%M"
 )
-if not exist "%HAIRGPU_FROZEN_ASSET_MANIFEST%" (
-  echo ERROR: Frozen Asset Manifest was not found:
-  echo   "%HAIRGPU_FROZEN_ASSET_MANIFEST%"
-  echo Generate it explicitly with freeze_novelty01_asset.py before formal measurement.
-  exit /b 9
+
+rem prepare-asset intentionally does not require an existing manifest.
+if /I not "%MODE%"=="prepare-asset" (
+  if not exist "%HAIRGPU_FROZEN_ASSET_MANIFEST%" (
+    echo ERROR: Frozen Asset Manifest was not found:
+    echo   "%HAIRGPU_FROZEN_ASSET_MANIFEST%"
+    echo Run this command first:
+    echo   set HAIRGPU_FREEZE_OPERATOR=Your_Name
+    echo   "%~f0" "%CONFIG%" prepare-asset
+    exit /b 9
+  )
 )
+
 
 echo [1/8] Rebuilding HairSystem Release x64 without Step0...
 "%MSBUILD%" "%ROOT%\HairSystem.sln" /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true
@@ -96,17 +108,21 @@ if not exist "%VIEWER%" (
   exit /b 7
 )
 
-echo [2/8] Running native ABI and workload self-test...
+
+echo [2/8] Running native ABI, canonical asset, and workload self-test...
 "%VIEWER%" --native-self-test
 if errorlevel 1 exit /b %errorlevel%
+
 
 echo [3/8] Running HLSL load/compile self-test...
 "%VIEWER%" --shader-self-test
 if errorlevel 1 exit /b %errorlevel%
 
+
 echo [4/8] Checking Python syntax...
 python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py"
 if errorlevel 1 exit /b %errorlevel%
+
 
 echo [5/8] Running lock, telemetry-contract, and suite-selection self-tests...
 python "%~dp0hairgpu_final_run.py" --self-test
@@ -116,6 +132,9 @@ if errorlevel 1 exit /b %errorlevel%
 python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
 if errorlevel 1 exit /b %errorlevel%
 
+if /I "%MODE%"=="prepare-asset" goto :prepare_asset
+
+
 echo [6/8] Confirming active power scheme...
 powercfg /GETACTIVESCHEME
 if errorlevel 1 (
@@ -123,10 +142,43 @@ if errorlevel 1 (
   exit /b 8
 )
 
+
 echo [7/8] Running strict dry-run preflight (%MODE%)...
 python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
 if errorlevel 1 exit /b %errorlevel%
 
+
 echo [8/8] Running Release x64 suite (%MODE%)...
 python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
 exit /b %errorlevel%
+
+:prepare_asset
+if not defined HAIRGPU_FREEZE_OPERATOR (
+  echo ERROR: HAIRGPU_FREEZE_OPERATOR is required for prepare-asset.
+  echo Example: set HAIRGPU_FREEZE_OPERATOR=Your_Name
+  exit /b 10
+)
+
+echo [6/8] Exporting canonical 100k Hair Asset and topology from the Release viewer...
+python "%~dp0freeze_novelty01_asset.py" ^
+  --template-manifest "%CONFIG%" ^
+  --bundle-dir "%FROZEN_BUNDLE%" ^
+  --viewer-exe "%VIEWER%" ^
+  --generate-source ^
+  --operator "%HAIRGPU_FREEZE_OPERATOR%" ^
+  --repo-root "%ROOT%" ^
+  --force
+if errorlevel 1 exit /b %errorlevel%
+
+
+echo [7/8] Verifying portable bundle hashes and Viewer round trip...
+python "%~dp0freeze_novelty01_asset.py" ^
+  --bundle-dir "%FROZEN_BUNDLE%" ^
+  --viewer-exe "%VIEWER%" ^
+  --verify-only
+if errorlevel 1 exit /b %errorlevel%
+
+
+echo [8/8] Frozen Asset preparation completed.
+echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
+exit /b 0

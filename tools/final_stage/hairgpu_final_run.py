@@ -34,7 +34,10 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.5-process-evidence"
+VALIDATION_VERSION = "01-safe-v3.6-frozen-asset-source"
+FROZEN_ASSET_RUNTIME_VERSION = 5
+
+_FROZEN_ASSET_VIEWER_VALIDATION_CACHE: set[tuple[str, str]] = set()
 FRAME_BUDGET_MS = 1000.0 / 60.0
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -563,7 +566,7 @@ def _resolve_bundle_member(manifest_path: Path, value: Any) -> tuple[Path | None
 
 def validate_asset_manifest(path: Path, repo_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest = read_json(path); problems: list[dict[str, Any]] = []
-    if str(manifest.get("manifestVersion", "")) not in {"novelty01-100k-v1.4", "novelty01-100k-v1.5"}:
+    if str(manifest.get("manifestVersion", "")) != "novelty01-100k-v1.6":
         problems.append(issue("E_ASSET_MANIFEST_VERSION", "Frozen asset manifest version is incompatible.", observed=manifest.get("manifestVersion")))
     if manifest.get("freezeStatus") != "FROZEN":
         problems.append(issue("E_ASSET_NOT_FROZEN", "Formal asset manifest must be FROZEN.", observed=manifest.get("freezeStatus")))
@@ -571,6 +574,7 @@ def validate_asset_manifest(path: Path, repo_root: Path) -> tuple[dict[str, Any]
     expected_generation = {
         "displayStrandCount": 100000, "primaryGuideStrandCount": 4000,
         "followersPerGuide": 24, "particlesPerGuide": 128, "solverIterations": 6,
+        "groupsPerBlock": 8,
     }
     for key, expected in expected_generation.items():
         if _to_int(generation.get(key), -1) != expected:
@@ -618,13 +622,92 @@ def validate_asset_manifest(path: Path, repo_root: Path) -> tuple[dict[str, Any]
         problems.append(issue("E_ASSET_SOURCE_COMMIT_FORMAT", "Asset source commit is invalid.", observed=commit))
     if manifest.get("sourceBranch") != "Novelty":
         problems.append(issue("E_ASSET_SOURCE_BRANCH", "Frozen asset must come from Novelty.", observed=manifest.get("sourceBranch")))
-    compatibility = _to_int(manifest.get("minimumCompatibleRuntimeVersion", 1), 1)
-    runtime_version = _to_int(manifest.get("assetFormatVersion", compatibility), compatibility)
-    if runtime_version < compatibility:
-        problems.append(issue("E_ASSET_RUNTIME_COMPATIBILITY", "Asset format compatibility is invalid."))
+    minimum_runtime = _to_int(manifest.get("minimumCompatibleRuntimeVersion", 1), 1)
+    if minimum_runtime < 1 or minimum_runtime > FROZEN_ASSET_RUNTIME_VERSION:
+        problems.append(issue(
+            "E_ASSET_RUNTIME_COMPATIBILITY",
+            "Frozen asset requires an unsupported runtime contract version.",
+            expected=f"<= {FROZEN_ASSET_RUNTIME_VERSION}",
+            observed=minimum_runtime,
+        ))
+    if str(manifest.get("manifestVersion", "")) == "novelty01-100k-v1.6":
+        expected_identity = {
+            "generationMode": "viewer-canonical-export",
+            "generatorSettingsSchemaVersion": "novelty01-generator-settings-v1",
+            "assetFormatVersion": 1,
+            "topologyFormatVersion": 1,
+            "assetInternalValidation": "PASS",
+            "topologyInternalValidation": "PASS",
+            "roundTripValidation": "PASS",
+        }
+        for key, expected_value in expected_identity.items():
+            if manifest.get(key) != expected_value:
+                problems.append(issue(
+                    "E_ASSET_CANONICAL_IDENTITY",
+                    f"Frozen asset canonical identity mismatch: {key}",
+                    expected=expected_value,
+                    observed=manifest.get(key),
+                ))
     manifest["_resolvedMembers"] = resolved_members
     manifest["_runtimeCommitSha"] = git_value(repo_root, "rev-parse", "HEAD")
     return manifest, problems
+
+
+def validate_frozen_asset_with_viewer(
+    viewer_exe: Path, manifest_path: Path
+) -> list[dict[str, Any]]:
+    """Ask the exact Release viewer to parse and round-trip the frozen bundle.
+
+    Hash validation alone cannot detect a structurally incompatible pair of Hair
+    Binary and topology files. The CPU-only viewer command validates internal
+    counts, topology hash, generator settings and binary round trip without
+    creating a D3D device or entering the render loop.
+    """
+    if not viewer_exe.is_file():
+        return [issue(
+            "E_VIEWER_MISSING",
+            "Viewer executable is missing for frozen-asset validation.",
+            observed=str(viewer_exe),
+        )]
+    try:
+        cache_key = (sha256_file(viewer_exe), sha256_file(manifest_path))
+    except OSError as exc:
+        return [issue(
+            "E_FROZEN_ASSET_RUNTIME_VALIDATION_IDENTITY",
+            "Frozen-asset validation identity could not be computed.",
+            observed=str(exc),
+        )]
+    if cache_key in _FROZEN_ASSET_VIEWER_VALIDATION_CACHE:
+        return []
+    try:
+        completed = subprocess.run(
+            [str(viewer_exe), "--validate-frozen-source", str(manifest_path.parent.resolve())],
+            cwd=viewer_exe.parent,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [issue(
+            "E_FROZEN_ASSET_RUNTIME_VALIDATION_TIMEOUT",
+            "Viewer frozen-asset validation timed out.",
+        )]
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [issue(
+            "E_FROZEN_ASSET_RUNTIME_VALIDATION_LAUNCH",
+            "Viewer frozen-asset validation could not be launched.",
+            observed=str(exc),
+        )]
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "<no output>").strip()
+        return [issue(
+            "E_FROZEN_ASSET_RUNTIME_VALIDATION",
+            "Viewer rejected the frozen asset bundle.",
+            observed=detail[-8000:],
+        )]
+    _FROZEN_ASSET_VIEWER_VALIDATION_CACHE.add(cache_key)
+    return []
 
 
 def _process_alive(pid: int) -> bool:
@@ -1170,6 +1253,10 @@ def execute_case(case: Mapping[str, Any], viewer_exe: Path, output_dir: Path,
     else:
         asset_manifest, asset_problems = validate_asset_manifest(asset_manifest_path, repo_root)
         problems.extend(asset_problems)
+        if not asset_problems:
+            # Dry-run also validates binary compatibility, but the cache ensures
+            # a full suite process performs this expensive check only once.
+            problems.extend(validate_frozen_asset_with_viewer(viewer_exe, asset_manifest_path))
     if normalized.get("method") not in FORMAL_METHOD_CODES:
         problems.append(issue("E_METHOD", "Unknown formal method.", observed=normalized.get("method")))
     if problems:
