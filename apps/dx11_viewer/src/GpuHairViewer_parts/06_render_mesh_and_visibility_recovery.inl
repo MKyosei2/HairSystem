@@ -255,8 +255,3 @@ if (FAILED(m_lastPresentResult))
             m_context->ClearState();
         }
     }
-
-    bool GpuHairViewer::CompileShaderFromFile(const wchar_t* filePath, const char* entryPoint, const char* target, ID3DBlob** blobOut, std::wstring& errorText)
-    {
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#if defined(_DEBUG)
