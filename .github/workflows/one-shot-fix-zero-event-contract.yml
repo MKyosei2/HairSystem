@@ -1,20 +1,21 @@
 name: One Shot Fix Zero Event Contract
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/complete-test-environment
+      - Novelty
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, '[zero-event-contract-fixed]') }}
+    if: ${{ !contains(github.event.pull_request.head.sha, 'never-match') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
       # This workflow exists only to make one exact edit in a large split INL.
@@ -32,14 +33,22 @@ jobs:
           // Event-bearing scenarios declare their own positive minimum in the case JSON.
           m_experimentCase.scenarioAssertionMinAppliedEvents =
               assertions->UInt({ "min_applied_events", "minAppliedEvents" }, 0u);'''
-          if text.count(old) != 1:
-              raise SystemExit(f"Expected exactly one native event-contract target, found {text.count(old)}")
-          path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+          count = text.count(old)
+          if count == 0 and "Zero-event scenarios such as Idle" in text:
+              print("Native event contract is already fixed.")
+          elif count == 1:
+              path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+          else:
+              raise SystemExit(f"Expected zero or one native event-contract target, found {count}")
           PY
 
-      - name: Commit exact patch
+      - name: Commit exact patch when needed
         shell: bash
         run: |
+          if git diff --quiet -- apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl; then
+            echo "No patch required."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl
