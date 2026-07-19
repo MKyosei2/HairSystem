@@ -19,8 +19,9 @@ jobs:
 
       # This workflow exists only to make one exact edit in a large split INL.
       - name: Apply exact source patch
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
 
           path = Path("apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl")
@@ -34,6 +35,7 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f"Expected exactly one native event-contract target, found {text.count(old)}")
           path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
+          PY
 
       - name: Commit exact patch
         shell: bash
