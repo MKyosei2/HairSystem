@@ -7,6 +7,8 @@ import textwrap
 import traceback
 from pathlib import Path
 
+from chatgpt_frozen_fallbacks import patch_generator_script
+
 
 def main() -> int:
     root = Path(__file__).resolve().parents[2]
@@ -47,6 +49,7 @@ def main() -> int:
         begin = source.index(begin_token) + len(begin_token)
         end = source.index(end_token, begin)
         script = textwrap.dedent(source[begin:end]) + "\n"
+        script = patch_generator_script(script)
 
         generator = root / "chatgpt_generate_prenovelty_zip.py"
         generator.write_text(script, encoding="utf-8")
