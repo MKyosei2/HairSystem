@@ -1,0 +1,566 @@
+name: Build Prenovelty 14-File Patch ZIP
+
+on:
+  pull_request:
+    branches: [Novelty]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-patch-zip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate the fourteen corrected files
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import re
+          import subprocess
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+          TARGETS = [
+              "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/08_ui_state_sync_and_controls.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/09_settings_load_save_and_export.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "docs/sample_assets/final_runtime_suite_template.json",
+              "tools/final_stage/hairgpu_final_run.py",
+              "tools/final_stage/hairgpu_runtime_suite.py",
+              "tools/final_stage/Run_Final_Runtime_Suite.bat",
+              "tests/final_stage/test_hairgpu_safe_runtime_suite.py",
+              ".github/workflows/windows-build-test.yml",
+              "apps/dx11_viewer/CMakeLists.txt",
+          ]
+
+          for relative in TARGETS:
+              if not (ROOT / relative).is_file():
+                  raise SystemExit(f"required source file is missing: {relative}")
+
+          def read(relative: str) -> str:
+              return (ROOT / relative).read_text(encoding="utf-8-sig")
+
+          def write(relative: str, text: str) -> None:
+              path = ROOT / relative
+              path.write_text(text.replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+
+          def run_git(*args: str) -> str:
+              completed = subprocess.run(
+                  ["git", *args], cwd=ROOT, capture_output=True, text=True,
+                  encoding="utf-8", errors="replace", check=False,
+              )
+              return completed.stdout if completed.returncode == 0 else ""
+
+          def extract_cpp_function(source: str, name: str) -> str | None:
+              pattern = re.compile(
+                  rf"^[ \t]*(?:(?:const\s+)?[A-Za-z_][\w:<>,*&\s]*?\s+)"
+                  rf"GpuHairViewer::{re.escape(name)}\s*\(",
+                  re.MULTILINE,
+              )
+              match = pattern.search(source)
+              if not match:
+                  return None
+              open_brace = source.find("{", match.end())
+              if open_brace < 0:
+                  return None
+
+              depth = 0
+              i = open_brace
+              state = "code"
+              while i < len(source):
+                  ch = source[i]
+                  nxt = source[i + 1] if i + 1 < len(source) else ""
+                  if state == "code":
+                      if ch == "/" and nxt == "/":
+                          state = "line_comment"; i += 2; continue
+                      if ch == "/" and nxt == "*":
+                          state = "block_comment"; i += 2; continue
+                      if ch == '"':
+                          state = "string"; i += 1; continue
+                      if ch == "'":
+                          state = "char"; i += 1; continue
+                      if ch == "{":
+                          depth += 1
+                      elif ch == "}":
+                          depth -= 1
+                          if depth == 0:
+                              return source[match.start(): i + 1].rstrip() + "\n"
+                      i += 1
+                      continue
+                  if state == "line_comment":
+                      if ch == "\n": state = "code"
+                      i += 1; continue
+                  if state == "block_comment":
+                      if ch == "*" and nxt == "/": state = "code"; i += 2; continue
+                      i += 1; continue
+                  if state in {"string", "char"}:
+                      if ch == "\\": i += 2; continue
+                      if (state == "string" and ch == '"') or (state == "char" and ch == "'"):
+                          state = "code"
+                      i += 1
+              return None
+
+          HISTORY_PATHS = [
+              "apps/dx11_viewer/src/GpuHairViewer.cpp",
+              "apps/dx11_viewer/src/GpuHairViewer.cpp.bak.modified",
+              *[
+                  f"apps/dx11_viewer/src/GpuHairViewer_parts/{index:02d}_{suffix}.inl"
+                  for index, suffix in [
+                      (0, "preamble_helpers_and_phase1_hooks"),
+                      (1, "window_device_and_ui_setup"),
+                      (2, "resource_creation_and_shader_loading"),
+                      (3, "simulation_reset_and_frame_step"),
+                      (4, "constant_buffers_and_active_set_sync"),
+                      (5, "active_set_scoring_and_runtime_update"),
+                      (6, "render_mesh_and_visibility_recovery"),
+                      (7, "draw_path_and_gpu_timing"),
+                      (8, "ui_state_sync_and_controls"),
+                      (9, "settings_load_save_and_export"),
+                      (10, "phase1_telemetry_csv_jsonl_summary"),
+                      (11, "experiment_env_and_performance_sample"),
+                      (12, "strand_pick_gizmo_and_brush_edit"),
+                      (13, "edit_stack_inline_layers_and_masks"),
+                      (14, "scalp_overlay_and_window_messages"),
+                      (15, "shutdown_and_tail"),
+                  ]
+              ],
+          ]
+
+          def recover_historical_function(name: str) -> str:
+              seen: set[tuple[str, str]] = set()
+              for history_path in HISTORY_PATHS:
+                  revisions = run_git("rev-list", "--all", "--", history_path).splitlines()
+                  for revision in revisions:
+                      key = (revision, history_path)
+                      if key in seen:
+                          continue
+                      seen.add(key)
+                      source = run_git("show", f"{revision}:{history_path}")
+                      if not source:
+                          continue
+                      body = extract_cpp_function(source, name)
+                      if body:
+                          print(f"Recovered {name} from {revision[:12]}:{history_path}")
+                          return body
+              raise RuntimeError(f"Could not recover historical implementation of {name}")
+
+          def insert_before(text: str, anchor: str, block: str) -> str:
+              position = text.find(anchor)
+              if position < 0:
+                  raise RuntimeError(f"insertion anchor was not found: {anchor}")
+              return text[:position] + block.rstrip() + "\n\n" + text[position:]
+
+          def replace_cpp_function(text: str, name: str, replacement: str) -> str:
+              current = extract_cpp_function(text, name)
+              if not current:
+                  raise RuntimeError(f"current function was not found: {name}")
+              return text.replace(current, replacement.rstrip() + "\n", 1)
+
+          # 1) Encoding warning and missing UI creation implementation.
+          p01 = TARGETS[0]
+          text = read(p01)
+          text = text.replace("return std::string(text.begin(), text.end());", "return {};")
+          if "GpuHairViewer::CreateUiControls(" not in text:
+              text = insert_before(
+                  text,
+                  "    bool GpuHairViewer::Initialize(",
+                  recover_historical_function("CreateUiControls"),
+              )
+          write(p01, text)
+
+          # 2) Restore the three lost UI/workspace functions and freeze workload-changing presets.
+          p08 = TARGETS[1]
+          text = read(p08)
+          recovered_blocks: list[str] = []
+          for function_name in ("ApplyWorkspaceMode", "ApplyGroomToolPreset", "GetWorkspaceDisplayName"):
+              if f"GpuHairViewer::{function_name}(" not in text:
+                  recovered_blocks.append(recover_historical_function(function_name))
+          if recovered_blocks:
+              text = insert_before(text, "    void GpuHairViewer::ApplyPreset(", "\n".join(recovered_blocks))
+
+          preset = extract_cpp_function(text, "ApplyPreset")
+          if not preset:
+              raise RuntimeError("ApplyPreset was not found")
+          fixed_preset = preset
+          fixed_preset = re.sub(r"m_builderGuideCount\s*=\s*\d+u?\s*;", "m_builderGuideCount = kFixedGuideCount;", fixed_preset)
+          fixed_preset = re.sub(r"m_builderFollowersPerGuide\s*=\s*\d+u?\s*;", "m_builderFollowersPerGuide = kFixedFollowersPerGuide;", fixed_preset)
+          fixed_preset = re.sub(r"m_builderParticlesPerStrand\s*=\s*\d+u?\s*;", "m_builderParticlesPerStrand = kFixedParticlesPerStrand;", fixed_preset)
+          fixed_preset = re.sub(r"m_simConfig\.solverIterations\s*=\s*\d+u?\s*;", "m_simConfig.solverIterations = kFixedSolverIterations;", fixed_preset)
+          if "EnforceFixedWorkload();" not in fixed_preset:
+              marker = "        SyncControlsFromState();"
+              if marker not in fixed_preset:
+                  raise RuntimeError("ApplyPreset synchronization anchor was not found")
+              fixed_preset = fixed_preset.replace(marker, "        EnforceFixedWorkload();\n" + marker, 1)
+          text = text.replace(preset, fixed_preset, 1)
+          write(p08, text)
+
+          # 3) Restore canonical frozen-asset export and validation implementations.
+          p09 = TARGETS[2]
+          text = read(p09)
+          recovered_blocks = []
+          for function_name in ("ExportCanonicalFrozenAssetSource", "ValidateCanonicalFrozenAssetSource"):
+              if f"GpuHairViewer::{function_name}(" not in text:
+                  recovered_blocks.append(recover_historical_function(function_name))
+          if recovered_blocks:
+              text = insert_before(text, "    int GpuHairViewer::GetSelectedInlineLayerIndex() const", "\n".join(recovered_blocks))
+          write(p09, text)
+
+          # 4) Remove double asset rebuild and strengthen native fixed-contract checks.
+          p15 = TARGETS[3]
+          text = read(p15)
+          text = re.sub(
+              r"(ApplyPreset\(preset\);\s*)RebuildAsset\([^;]+;\s*",
+              r"\1",
+              text,
+              count=1,
+              flags=re.DOTALL,
+          )
+          native = extract_cpp_function(text, "RunNativeSelfTests")
+          if not native:
+              raise RuntimeError("RunNativeSelfTests was not found")
+          if "kFixedTimeStepSeconds <= 0.0f" not in native:
+              addition = (
+                  "        if (!std::isfinite(kFixedTimeStepSeconds) || kFixedTimeStepSeconds <= 0.0f ||\n"
+                  "            std::fabs(kFixedTimeStepSeconds - (1.0f / 60.0f)) > 1.0e-7f) return 14;\n"
+                  "        if (!std::isfinite(SegmentLengthForParticleCount(kFixedParticlesPerStrand)) ||\n"
+                  "            SegmentLengthForParticleCount(kFixedParticlesPerStrand) <= 0.0f) return 15;\n"
+              )
+              return_pos = native.rfind("        return 0;")
+              if return_pos < 0:
+                  raise RuntimeError("RunNativeSelfTests success return was not found")
+              native = native[:return_pos] + addition + native[return_pos:]
+              text = replace_cpp_function(text, "RunNativeSelfTests", native)
+          write(p15, text)
+
+          # 5) Centralize non-blocking D3D11 query reads without introducing a flush.
+          p07 = TARGETS[4]
+          text = read(p07)
+          if "kHairGpuNonBlockingQueryFlags" not in text:
+              text = text.replace(
+                  "D3D11_ASYNC_GETDATA_DONOTFLUSH",
+                  "kHairGpuNonBlockingQueryFlags",
+              )
+              header_end = text.find("\n", text.find("\n") + 1) + 1
+              declaration = (
+                  "\nnamespace\n{\n"
+                  "    constexpr UINT kHairGpuNonBlockingQueryFlags = D3D11_ASYNC_GETDATA_DONOTFLUSH;\n"
+                  "}\n"
+              )
+              text = text[:header_end] + declaration + text[header_end:]
+          write(p07, text)
+
+          # 6) Mark the formal telemetry contract version and required coverage in the existing exporter.
+          p10 = TARGETS[5]
+          text = read(p10)
+          if "HAIRGPU_PRENOVELTY_TELEMETRY_CONTRACT_V4" not in text:
+              text = text.replace(
+                  "// This file is included by ../GpuHairViewer.cpp; do not compile it directly.",
+                  "// This file is included by ../GpuHairViewer.cpp; do not compile it directly.\n"
+                  "// HAIRGPU_PRENOVELTY_TELEMETRY_CONTRACT_V4:\n"
+                  "// preserve measured-zero versus unavailable values, require delayed GPU timing,\n"
+                  "// and reject synthetic metrics or same-frame GPU readbacks in formal evidence.",
+                  1,
+              )
+          write(p10, text)
+
+          # 7) Document and bind the pre-novelty gate to the experiment evidence path.
+          p11 = TARGETS[6]
+          text = read(p11)
+          if "HAIRGPU_PRENOVELTY_GATE_24FPS" not in text:
+              text = text.replace(
+                  "// This file is included by ../GpuHairViewer.cpp; do not compile it directly.",
+                  "// This file is included by ../GpuHairViewer.cpp; do not compile it directly.\n"
+                  "// HAIRGPU_PRENOVELTY_GATE_24FPS: B0/B6/B8 evidence uses the 24 FPS baseline gate;\n"
+                  "// the proposal P method retains the independent 60 FPS target in the suite profile.",
+                  1,
+              )
+          write(p11, text)
+
+          # 8) Add separate pre-novelty and proposal quality-gate profiles.
+          config_path = TARGETS[7]
+          config = json.loads(read(config_path))
+          defaults = config.setdefault("run_defaults", {})
+          proposal_gate = {
+              "minimum_average_fps": float(defaults.get("minimum_average_fps", 60.0)),
+              "minimum_target_fps_ratio": float(defaults.get("minimum_sixty_fps_ratio", 0.95)),
+              "maximum_frame_budget_overrun_rate": float(defaults.get("maximum_frame_budget_overrun_rate", 0.05)),
+              "maximum_p95_frame_ms": float(defaults.get("maximum_p95_frame_ms", 16.6667)),
+              "maximum_p99_frame_ms": float(defaults.get("maximum_p99_frame_ms", 20.0)),
+              "maximum_single_frame_ms": float(defaults.get("maximum_single_frame_ms", 50.0)),
+              "maximum_frames_over_100ms": int(defaults.get("maximum_frames_over_100ms", 0)),
+          }
+          config["quality_gates"] = {
+              "prenovelty": {
+                  "minimum_average_fps": 24.0,
+                  "minimum_target_fps_ratio": 0.95,
+                  "maximum_frame_budget_overrun_rate": 0.05,
+                  "maximum_p95_frame_ms": 41.6667,
+                  "maximum_p99_frame_ms": 50.0,
+                  "maximum_single_frame_ms": 100.0,
+                  "maximum_frames_over_100ms": 0,
+              },
+              "proposal": proposal_gate,
+          }
+          defaults["evaluation_phase"] = "prenovelty"
+          write(config_path, json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+
+          # 9) Wrap case normalization so each case receives its phase-specific thresholds.
+          p_final = TARGETS[8]
+          text = read(p_final)
+          if "HAIRGPU_QUALITY_GATE_PROFILE_V1" not in text:
+              block = r'''
+          # HAIRGPU_QUALITY_GATE_PROFILE_V1
+          PRENOVELTY_QUALITY_GATE = {
+              "minimum_average_fps": 24.0,
+              "minimum_target_fps_ratio": 0.95,
+              "maximum_frame_budget_overrun_rate": 0.05,
+              "maximum_p95_frame_ms": 41.6667,
+              "maximum_p99_frame_ms": 50.0,
+              "maximum_single_frame_ms": 100.0,
+              "maximum_frames_over_100ms": 0,
+          }
+          PROPOSAL_QUALITY_GATE = {
+              "minimum_average_fps": 60.0,
+              "minimum_target_fps_ratio": 0.95,
+              "maximum_frame_budget_overrun_rate": 0.05,
+              "maximum_p95_frame_ms": 16.6667,
+              "maximum_p99_frame_ms": 20.0,
+              "maximum_single_frame_ms": 50.0,
+              "maximum_frames_over_100ms": 0,
+          }
+
+          def quality_gate_profile_for_case(case: Mapping[str, Any]) -> dict[str, Any]:
+              method = normalize_method_code(str(case.get("method", case.get("variant", ""))))
+              phase = str(case.get("evaluation_phase", "")).strip().lower()
+              proposal = method == "P" or phase == "proposal"
+              return dict(PROPOSAL_QUALITY_GATE if proposal else PRENOVELTY_QUALITY_GATE)
+
+          def apply_quality_gate_profile(case: Mapping[str, Any]) -> dict[str, Any]:
+              result = dict(case)
+              profile = quality_gate_profile_for_case(result)
+              result.setdefault("evaluation_phase", "proposal" if normalize_method_code(str(result.get("method", ""))) == "P" else "prenovelty")
+              for key, value in profile.items():
+                  result[key] = value
+              return result
+
+          if "normalize_case" in globals():
+              _hairgpu_original_normalize_case = normalize_case
+              def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
+                  return apply_quality_gate_profile(_hairgpu_original_normalize_case(case))
+
+          if "_normalize_case" in globals():
+              _hairgpu_original_private_normalize_case = _normalize_case
+              def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
+                  return apply_quality_gate_profile(_hairgpu_original_private_normalize_case(case))
+          '''
+              guard = '\nif __name__ == "__main__":'
+              if guard in text:
+                  text = text.replace(guard, "\n" + block.strip("\n") + guard, 1)
+              else:
+                  text += "\n" + block.strip("\n") + "\n"
+          write(p_final, text)
+
+          # 10) Materialize the gate profile in every expanded suite case.
+          p_suite = TARGETS[9]
+          text = read(p_suite)
+          if "HAIRGPU_PRENOVELTY_SUITE_SELECTION_V1" not in text:
+              block = r'''
+          # HAIRGPU_PRENOVELTY_SUITE_SELECTION_V1
+          PRENOVELTY_SMOKE_METHODS = {"B0", "B6", "B8"}
+          PRENOVELTY_SMOKE_SCENARIOS = {
+              "S01_Idle", "S03_Walk", "S09_StrongWind", "S17_CloseCamera100k"
+          }
+
+          def _hairgpu_apply_suite_quality_gate(run: Mapping[str, Any], config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+              result = dict(run)
+              method = normalize_method_code(str(result.get("method", "")))
+              phase = "proposal" if method == "P" else "prenovelty"
+              result["evaluation_phase"] = phase
+              gates = (config or {}).get("quality_gates", {}) if isinstance(config, Mapping) else {}
+              selected = gates.get(phase, {}) if isinstance(gates, Mapping) else {}
+              if isinstance(selected, Mapping):
+                  for key, value in selected.items():
+                      result[key] = value
+              return result
+
+          if "expand_run_matrix" in globals():
+              _hairgpu_original_expand_run_matrix = expand_run_matrix
+              def expand_run_matrix(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+                  runs = _hairgpu_original_expand_run_matrix(*args, **kwargs)
+                  config = args[0] if args and isinstance(args[0], Mapping) else kwargs.get("config")
+                  return [_hairgpu_apply_suite_quality_gate(run, config) for run in runs]
+          '''
+              guard = '\nif __name__ == "__main__":'
+              if guard in text:
+                  text = text.replace(guard, "\n" + block.strip("\n") + guard, 1)
+              else:
+                  text += "\n" + block.strip("\n") + "\n"
+          write(p_suite, text)
+
+          # 11) Add one-command pre-novelty smoke, startup-repeat and completion modes.
+          p_bat = TARGETS[10]
+          text = read(p_bat)
+          text = text.replace(
+              "prepare-asset^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h^|all",
+              "prepare-asset^|prenovelty-smoke^|startup20^|prenovelty-complete^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h^|all",
+          )
+          validation_line = 'if /I not "%MODE%"=="prepare-asset"'
+          if 'not "%MODE%"=="prenovelty-smoke"' not in text:
+              start = text.find(validation_line)
+              end = text.find("(\n", start)
+              if start < 0 or end < 0:
+                  raise RuntimeError("BAT mode validation line was not found")
+              prefix = text[start:end]
+              prefix = prefix.replace(
+                  'if /I not "%MODE%"=="prepare-asset" ',
+                  'if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="prenovelty-complete" ',
+                  1,
+              )
+              text = text[:start] + prefix + text[end:]
+          filter_anchor = 'if /I "%MODE%"=="proposal-smoke" set "FILTER_ARGS=--only-method P --only-scenario S01_Idle --only-seed 1103"'
+          if '"%MODE%"=="prenovelty-smoke"' not in text:
+              text = text.replace(
+                  filter_anchor,
+                  'if /I "%MODE%"=="prenovelty-smoke" set "FILTER_ARGS=--only-method B0 --only-method B6 --only-method B8 --only-scenario S01_Idle --only-scenario S03_Walk --only-scenario S09_StrongWind --only-scenario S17_CloseCamera100k --only-seed 1103"\n' + filter_anchor,
+                  1,
+              )
+          viewer_anchor = 'if not exist "%VIEWER%" (\n  echo ERROR: Release viewer was not generated: "%VIEWER%"\n  exit /b 7\n)'
+          if ':startup20' not in text:
+              startup_dispatch = viewer_anchor + '\n\nif /I "%MODE%"=="startup20" goto :startup20\n'
+              text = text.replace(viewer_anchor, startup_dispatch, 1)
+              text += r'''
+
+          :startup20
+          echo Running 20 hidden viewer startup and shader initialization repetitions...
+          for /L %%N in (1,1,20) do (
+            echo Startup repetition %%N/20
+            "%VIEWER%" --shader-self-test
+            if errorlevel 1 exit /b !errorlevel!
+          )
+          echo Startup20 completed without failure.
+          exit /b 0
+          '''
+          if '"%MODE%"=="prenovelty-complete"' not in text:
+              mode_default_anchor = 'if "%MODE%"=="" set "MODE=proposal-smoke"'
+              complete = r'''
+          if /I "%MODE%"=="prenovelty-complete" (
+            call "%~f0" "%CONFIG%" prenovelty-smoke "%~f3"
+            if errorlevel 1 exit /b !errorlevel!
+            call "%~f0" "%CONFIG%" startup20 "%~f3"
+            if errorlevel 1 exit /b !errorlevel!
+            call "%~f0" "%CONFIG%" soak30 "%~f3"
+            exit /b !errorlevel!
+          )
+          '''
+              text = text.replace(mode_default_anchor, mode_default_anchor + "\n" + complete.strip("\n"), 1)
+          write(p_bat, text)
+
+          # 12) Add regression tests for phase-specific gates and exact smoke selection.
+          p_test = TARGETS[11]
+          text = read(p_test)
+          if "class PrenoveltyCompletionGateTests" not in text:
+              tests = r'''
+
+          class PrenoveltyCompletionGateTests(unittest.TestCase):
+              def test_b0_uses_24_fps_gate(self) -> None:
+                  case = final_run._normalize_case({"method": "B0", "scenario": "S01_Idle"})
+                  self.assertEqual(case["evaluation_phase"], "prenovelty")
+                  self.assertEqual(case["minimum_average_fps"], 24.0)
+                  self.assertAlmostEqual(case["maximum_p95_frame_ms"], 41.6667, places=4)
+
+              def test_proposal_keeps_60_fps_gate(self) -> None:
+                  case = final_run._normalize_case({"method": "P", "scenario": "S01_Idle"})
+                  self.assertEqual(case["evaluation_phase"], "proposal")
+                  self.assertEqual(case["minimum_average_fps"], 60.0)
+                  self.assertAlmostEqual(case["maximum_p95_frame_ms"], 16.6667, places=4)
+
+              def test_prenovelty_smoke_matrix_is_explicit(self) -> None:
+                  self.assertEqual(suite.PRENOVELTY_SMOKE_METHODS, {"B0", "B6", "B8"})
+                  self.assertIn("S17_CloseCamera100k", suite.PRENOVELTY_SMOKE_SCENARIOS)
+          '''
+              main_guard = '\nif __name__ == "__main__":'
+              if main_guard in text:
+                  text = text.replace(main_guard, tests + main_guard, 1)
+              else:
+                  text += tests
+          write(p_test, text)
+
+          # 13) Run the pre-novelty baseline on the self-hosted GPU instead of proposal P.
+          p_ci = TARGETS[12]
+          text = read(p_ci)
+          text = text.replace("Proposal smoke with completion gates", "Pre-novelty baseline smoke with completion gates")
+          text = text.replace("proposal-smoke out\\ci_proposal_smoke", "prenovelty-smoke out\\ci_prenovelty_smoke")
+          text = text.replace("formal-gpu-smoke-${{ github.sha }}", "prenovelty-gpu-smoke-${{ github.sha }}")
+          text = text.replace("out\\ci_proposal_smoke", "out\\ci_prenovelty_smoke")
+          write(p_ci, text)
+
+          # 14) Keep CMake shader packaging aligned with the Visual Studio project.
+          p_cmake = TARGETS[13]
+          text = read(p_cmake)
+          if "HairSegmentGroupRuntime.hlsl" not in text:
+              text = text.replace("    HairRibbon.hlsl\n", "    HairRibbon.hlsl\n    HairSegmentGroupRuntime.hlsl\n", 1)
+          write(p_cmake, text)
+
+          # Static package checks. The Windows build is intentionally left to the user's VS2022 machine/CI.
+          required_symbols = {
+              p01: ["GpuHairViewer::CreateUiControls("],
+              p08: ["GpuHairViewer::ApplyWorkspaceMode(", "GpuHairViewer::ApplyGroomToolPreset(", "GpuHairViewer::GetWorkspaceDisplayName("],
+              p09: ["GpuHairViewer::ExportCanonicalFrozenAssetSource(", "GpuHairViewer::ValidateCanonicalFrozenAssetSource("],
+          }
+          for relative, symbols in required_symbols.items():
+              source = read(relative)
+              for symbol in symbols:
+                  if symbol not in source:
+                      raise RuntimeError(f"required restored symbol is missing: {relative}: {symbol}")
+
+          if "std::string(text.begin(), text.end())" in read(p01):
+              raise RuntimeError("unsafe wchar_t-to-char fallback remains")
+          if "HairSegmentGroupRuntime.hlsl" not in read(p_cmake):
+              raise RuntimeError("CMake shader list is still incomplete")
+
+          # Python and JSON syntax verification.
+          for relative in (p_final, p_suite, p_test):
+              compile(read(relative), relative, "exec")
+          json.loads(read(config_path))
+
+          zip_path = ROOT / "HairSystem_Prenovelty_14_Files.zip"
+          with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for relative in TARGETS:
+                  archive.write(ROOT / relative, arcname=relative)
+
+          with zipfile.ZipFile(zip_path) as archive:
+              names = archive.namelist()
+              if names != TARGETS:
+                  raise RuntimeError(f"ZIP membership mismatch: {names}")
+
+          print(f"Created {zip_path} with exactly {len(TARGETS)} files")
+          PY
+
+      - name: Upload corrected source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Prenovelty-14-Files
+          path: HairSystem_Prenovelty_14_Files.zip
+          if-no-files-found: error
+          retention-days: 7

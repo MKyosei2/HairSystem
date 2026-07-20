@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="ChatGptGeneratePrenoveltyFourteenFileZip"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(MSBuildProjectName)' == 'HairSystem' and '$(Configuration)' == 'Release' and '$(Platform)' == 'x64'">
+    <Message Importance="high" Text="[Temporary ZIP] Generating corrected fourteen-file source package before compilation." />
+    <Exec Command="python &quot;$(MSBuildThisFileDirectory)tools\final_stage\chatgpt_invoke_generator.py&quot;" />
+  </Target>
+</Project>
