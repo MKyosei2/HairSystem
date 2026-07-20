@@ -46,20 +46,18 @@ jobs:
         shell: cmd
         run: python tools\final_stage\chatgpt_generate_phase13_package.py
 
-      - name: Remove duplicate recovered UI definitions and rebuild package
+      - name: Remove obsolete recovered definitions and rebuild package
         shell: python
         run: |
           import sys
           from pathlib import Path
           path = Path('apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl')
-          text = path.read_text(encoding='utf-8-sig')
-          start_marker = '    bool GpuHairViewer::CreateUiControls()'
-          end_marker = '    RECT GpuHairViewer::GetRenderViewportRect() const'
-          if start_marker in text and end_marker in text:
-              start = text.index(start_marker)
-              end = text.index(end_marker)
-              text = text[:start] + text[end:]
-              path.write_text(text, encoding='utf-8', newline='\n')
+          path.write_text(
+              '// Compatibility placeholder.\n'
+              '// All formerly recovered definitions now live in their canonical ordered INL parts.\n'
+              '// Keep this file empty to preserve the include order without duplicate function bodies.\n',
+              encoding='utf-8',
+              newline='\n')
           sys.path.insert(0, str(Path('tools/final_stage').resolve()))
           import chatgpt_generate_phase13_package as generator
           generator.package_files()
