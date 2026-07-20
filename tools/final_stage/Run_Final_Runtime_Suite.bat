@@ -24,6 +24,10 @@ if not exist "%CONFIG%" (
   exit /b 2
 )
 
+rem prenovelty-complete is an orchestrator. Each child mode performs its own
+rem clean Release rebuild and validation, so branch before normal execution.
+if /I "%MODE%"=="prenovelty-complete" goto :prenovelty_complete
+
 where python >nul 2>nul
 if errorlevel 1 (
   echo ERROR: python.exe was not found in PATH.
@@ -59,6 +63,7 @@ set "VIEWER=%VIEWER_DIR%\HairSystem.exe"
 set "FROZEN_BUNDLE=%ROOT%\benchmarks\novelty01\frozen_asset_bundle"
 set "GATE=%~dp0hairgpu_formal_gate.py"
 set "FREEZER=%~dp0freeze_novelty01_asset.py"
+set "STARTUP_TEST=%~dp0hairgpu_startup_self_test.py"
 
 for %%F in (PENDING_STEP0_REAL.ini STEP0_FORCE_RUN.ini STEP0_REAL_MEASUREMENT_PENDING.txt STEP0_REAL_MEASUREMENT_READY.txt) do (
   if exist "%VIEWER_DIR%\%%F" del /Q "%VIEWER_DIR%\%%F"
@@ -67,6 +72,7 @@ for %%F in (PENDING_STEP0_REAL.ini STEP0_FORCE_RUN.ini STEP0_REAL_MEASUREMENT_PE
 
 set "FILTER_ARGS="
 set "RUN_KIND_ARGS=--run-kind formal"
+if /I "%MODE%"=="prenovelty-smoke" set "FILTER_ARGS=--only-method B0 --only-method B6 --only-method B8 --only-scenario S01_Idle --only-scenario S03_Walk --only-scenario S09_StrongWind --only-scenario S17_CloseCamera100k --only-seed 1103"
 if /I "%MODE%"=="proposal-smoke" set "FILTER_ARGS=--only-method P --only-scenario S01_Idle --only-seed 1103"
 if /I "%MODE%"=="comparison-smoke" set "FILTER_ARGS=--only-method B0 --only-method P --only-scenario S01_Idle --only-seed 1103"
 if /I "%MODE%"=="critical" set "FILTER_ARGS=--only-method B0 --only-method B8 --only-method P --only-scenario S01_Idle --only-scenario S07_ColliderApproach --only-scenario S08_StaticDynamicBoundaryContact --only-scenario S12_FalseStaticTrap --only-scenario S13_RepairStorm --only-scenario S16_StateThrashing --only-scenario S17_CloseCamera100k --only-seed 1103"
@@ -94,7 +100,9 @@ if not defined HAIRGPU_FROZEN_ASSET_MANIFEST (
   for /f "usebackq delims=" %%M in (`python -c "import json,pathlib; c=pathlib.Path(r'%CONFIG%').resolve(); j=json.loads(c.read_text(encoding='utf-8-sig')); p=pathlib.Path(j['source']['asset_manifest']); print((p if p.is_absolute() else c.parent/p).resolve())"`) do set "HAIRGPU_FROZEN_ASSET_MANIFEST=%%M"
 )
 
-if /I not "%MODE%"=="prepare-asset" (
+rem startup20 validates the real executable startup path and does not consume a
+rem formal asset manifest. prepare-asset creates the manifest itself.
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="startup20" (
   if not exist "%HAIRGPU_FROZEN_ASSET_MANIFEST%" (
     echo ERROR: Frozen Asset Manifest was not found:
     echo   "%HAIRGPU_FROZEN_ASSET_MANIFEST%"
@@ -105,9 +113,10 @@ if /I not "%MODE%"=="prepare-asset" (
   )
 )
 
+
 echo [1/9] Rebuilding HairSystem Release x64 without Step0...
 "%MSBUILD%" "%ROOT%\HairSystem.sln" /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
 if not exist "%VIEWER%" (
   echo ERROR: Release viewer was not generated: "%VIEWER%"
   exit /b 7
@@ -115,33 +124,38 @@ if not exist "%VIEWER%" (
 
 if /I "%MODE%"=="startup20" goto :startup20
 
-echo [2/8] Running native ABI, canonical asset, and workload self-test...
+
+echo [2/9] Running native ABI, canonical asset, and workload self-test...
 "%VIEWER%" --native-self-test
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [3/9] Running HLSL load/compile self-test...
 "%VIEWER%" --shader-self-test
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [4/9] Checking Python syntax...
-python -m py_compile "%FREEZER%" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py" "%GATE%"
-if errorlevel 1 exit /b %errorlevel%
+python -m py_compile "%FREEZER%" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py" "%GATE%" "%STARTUP_TEST%"
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [5/9] Running lock, telemetry, selection, gate, and unit self-tests...
 python "%~dp0hairgpu_final_run.py" --self-test
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
 python "%~dp0hairgpu_runtime_suite.py" --self-test
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
 python "%GATE%" --self-test
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
 python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
 
 if /I "%MODE%"=="prepare-asset" goto :prepare_asset
 
+
 echo [6/9] Verifying frozen bundle before the run...
 python "%FREEZER%" --bundle-dir "%FROZEN_BUNDLE%" --viewer-exe "%VIEWER%" --verify-only
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
 
 rem The native Viewer intentionally refuses generated/cache assets in formal mode.
 rem Resolve the exact frozen member path and immutable hashes from the verified manifest.
@@ -158,16 +172,20 @@ if not defined HAIRGPU_FORMAL_ASSET_SHA256 exit /b 11
 if not defined HAIRGPU_FORMAL_TOPOLOGY_SHA256 exit /b 11
 if not defined HAIRGPU_GENERATOR_SETTINGS_SHA256 exit /b 11
 
+
 echo [7/9] Running strict static and hardware dry-run preflight (%MODE%)...
 python "%GATE%" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG% %HARDWARE_ARG%
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [8/9] Running Release x64 suite through the final environment gate (%MODE%)...
 python "%GATE%" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG% %HARDWARE_ARG%
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [9/9] Formal environment gate PASS.
 exit /b 0
+
 
 :prepare_asset
 if not defined HAIRGPU_FREEZE_OPERATOR (
@@ -175,6 +193,7 @@ if not defined HAIRGPU_FREEZE_OPERATOR (
   echo Example: set HAIRGPU_FREEZE_OPERATOR=Your_Name
   exit /b 10
 )
+
 
 echo [6/9] Exporting canonical 100k Hair Asset, guide topology, and settings...
 python "%FREEZER%" ^
@@ -185,15 +204,18 @@ python "%FREEZER%" ^
   --operator "%HAIRGPU_FREEZE_OPERATOR%" ^
   --repo-root "%ROOT%" ^
   --force
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [7/9] Verifying portable bundle hashes and native round trip...
 python "%FREEZER%" --bundle-dir "%FROZEN_BUNDLE%" --viewer-exe "%VIEWER%" --verify-only
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [8/9] Running post-generation native self-test...
 "%VIEWER%" --native-self-test
-if errorlevel 1 exit /b %errorlevel%
+if errorlevel 1 exit /b !errorlevel!
+
 
 echo [9/9] Frozen Asset preparation completed.
 echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
@@ -201,11 +223,61 @@ exit /b 0
 
 
 :startup20
-echo Running 20 hidden viewer startup and shader initialization repetitions...
-for /L %%N in (1,1,20) do (
-  echo Startup repetition %%N/20
-  "%VIEWER%" --shader-self-test
-  if errorlevel 1 exit /b !errorlevel!
-)
+echo Running one native self-test before the repeated real startup path...
+"%VIEWER%" --native-self-test
+if errorlevel 1 exit /b !errorlevel!
+
+echo Running one shader self-test before the repeated real startup path...
+"%VIEWER%" --shader-self-test
+if errorlevel 1 exit /b !errorlevel!
+
+set "STARTUP_OUTPUT=%ROOT%\out\startup20"
+if not "%~3"=="" set "STARTUP_OUTPUT=%~f3"
+if not exist "%STARTUP_OUTPUT%" mkdir "%STARTUP_OUTPUT%"
+
+python "%STARTUP_TEST%" ^
+  --viewer "%VIEWER%" ^
+  --repetitions 20 ^
+  --run-seconds 3.0 ^
+  --startup-timeout 120 ^
+  --shutdown-timeout 30 ^
+  --report "%STARTUP_OUTPUT%\startup20_summary.json"
+if errorlevel 1 exit /b !errorlevel!
+
 echo Startup20 completed without failure.
+exit /b 0
+
+
+:prenovelty_complete
+set "COMPLETE_OUTPUT=%ROOT%\out\prenovelty_phase2"
+if not "%~3"=="" set "COMPLETE_OUTPUT=%~f3"
+if not exist "%COMPLETE_OUTPUT%" mkdir "%COMPLETE_OUTPUT%"
+
+if not defined HAIRGPU_FREEZE_OPERATOR (
+  echo ERROR: HAIRGPU_FREEZE_OPERATOR is required for prenovelty-complete.
+  echo Example: set HAIRGPU_FREEZE_OPERATOR=Your_Name
+  exit /b 10
+)
+
+call "%~f0" "%CONFIG%" prepare-asset
+if errorlevel 1 exit /b !errorlevel!
+
+call "%~f0" "%CONFIG%" startup20 "%COMPLETE_OUTPUT%\startup20"
+if errorlevel 1 exit /b !errorlevel!
+
+call "%~f0" "%CONFIG%" prenovelty-smoke "%COMPLETE_OUTPUT%\smoke"
+if errorlevel 1 exit /b !errorlevel!
+
+set "COMMIT_SHA=unknown"
+for /f "usebackq delims=" %%C in (`git -C "%ROOT%" rev-parse HEAD 2^>nul`) do set "COMMIT_SHA=%%C"
+(
+  echo status=PASS
+  echo phase=2
+  echo commit=!COMMIT_SHA!
+  echo completedAt=%DATE% %TIME%
+  echo note=Phase 2 passed. Phase 3 pre-novelty-only configuration and soak gates are still required before the final PRENOVELTY_ENVIRONMENT_READY declaration.
+) > "%COMPLETE_OUTPUT%\PRENOVELTY_PHASE2_COMPLETE.txt"
+
+echo Phase 2 pre-novelty preparation completed.
+echo Marker: "%COMPLETE_OUTPUT%\PRENOVELTY_PHASE2_COMPLETE.txt"
 exit /b 0
