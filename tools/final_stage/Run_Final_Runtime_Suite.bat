@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 if "%~1"=="" (
-  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [prepare-asset^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h] [output_dir]
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [prepare-asset^|prenovelty-smoke^|startup20^|prenovelty-complete^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h^|all] [output_dir]
   exit /b 1
 )
 
@@ -14,7 +14,7 @@ if "%MODE%"=="" set "MODE=proposal-smoke"
 set "OUTPUT_ARG="
 if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
 
-if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" (
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="prenovelty-complete" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
   echo ERROR: unsupported mode "%MODE%".
   exit /b 2
 )
@@ -72,6 +72,7 @@ if /I "%MODE%"=="comparison-smoke" set "FILTER_ARGS=--only-method B0 --only-meth
 if /I "%MODE%"=="critical" set "FILTER_ARGS=--only-method B0 --only-method B8 --only-method P --only-scenario S01_Idle --only-scenario S07_ColliderApproach --only-scenario S08_StaticDynamicBoundaryContact --only-scenario S12_FalseStaticTrap --only-scenario S13_RepairStorm --only-scenario S16_StateThrashing --only-scenario S17_CloseCamera100k --only-seed 1103"
 if /I "%MODE%"=="baseline" set "FILTER_ARGS=--only-method B0"
 if /I "%MODE%"=="full" set "FILTER_ARGS="
+if /I "%MODE%"=="all" set "RUN_KIND_ARGS=--run-kind all"
 if /I "%MODE%"=="determinism" set "RUN_KIND_ARGS=--run-kind determinism"
 if /I "%MODE%"=="soak30" (
   set "RUN_KIND_ARGS=--run-kind long-run"
@@ -112,7 +113,9 @@ if not exist "%VIEWER%" (
   exit /b 7
 )
 
-echo [2/9] Running native ABI and fixed-workload self-test...
+if /I "%MODE%"=="startup20" goto :startup20
+
+echo [2/8] Running native ABI, canonical asset, and workload self-test...
 "%VIEWER%" --native-self-test
 if errorlevel 1 exit /b %errorlevel%
 
@@ -194,4 +197,15 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo [9/9] Frozen Asset preparation completed.
 echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
+exit /b 0
+
+
+:startup20
+echo Running 20 hidden viewer startup and shader initialization repetitions...
+for /L %%N in (1,1,20) do (
+  echo Startup repetition %%N/20
+  "%VIEWER%" --shader-self-test
+  if errorlevel 1 exit /b !errorlevel!
+)
+echo Startup20 completed without failure.
 exit /b 0

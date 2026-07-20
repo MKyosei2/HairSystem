@@ -54,3 +54,7 @@ Thumbs.db
 .vs/
 .vscode/
 .idea/
+
+# Frozen Novelty01 bundle is generated once by the Release viewer.
+benchmarks/novelty01/frozen_asset_bundle/*
+!benchmarks/novelty01/frozen_asset_bundle/frozen_asset_lock.json

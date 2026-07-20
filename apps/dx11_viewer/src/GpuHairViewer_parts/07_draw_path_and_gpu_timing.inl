@@ -1,6 +1,11 @@
 // GpuHairViewer.cpp ordered part 07: draw_path_and_gpu_timing
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
 
+namespace
+{
+    constexpr UINT kHairGpuNonBlockingQueryFlags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
+}
+
     const wchar_t* GpuHairViewer::GetGroomToolDisplayName() const
     {
         switch (m_groomTool)

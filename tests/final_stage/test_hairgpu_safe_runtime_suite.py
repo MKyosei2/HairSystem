@@ -367,5 +367,23 @@ class CompletedEnvironmentRegressionTests(unittest.TestCase):
             )
 
 
+
+class PrenoveltyCompletionGateTests(unittest.TestCase):
+    def test_b0_uses_24_fps_gate(self) -> None:
+        case = final_run._normalize_case({"method": "B0", "scenario": "S01_Idle"})
+        self.assertEqual(case["evaluation_phase"], "prenovelty")
+        self.assertEqual(case["minimum_average_fps"], 24.0)
+        self.assertAlmostEqual(case["maximum_p95_frame_ms"], 41.6667, places=4)
+
+    def test_proposal_keeps_60_fps_gate(self) -> None:
+        case = final_run._normalize_case({"method": "P", "scenario": "S01_Idle"})
+        self.assertEqual(case["evaluation_phase"], "proposal")
+        self.assertEqual(case["minimum_average_fps"], 60.0)
+        self.assertAlmostEqual(case["maximum_p95_frame_ms"], 16.6667, places=4)
+
+    def test_prenovelty_smoke_matrix_is_explicit(self) -> None:
+        self.assertEqual(suite.PRENOVELTY_SMOKE_METHODS, {"B0", "B6", "B8"})
+        self.assertIn("S17_CloseCamera100k", suite.PRENOVELTY_SMOKE_SCENARIOS)
+
 if __name__ == "__main__":
     unittest.main()

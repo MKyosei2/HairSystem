@@ -14,6 +14,118 @@
         UpdateScalpOverlayVertexBuffer();
     }
 
+    void GpuHairViewer::ApplyWorkspaceMode(WorkspaceMode workspace)
+    {
+        m_workspaceMode = workspace;
+        switch (workspace)
+        {
+        case WorkspaceMode::Groom:
+            m_interactionMode = InteractionMode::Edit;
+            if (m_debugColorMode == DebugColorMode::Natural)
+            {
+                m_debugColorMode = DebugColorMode::Editability;
+            }
+            if (m_maskOverlayMode == MaskOverlayMode::None)
+            {
+                m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            }
+            break;
+        case WorkspaceMode::Sim:
+            m_interactionMode = InteractionMode::View;
+            if (m_maskOverlayMode == MaskOverlayMode::EditInfluenceBeforeAfter)
+            {
+                m_maskOverlayMode = MaskOverlayMode::None;
+            }
+            break;
+        case WorkspaceMode::Review:
+            m_interactionMode = InteractionMode::View;
+            if (m_maskOverlayMode == MaskOverlayMode::None)
+            {
+                m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            }
+            break;
+        case WorkspaceMode::Report:
+            m_interactionMode = InteractionMode::View;
+            if (m_maskOverlayMode == MaskOverlayMode::None)
+            {
+                m_maskOverlayMode = MaskOverlayMode::ActiveSetRiskSelection;
+            }
+            break;
+        }
+        SyncControlsFromState();
+        LayoutUiControls();
+    }
+
+    void GpuHairViewer::ApplyGroomToolPreset(GroomTool tool)
+    {
+        m_groomTool = tool;
+        m_workspaceMode = WorkspaceMode::Groom;
+        m_interactionMode = InteractionMode::Edit;
+        switch (tool)
+        {
+        case GroomTool::Select:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Comb:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_quickEditFeather = std::max(m_quickEditFeather, 0.20f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Grab:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Smooth:
+            m_quickEditBoundarySmoothing = std::max(m_quickEditBoundarySmoothing, 0.45f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        case GroomTool::Length:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Volume:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Part:
+            m_quickEditMode = hairgpu::RegionSelectMode::Sector;
+            m_maskOverlayMode = MaskOverlayMode::Parting;
+            break;
+        case GroomTool::Freeze:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::StrandFix:
+            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
+            break;
+        case GroomTool::Clump:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_quickEditFeather = std::max(m_quickEditFeather, 0.24f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        case GroomTool::Curl:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_quickEditFeather = std::max(m_quickEditFeather, 0.26f);
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        case GroomTool::Unclump:
+            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
+            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
+            break;
+        }
+        SyncControlsFromState();
+        LayoutUiControls();
+    }
+
+    const wchar_t* GpuHairViewer::GetWorkspaceDisplayName() const
+    {
+        switch (m_workspaceMode)
+        {
+        case WorkspaceMode::Groom: return L"Groom";
+        case WorkspaceMode::Sim: return L"Sim";
+        case WorkspaceMode::Review: return L"Review";
+        case WorkspaceMode::Report: return L"Report";
+        default: return L"Groom";
+        }
+    }
+
     void GpuHairViewer::ApplyPreset(int presetIndex)
     {
         m_renderMode = RenderMode::StrandRibbon;
@@ -29,14 +141,14 @@
         default:
         case 0:
             m_activePresetName = L"Rapunzel Preview";
-            m_builderGuideCount = 6000;
-            m_builderFollowersPerGuide = 16;
-            m_builderParticlesPerStrand = 128;
+            m_builderGuideCount = kFixedGuideCount;
+            m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+            m_builderParticlesPerStrand = kFixedParticlesPerStrand;
             m_widthScale = 0.56f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.085f;
             m_simConfig.windStrength = 0.03f;
-            m_simConfig.solverIterations = 14;
+            m_simConfig.solverIterations = kFixedSolverIterations;
             m_simConfig.followStiffness = 0.992f;
             m_selfCollisionRadius = 0.0055f;
             m_selfCollisionStiffness = 0.10f;
@@ -46,14 +158,14 @@
             break;
         case 1:
             m_activePresetName = L"Calm Studio";
-            m_builderGuideCount = 6000;
-            m_builderFollowersPerGuide = 16;
-            m_builderParticlesPerStrand = 128;
+            m_builderGuideCount = kFixedGuideCount;
+            m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+            m_builderParticlesPerStrand = kFixedParticlesPerStrand;
             m_widthScale = 0.60f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.060f;
             m_simConfig.windStrength = 0.08f;
-            m_simConfig.solverIterations = 14;
+            m_simConfig.solverIterations = kFixedSolverIterations;
             m_simConfig.followStiffness = 0.985f;
             m_selfCollisionRadius = 0.012f;
             m_selfCollisionStiffness = 0.38f;
@@ -63,14 +175,14 @@
             break;
         case 2:
             m_activePresetName = L"Windy Demo";
-            m_builderGuideCount = 6000;
-            m_builderFollowersPerGuide = 16;
-            m_builderParticlesPerStrand = 128;
+            m_builderGuideCount = kFixedGuideCount;
+            m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+            m_builderParticlesPerStrand = kFixedParticlesPerStrand;
             m_widthScale = 0.58f;
             m_simConfig.gravity = 18.5f;
             m_simConfig.globalDamping = 0.040f;
             m_simConfig.windStrength = 1.30f;
-            m_simConfig.solverIterations = 12;
+            m_simConfig.solverIterations = kFixedSolverIterations;
             m_simConfig.followStiffness = 0.965f;
             m_selfCollisionRadius = 0.011f;
             m_selfCollisionStiffness = 0.32f;
@@ -80,14 +192,14 @@
             break;
         case 3:
             m_activePresetName = L"Heavy Grounded";
-            m_builderGuideCount = 6000;
-            m_builderFollowersPerGuide = 16;
-            m_builderParticlesPerStrand = 128;
+            m_builderGuideCount = kFixedGuideCount;
+            m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+            m_builderParticlesPerStrand = kFixedParticlesPerStrand;
             m_widthScale = 0.62f;
             m_simConfig.gravity = 22.0f;
             m_simConfig.globalDamping = 0.072f;
             m_simConfig.windStrength = 0.10f;
-            m_simConfig.solverIterations = 16;
+            m_simConfig.solverIterations = kFixedSolverIterations;
             m_simConfig.followStiffness = 0.990f;
             m_selfCollisionRadius = 0.015f;
             m_selfCollisionStiffness = 0.52f;
@@ -97,14 +209,14 @@
             break;
         case 4:
             m_activePresetName = L"Game-ish LOD";
-            m_builderGuideCount = 6000;
-            m_builderFollowersPerGuide = 16;
-            m_builderParticlesPerStrand = 128;
+            m_builderGuideCount = kFixedGuideCount;
+            m_builderFollowersPerGuide = kFixedFollowersPerGuide;
+            m_builderParticlesPerStrand = kFixedParticlesPerStrand;
             m_widthScale = 0.54f;
             m_simConfig.gravity = 18.0f;
             m_simConfig.globalDamping = 0.050f;
             m_simConfig.windStrength = 0.25f;
-            m_simConfig.solverIterations = 12;
+            m_simConfig.solverIterations = kFixedSolverIterations;
             m_simConfig.followStiffness = 0.90f;
             m_selfCollisionRadius = 0.010f;
             m_selfCollisionStiffness = 0.28f;
@@ -116,6 +228,7 @@
         m_enableSelfCollision = false;
         m_enableGridSelfCollision = false;
         m_enableScalpMotion = false;
+        EnforceFixedWorkload();
         SyncControlsFromState();
         RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
     }

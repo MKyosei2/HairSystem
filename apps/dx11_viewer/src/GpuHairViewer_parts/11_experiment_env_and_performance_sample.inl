@@ -1,5 +1,7 @@
 // GpuHairViewer.cpp ordered part 11: experiment_env_and_performance_sample
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
+// HAIRGPU_PRENOVELTY_GATE_24FPS: B0/B6/B8 evidence uses the 24 FPS baseline gate;
+// the proposal P method retains the independent 60 FPS target in the suite profile.
 
 sample.topLevelNoveltyMask = m_noveltyTelemetry.topLevelNoveltyMask;
 sample.overflowCount = m_noveltyTelemetry.overflowCount;

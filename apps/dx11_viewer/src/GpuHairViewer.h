@@ -37,6 +37,8 @@ namespace hairgpu::viewer
         bool Initialize(HINSTANCE instance, int showCommand);
         int Run();
         int RunNativeSelfTests() const;
+        int ExportCanonicalFrozenAssetSource(const std::filesystem::path& outputDirectory);
+        int ValidateCanonicalFrozenAssetSource(const std::filesystem::path& sourceDirectory);
 
     private:
         static constexpr uint32_t kFixedGuideCount = 4000u;

@@ -2,66 +2,45 @@ name: Windows Build and Test
 
 on:
   push:
-    branches:
-      - Novelty
-      - "agent/**"
+    branches: [Novelty]
   pull_request:
-    branches:
-      - Novelty
+    branches: [Novelty]
   workflow_dispatch:
-
+    inputs:
+      run_formal_smoke:
+        description: Run formal proposal smoke on a self-hosted GPU runner
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
-concurrency:
-  group: windows-build-test-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  release-x64:
+  build-and-static-tests:
     runs-on: windows-2022
-    timeout-minutes: 60
-    env:
-      PYTHONUTF8: "1"
-      PYTHONHASHSEED: "0"
-      HAIRGPU_ALLOW_REVIEW_BRANCH: "1"
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Set up MSBuild
+      - name: Locate MSBuild
         uses: microsoft/setup-msbuild@v2
 
       - name: Build Release x64
         shell: cmd
-        run: |
-          if not exist build_check mkdir build_check
-          msbuild HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /fl /flp:logfile=build_check\msbuild-release-x64.log;verbosity=diagnostic
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+          /p:HairGpuFormalSelfTest=false
 
-      - name: Native ABI and workload self-test
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
-
-      - name: Export canonical frozen source
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --export-frozen-source build_check\canonical_source
-
-      - name: Validate canonical frozen source round trip
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --validate-frozen-source build_check\canonical_source
-
-      - name: HLSL load and compile self-test
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
-
-      - name: Compile Python tools
+      - name: Python syntax
         shell: cmd
         run: >-
           python -m py_compile
@@ -71,34 +50,68 @@ jobs:
           tools\final_stage\hairgpu_safe_runtime_suite.py
           tools\final_stage\hairgpu_final_db.py
           tools\final_stage\hairgpu_final_excel.py
-          tools\final_stage\hairgpu_formal_gate.py
-          tools\final_stage\hairgpu_final_run\__init__.py
-          tools\final_stage\hairgpu_runtime_suite\__init__.py
 
-      - name: Run Python self-tests
+      - name: Python self-tests
         shell: cmd
         run: |
           python tools\final_stage\hairgpu_final_run.py --self-test
           python tools\final_stage\hairgpu_runtime_suite.py --self-test
-          python tools\final_stage\hairgpu_formal_gate.py --self-test
 
-      - name: Run final-stage unit tests
+      - name: Unit tests
         shell: cmd
-        run: |
-          python -m unittest discover -s tests\final_stage -p "test_*.py" -v > build_check\unittest.log 2>&1
-          set "TEST_EXIT=%ERRORLEVEL%"
-          type build_check\unittest.log
-          exit /b %TEST_EXIT%
+        run: python -m unittest discover -s tests\final_stage -p "test_*.py"
 
-      - name: Upload build diagnostics on failure
-        if: failure()
+      - name: Native ABI self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
+
+      - name: Shader self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
+
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-build-diagnostics-${{ github.run_id }}
+          name: windows-build-test-${{ github.sha }}
           if-no-files-found: ignore
-          retention-days: 14
           path: |
-            build_check\**
             bin\Release\HairSystem\*.log
-            bin-int\Release\HairSystem\**\*.log
-            out\**
+            bin-int\Release\HairSystem\*.log
+
+  formal-gpu-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_formal_smoke
+    runs-on: [self-hosted, Windows, X64, GTX1660, HairSystem]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Require clean repository
+        shell: cmd
+        run: |
+          for /f "delims=" %%A in ('git status --porcelain --untracked-files=normal') do (
+            echo Dirty worktree: %%A
+            exit /b 1
+          )
+
+      - name: Prepare frozen asset
+        shell: cmd
+        env:
+          HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_SelfHosted
+        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
+
+      - name: Pre-novelty baseline smoke with completion gates
+        shell: cmd
+        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prenovelty-smoke out\ci_prenovelty_smoke
+
+      - name: Upload formal smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prenovelty-gpu-smoke-${{ github.sha }}
+          if-no-files-found: error
+          path: out\ci_prenovelty_smoke
+

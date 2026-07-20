@@ -255,11 +255,12 @@
     "maximum_gpu_clock_drop_ratio": 0.15,
     "build_configuration": "Release",
     "platform": "x64",
-    "hardware_sample_interval_seconds": 1.0,
+    "hardware_sample_interval_seconds": 3.0,
     "minimum_process_memory_sample_coverage": 0.95,
     "maximum_process_private_memory_mib": 32768.0,
     "target_process_private_memory_mib": 1024.0,
-    "maximum_dxgi_local_usage_mib": 6144.0
+    "maximum_dxgi_local_usage_mib": 6144.0,
+    "evaluation_phase": "prenovelty"
   },
   "seeds": [
     1103,
@@ -511,5 +512,25 @@
     "max_p99_degradation_ratio": 1.1,
     "max_query_unresolved_slope": 0.0
   },
-  "method_settings_source": "tools/final_stage/hairgpu_final_run.py::METHOD_PRESETS"
+  "method_settings_source": "tools/final_stage/hairgpu_final_run.py::METHOD_PRESETS",
+  "quality_gates": {
+    "prenovelty": {
+      "minimum_average_fps": 24.0,
+      "minimum_target_fps_ratio": 0.95,
+      "maximum_frame_budget_overrun_rate": 0.05,
+      "maximum_p95_frame_ms": 41.6667,
+      "maximum_p99_frame_ms": 50.0,
+      "maximum_single_frame_ms": 100.0,
+      "maximum_frames_over_100ms": 0
+    },
+    "proposal": {
+      "minimum_average_fps": 60.0,
+      "minimum_target_fps_ratio": 0.95,
+      "maximum_frame_budget_overrun_rate": 0.05,
+      "maximum_p95_frame_ms": 16.6667,
+      "maximum_p99_frame_ms": 20.0,
+      "maximum_single_frame_ms": 50.0,
+      "maximum_frames_over_100ms": 0
+    }
+  }
 }

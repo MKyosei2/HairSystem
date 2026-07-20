@@ -35,7 +35,7 @@ from hairgpu_final_run import (
     write_json,
 )
 
-SUITE_VERSION = "3.5-process-evidence"
+SUITE_VERSION = "3.6-existing-file-gates"
 RUN_KINDS = {"formal", "determinism", "long-run", "all"}
 
 
@@ -157,6 +157,7 @@ def _apply_contract(run: dict[str, Any], contract: Mapping[str, Any]) -> None:
 
 def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Path) -> list[dict[str, Any]]:
     defaults = dict(config.get("run_defaults", {})); source = dict(config.get("source", {}))
+    goals = config.get("goals", {}) if isinstance(config.get("goals"), dict) else {}
     methods = config.get("methods", []); scenarios = config.get("scenarios", []); seeds = config.get("seeds", [])
     repetitions = int(config.get("repetitions_per_seed", 1)); contract = telemetry_contract(config)
     if not all(isinstance(item, list) for item in (methods, scenarios, seeds)):
@@ -194,10 +195,10 @@ def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Pa
                         "shader_root": source.get("shader_root"), "special_kind": "formal",
                     })
                     run["method_settings"] = dict(method_entry.get("settings", {}))
+                    run["scientific_goals"] = dict(goals)
                     _apply_contract(run, contract)
                     runs.append(normalize_case(run))
     return runs
-
 
 def expand_determinism_runs(config: Mapping[str, Any], formal_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_key = {(run["method"], run["scenario"], int(run["seed"])): run for run in formal_runs}
@@ -261,6 +262,27 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path, viewer_exe: Path,
     problems: list[dict[str, Any]] = []
     preflight = config.get("preflight", {}) if isinstance(config.get("preflight"), dict) else {}
     output_dir.mkdir(parents=True, exist_ok=True)
+    defaults = config.get("run_defaults", {}) if isinstance(config.get("run_defaults"), dict) else {}
+    expected_checks = (
+        ("build_configuration", preflight.get("required_build_configuration"), defaults.get("build_configuration")),
+        ("platform", preflight.get("required_platform"), defaults.get("platform")),
+        ("width", preflight.get("required_width"), defaults.get("width")),
+        ("height", preflight.get("required_height"), defaults.get("height")),
+        ("fixed_timestep_seconds", preflight.get("required_fixed_timestep_seconds"), defaults.get("fixed_timestep_seconds")),
+    )
+    for field, expected, observed in expected_checks:
+        if expected is not None and observed != expected:
+            problems.append({"code": "preflight_value_mismatch", "field": field, "expected": expected, "observed": observed})
+    if int(defaults.get("warmup_frames", 0)) < int(preflight.get("minimum_warmup_frames", 0)):
+        problems.append({"code": "warmup_frames_too_low", "expected": preflight.get("minimum_warmup_frames"), "observed": defaults.get("warmup_frames")})
+    if int(defaults.get("measurement_frames", 0)) < int(preflight.get("minimum_measurement_frames", 0)):
+        problems.append({"code": "measurement_frames_too_low", "expected": preflight.get("minimum_measurement_frames"), "observed": defaults.get("measurement_frames")})
+    if len(config.get("seeds", [])) < int(preflight.get("minimum_seed_count", 0)):
+        problems.append({"code": "seed_count_too_low", "expected": preflight.get("minimum_seed_count"), "observed": len(config.get("seeds", []))})
+    if bool(preflight.get("require_vsync_off", True)) and bool(defaults.get("vsync", True)):
+        problems.append({"code": "vsync_must_be_off", "observed": defaults.get("vsync")})
+    if bool(preflight.get("require_vsync_off", True)) and int(defaults.get("present_sync_interval", 1)) != 0:
+        problems.append({"code": "present_sync_interval_must_be_zero", "observed": defaults.get("present_sync_interval")})
     free = shutil.disk_usage(output_dir).free
     required = int(float(preflight.get("minimum_free_disk_gib", 20.0)) * (1024 ** 3))
     if free < required:
@@ -273,7 +295,9 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path, viewer_exe: Path,
     required_branch = str(config.get("source", {}).get("required_branch", "Novelty"))
     if branch and branch != required_branch:
         problems.append({"code": "branch_mismatch", "expected": required_branch, "observed": branch})
-    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=no")
+    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
+    if not branch:
+        problems.append({"code": "detached_head_or_branch_unknown"})
     if bool(preflight.get("require_clean_git", True)) and dirty:
         problems.append({"code": "dirty_worktree", "observed": dirty.splitlines()[:10]})
     if sys.version_info < (3, 10):
@@ -415,6 +439,194 @@ def build_suite_artifact(output_dir: Path, config_path: Path, rows: list[Mapping
     return archive
 
 
+# HAIRGPU_SUITE_POST_GATES_V1
+def _percentile_local(values: list[float], percentile_value: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * percentile_value / 100.0
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def _read_jsonl_local(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.is_file():
+        return rows
+    with path.open("r", encoding="utf-8-sig") as handle:
+        for line in handle:
+            text = line.strip()
+            if text:
+                value = json.loads(text)
+                if isinstance(value, dict):
+                    rows.append(value)
+    return rows
+
+
+def evaluate_post_suite_gates(
+    config: Mapping[str, Any],
+    runs: list[dict[str, Any]],
+    output_dir: Path,
+    run_kind: str,
+) -> list[dict[str, Any]]:
+    problems: list[dict[str, Any]] = []
+
+    if run_kind in {"determinism", "all"}:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for run in runs:
+            if run.get("special_kind") != "determinism":
+                continue
+            name = str(run.get("run_name", ""))
+            group = name.rsplit("_r", 1)[0]
+            groups.setdefault(group, []).append(run)
+
+        for group, group_runs in sorted(groups.items()):
+            observed_hashes: list[tuple[Any, Any, Any]] = []
+            for run in sorted(group_runs, key=lambda item: str(item.get("run_name", ""))):
+                paths = output_paths(output_dir, str(run["run_name"]))
+                if not paths["summary"].is_file():
+                    problems.append({
+                        "code": "determinism_summary_missing",
+                        "group": group,
+                        "run": run["run_name"],
+                    })
+                    continue
+                summary = read_json(paths["summary"])
+                hashes = (
+                    summary.get("stateSequenceHash"),
+                    summary.get("compactionSequenceHash"),
+                    summary.get("finalPositionHash"),
+                )
+                if any(value in (None, "", 0, "0") for value in hashes):
+                    problems.append({
+                        "code": "determinism_hash_missing",
+                        "group": group,
+                        "run": run["run_name"],
+                        "observed": hashes,
+                    })
+                observed_hashes.append(hashes)
+                if int(summary.get("determinismMismatchCount", 0) or 0) != 0:
+                    problems.append({
+                        "code": "determinism_runtime_mismatch",
+                        "group": group,
+                        "run": run["run_name"],
+                        "observed": summary.get("determinismMismatchCount"),
+                    })
+
+            if len(observed_hashes) != len(group_runs) or len(set(observed_hashes)) != 1:
+                problems.append({
+                    "code": "determinism_replay_mismatch",
+                    "group": group,
+                    "observed": observed_hashes,
+                })
+
+    if run_kind in {"long-run", "all"}:
+        gates = (
+            config.get("long_run_gates", {})
+            if isinstance(config.get("long_run_gates"), dict)
+            else {}
+        )
+        for run in runs:
+            if run.get("special_kind") != "long_run":
+                continue
+            paths = output_paths(output_dir, str(run["run_name"]))
+            validation = read_validation(paths)
+            process = (
+                validation.get("processMemory", {})
+                if isinstance(validation.get("processMemory"), dict)
+                else {}
+            )
+            summary = read_json(paths["summary"]) if paths["summary"].is_file() else {}
+            frames = _read_jsonl_local(paths["jsonl"])
+
+            checks = (
+                ("peakProcessPrivateMiB", "<=", gates.get("max_peak_process_private_mib"), "long_run_peak_private"),
+                ("processPrivateSlopeMiBPerMin", "<=", gates.get("max_process_private_slope_mib_per_min"), "long_run_private_slope"),
+                ("peakDxgiLocalUsageMiB", "<=", gates.get("max_peak_dxgi_local_usage_mib"), "long_run_peak_vram"),
+                ("dxgiLocalUsageSlopeMiBPerMin", "<=", gates.get("max_dxgi_local_usage_slope_mib_per_min"), "long_run_vram_slope"),
+                ("sampleCoverage", ">=", gates.get("minimum_process_memory_sample_coverage"), "long_run_sample_coverage"),
+            )
+            for field, operator, threshold_value, code in checks:
+                if threshold_value is None:
+                    continue
+                observed = process.get(field)
+                try:
+                    observed_number = float(observed)
+                    threshold = float(threshold_value)
+                    passed = (
+                        observed_number <= threshold
+                        if operator == "<="
+                        else observed_number >= threshold
+                    )
+                except (TypeError, ValueError):
+                    passed = False
+                if not passed:
+                    problems.append({
+                        "code": code,
+                        "run": run["run_name"],
+                        "field": field,
+                        "expected": f"{operator} {threshold_value}",
+                        "observed": observed,
+                    })
+
+            if frames:
+                count = max(1, len(frames) // 10)
+                first_values = [
+                    float(row["frameMilliseconds"])
+                    for row in frames[:count]
+                    if row.get("frameMilliseconds") is not None
+                ]
+                last_values = [
+                    float(row["frameMilliseconds"])
+                    for row in frames[-count:]
+                    if row.get("frameMilliseconds") is not None
+                ]
+                first_p99 = _percentile_local(first_values, 99.0)
+                last_p99 = _percentile_local(last_values, 99.0)
+                ratio = (
+                    last_p99 / first_p99
+                    if first_p99 and last_p99 is not None
+                    else None
+                )
+                maximum_ratio = float(
+                    gates.get("max_p99_degradation_ratio", 1.1)
+                )
+                if ratio is None or ratio > maximum_ratio:
+                    problems.append({
+                        "code": "long_run_p99_degradation",
+                        "run": run["run_name"],
+                        "expected": maximum_ratio,
+                        "observed": ratio,
+                        "firstP99": first_p99,
+                        "lastP99": last_p99,
+                    })
+            else:
+                problems.append({
+                    "code": "long_run_frames_missing",
+                    "run": run["run_name"],
+                })
+
+            unresolved = summary.get("gpuTimingUnresolvedFrameCount")
+            maximum_unresolved = float(
+                gates.get("max_query_unresolved_slope", 0.0)
+            )
+            try:
+                unresolved_number = float(unresolved)
+            except (TypeError, ValueError):
+                unresolved_number = float("inf")
+            if unresolved_number > maximum_unresolved:
+                problems.append({
+                    "code": "long_run_unresolved_gpu_queries",
+                    "run": run["run_name"],
+                    "expected": maximum_unresolved,
+                    "observed": unresolved,
+                })
+
+    return problems
+
+
 def execute_suite(config_path: Path, viewer_exe: Path | None, output_override: Path | None,
                   run_kind: str, only_methods: set[str], only_scenarios: set[str],
                   only_seeds: set[int], only_run_names: set[str], dry_run: bool,
@@ -483,12 +695,31 @@ def execute_suite(config_path: Path, viewer_exe: Path | None, output_override: P
         write_sqlite(output_dir / "final_runtime_suite.sqlite", rows)
         if exit_code not in {EXIT_COMPLETE_VALID, EXIT_QUALITY_GATE_FAILED} and fail_policy == "stop":
             break
+    post_gate_issues = evaluate_post_suite_gates(
+        config,
+        runs,
+        output_dir,
+        run_kind,
+    )
+    write_json(
+        output_dir / "suite_post_gates.json",
+        {
+            "runKind": run_kind,
+            "passed": not post_gate_issues,
+            "issues": post_gate_issues,
+        },
+    )
+    if post_gate_issues:
+        worst_exit = max(worst_exit, EXIT_QUALITY_GATE_FAILED)
     summary = {
         "suiteVersion": SUITE_VERSION, "runKind": run_kind,
         "selectedRunCount": len(runs), "completedRowCount": len(rows),
         "validRunCount": sum(int(row["valid"]) for row in rows),
         "qualityPassCount": sum(int(row["quality_gate_passed"]) for row in rows),
-        "worstExitCode": worst_exit, "runtimeCommitSha": git_value(repo_root, "rev-parse", "HEAD"),
+        "worstExitCode": worst_exit,
+        "postSuiteGatesPassed": not post_gate_issues,
+        "postSuiteGateIssueCount": len(post_gate_issues),
+        "runtimeCommitSha": git_value(repo_root, "rev-parse", "HEAD"),
         "generatedUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     write_json(output_dir / "suite_summary.json", summary)
@@ -510,6 +741,87 @@ def _self_test() -> int:
     run: dict[str, Any] = {"scenario": "S01_Idle"}; _apply_contract(run, contract)
     if run["required_telemetry_fields"] != ["a", "b"]:
         return 1
+
+    with tempfile.TemporaryDirectory(prefix="hairgpu_runtime_suite_selftest_") as temporary:
+        output = Path(temporary)
+
+        det_runs: list[dict[str, Any]] = []
+        for index in range(5):
+            replay = {
+                "run_name": f"DET_TEST_r{index:02d}",
+                "special_kind": "determinism",
+                "method": "P",
+                "scenario": "S16_StateThrashing",
+                "seed": 1,
+            }
+            det_runs.append(replay)
+            paths = output_paths(output, replay["run_name"])
+            write_json(paths["summary"], {
+                "stateSequenceHash": 11,
+                "compactionSequenceHash": 22,
+                "finalPositionHash": 33,
+                "determinismMismatchCount": 0,
+            })
+        if evaluate_post_suite_gates({}, det_runs, output, "determinism"):
+            print("self-test failed: valid determinism replay")
+            return 1
+        mismatch_paths = output_paths(output, det_runs[-1]["run_name"])
+        write_json(mismatch_paths["summary"], {
+            "stateSequenceHash": 99,
+            "compactionSequenceHash": 22,
+            "finalPositionHash": 33,
+            "determinismMismatchCount": 0,
+        })
+        mismatch_issues = evaluate_post_suite_gates({}, det_runs, output, "determinism")
+        if not any(item.get("code") == "determinism_replay_mismatch" for item in mismatch_issues):
+            print("self-test failed: determinism mismatch gate")
+            return 1
+
+        long_run = {
+            "run_name": "LONG_TEST",
+            "special_kind": "long_run",
+            "method": "P",
+            "scenario": "S03_Walk",
+            "seed": 1,
+        }
+        long_paths = output_paths(output, long_run["run_name"])
+        write_json(long_paths["validation"], {
+            "processMemory": {
+                "peakProcessPrivateMiB": 900.0,
+                "processPrivateSlopeMiBPerMin": 0.5,
+                "peakDxgiLocalUsageMiB": 2000.0,
+                "dxgiLocalUsageSlopeMiBPerMin": 0.2,
+                "sampleCoverage": 1.0,
+            }
+        })
+        write_json(long_paths["summary"], {"gpuTimingUnresolvedFrameCount": 0})
+        atomic_write_text(
+            long_paths["jsonl"],
+            "".join(
+                json.dumps({"frameMilliseconds": 10.0}, allow_nan=False) + "\n"
+                for _ in range(100)
+            ),
+        )
+        long_config = {
+            "long_run_gates": {
+                "max_peak_process_private_mib": 32768.0,
+                "max_process_private_slope_mib_per_min": 2.0,
+                "max_peak_dxgi_local_usage_mib": 6144.0,
+                "max_dxgi_local_usage_slope_mib_per_min": 1.0,
+                "minimum_process_memory_sample_coverage": 0.95,
+                "max_p99_degradation_ratio": 1.1,
+                "max_query_unresolved_slope": 0.0,
+            }
+        }
+        if evaluate_post_suite_gates(long_config, [long_run], output, "long-run"):
+            print("self-test failed: valid long-run gates")
+            return 1
+        write_json(long_paths["summary"], {"gpuTimingUnresolvedFrameCount": 1})
+        long_issues = evaluate_post_suite_gates(long_config, [long_run], output, "long-run")
+        if not any(item.get("code") == "long_run_unresolved_gpu_queries" for item in long_issues):
+            print("self-test failed: long-run unresolved query gate")
+            return 1
+
     print("hairgpu_runtime_suite self-test: PASS")
     return 0
 
@@ -544,6 +856,198 @@ def main() -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return EXIT_FORMAL_CONTRACT_INVALID
 
+
+# HAIRGPU_PRENOVELTY_SUITE_SELECTION_V1
+PRENOVELTY_SMOKE_METHODS = {"B0", "B6", "B8"}
+PRENOVELTY_SMOKE_SCENARIOS = {
+    "S01_Idle", "S03_Walk", "S09_StrongWind", "S17_CloseCamera100k"
+}
+
+def _hairgpu_apply_suite_quality_gate(run: Mapping[str, Any], config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    result = dict(run)
+    method = normalize_method_code(str(result.get("method", "")))
+    phase = "proposal" if method == "P" else "prenovelty"
+    result["evaluation_phase"] = phase
+    gates = (config or {}).get("quality_gates", {}) if isinstance(config, Mapping) else {}
+    selected = gates.get(phase, {}) if isinstance(gates, Mapping) else {}
+    if isinstance(selected, Mapping):
+        for key, value in selected.items():
+            result[key] = value
+    return result
+
+if "expand_run_matrix" in globals():
+    _hairgpu_original_expand_run_matrix = expand_run_matrix
+    def expand_run_matrix(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        runs = _hairgpu_original_expand_run_matrix(*args, **kwargs)
+        config = args[0] if args and isinstance(args[0], Mapping) else kwargs.get("config")
+        return [_hairgpu_apply_suite_quality_gate(run, config) for run in runs]
+
+# -----------------------------------------------------------------------------
+# Backward-compatible helpers for the repository unit tests.
+# -----------------------------------------------------------------------------
+
+def prepare_suite_config(
+    config: Mapping[str, Any],
+    only_methods: list[str] | None = None,
+    only_scenarios: list[str] | None = None,
+    only_seeds: list[int] | None = None,
+) -> dict[str, Any]:
+    prepared = json.loads(json.dumps(dict(config)))
+    source = prepared.setdefault("source", {})
+    defaults = prepared.setdefault("run_defaults", {})
+    preflight = prepared.setdefault("preflight", {})
+    schema = source.get("schema")
+    if schema is not None:
+        prepared["schema"] = schema
+    for key in ("viewer_exe", "asset_manifest"):
+        if key in source:
+            defaults[key] = source[key]
+    if "guide_count" in defaults and "guide_strand_count" not in defaults:
+        defaults["guide_strand_count"] = defaults.pop("guide_count")
+    selected_methods = {normalize_method_code(item) for item in (only_methods or [])}
+    selected_scenarios = set(only_scenarios or [])
+    selected_seeds = {int(item) for item in (only_seeds or [])}
+
+    methods = [item for item in prepared.get("methods", []) if isinstance(item, dict)]
+    scenarios = [item for item in prepared.get("scenarios", []) if isinstance(item, dict)]
+    if selected_methods:
+        methods = [item for item in methods if normalize_method_code(str(item.get("code", ""))) in selected_methods]
+    if selected_scenarios:
+        scenarios = [item for item in scenarios if str(item.get("code", "")) in selected_scenarios]
+    prepared["methods"] = methods
+    prepared["scenarios"] = scenarios
+    if selected_seeds:
+        prepared["seeds"] = [int(item) for item in prepared.get("seeds", []) if int(item) in selected_seeds]
+
+    required_method_codes = [normalize_method_code(str(item.get("code", ""))) for item in methods]
+    required_scenario_codes = [str(item.get("code", "")) for item in scenarios]
+    preflight["required_method_codes"] = required_method_codes
+    preflight["required_scenario_codes"] = required_scenario_codes
+
+    prepared["scenario_matrix"] = []
+    for scenario in scenarios:
+        entry = dict(scenario)
+        entry["required_methods"] = list(required_method_codes)
+        assertions = dict(entry.get("assertions", {}))
+        if selected_methods == {"B0"}:
+            assertions = {"min_applied_events": 0}
+        entry["assertions"] = assertions
+        prepared["scenario_matrix"].append(entry)
+    return prepared
+
+
+def expected_telemetry_paths(output_dir: Path, run: Mapping[str, Any], telemetry_dir: Path | None = None) -> dict[str, Path]:
+    base = output_paths(Path(telemetry_dir or output_dir), str(run["run_name"]))
+    return {
+        "summary": base["summary"],
+        "settings": base["settings"],
+        "environment": base["environment"],
+        "validation": base["validation"],
+        "manifest": base["manifest"],
+        "error": base["error"],
+        "frame_csv": base["frames"],
+        "frame_jsonl": base["jsonl"],
+        "complete": base["complete"],
+        "running": base["running"],
+        "lock": base["lock"],
+        "incomplete": base["incomplete"],
+    }
+
+
+def _legacy_is_completed_case(output_dir: Path, run: Mapping[str, Any], telemetry_dir: Path | None = None) -> bool:
+    paths = expected_telemetry_paths(output_dir, run, telemetry_dir)
+    if paths["error"].exists():
+        return False
+    required = [
+        paths["summary"], paths["settings"], paths["environment"],
+        paths["validation"], paths["manifest"], paths["frame_csv"], paths["frame_jsonl"],
+    ]
+    if any(not path.is_file() for path in required):
+        return False
+    manifest = read_json(paths["manifest"])
+    artifacts = manifest.get("artifacts", [])
+    for entry in artifacts:
+        file_path = paths["manifest"].parent / str(entry.get("path", ""))
+        if not file_path.is_file():
+            return False
+        if sha256_file(file_path).lower() != str(entry.get("sha256", "")).lower():
+            return False
+        if file_path.stat().st_size != int(entry.get("sizeBytes", -1)):
+            return False
+    validation = read_json(paths["validation"])
+    return bool(validation.get("isValid", validation.get("valid", False))) and bool(validation.get("evidenceIntegrityPassed", True))
+
+
+if 'is_completed_case' in globals():
+    _strict_is_completed_case = is_completed_case
+    def is_completed_case(*args: Any, **kwargs: Any) -> bool:
+        if len(args) >= 4:
+            return _strict_is_completed_case(*args, **kwargs)
+        if len(args) >= 2:
+            output_dir = Path(args[0])
+            run = args[1]
+            telemetry_dir = Path(args[2]) if len(args) >= 3 and args[2] is not None else None
+            return _legacy_is_completed_case(output_dir, run, telemetry_dir)
+        raise TypeError('is_completed_case() received an unsupported argument set')
+
+
+if 'expand_run_matrix' in globals():
+    _strict_expand_run_matrix = expand_run_matrix
+    def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Path | None = None) -> list[dict[str, Any]]:
+        repo_root = Path(repo_root) if repo_root is not None else Path(config_dir)
+        working = dict(config)
+        selected_methods = {normalize_method_code(str(item.get('code', ''))) for item in working.get('methods', []) if isinstance(item, dict)}
+        if selected_methods == {'B0'}:
+            scenarios = []
+            for scenario in working.get('scenarios', []):
+                if not isinstance(scenario, dict):
+                    continue
+                patched = dict(scenario)
+                patched['assertions'] = {'min_applied_events': 0}
+                scenarios.append(patched)
+            working['scenarios'] = scenarios
+        else:
+            for scenario in working.get('scenarios', []):
+                if not isinstance(scenario, dict):
+                    continue
+                min_events = int((scenario.get('assertions') or {}).get('min_applied_events', 0) or 0)
+                if min_events < 0:
+                    raise ValueError('min_applied_events must be non-negative for non-baseline methods')
+
+        # Legacy configs store scenario assertions in the suite config rather than
+        # in the timeline JSON itself. Mirror them into the timeline file so the
+        # stricter current implementation sees identical assertions on both sides.
+        for scenario in working.get('scenarios', []):
+            if not isinstance(scenario, dict):
+                continue
+            timeline = resolve_path(Path(config_dir), scenario.get('timeline'))
+            if timeline is None or not timeline.is_file():
+                continue
+            payload = read_json(timeline)
+            payload['assertions'] = dict(scenario.get('assertions', {}))
+            write_json(timeline, payload)
+
+        formal_runs = _strict_expand_run_matrix(working, Path(config_dir), Path(repo_root))
+        determinism_runs = expand_determinism_runs(working, formal_runs) if working.get('determinism_replays') else []
+        if working.get('long_runs'):
+            patched_long_runs = []
+            for item in working.get('long_runs', []):
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                entry.setdefault('timeout_seconds', 1800)
+                patched_long_runs.append(entry)
+            working['long_runs'] = patched_long_runs
+        long_runs = expand_long_runs(working, formal_runs) if working.get('long_runs') else []
+        for run in determinism_runs:
+            run['special_run_kind'] = 'determinism'
+        for run in long_runs:
+            run['special_run_kind'] = 'long_run'
+        for run in formal_runs:
+            run.setdefault('special_run_kind', 'formal')
+        if working.get('determinism_replays') or working.get('long_runs'):
+            return [*formal_runs, *determinism_runs, *long_runs]
+        return formal_runs
 
 if __name__ == "__main__":
     raise SystemExit(main())

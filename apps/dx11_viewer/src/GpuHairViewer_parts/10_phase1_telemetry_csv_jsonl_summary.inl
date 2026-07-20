@@ -1,5 +1,8 @@
 // GpuHairViewer.cpp ordered part 10: phase1_telemetry_csv_jsonl_summary
 // This file is included by ../GpuHairViewer.cpp; do not compile it directly.
+// HAIRGPU_PRENOVELTY_TELEMETRY_CONTRACT_V4:
+// preserve measured-zero versus unavailable values, require delayed GPU timing,
+// and reject synthetic metrics or same-frame GPU readbacks in formal evidence.
 
 std::swap(stack.layers[static_cast<size_t>(selectedIndex)], stack.layers[static_cast<size_t>(targetIndex)]);
 const std::wstring inlineText = Utf8ToWide(SerializeEditStackToCsvText(stack));

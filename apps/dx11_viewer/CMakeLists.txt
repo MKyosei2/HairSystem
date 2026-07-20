@@ -7,6 +7,7 @@ set(HAIRGPU_DX11_VIEWER_SHADERS
     HairLine.hlsl
     HairParticle.hlsl
     HairRibbon.hlsl
+    HairSegmentGroupRuntime.hlsl
     HairSim.hlsl
     HairStrandInstanced.hlsl
     HairTube.hlsl
