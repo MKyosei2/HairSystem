@@ -23,7 +23,7 @@ modified: list[str] = []
 path = "apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl"
 write(
     path,
-    """// GpuHairViewer.cpp ordered part 02a: required_runtime_foundation\n"
+    "// GpuHairViewer.cpp ordered part 02a: required_runtime_foundation\n"
     "// The formerly missing definitions now live in their canonical ordered INL\n"
     "// files (01, 06, and 08). This placeholder intentionally contains no\n"
     "// function bodies so each GpuHairViewer member has exactly one definition.\n"
