@@ -30,7 +30,9 @@ jobs:
 
       - name: Generate modified files
         shell: cmd
-        run: python tools\final_stage\_chatgpt_phase13_package.py
+        run: |
+          python tools\final_stage\_chatgpt_phase13_package.py
+          python tools\final_stage\_chatgpt_phase13_buildfix.py
 
       - name: Locate MSBuild
         uses: microsoft/setup-msbuild@v2
