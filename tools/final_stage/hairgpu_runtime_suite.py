@@ -857,5 +857,29 @@ def main() -> int:
         return EXIT_FORMAL_CONTRACT_INVALID
 
 
+# HAIRGPU_PRENOVELTY_SUITE_SELECTION_V1
+PRENOVELTY_SMOKE_METHODS = {"B0", "B6", "B8"}
+PRENOVELTY_SMOKE_SCENARIOS = {
+    "S01_Idle", "S03_Walk", "S09_StrongWind", "S17_CloseCamera100k"
+}
+
+def _hairgpu_apply_suite_quality_gate(run: Mapping[str, Any], config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    result = dict(run)
+    method = normalize_method_code(str(result.get("method", "")))
+    phase = "proposal" if method == "P" else "prenovelty"
+    result["evaluation_phase"] = phase
+    gates = (config or {}).get("quality_gates", {}) if isinstance(config, Mapping) else {}
+    selected = gates.get(phase, {}) if isinstance(gates, Mapping) else {}
+    if isinstance(selected, Mapping):
+        for key, value in selected.items():
+            result[key] = value
+    return result
+
+if "expand_run_matrix" in globals():
+    _hairgpu_original_expand_run_matrix = expand_run_matrix
+    def expand_run_matrix(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        runs = _hairgpu_original_expand_run_matrix(*args, **kwargs)
+        config = args[0] if args and isinstance(args[0], Mapping) else kwargs.get("config")
+        return [_hairgpu_apply_suite_quality_gate(run, config) for run in runs]
 if __name__ == "__main__":
     raise SystemExit(main())

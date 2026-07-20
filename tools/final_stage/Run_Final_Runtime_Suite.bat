@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 if "%~1"=="" (
-  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [prepare-asset^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h^|all] [output_dir]
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [prepare-asset^|prenovelty-smoke^|startup20^|prenovelty-complete^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h^|all] [output_dir]
   exit /b 1
 )
 
@@ -14,7 +14,7 @@ if "%MODE%"=="" set "MODE=proposal-smoke"
 set "OUTPUT_ARG="
 if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
 
-if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="prenovelty-complete" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
   echo ERROR: unsupported mode "%MODE%".
   exit /b 2
 )
@@ -109,6 +109,9 @@ if not exist "%VIEWER%" (
   exit /b 7
 )
 
+if /I "%MODE%"=="startup20" goto :startup20
+
+
 
 echo [2/8] Running native ABI, canonical asset, and workload self-test...
 "%VIEWER%" --native-self-test
@@ -182,4 +185,15 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo [8/8] Frozen Asset preparation completed.
 echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
+exit /b 0
+
+
+:startup20
+echo Running 20 hidden viewer startup and shader initialization repetitions...
+for /L %%N in (1,1,20) do (
+  echo Startup repetition %%N/20
+  "%VIEWER%" --shader-self-test
+  if errorlevel 1 exit /b !errorlevel!
+)
+echo Startup20 completed without failure.
 exit /b 0

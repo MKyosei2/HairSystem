@@ -6,8 +6,7 @@
                 {
                     const int preset = static_cast<int>(SendMessageW(m_comboPreset, CB_GETCURSEL, 0, 0));
                     ApplyPreset(preset);
-                    RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
-                }
+                    }
                 return 0;
             case IDC_COMBO_RENDER_MODE:
             case IDC_COMBO_INTERACTION_MODE:
@@ -320,6 +319,10 @@
             (sizeof(SegmentGroupCertificateGpuData) % 16u) != 0u ||
             (sizeof(SegmentGroupRuntimeCounters) % 16u) != 0u ||
             (sizeof(SegmentGroupRuntimeConstants) % 16u) != 0u) return 13;
+        if (!std::isfinite(kFixedTimeStepSeconds) || kFixedTimeStepSeconds <= 0.0f ||
+            std::fabs(kFixedTimeStepSeconds - (1.0f / 60.0f)) > 1.0e-7f) return 14;
+        if (!std::isfinite(SegmentLengthForParticleCount(kFixedParticlesPerStrand)) ||
+            SegmentLengthForParticleCount(kFixedParticlesPerStrand) <= 0.0f) return 15;
         return 0;
     }
 

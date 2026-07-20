@@ -1924,5 +1924,48 @@ def main() -> int:
         return EXIT_CONFIGURATION_FAILURE
 
 
+# HAIRGPU_QUALITY_GATE_PROFILE_V1
+PRENOVELTY_QUALITY_GATE = {
+    "minimum_average_fps": 24.0,
+    "minimum_target_fps_ratio": 0.95,
+    "maximum_frame_budget_overrun_rate": 0.05,
+    "maximum_p95_frame_ms": 41.6667,
+    "maximum_p99_frame_ms": 50.0,
+    "maximum_single_frame_ms": 100.0,
+    "maximum_frames_over_100ms": 0,
+}
+PROPOSAL_QUALITY_GATE = {
+    "minimum_average_fps": 60.0,
+    "minimum_target_fps_ratio": 0.95,
+    "maximum_frame_budget_overrun_rate": 0.05,
+    "maximum_p95_frame_ms": 16.6667,
+    "maximum_p99_frame_ms": 20.0,
+    "maximum_single_frame_ms": 50.0,
+    "maximum_frames_over_100ms": 0,
+}
+
+def quality_gate_profile_for_case(case: Mapping[str, Any]) -> dict[str, Any]:
+    method = normalize_method_code(str(case.get("method", case.get("variant", ""))))
+    phase = str(case.get("evaluation_phase", "")).strip().lower()
+    proposal = method == "P" or phase == "proposal"
+    return dict(PROPOSAL_QUALITY_GATE if proposal else PRENOVELTY_QUALITY_GATE)
+
+def apply_quality_gate_profile(case: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(case)
+    profile = quality_gate_profile_for_case(result)
+    result.setdefault("evaluation_phase", "proposal" if normalize_method_code(str(result.get("method", ""))) == "P" else "prenovelty")
+    for key, value in profile.items():
+        result[key] = value
+    return result
+
+if "normalize_case" in globals():
+    _hairgpu_original_normalize_case = normalize_case
+    def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
+        return apply_quality_gate_profile(_hairgpu_original_normalize_case(case))
+
+if "_normalize_case" in globals():
+    _hairgpu_original_private_normalize_case = _normalize_case
+    def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
+        return apply_quality_gate_profile(_hairgpu_original_private_normalize_case(case))
 if __name__ == "__main__":
     raise SystemExit(main())
