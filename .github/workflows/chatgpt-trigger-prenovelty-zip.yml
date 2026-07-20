@@ -1,0 +1,43 @@
+name: Trigger Prenovelty 14-File ZIP
+
+on:
+  push:
+    branches:
+      - chatgpt-temp-prenovelty-14files-20260720
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Extract and run generator embedded in the review workflow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          source = Path('.github/workflows/chatgpt-build-prenovelty-14files.yml').read_text(encoding='utf-8')
+          begin_token = "          python - <<'PY'\n"
+          end_token = "\n          PY\n"
+          begin = source.index(begin_token) + len(begin_token)
+          end = source.index(end_token, begin)
+          script = textwrap.dedent(source[begin:end]) + "\n"
+          Path('chatgpt_generate_prenovelty_zip.py').write_text(script, encoding='utf-8')
+          PY
+          python chatgpt_generate_prenovelty_zip.py
+      - name: Upload corrected source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Prenovelty-14-Files
+          path: HairSystem_Prenovelty_14_Files.zip
+          if-no-files-found: error
+          retention-days: 7
