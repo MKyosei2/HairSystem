@@ -1,0 +1,104 @@
+name: ChatGPT Phase13 Source Package
+
+on:
+  push:
+    branches:
+      - chatgpt/phase13-source-package-20260720
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-validate-package:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Apply generator hotfixes
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('tools/final_stage/chatgpt_generate_phase13_package.py')
+          t = p.read_text(encoding='utf-8')
+          t = t.replace('if ":prenovelty_complete" not in text:', 'if "\\n:prenovelty_complete\\n" not in text:')
+          t = t.replace('uint32_t parentGroupId = UINT32_MAX;', 'uint32_t parentGroupId = 0xffffffffu;')
+          t = t.replace('uint32_t childGroupId = UINT32_MAX;', 'uint32_t childGroupId = 0xffffffffu;')
+          p.write_text(t, encoding='utf-8')
+
+      - name: Generate phase13 package
+        shell: cmd
+        run: python tools\final_stage\chatgpt_generate_phase13_package.py
+
+      - name: Python syntax
+        shell: cmd
+        run: >-
+          python -m py_compile
+          tools\final_stage\freeze_novelty01_asset.py
+          tools\final_stage\hairgpu_final_run.py
+          tools\final_stage\hairgpu_runtime_suite.py
+          tools\final_stage\hairgpu_formal_gate.py
+          tests\final_stage\test_phase13_package_contract.py
+
+      - name: Phase13 contract tests
+        shell: cmd
+        run: python -m unittest tests.final_stage.test_phase13_package_contract -v
+
+      - name: Existing final-stage tests
+        shell: cmd
+        run: python -m unittest discover -s tests\final_stage -p "test_*.py" -v
+
+      - name: Build Release x64
+        shell: cmd
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+          /p:HairGpuFormalSelfTest=false
+
+      - name: Native ABI self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
+
+      - name: Shader self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
+
+      - name: Startup self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --startup-self-test
+
+      - name: Upload phase13 package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Phase13-Modified-Source-Files
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: out\phase13_source_package\HairSystem_Phase13_Modified_Source_Files.zip
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Phase13-Validation-Logs
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            bin\Release\HairSystem\*.log
+            bin-int\Release\HairSystem\*.log
