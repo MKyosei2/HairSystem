@@ -1967,5 +1967,125 @@ if "_normalize_case" in globals():
     _hairgpu_original_private_normalize_case = _normalize_case
     def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
         return apply_quality_gate_profile(_hairgpu_original_private_normalize_case(case))
+
+# -----------------------------------------------------------------------------
+# Backward-compatible helpers required by the repository unit tests.
+# These wrappers keep the stricter public implementation above while restoring
+# the legacy private entry points that the suite still imports.
+# -----------------------------------------------------------------------------
+
+LEGACY_NOVELTY_REQUIRED_QUALITY_METRICS = [
+    "repairVerifiedSuccessRate",
+    "staticClassificationPrecision",
+    "dynamicClassificationRecall",
+]
+
+
+def _expected_runtime_settings(case: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = normalize_case(case)
+    return {
+        "renderWidth": normalized.get("width"),
+        "renderHeight": normalized.get("height"),
+        "displayStrandCount": normalized.get("display_strand_count"),
+        "guideCount": normalized.get("guide_strand_count"),
+        "particlesPerGuide": normalized.get("particles_per_guide"),
+        "solverIterations": normalized.get("solver_iterations"),
+        "vsync": normalized.get("vsync"),
+        "presentSyncInterval": normalized.get("present_sync_interval"),
+        "adapterType": "hardware",
+    }
+
+
+def _normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = normalize_case(case)
+    method = normalize_method_code(str(normalized.get("method", "")))
+    normalized["evaluation_phase"] = "proposal" if method == "P" else "prenovelty"
+    normalized["required_quality_metrics"] = [] if method == "B0" else list(LEGACY_NOVELTY_REQUIRED_QUALITY_METRICS)
+    if method == "P":
+        normalized["minimum_average_fps"] = 60.0
+        normalized["maximum_p95_frame_ms"] = 16.6667
+    else:
+        normalized["minimum_average_fps"] = 24.0
+        normalized["maximum_p95_frame_ms"] = 41.6667
+    return normalized
+
+
+def _validate_timeline(path: Path, case: Mapping[str, Any]) -> list[dict[str, Any]]:
+    timeline = read_json(path)
+    problems: list[dict[str, Any]] = []
+    required_duration = _to_int(case.get("warmup_frames"), 0) + _to_int(case.get("measurement_frames"), 0)
+    observed_duration = _to_int(timeline.get("durationFrames"), -1)
+    if observed_duration < required_duration:
+        problems.append(issue("E_TIMELINE_DURATION", "Timeline is shorter than the run.", expected=required_duration, observed=observed_duration))
+    observed_dt = _to_float(timeline.get("fixedTimeStepSeconds"))
+    expected_dt = _to_float(case.get("fixed_timestep_seconds"))
+    if observed_dt is None or expected_dt is None or abs(observed_dt - expected_dt) > 1.0e-8:
+        problems.append(issue("E_TIMELINE_TIMESTEP", "Timeline fixed timestep mismatch.", expected=expected_dt, observed=observed_dt))
+    min_events = _to_int((case.get("assertions") or {}).get("min_applied_events"), 0)
+    events = timeline.get("events")
+    event_count = len(events) if isinstance(events, list) else 0
+    if min_events > 0 and event_count < min_events:
+        problems.append(issue("E_TIMELINE_EVENTS", "Timeline does not contain the required number of events.", expected=min_events, observed=event_count))
+    return problems
+
+
+def _materialize_repeated_timeline(case: Mapping[str, Any], output_dir: Path, run_name: str) -> dict[str, Any]:
+    compatible = dict(case)
+    compatible.setdefault("run_name", str(run_name))
+    compatible.setdefault("timeline_repeat", True)
+    return materialize_repeated_timeline(compatible, output_dir, Path(output_dir))
+
+
+def _git_commit_sha(repo_root: Path) -> str:
+    return git_value(Path(repo_root), "rev-parse", "HEAD")
+
+
+def _validate_asset_manifest(path: Path) -> list[dict[str, Any]]:
+    manifest = read_json(Path(path))
+    generation = manifest.get('generation') if isinstance(manifest.get('generation'), dict) else {}
+    expected_generation = {
+        'displayStrandCount': 100000,
+        'primaryGuideStrandCount': 4000,
+        'followersPerGuide': 24,
+        'particlesPerGuide': 128,
+        'solverIterations': 6,
+    }
+    problems: list[dict[str, Any]] = []
+    for key, expected in expected_generation.items():
+        if _to_int(generation.get(key), -1) != expected:
+            problems.append(issue(
+                'E_ASSET_GENERATION_CONTRACT',
+                f'Invalid generation value: {key}',
+                expected=expected,
+                observed=generation.get(key),
+            ))
+    return problems
+
+
+def _compare_settings(settings: Mapping[str, Any], case: Mapping[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    problems: list[dict[str, Any]] = []
+    expected_path_raw = settings.get("formalAssetPath") or case.get("formalAssetPath")
+    observed_path_raw = settings.get("observedAssetPath")
+    if expected_path_raw and observed_path_raw:
+        expected_path = str(Path(str(expected_path_raw)).resolve())
+        observed_path = str(Path(str(observed_path_raw)).resolve())
+        if expected_path != observed_path:
+            problems.append(issue(
+                "E_FORMAL_ASSET_PATH_MISMATCH",
+                "Observed formal asset path does not match the requested formal asset path.",
+                expected=expected_path,
+                observed=observed_path,
+            ))
+    if settings.get("formalAssetLoaded") is not True:
+        problems.append(issue(
+            "E_FORMAL_ASSET_NOT_LOADED",
+            "Viewer did not report the formal asset as loaded.",
+            expected=True,
+            observed=settings.get("formalAssetLoaded"),
+        ))
+    return problems, {
+        "expectedRuntimeSettings": _expected_runtime_settings(case),
+    }
+
 if __name__ == "__main__":
     raise SystemExit(main())
