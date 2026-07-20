@@ -12,7 +12,6 @@ on:
         required: false
         default: false
         type: boolean
-
 permissions:
   contents: read
 
@@ -115,3 +114,4 @@ jobs:
           name: prenovelty-gpu-smoke-${{ github.sha }}
           if-no-files-found: error
           path: out\ci_prenovelty_smoke
+
