@@ -46,6 +46,24 @@ jobs:
         shell: cmd
         run: python tools\final_stage\chatgpt_generate_phase13_package.py
 
+      - name: Remove duplicate recovered UI definitions and rebuild package
+        shell: python
+        run: |
+          import sys
+          from pathlib import Path
+          path = Path('apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl')
+          text = path.read_text(encoding='utf-8-sig')
+          start_marker = '    bool GpuHairViewer::CreateUiControls()'
+          end_marker = '    RECT GpuHairViewer::GetRenderViewportRect() const'
+          if start_marker in text and end_marker in text:
+              start = text.index(start_marker)
+              end = text.index(end_marker)
+              text = text[:start] + text[end:]
+              path.write_text(text, encoding='utf-8', newline='\n')
+          sys.path.insert(0, str(Path('tools/final_stage').resolve()))
+          import chatgpt_generate_phase13_package as generator
+          generator.package_files()
+
       - name: Python syntax
         shell: cmd
         run: >-
@@ -72,6 +90,7 @@ jobs:
           /p:HairGpuStep0ProfileEnabled=false
           /p:HairGpuFormalBuild=true
           /p:HairGpuFormalSelfTest=false
+          /fl /flp:logfile=out\phase13_source_package\msbuild.log;verbosity=normal
 
       - name: Native ABI self-test
         shell: cmd
@@ -103,5 +122,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: |
+            out\phase13_source_package\msbuild.log
             bin\Release\HairSystem\*.log
             bin-int\Release\HairSystem\*.log
