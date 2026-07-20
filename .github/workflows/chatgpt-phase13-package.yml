@@ -1,0 +1,97 @@
+name: ChatGPT Phase13 Package
+
+on:
+  push:
+    branches:
+      - chatgpt/phase13-package-20260720-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate modified files
+        shell: cmd
+        run: python tools\final_stage\_chatgpt_phase13_package.py
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: cmd
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+          /p:HairGpuFormalSelfTest=false
+
+      - name: Python syntax
+        shell: cmd
+        run: >-
+          python -m py_compile
+          tools\final_stage\hairgpu_final_run.py
+          tools\final_stage\hairgpu_runtime_suite.py
+          tools\final_stage\hairgpu_formal_gate.py
+          tests\final_stage\test_hairgpu_safe_runtime_suite.py
+
+      - name: Unit tests
+        shell: cmd
+        run: python -m unittest discover -s tests\final_stage -p "test_*.py" -v
+
+      - name: Native ABI self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
+
+      - name: Shader self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
+
+      - name: Startup self-test
+        shell: cmd
+        run: bin\Release\HairSystem\HairSystem.exe --startup-self-test
+
+      - name: Package modified files only
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $PWD 'phase13_stage'
+          $artifact = Join-Path $PWD 'phase13_artifact'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $artifact -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          New-Item -ItemType Directory -Path $artifact | Out-Null
+          foreach ($file in Get-Content 'phase13_modified_files.txt') {
+            if ([string]::IsNullOrWhiteSpace($file)) { continue }
+            $source = Join-Path $PWD $file
+            if (-not (Test-Path $source -PathType Leaf)) { throw "Missing package file: $file" }
+            $destination = Join-Path $stage $file
+            New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
+            Copy-Item $source $destination -Force
+          }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $artifact 'HairSystem_Phase13_Modified_Files.zip') -CompressionLevel Optimal
+
+      - name: Upload package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hairsystem-phase13-modified-files-${{ github.sha }}
+          path: phase13_artifact\HairSystem_Phase13_Modified_Files.zip
+          if-no-files-found: error
+          retention-days: 30
