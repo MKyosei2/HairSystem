@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - chatgpt/phase13-source-package-20260720
+  pull_request:
+    branches:
+      - Novelty
   workflow_dispatch:
 
 permissions:
