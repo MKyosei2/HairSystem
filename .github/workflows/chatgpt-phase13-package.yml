@@ -20,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           clean: true
 
       - name: Setup Python
@@ -43,6 +43,7 @@ jobs:
           /p:HairGpuStep0ProfileEnabled=false
           /p:HairGpuFormalBuild=true
           /p:HairGpuFormalSelfTest=false
+          /fl /flp:logfile=phase13_msbuild.log;verbosity=normal
 
       - name: Python syntax
         shell: cmd
@@ -98,3 +99,12 @@ jobs:
           path: phase13_artifact\HairSystem_Phase13_Modified_Files.zip
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hairsystem-phase13-build-log-${{ github.sha }}
+          path: phase13_msbuild.log
+          if-no-files-found: warn
+          retention-days: 7
