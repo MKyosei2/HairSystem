@@ -23,7 +23,9 @@ def replace_function(text: str, signature: str, replacement: str) -> str:
             depth -= 1
             if depth == 0:
                 end += 1
-                while end < len(text) and text[end] in " \t\r\n":
+                # Consume line endings only. Consuming ordinary spaces would remove
+                # the indentation of the next function and break its signature lookup.
+                while end < len(text) and text[end] in "\r\n":
                     end += 1
                 break
         end += 1
