@@ -50,8 +50,9 @@ jobs:
       - name: Release x64 build
         shell: pwsh
         run: |
-          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false 2>&1 | Tee-Object -FilePath p0_msbuild.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
 
       - name: Native and shader self-tests
         shell: pwsh
@@ -70,8 +71,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package only the 16 modified files
+        if: always()
         shell: pwsh
         run: |
+          if (-not (Test-Path p0_modified_files.txt)) { throw "P0 file manifest is missing" }
           $stage = Join-Path $PWD "p0_package"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Get-Content p0_modified_files.txt | ForEach-Object {
@@ -83,14 +86,15 @@ jobs:
           Compress-Archive -Path "$stage\*" -DestinationPath "HairSystem_P0_Visual_Validation_16_Files.zip" -Force
           (Get-FileHash HairSystem_P0_Visual_Validation_16_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_P0_Visual_Validation_16_Files.sha256
 
-      - name: Upload P0 package
+      - name: Upload P0 package and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: HairSystem-P0-Visual-Validation-16-Files
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
           path: |
             HairSystem_P0_Visual_Validation_16_Files.zip
             HairSystem_P0_Visual_Validation_16_Files.sha256
             p0_modified_files.txt
+            p0_msbuild.log
