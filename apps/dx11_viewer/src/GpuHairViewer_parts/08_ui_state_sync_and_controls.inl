@@ -130,6 +130,10 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             m_showInspectorPane = false;
             m_showBottomTray = false;
             m_fastGroomViewport = false;
+            // The pre-novelty baseline must simulate all guides and rebuild
+            // all followers. Active-set/tier skipping is evaluated only in its
+            // designated comparison methods after correctness is established.
+            m_enableActiveSetRuntime = false;
         }
         EnforceFixedWorkload();
         SyncControlsFromState();
@@ -212,10 +216,24 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
         const uint64_t followerParticles = totalParticles > guideParticles ? (totalParticles - guideParticles) : 0ull;
 
         std::wstringstream ss;
+        const wchar_t* cadenceSource = m_compositorCadenceValid
+            ? L"GPU complete + DWM composed"
+            : (m_gpuCompletionCadenceValid
+                ? L"GPU complete"
+                : L"CPU submit only");
         ss << L"Runtime\n"
            << L"Preset: " << m_activePresetName << L"\n"
-           << L"FPS: " << std::fixed << std::setprecision(1) << m_smoothedFps
-           << L"  Frame: " << std::setprecision(2) << (m_lastFrameSeconds * 1000.0f) << L" ms\n"
+           << L"Presented FPS (0.5 s window): " << std::fixed << std::setprecision(1)
+           << (m_completedCadenceWindowValid ? m_completedPresentFps : 0.0f)
+           << L"  Simulation Hz: "
+           << (m_completedCadenceWindowValid ? m_completedSimulationHz : 0.0f) << L"\n"
+           << L"Completed Frame: " << std::setprecision(2)
+           << m_lastFrameIntervalMilliseconds << L" ms"
+           << L"  Source: " << cadenceSource << L"\n"
+           << L"CPU Work: " << m_lastCpuFrameWorkMilliseconds << L" ms"
+           << L"  GPU Wait: " << m_lastGpuCompletionWaitMilliseconds << L" ms\n"
+           << L"DWM Wait: " << m_lastCompositorWaitMilliseconds << L" ms"
+           << L"  Pace Wait: " << m_lastPacingWaitMilliseconds << L" ms\n"
            << L"Sim Step: " << std::setprecision(2) << m_lastSimulationStepMilliseconds << L" ms"
            << L"  AvgSim: " << avgSimMs << L" ms\n"
            << L"GPU Frame: " << m_lastGpuFrameMilliseconds << L" ms"

@@ -149,6 +149,35 @@ float3 SafeNormalize(float3 v)
     return (lenSq > 1.0e-8f) ? (v * rsqrt(lenSq)) : float3(0.0f, 0.0f, 0.0f);
 }
 
+float3 RotateVectorFromTo(float3 value, float3 fromDirection, float3 toDirection)
+{
+    float3 fromUnit = SafeNormalize(fromDirection);
+    float3 toUnit = SafeNormalize(toDirection);
+    float cosine = clamp(dot(fromUnit, toUnit), -1.0f, 1.0f);
+    float3 axis = cross(fromUnit, toUnit);
+    float sine = length(axis);
+
+    if (sine <= 1.0e-5f)
+    {
+        if (cosine >= 0.0f)
+        {
+            return value;
+        }
+
+        float3 reference = (abs(fromUnit.x) < 0.8f)
+            ? float3(1.0f, 0.0f, 0.0f)
+            : float3(0.0f, 1.0f, 0.0f);
+        float3 halfTurnAxis = SafeNormalize(cross(fromUnit, reference));
+        return 2.0f * halfTurnAxis * dot(halfTurnAxis, value) - value;
+    }
+
+    axis /= sine;
+    return value * cosine +
+        cross(axis, value) * sine +
+        axis * dot(axis, value) * (1.0f - cosine);
+}
+
+
 bool IsFinite3(float3 value)
 {
     // Shader Model 5-safe finite test: NaN is unequal to itself and infinities
@@ -512,7 +541,6 @@ float3 ApplyLooseGuideConstraints(uint strandIndex, uint localIndex, float3 p)
 }
 
 [numthreads(64, 1, 1)]
-[numthreads(64, 1, 1)]
 void RootBindCS(uint3 id : SV_DispatchThreadID)
 {
     uint strandIndex = DispatchBaseIndex + id.x;
@@ -607,7 +635,6 @@ void ClearConstraintLambdasCS(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(64, 1, 1)]
-[numthreads(64, 1, 1)]
 void DistanceCS(uint3 id : SV_DispatchThreadID)
 {
     uint dispatchIndex = DispatchBaseIndex + id.x;
@@ -668,7 +695,6 @@ void DistanceCS(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(64, 1, 1)]
-[numthreads(64, 1, 1)]
 void StabilityGuardCS(uint3 id : SV_DispatchThreadID)
 {
     uint dispatchIndex = DispatchBaseIndex + id.x;
@@ -687,10 +713,10 @@ void StabilityGuardCS(uint3 id : SV_DispatchThreadID)
     float maximumTranslatedRestDeviation = 0.0f;
 
     [loop]
-    for (uint i = 1u; i < ParticlesPerStrand; ++i)
+    for (uint scanIndex = 1u; scanIndex < ParticlesPerStrand; ++scanIndex)
     {
-        uint previousIndex = start + i - 1u;
-        uint currentIndex = start + i;
+        uint previousIndex = start + scanIndex - 1u;
+        uint currentIndex = start + scanIndex;
         float3 restParent = RestPositions[previousIndex].xyz;
         float3 restChild = RestPositions[currentIndex].xyz;
         float targetLength = max(length(restChild - restParent), 1.0e-5f);
@@ -720,9 +746,9 @@ void StabilityGuardCS(uint3 id : SV_DispatchThreadID)
     if (catastrophic && EnableCatastrophicRecovery != 0u)
     {
         [loop]
-        for (uint i = 1u; i < ParticlesPerStrand; ++i)
+        for (uint recoveryIndex = 1u; recoveryIndex < ParticlesPerStrand; ++recoveryIndex)
         {
-            uint pointIndex = start + i;
+            uint pointIndex = start + recoveryIndex;
             float3 recovered = RestPositions[pointIndex].xyz + rootTranslation;
             OutputPositions[pointIndex] = float4(recovered, 1.0f);
             OutputPreviousPositions[pointIndex] = float4(recovered, 1.0f);
@@ -735,10 +761,10 @@ void StabilityGuardCS(uint3 id : SV_DispatchThreadID)
     // the authored rest length or injecting correction velocity.
     static const float kMaximumStretchRatio = 1.005f;
     [loop]
-    for (uint i = 1u; i < ParticlesPerStrand; ++i)
+    for (uint clampIndex = 1u; clampIndex < ParticlesPerStrand; ++clampIndex)
     {
-        uint previousIndex = start + i - 1u;
-        uint currentIndex = start + i;
+        uint previousIndex = start + clampIndex - 1u;
+        uint currentIndex = start + clampIndex;
         float3 parent = OutputPositions[previousIndex].xyz;
         float3 child = OutputPositions[currentIndex].xyz;
         float3 restParent = RestPositions[previousIndex].xyz;
@@ -764,7 +790,6 @@ void StabilityGuardCS(uint3 id : SV_DispatchThreadID)
     }
 }
 
-[numthreads(64, 1, 1)]
 [numthreads(64, 1, 1)]
 void BendCS(uint3 id : SV_DispatchThreadID)
 {
@@ -1570,32 +1595,24 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(64, 1, 1)]
-[numthreads(64, 1, 1)]
 void FollowCS(uint3 id : SV_DispatchThreadID)
 {
     uint followerPointDispatchIndex = DispatchBaseIndex + id.x;
-    uint activeFollowerCount = GetCompactedFollowerCount();
-    uint totalFollowerPointCount = activeFollowerCount * ParticlesPerStrand;
-    if (followerPointDispatchIndex >= totalFollowerPointCount) return;
-
-    uint compactedFollowerIndex = followerPointDispatchIndex / ParticlesPerStrand;
-    uint localPointIndex = followerPointDispatchIndex % ParticlesPerStrand;
-    uint followerIndex = compactedFollowerIndex;
-    if (UseCompactedFollowerDispatch != 0u)
-        followerIndex = CompactedFollowerIndices[compactedFollowerIndex];
-    if (followerIndex >= FollowerStrandCount) return;
-
-    uint tier = FollowerTierAssignments[followerIndex];
-    if (tier == 1u)
+    uint totalFollowerPointCount = FollowerStrandCount * ParticlesPerStrand;
+    if (followerPointDispatchIndex >= totalFollowerPointCount)
     {
-        uint reducedStride = max(FollowerUpdateStride, 2u);
-        if (((followerIndex + FollowerUpdatePhase) % reducedStride) != 0u) return;
+        return;
     }
-    else if (tier == 2u) return;
-    else if (tier == 3u)
+
+    // Pre-novelty correctness baseline: every follower point is reconstructed on
+    // every simulation tick. Tiered skipping without a coherent cached transform
+    // left the root at the current scalp position while the remaining points kept
+    // an older pose, which produced the long one-sided spikes visible in the Viewer.
+    uint followerIndex = followerPointDispatchIndex / ParticlesPerStrand;
+    uint localPointIndex = followerPointDispatchIndex % ParticlesPerStrand;
+    if (followerIndex >= FollowerStrandCount)
     {
-        uint cachedStride = max(FollowerUpdateStride, 4u);
-        if (((followerIndex + FollowerUpdatePhase) % cachedStride) != 0u) return;
+        return;
     }
 
     uint strandIndex = GuideStrandCount + followerIndex;
@@ -1605,57 +1622,96 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    uint strandStart = strandIndex * ParticlesPerStrand;
-    uint strandPointIndex = strandStart + localPointIndex;
+    // RootBindCS owns roots for guides and followers.
     if (localPointIndex == 0u)
     {
         return;
     }
 
-    uint parentPointIndex = uint(follow.ParentGuide) * ParticlesPerStrand + localPointIndex;
-    float3 parentPos = OutputPositions[parentPointIndex].xyz;
+    uint strandStart = strandIndex * ParticlesPerStrand;
+    uint strandPointIndex = strandStart + localPointIndex;
+    uint parentGuide = uint(follow.ParentGuide);
+    uint parentStart = parentGuide * ParticlesPerStrand;
+    uint parentPointIndex = parentStart + localPointIndex;
+
+    uint previousLocal = (localPointIndex > 0u) ? (localPointIndex - 1u) : 0u;
+    uint nextLocal = min(localPointIndex + 1u, ParticlesPerStrand - 1u);
+    uint previousParentIndex = parentStart + previousLocal;
+    uint nextParentIndex = parentStart + nextLocal;
+
+    float3 parentPosition = OutputPositions[parentPointIndex].xyz;
+    float3 previousParentPosition = OutputPreviousPositions[parentPointIndex].xyz;
     float3 parentRest = RestPositions[parentPointIndex].xyz;
     float3 followerRest = RestPositions[strandPointIndex].xyz;
     float3 followerRestRoot = RestPositions[strandStart].xyz;
     float3 followerRoot = OutputPositions[strandStart].xyz;
-    float3 translatedRest = followerRest + (followerRoot - followerRestRoot);
+
+    float3 restTangent = SafeNormalize(
+        RestPositions[nextParentIndex].xyz -
+        RestPositions[previousParentIndex].xyz);
+    float3 currentTangent = SafeNormalize(
+        OutputPositions[nextParentIndex].xyz -
+        OutputPositions[previousParentIndex].xyz);
+    float3 previousTangent = SafeNormalize(
+        OutputPreviousPositions[nextParentIndex].xyz -
+        OutputPreviousPositions[previousParentIndex].xyz);
+
     float3 restOffset = followerRest - parentRest;
-    float t = ParticlesPerStrand > 1u
+    float clumpGain = lerp(0.25f, 1.0f, saturate(follow.ClumpWeight));
+    float3 currentOffset = RotateVectorFromTo(
+        restOffset,
+        restTangent,
+        currentTangent) * clumpGain;
+    float3 previousOffset = RotateVectorFromTo(
+        restOffset,
+        restTangent,
+        previousTangent) * clumpGain;
+
+    float t = (ParticlesPerStrand > 1u)
         ? float(localPointIndex) / float(ParticlesPerStrand - 1u)
         : 0.0f;
-    float noisePhase = ElapsedTime * (1.7f + 0.6f * follow.NoiseWeight) +
+    float noiseAmplitude = min(
+        follow.NoiseWeight * (0.0015f + t * 0.0065f),
+        max(length(restOffset) * 0.15f, 0.00025f));
+    float currentNoisePhase = ElapsedTime *
+        (1.7f + 0.6f * follow.NoiseWeight) +
         strandIndex * 0.173f + localPointIndex * 0.217f;
-    float noiseAmp = follow.NoiseWeight * (0.0015f + t * 0.0065f);
-    float3 noise = float3(
-        sin(noisePhase),
+    float previousNoisePhase = (ElapsedTime - DeltaTime) *
+        (1.7f + 0.6f * follow.NoiseWeight) +
+        strandIndex * 0.173f + localPointIndex * 0.217f;
+    float3 currentNoise = float3(
+        sin(currentNoisePhase),
         0.0f,
-        cos(noisePhase * 1.17f)) * noiseAmp;
-    float followGain = saturate(lerp(1.0f, follow.FollowWeight, FollowStiffness));
-    float clumpGain = lerp(0.25f, 1.0f, follow.ClumpWeight);
-    float3 target = parentPos + restOffset * clumpGain + noise;
+        cos(currentNoisePhase * 1.17f)) * noiseAmplitude;
+    float3 previousNoise = float3(
+        sin(previousNoisePhase),
+        0.0f,
+        cos(previousNoisePhase * 1.17f)) * noiseAmplitude;
 
-    // A corrupted guide must never be multiplied into 24 dense followers.
-    float authoredRadius = length(followerRest - followerRestRoot);
-    float maximumFollowerRadius = max(0.12f, authoredRadius * 1.65f + 0.08f);
-    if (!IsFinite3(parentPos) ||
+    float3 target = parentPosition + currentOffset + currentNoise;
+    float3 previousTarget = previousParentPosition + previousOffset + previousNoise;
+    float3 translatedRest = followerRest + (followerRoot - followerRestRoot);
+
+    float authoredRootRadius = length(followerRest - followerRestRoot);
+    float maximumRootRadius = max(0.08f, authoredRootRadius * 1.20f + 0.025f);
+    if (!IsFinite3(parentPosition) ||
         !IsFinite3(target) ||
-        length(target - followerRoot) > maximumFollowerRadius)
+        length(target - followerRoot) > maximumRootRadius)
     {
         target = translatedRest;
     }
-
-    float3 current = InputPositions[strandPointIndex].xyz;
-    if (!IsFinite3(current))
+    if (!IsFinite3(previousParentPosition) ||
+        !IsFinite3(previousTarget) ||
+        length(previousTarget - followerRoot) > maximumRootRadius)
     {
-        current = translatedRest;
-    }
-    float3 blended = lerp(current, target, followGain);
-    if (!IsFinite3(blended))
-    {
-        blended = translatedRest;
+        previousTarget = target;
     }
 
-    OutputPreviousPositions[strandPointIndex] = float4(current, 1.0f);
-    OutputPositions[strandPointIndex] = float4(blended, 1.0f);
+    // Followers are kinematic reconstructions of their guide, not independent
+    // particles. Direct assignment avoids temporal trails and keeps all 24
+    // followers coherent with the current guide pose in the same frame.
+    OutputPositions[strandPointIndex] = float4(target, 1.0f);
+    OutputPreviousPositions[strandPointIndex] = float4(previousTarget, 1.0f);
 }
+
 

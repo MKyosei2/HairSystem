@@ -217,36 +217,38 @@ if (FAILED(m_lastPresentResult))
 
     void GpuHairViewer::UpdateWindowTitle()
     {
+        const wchar_t* cadenceSource = m_compositorCadenceValid
+            ? L"gpu-complete+dwm-composed"
+            : (m_gpuCompletionCadenceValid
+                ? L"gpu-complete"
+                : L"cpu-submit-only");
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer ActiveSet Runtime [FOLLOWER_COMPACTION + STRAND_PICK + SDF]  |  preset=" << m_activePresetName
-            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
+        ss << L"Hair GPU Viewer"
+            << L"  |  presentFPS=" << std::fixed << std::setprecision(1)
+            << (m_completedCadenceWindowValid ? m_completedPresentFps : 0.0f)
+            << L"  simHz=" << std::setprecision(1)
+            << (m_completedCadenceWindowValid ? m_completedSimulationHz : 0.0f)
+            << L"  completedFrameMs=" << std::setprecision(2)
+            << m_lastFrameIntervalMilliseconds
+            << L"  cpuWorkMs=" << m_lastCpuFrameWorkMilliseconds
+            << L"  gpuTimestampMs=" << m_lastGpuFrameMilliseconds
+            << L"  gpuWaitMs=" << m_lastGpuCompletionWaitMilliseconds
+            << L"  dwmWaitMs=" << m_lastCompositorWaitMilliseconds
+            << L"  paceWaitMs=" << m_lastPacingWaitMilliseconds
+            << L"  source=" << cadenceSource
+            << L"  |  preset=" << m_activePresetName
             << L"  guides=" << m_asset.guideStrandCount
             << L"  followers=" << m_asset.followerStrandCount
             << L"  totalStrands=" << m_asset.strands.size()
             << L"  particles=" << m_asset.restPoints.size()
-            << L"  render=" << (m_renderMode == RenderMode::ParticlePointSprite ? L"point" : (m_renderMode == RenderMode::ParticleBillboard ? L"billboard" : L"ribbon"))
-            << L"  mode=" << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
-            << L"  gpuFrameMs=" << std::setprecision(2) << m_lastGpuFrameMilliseconds
-            << L"  vis="
-            << ((m_cpuReadbackMode == CpuReadbackMode::Off)
-                ? std::wstring(L"n/a")
-                : std::to_wstring(m_lastEstimatedVisibleParticles))
-            << L"  suspect=" << (m_lastVisibilitySuspect ? L"yes" : L"no")
-            << L"  cpuFallback=" << (m_lastUsedCpuVisibilityFallback ? L"yes" : L"no")
-            << L"  readback=" << (m_cpuReadbackMode == CpuReadbackMode::Off ? L"off" : (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug ? L"full-debug" : L"on-demand"))
-            << L"  readbackValid=" << (m_lastVisibilityReadbackValid ? L"yes" : L"no")
-            << L"  initialPoseFallback=" << (m_lastVisibilityUsedInitialPoseFallback ? L"yes" : L"no")
-            << L"  recoveryPending=" << (m_visibilityRecoveryPending ? L"yes" : L"no")
-            << L"  recoveries=" << m_visibilityRecoveryCount
-            << L"  readbackFailures=" << m_visibilityReadbackFailureCount
-            << L"  widthScale=" << m_widthScale
-            << L"  stretchCompliance=" << m_simConfig.stretchCompliance
-            << L"  selfCollision=" << (m_enableSelfCollision ? L"density-grid" : L"off")
-            << L"  angularXPBD=" << (m_enableRuntimeAngularBend ? L"on" : L"off")
-            << L"  scalpRoots=static-gpu"
-            << L"  selectedStrand=" << ((m_selectedStrandIndex >= 0) ? std::to_wstring(m_selectedStrandIndex) : L"none")
-            << L"  gizmo=" << ((m_strandGizmoMode == StrandGizmoMode::TipTranslate) ? L"tip" : ((m_strandGizmoMode == StrandGizmoMode::WholeTranslate) ? L"whole" : L"root"))
-            << L"  scalpAnim=" << (m_lastScalpAnimationSource.empty() ? L"sample" : std::filesystem::path(m_lastScalpAnimationSource).filename().wstring())
+            << L"  render="
+            << (m_renderMode == RenderMode::ParticlePointSprite
+                ? L"point"
+                : (m_renderMode == RenderMode::ParticleBillboard
+                    ? L"billboard"
+                    : L"ribbon"))
+            << L"  mode="
+            << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
             << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
     }

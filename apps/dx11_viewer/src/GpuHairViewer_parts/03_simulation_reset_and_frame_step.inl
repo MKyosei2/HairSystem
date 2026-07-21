@@ -477,15 +477,11 @@ return true;
             ? compactedGuidePointCount
             : totalGuideParticleCount;
 
-        const uint32_t compactedFollowerCount = useActiveDispatch
-            ? (std::max<uint32_t>(
-                m_activeSetPlan.summary.selectedStrandCount,
-                guideDispatchCount) - guideDispatchCount)
-            : followerStrandCount;
-
-        const uint32_t followerDispatchCount = useActiveDispatch
-            ? compactedFollowerCount
-            : followerStrandCount;
+        // Pre-novelty correctness baseline: all 96,000 followers are rebuilt
+        // every simulation tick. Guide compaction may still be evaluated, but
+        // follower temporal skipping is not allowed until a coherent cached-pose
+        // transform exists and is validated as part of the novelty experiment.
+        const uint32_t followerDispatchCount = followerStrandCount;
 
         const uint32_t sortedEntryCount =
             std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
@@ -2107,12 +2103,12 @@ return true;
                 }
             }
         }
-        constants.followerUpdateStride = useActiveDispatch ? std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u)) : 1u;
-        constants.followerUpdatePhase = useActiveDispatch ? (m_runtimeFollowerUpdatePhase % std::max<uint32_t>(constants.followerUpdateStride, 1u)) : 0u;
+        constants.followerUpdateStride = 1u;
+        constants.followerUpdatePhase = 0u;
         constants.useCompactedGuideDispatch = useActiveDispatch ? 1u : 0u;
         constants.compactedGuideCount = useActiveDispatch ? static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size()) : 0u;
-        constants.useCompactedFollowerDispatch = useActiveDispatch ? 1u : 0u;
-        constants.compactedFollowerCount = useActiveDispatch ? std::max<uint32_t>(m_activeSetPlan.summary.selectedStrandCount, constants.compactedGuideCount) - constants.compactedGuideCount : 0u;
+        constants.useCompactedFollowerDispatch = 0u;
+        constants.compactedFollowerCount = 0u;
         constants.useCompactedGuidePointDispatch = useActiveDispatch ? 1u : 0u;
         constants.compactedGuidePointCount = compactedGuidePointCount;
     }
@@ -2185,8 +2181,8 @@ return true;
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
         const bool useActiveDispatch = m_enableActiveSetRuntime && m_activeSetPlan.summary.selectedGuideCount > 0u;
-        constants.followerUpdateStride = useActiveDispatch ? std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u)) : 1u;
-        constants.followerUpdatePhase = useActiveDispatch ? (m_runtimeFollowerUpdatePhase % std::max<uint32_t>(constants.followerUpdateStride, 1u)) : 0u;
-        constants.useCompactedFollowerDispatch = useActiveDispatch ? 1u : 0u;
-        constants.compactedFollowerCount = useActiveDispatch ? std::max<uint32_t>(m_activeSetPlan.summary.selectedStrandCount, static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size())) - static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size()) : 0u;
+        constants.followerUpdateStride = 1u;
+        constants.followerUpdatePhase = 0u;
+        constants.useCompactedFollowerDispatch = 0u;
+        constants.compactedFollowerCount = 0u;
     }

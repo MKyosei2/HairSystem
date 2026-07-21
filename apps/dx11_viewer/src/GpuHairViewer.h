@@ -1494,12 +1494,23 @@ namespace hairgpu::viewer
         float m_scalpPartLineWidth = 0.034f;
         float m_scalpTintDarkness = 0.55f;
         float m_scalpHairBlend = 0.70f;
+        // Presentation cadence is measured after GPU completion, compositor
+        // synchronization, and optional 60 Hz pacing. m_smoothedFps remains as
+        // a compatibility alias for the completed-frame rolling-window value.
         float m_smoothedFps = 0.0f;
+        float m_completedPresentFps = 0.0f;
+        float m_completedSimulationHz = 0.0f;
         float m_lastFrameSeconds = 0.0f;
         float m_lastFrameIntervalMilliseconds = 0.0f;
         float m_lastCpuFrameWorkMilliseconds = 0.0f;
         float m_lastSimulationStepMilliseconds = 0.0f;
+        float m_lastGpuCompletionWaitMilliseconds = 0.0f;
+        float m_lastCompositorWaitMilliseconds = 0.0f;
+        float m_lastPacingWaitMilliseconds = 0.0f;
         float m_statsUpdateAccumulator = 0.0f;
+        bool m_gpuCompletionCadenceValid = false;
+        bool m_compositorCadenceValid = false;
+        bool m_completedCadenceWindowValid = false;
         hairgpu::HairAsset m_asset;
         hairgpu::GpuSimulationConfig m_simConfig;
         hairgpu::ColliderSet m_colliders;
