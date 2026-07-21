@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Formal suite mode
+        description: Formal suite mode on the actual RTX 4070 Ti SUPER host
         required: true
-        default: proposal-smoke
+        default: prenovelty-complete
         type: choice
         options:
+          - prenovelty-smoke
+          - prenovelty-complete
+          - prenovelty-soak30
+          - startup20
           - proposal-smoke
           - comparison-smoke
           - critical
@@ -17,57 +21,58 @@ on:
           - soak2h
           - soak8h
           - full
-
+          - phase13-full
+          - projection4070-to-1660
 permissions:
   contents: read
-
 concurrency:
-  group: formal-gpu-regression
+  group: formal-gpu-regression-rtx4070ti-super
   cancel-in-progress: false
-
 jobs:
-  formal-gtx1660:
-    runs-on: [self-hosted, Windows, X64, HairSystem, GTX1660]
+  formal-rtx4070ti-super:
+    runs-on: [self-hosted, Windows, X64, HairSystem, RTX4070TiSUPER]
     timeout-minutes: 600
     env:
       PYTHONUTF8: "1"
       PYTHONHASHSEED: "0"
-      HAIRGPU_FREEZE_OPERATOR: GitHub_Actions
+      HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_RTX4070TiSUPER
       HAIRGPU_ALLOW_REVIEW_BRANCH: "1"
+      HAIRGPU_HARDWARE_PROFILE: measurement_rtx4070ti_super
     steps:
       - name: Checkout clean source state
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           clean: true
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Prepare canonical frozen asset
+      - name: Run pre-novelty phase
+        if: startsWith(inputs.mode, 'prenovelty-') || inputs.mode == 'startup20'
         shell: cmd
         run: >-
           tools\final_stage\Run_Final_Runtime_Suite.bat
-          docs\sample_assets\final_runtime_suite_template.json
-          prepare-asset
-
-      - name: Run selected formal gate
+          docs\sample_assets\prenovelty_runtime_suite.json
+          ${{ inputs.mode }}
+          out\prenovelty_baseline
+      - name: Run proposal/final phase or projection
+        if: ${{ !(startsWith(inputs.mode, 'prenovelty-') || inputs.mode == 'startup20') }}
         shell: cmd
         run: >-
           tools\final_stage\Run_Final_Runtime_Suite.bat
           docs\sample_assets\final_runtime_suite_template.json
           ${{ inputs.mode }}
-
-      - name: Upload formal evidence
+          out\novelty01_baseline
+      - name: Upload actual RTX evidence and separate GTX projection
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: formal-gpu-${{ inputs.mode }}-${{ github.run_id }}
+          name: rtx4070ti-super-${{ inputs.mode }}-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 30
           compression-level: 6
           path: |
+            out\prenovelty_baseline\**
             out\novelty01_baseline\**
             benchmarks\novelty01\frozen_asset_bundle\frozen_asset_manifest.json

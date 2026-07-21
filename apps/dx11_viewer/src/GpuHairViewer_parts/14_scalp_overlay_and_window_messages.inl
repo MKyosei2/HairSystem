@@ -256,7 +256,7 @@
             return 0;
         case WM_LBUTTONDOWN:
         {
-            const RECT renderRect = GetRenderViewportRect();
+            const RECT renderRect = this->GetRenderViewportRect();
             const POINT p = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             if (PtInRect(&renderRect, p))
             {
@@ -319,7 +319,7 @@
         {
             POINT screenPoint = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ScreenToClient(hwnd, &screenPoint);
-            const RECT renderRect = GetRenderViewportRect();
+            const RECT renderRect = this->GetRenderViewportRect();
             if (PtInRect(&renderRect, screenPoint))
             {
                 const float wheel = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);

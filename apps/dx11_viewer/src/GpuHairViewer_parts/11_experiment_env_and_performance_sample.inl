@@ -809,6 +809,9 @@ return sample;
         out << "  \"sameFrameReadbackCount\": " << m_sameFrameReadbackCount << ",\n";
         out << "  \"nanStateCount\": " << m_nanStateCount << ",\n";
         out << "  \"infiniteStateCount\": " << m_infiniteStateCount << ",\n";
+        out << "  \"visualValidationPassed\": "
+            << ((m_nanStateCount == 0u && m_infiniteStateCount == 0u) ? "true" : "false")
+            << ",\n";
         out << "  \"scenarioAppliedEventCount\": " << m_scenarioAppliedEventCount << ",\n";
         out << "  \"scenarioAssertionFailureCount\": " << m_scenarioAssertionFailureCount << ",\n";
         out << "  \"collisionCandidateCount\": " << collisionCandidates << ",\n";

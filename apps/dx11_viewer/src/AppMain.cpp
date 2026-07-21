@@ -6,11 +6,14 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -314,13 +317,368 @@ namespace
         const int validationResult = ValidateCanonicalFrozenSource(outputDirectory);
         return validationResult == 0 ? 0 : 70 + validationResult;
     }
+    struct LocalDebugCaptureOptions
+    {
+        bool enabled = false;
+        bool autoCommit = false;
+        bool push = false;
+        uint32_t warmupFrames = 120u;
+        uint32_t captureFrames = 1800u;
+        std::wstring methodCode = L"DEV";
+        std::wstring runName = L"local_debug";
+        std::filesystem::path repositoryRoot;
+        std::filesystem::path runDirectory;
+    };
+
+    void SetEnvironmentValue(const wchar_t* name, const std::wstring& value)
+    {
+        if (name != nullptr)
+        {
+            SetEnvironmentVariableW(name, value.c_str());
+        }
+    }
+
+    uint32_t ParsePositiveUInt(const wchar_t* value, uint32_t fallback)
+    {
+        if (value == nullptr || *value == L'\0')
+        {
+            return fallback;
+        }
+        try
+        {
+            const unsigned long parsed = std::stoul(value);
+            return parsed > 0ul ? static_cast<uint32_t>(parsed) : fallback;
+        }
+        catch (...)
+        {
+            return fallback;
+        }
+    }
+
+    std::filesystem::path FindRepositoryRoot(std::filesystem::path start)
+    {
+        std::error_code ec;
+        start = std::filesystem::absolute(start, ec);
+        if (ec)
+        {
+            return {};
+        }
+        for (uint32_t depth = 0u; depth < 10u; ++depth)
+        {
+            if (std::filesystem::is_regular_file(start / L"HairSystem.sln", ec) &&
+                std::filesystem::exists(start / L".git", ec))
+            {
+                return start;
+            }
+            const std::filesystem::path parent = start.parent_path();
+            if (parent.empty() || parent == start)
+            {
+                break;
+            }
+            start = parent;
+        }
+        return {};
+    }
+
+    std::wstring BuildUtcRunDirectoryName()
+    {
+        SYSTEMTIME time = {};
+        GetSystemTime(&time);
+        std::wstringstream stream;
+        stream << std::setfill(L'0')
+               << std::setw(4) << time.wYear
+               << std::setw(2) << time.wMonth
+               << std::setw(2) << time.wDay
+               << L'T'
+               << std::setw(2) << time.wHour
+               << std::setw(2) << time.wMinute
+               << std::setw(2) << time.wSecond
+               << L'Z'
+               << L'_' << GetCurrentProcessId();
+        return stream.str();
+    }
+
+    std::string JsonEscapeText(const std::string& value)
+    {
+        std::ostringstream stream;
+        for (unsigned char ch : value)
+        {
+            switch (ch)
+            {
+            case '\\': stream << "\\\\"; break;
+            case '"': stream << "\\\""; break;
+            case '\n': stream << "\\n"; break;
+            case '\r': stream << "\\r"; break;
+            case '\t': stream << "\\t"; break;
+            default:
+                if (ch < 0x20u)
+                {
+                    stream << "\\u" << std::hex << std::setw(4)
+                           << std::setfill('0') << static_cast<unsigned int>(ch)
+                           << std::dec;
+                }
+                else
+                {
+                    stream << static_cast<char>(ch);
+                }
+                break;
+            }
+        }
+        return stream.str();
+    }
+
+    bool WriteCaptureContext(
+        const LocalDebugCaptureOptions& options,
+        const std::filesystem::path& executablePath)
+    {
+        std::ofstream output(options.runDirectory / L"capture_context.json", std::ios::binary);
+        if (!output)
+        {
+            return false;
+        }
+    #if defined(_DEBUG)
+        constexpr const char* buildConfiguration = "Debug";
+    #else
+        constexpr const char* buildConfiguration = "Release";
+    #endif
+        output << "{\n"
+               << "  \"schemaVersion\": \"hairgpu-local-debug-context-v1\",\n"
+               << "  \"evidenceClass\": \"diagnostic_debugger\",\n"
+               << "  \"formalEvidence\": false,\n"
+               << "  \"launchMode\": \"visual_studio_local_debugger\",\n"
+               << "  \"debuggerAttached\": " << (IsDebuggerPresent() ? "true" : "false") << ",\n"
+               << "  \"buildConfiguration\": \"" << buildConfiguration << "\",\n"
+               << "  \"platform\": \"x64\",\n"
+               << "  \"warmupFrames\": " << options.warmupFrames << ",\n"
+               << "  \"captureFrames\": " << options.captureFrames << ",\n"
+               << "  \"methodCode\": \"" << JsonEscapeText(std::filesystem::path(options.methodCode).u8string()) << "\",\n"
+               << "  \"guideCount\": " << kGuideCount << ",\n"
+               << "  \"followersPerGuide\": " << kFollowersPerGuide << ",\n"
+               << "  \"displayStrandCount\": " << kDisplayStrandCount << ",\n"
+               << "  \"particlesPerStrand\": " << kParticlesPerStrand << ",\n"
+               << "  \"solverIterations\": " << kSolverIterations << ",\n"
+               << "  \"repositoryRoot\": \"" << JsonEscapeText(options.repositoryRoot.u8string()) << "\",\n"
+               << "  \"runDirectory\": \"" << JsonEscapeText(options.runDirectory.u8string()) << "\",\n"
+               << "  \"executable\": \"" << JsonEscapeText(executablePath.u8string()) << "\",\n"
+               << "  \"automaticCommitRequested\": " << (options.autoCommit ? "true" : "false") << ",\n"
+               << "  \"automaticPushRequested\": " << (options.push ? "true" : "false") << ",\n"
+               << "  \"warning\": \"Debugger data is diagnostic and must not be used as formal paper evidence.\"\n"
+               << "}\n";
+        return output.good();
+    }
+
+    std::wstring QuoteCommandLineArgument(const std::wstring& value)
+    {
+        std::wstring quoted = L"\"";
+        size_t backslashCount = 0u;
+        for (wchar_t ch : value)
+        {
+            if (ch == L'\\')
+            {
+                ++backslashCount;
+                continue;
+            }
+            if (ch == L'"')
+            {
+                quoted.append(backslashCount * 2u + 1u, L'\\');
+                quoted.push_back(L'"');
+                backslashCount = 0u;
+                continue;
+            }
+            quoted.append(backslashCount, L'\\');
+            backslashCount = 0u;
+            quoted.push_back(ch);
+        }
+        quoted.append(backslashCount * 2u, L'\\');
+        quoted.push_back(L'"');
+        return quoted;
+    }
+
+    bool LaunchAndWait(
+        const std::wstring& commandLine,
+        const std::filesystem::path& workingDirectory,
+        DWORD& exitCode)
+    {
+        std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+        mutableCommand.push_back(L'\0');
+        STARTUPINFOW startupInfo = {};
+        startupInfo.cb = sizeof(startupInfo);
+        PROCESS_INFORMATION processInfo = {};
+        const BOOL created = CreateProcessW(
+            nullptr,
+            mutableCommand.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            workingDirectory.c_str(),
+            &startupInfo,
+            &processInfo);
+        if (!created)
+        {
+            exitCode = GetLastError();
+            return false;
+        }
+        WaitForSingleObject(processInfo.hProcess, INFINITE);
+        DWORD childExitCode = 1u;
+        GetExitCodeProcess(processInfo.hProcess, &childExitCode);
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        exitCode = childExitCode;
+        return true;
+    }
+
+    DWORD RunLocalDebugPostprocessor(
+        const LocalDebugCaptureOptions& options,
+        int viewerExitCode)
+    {
+        const std::filesystem::path script =
+            options.repositoryRoot / L"tools" / L"final_stage" / L"hairgpu_local_debug_report.py";
+        if (!std::filesystem::is_regular_file(script))
+        {
+            std::ofstream error(options.runDirectory / L"POSTPROCESS_LAUNCH_ERROR.txt");
+            error << "Postprocessor was not found: " << script.u8string() << "\n";
+            return ERROR_FILE_NOT_FOUND;
+        }
+
+        std::wstring arguments =
+            L" " + QuoteCommandLineArgument(script.wstring()) +
+            L" --repo-root " + QuoteCommandLineArgument(options.repositoryRoot.wstring()) +
+            L" --run-dir " + QuoteCommandLineArgument(options.runDirectory.wstring()) +
+            L" --run-name " + QuoteCommandLineArgument(options.runName) +
+            L" --viewer-exit-code " + std::to_wstring(viewerExitCode);
+        if (options.autoCommit)
+        {
+            arguments += L" --auto-commit";
+        }
+        if (options.push)
+        {
+            arguments += L" --push";
+        }
+
+        DWORD exitCode = 1u;
+        if (LaunchAndWait(L"python.exe" + arguments, options.repositoryRoot, exitCode))
+        {
+            return exitCode;
+        }
+        const DWORD pythonError = exitCode;
+        if (LaunchAndWait(L"py.exe -3" + arguments, options.repositoryRoot, exitCode))
+        {
+            return exitCode;
+        }
+
+        std::ofstream error(options.runDirectory / L"POSTPROCESS_LAUNCH_ERROR.txt");
+        error << "Failed to start python.exe or py.exe. Win32 errors: "
+              << pythonError << ", " << exitCode << "\n";
+        return exitCode;
+    }
+
+    bool ConfigureCommandLineAndLocalCapture(
+        const std::filesystem::path& executablePath,
+        LocalDebugCaptureOptions& options)
+    {
+        bool explicitlyDisabled = false;
+        for (int index = 1; index < __argc; ++index)
+        {
+            const std::wstring argument = __wargv[index] ? __wargv[index] : L"";
+            auto nextValue = [&]() -> const wchar_t*
+            {
+                return (index + 1 < __argc && __wargv[index + 1]) ? __wargv[++index] : L"";
+            };
+
+            if (argument == L"--start-paused")
+                SetEnvironmentValue(L"HAIRGPU_START_PAUSED", L"1");
+            else if (argument == L"--visual-validation")
+                SetEnvironmentValue(L"HAIRGPU_VISUAL_VALIDATION", L"1");
+            else if (argument == L"--experiment-config")
+                SetEnvironmentValue(L"HAIRGPU_CASE_JSON", nextValue());
+            else if (argument == L"--max-frames")
+                SetEnvironmentValue(L"HAIRGPU_MAX_FRAMES", nextValue());
+            else if (argument == L"--render-mode")
+                SetEnvironmentValue(L"HAIRGPU_RENDER_MODE", nextValue());
+            else if (argument == L"--self-collision")
+                SetEnvironmentValue(L"HAIRGPU_SELF_COLLISION", nextValue());
+            else if (argument == L"--guides-only")
+                SetEnvironmentValue(L"HAIRGPU_GUIDES_ONLY", nextValue());
+            else if (argument == L"--local-capture")
+            {
+                options.enabled = true;
+                explicitlyDisabled = false;
+            }
+            else if (argument == L"--no-local-capture")
+            {
+                options.enabled = false;
+                explicitlyDisabled = true;
+            }
+            else if (argument == L"--local-capture-warmup")
+                options.warmupFrames = ParsePositiveUInt(nextValue(), options.warmupFrames);
+            else if (argument == L"--local-capture-frames")
+                options.captureFrames = ParsePositiveUInt(nextValue(), options.captureFrames);
+            else if (argument == L"--local-capture-method")
+                options.methodCode = nextValue();
+            else if (argument == L"--local-capture-autocommit")
+                options.autoCommit = true;
+            else if (argument == L"--local-capture-push")
+            {
+                options.autoCommit = true;
+                options.push = true;
+            }
+        }
+
+        if (!options.enabled || explicitlyDisabled)
+        {
+            return true;
+        }
+
+        options.repositoryRoot = FindRepositoryRoot(executablePath.parent_path());
+        if (options.repositoryRoot.empty())
+        {
+            return false;
+        }
+        options.runDirectory =
+            options.repositoryRoot / L"results" / L"committed" / L"local_debug" /
+            BuildUtcRunDirectoryName();
+        std::error_code ec;
+        std::filesystem::create_directories(options.runDirectory, ec);
+        if (ec)
+        {
+            return false;
+        }
+
+        SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_CAPTURE", L"1");
+        SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_WARMUP_FRAMES", std::to_wstring(options.warmupFrames));
+        SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES", std::to_wstring(options.captureFrames));
+        SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_METHOD", options.methodCode);
+        SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_RUN_NAME", options.runName);
+        SetEnvironmentValue(L"HAIRGPU_AUTO_TELEMETRY", L"1");
+        SetEnvironmentValue(L"HAIRGPU_TELEMETRY_DIR", options.runDirectory.wstring());
+        SetEnvironmentValue(L"HAIRGPU_TELEMETRY_RUN_NAME", options.runName);
+        SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_EVIDENCE_CLASS", L"diagnostic_debugger");
+        return WriteCaptureContext(options, executablePath);
+    }
+
+
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
     wchar_t modulePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
-    const std::filesystem::path exeDir = std::filesystem::path(modulePath).parent_path();
+    const std::filesystem::path executablePath(modulePath);
+    const std::filesystem::path exeDir = executablePath.parent_path();
+
+    LocalDebugCaptureOptions localCapture;
+    if (!ConfigureCommandLineAndLocalCapture(executablePath, localCapture))
+    {
+        MessageBoxW(
+            nullptr,
+            L"Local debugger capture could not locate the repository or create its output directory.",
+            L"HairSystem Local Capture Failure",
+            MB_OK | MB_ICONERROR);
+        return 81;
+    }
+
     SetCurrentDirectoryW(exeDir.c_str());
 
     if (ArgumentEquals(1, L"--export-frozen-source"))
@@ -367,5 +725,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         return 1;
     }
 
-    return app.Run();
+    const int viewerExitCode = app.Run();
+    if (!localCapture.enabled)
+    {
+        return viewerExitCode;
+    }
+
+    const DWORD postprocessExitCode =
+        RunLocalDebugPostprocessor(localCapture, viewerExitCode);
+    if (postprocessExitCode != 0u && viewerExitCode == 0)
+    {
+        return 90;
+    }
+    return viewerExitCode;
 }

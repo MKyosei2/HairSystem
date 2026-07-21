@@ -94,6 +94,35 @@ namespace hairgpu
         uint8_t reserved = 0u;
     };
 
+
+    struct VisualValidationSettings
+    {
+        float maximumRootDriftMillimeters = 0.5f;
+        float maximumSegmentStretchRatio = 1.20f;
+        float maximumBoundsExpansionRatio = 1.50f;
+        float maximumFollowerParentDeviationMeters = 0.08f;
+        uint32_t requireFinitePositions = 1u;
+        uint32_t reserved0 = 0u;
+        uint32_t reserved1 = 0u;
+        uint32_t reserved2 = 0u;
+    };
+
+    struct VisualValidationResult
+    {
+        uint32_t invalidPointCount = 0u;
+        uint32_t nanPointCount = 0u;
+        uint32_t infinitePointCount = 0u;
+        uint32_t invalidFollowerParentCount = 0u;
+        float rootDriftMaxMillimeters = 0.0f;
+        float segmentStretchP99 = 1.0f;
+        float segmentStretchMax = 1.0f;
+        float boundsExpansionRatio = 1.0f;
+        float followerParentDeviationMaxMeters = 0.0f;
+        float frameToFrameDisplacementMaxMeters = 0.0f;
+        uint32_t passed = 1u;
+        uint32_t reserved = 0u;
+    };
+
     struct StrandMaterial
     {
         float rootWidth = 0.006f;

@@ -17,7 +17,7 @@
         const HINSTANCE instance = reinterpret_cast<HINSTANCE>(
             GetWindowLongPtrW(m_hwnd, GWLP_HINSTANCE));
         m_uiPanel = CreateWindowExW(
-            WS_EX_CONTROLPARENT,
+            WS_EX_CONTROLPARENT | WS_EX_TRANSPARENT,
             L"STATIC",
             L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,

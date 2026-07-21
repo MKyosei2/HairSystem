@@ -14,119 +14,7 @@
         UpdateScalpOverlayVertexBuffer();
     }
 
-    void GpuHairViewer::ApplyWorkspaceMode(WorkspaceMode workspace)
-    {
-        m_workspaceMode = workspace;
-        switch (workspace)
-        {
-        case WorkspaceMode::Groom:
-            m_interactionMode = InteractionMode::Edit;
-            if (m_debugColorMode == DebugColorMode::Natural)
-            {
-                m_debugColorMode = DebugColorMode::Editability;
-            }
-            if (m_maskOverlayMode == MaskOverlayMode::None)
-            {
-                m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            }
-            break;
-        case WorkspaceMode::Sim:
-            m_interactionMode = InteractionMode::View;
-            if (m_maskOverlayMode == MaskOverlayMode::EditInfluenceBeforeAfter)
-            {
-                m_maskOverlayMode = MaskOverlayMode::None;
-            }
-            break;
-        case WorkspaceMode::Review:
-            m_interactionMode = InteractionMode::View;
-            if (m_maskOverlayMode == MaskOverlayMode::None)
-            {
-                m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
-            }
-            break;
-        case WorkspaceMode::Report:
-            m_interactionMode = InteractionMode::View;
-            if (m_maskOverlayMode == MaskOverlayMode::None)
-            {
-                m_maskOverlayMode = MaskOverlayMode::ActiveSetRiskSelection;
-            }
-            break;
-        }
-        SyncControlsFromState();
-        LayoutUiControls();
-    }
-
-    void GpuHairViewer::ApplyGroomToolPreset(GroomTool tool)
-    {
-        m_groomTool = tool;
-        m_workspaceMode = WorkspaceMode::Groom;
-        m_interactionMode = InteractionMode::Edit;
-        switch (tool)
-        {
-        case GroomTool::Select:
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::Comb:
-            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
-            m_quickEditFeather = std::max(m_quickEditFeather, 0.20f);
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::Grab:
-            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::Smooth:
-            m_quickEditBoundarySmoothing = std::max(m_quickEditBoundarySmoothing, 0.45f);
-            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
-            break;
-        case GroomTool::Length:
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::Volume:
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::Part:
-            m_quickEditMode = hairgpu::RegionSelectMode::Sector;
-            m_maskOverlayMode = MaskOverlayMode::Parting;
-            break;
-        case GroomTool::Freeze:
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::StrandFix:
-            m_maskOverlayMode = MaskOverlayMode::EditInfluence;
-            break;
-        case GroomTool::Clump:
-            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
-            m_quickEditFeather = std::max(m_quickEditFeather, 0.24f);
-            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
-            break;
-        case GroomTool::Curl:
-            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
-            m_quickEditFeather = std::max(m_quickEditFeather, 0.26f);
-            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
-            break;
-        case GroomTool::Unclump:
-            m_quickEditMode = hairgpu::RegionSelectMode::Ellipse;
-            m_maskOverlayMode = MaskOverlayMode::EditInfluenceBeforeAfter;
-            break;
-        }
-        SyncControlsFromState();
-        LayoutUiControls();
-    }
-
-    const wchar_t* GpuHairViewer::GetWorkspaceDisplayName() const
-    {
-        switch (m_workspaceMode)
-        {
-        case WorkspaceMode::Groom: return L"Groom";
-        case WorkspaceMode::Sim: return L"Sim";
-        case WorkspaceMode::Review: return L"Review";
-        case WorkspaceMode::Report: return L"Report";
-        default: return L"Groom";
-        }
-    }
-
-    void GpuHairViewer::ApplyPreset(int presetIndex)
+void GpuHairViewer::ApplyPreset(int presetIndex)
     {
         m_renderMode = RenderMode::StrandRibbon;
         m_showScalpMesh = true;
@@ -140,21 +28,25 @@
         {
         default:
         case 0:
-            m_activePresetName = L"Rapunzel Preview";
+            m_activePresetName = L"Stable Benchmark Wig";
             m_builderGuideCount = kFixedGuideCount;
             m_builderFollowersPerGuide = kFixedFollowersPerGuide;
             m_builderParticlesPerStrand = kFixedParticlesPerStrand;
-            m_widthScale = 0.56f;
-            m_simConfig.gravity = 18.5f;
-            m_simConfig.globalDamping = 0.085f;
-            m_simConfig.windStrength = 0.03f;
+            m_widthScale = 0.82f;
+            m_simConfig.gravity = 9.81f;
+            m_simConfig.globalDamping = 0.065f;
+            m_simConfig.windStrength = 0.0f;
             m_simConfig.solverIterations = kFixedSolverIterations;
-            m_simConfig.followStiffness = 0.992f;
-            m_selfCollisionRadius = 0.0055f;
-            m_selfCollisionStiffness = 0.10f;
-            m_simConfig.selfCollisionCellSize = 0.060f;
-            m_simConfig.stretchCompliance = 2.0e-7f;
-            m_simConfig.bendCompliance = 1.5e-5f;
+            m_simConfig.followStiffness = 0.995f;
+            m_selfCollisionRadius = 0.0045f;
+            m_selfCollisionStiffness = 0.08f;
+            m_simConfig.selfCollisionCellSize = 0.040f;
+            m_simConfig.stretchCompliance = 5.0e-8f;
+            m_simConfig.bendCompliance = 7.5e-6f;
+            m_simConfig.looseConstraintStiffness = 0.0f;
+            m_simConfig.supportCollisionRadius = 0.0f;
+            m_simConfig.supportCollisionStiffness = 0.0f;
+            m_simConfig.freezeBlend = 0.0f;
             break;
         case 1:
             m_activePresetName = L"Calm Studio";
@@ -228,6 +120,17 @@
         m_enableSelfCollision = false;
         m_enableGridSelfCollision = false;
         m_enableScalpMotion = false;
+        if (presetIndex == 0)
+        {
+            m_workspaceMode = WorkspaceMode::Sim;
+            m_interactionMode = InteractionMode::View;
+            m_groomTool = GroomTool::Select;
+            m_debugColorMode = DebugColorMode::Natural;
+            m_maskOverlayMode = MaskOverlayMode::None;
+            m_showInspectorPane = false;
+            m_showBottomTray = false;
+            m_fastGroomViewport = false;
+        }
         EnforceFixedWorkload();
         SyncControlsFromState();
         RebuildAsset(m_builderGuideCount, m_builderFollowersPerGuide, m_builderParticlesPerStrand);
@@ -242,6 +145,22 @@
 
         ApplySampleMaskOverrides();
         m_asset = BuildSampleHybridHairAsset(guideCount, followersPerGuide, m_builderParticlesPerStrand, m_simConfig.segmentLength);
+        const hairgpu::HairAssetValidationReport structuralReport = hairgpu::ValidateHairAsset(m_asset);
+        const hairgpu::BenchmarkWigValidationReport shapeReport = hairgpu::ValidateBenchmarkWigShape(m_asset);
+        if (!structuralReport.valid || !shapeReport.valid)
+        {
+            const std::string diagnostic =
+                hairgpu::BuildHairAssetValidationSummary(structuralReport, true) + "\n" +
+                hairgpu::BuildBenchmarkWigValidationSummary(shapeReport, true);
+            m_lastImportStatus = L"Benchmark wig validation failed";
+            const std::wstring wideDiagnostic(diagnostic.begin(), diagnostic.end());
+            MessageBoxW(
+                m_hwnd,
+                wideDiagnostic.c_str(),
+                L"Invalid Benchmark Wig",
+                MB_OK | MB_ICONERROR);
+            return false;
+        }
         // Avoid double wig styling in viewer; sample/import paths already shape the asset.
         EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
         m_lastAssetSource = L"Sample Hybrid";

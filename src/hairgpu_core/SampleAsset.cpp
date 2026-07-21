@@ -133,7 +133,7 @@ namespace hairgpu
         constexpr float kHeadRadiusY = 0.20f;
         constexpr float kHeadRadiusZ = 0.19f;
         constexpr uint32_t kLengthResampleMinSamples = 64u;
-        constexpr float kTargetAverageStrandLengthMeters = 0.50f;
+        constexpr float kTargetAverageStrandLengthMeters = 0.44f;
 
         float ComputeReferenceStrandLength(float segmentLength)
         {
@@ -951,11 +951,27 @@ namespace hairgpu
 
         float ComputeGuideLength(const Vec3& root, const Vec3& scalpCenter, const Vec2& uv, float baseLength, const WigParameters& parameters)
         {
-            const float lowerRing = Clamp((1.0f - Clamp((root.y - (scalpCenter.y - 0.02f)) / 0.26f, 0.0f, 1.0f)), 0.0f, 1.0f);
-            const float crownReduction = Clamp((uv.y - 0.40f) / 0.60f, 0.0f, 1.0f) * 0.025f;
+            const float angle = WrapUnit(uv.x) * kTau;
+            const float front = std::max(std::sin(angle), 0.0f);
+            const float back = std::max(-std::sin(angle), 0.0f);
+            const float side = std::fabs(std::cos(angle));
+            const float lowerRing = Clamp(
+                1.0f - Clamp((root.y - (scalpCenter.y - 0.02f)) / 0.26f, 0.0f, 1.0f),
+                0.0f,
+                1.0f);
             const float faceOpening = EvaluateFaceOpeningMask(uv.x, uv.y);
-            const float frontTrim = 0.03f * faceOpening;
-            return baseLength * parameters.overallLength * (1.0f + parameters.lowerRingLengthBias * lowerRing - crownReduction - frontTrim);
+
+            // Orientation is encoded by the silhouette itself: fringe/front guides
+            // are shorter, side guides are medium, and back/nape guides are longer.
+            const float frontTrim = front * Lerp(0.24f, 0.38f, faceOpening);
+            const float backExtension = back * 0.18f;
+            const float sideExtension = side * 0.035f;
+            const float lowerExtension = parameters.lowerRingLengthBias * lowerRing;
+            const float regionalScale = Clamp(
+                0.94f + backExtension + sideExtension + lowerExtension - frontTrim,
+                0.56f,
+                1.26f);
+            return baseLength * parameters.overallLength * regionalScale;
         }
 
         void AppendStaticWigStrand(
@@ -1001,11 +1017,11 @@ namespace hairgpu
             const float backFactor = std::max(-std::sin(angle), 0.0f);
             const float sideFactor = std::fabs(std::cos(angle));
             const bool isGuideStrand = (flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u;
-            const float crownSupportZone = crownMask * (1.0f - faceOpening * 0.45f) * (0.78f + 0.22f * (1.0f - sideFactor));
-            const float supportSeed = Hash01(seed + 131u);
-            const float supportMix = (!isGuideStrand && supportSeed < (0.12f + 0.30f * crownSupportZone))
-                ? (0.58f + 0.22f * Hash01(seed + 151u))
-                : 0.0f;
+            (void)isGuideStrand;
+            // The formal benchmark uses one coherent length distribution. Randomly
+            // inserting short support followers created the visible scalp halo and
+            // made quality comparisons depend on authoring noise.
+            const float supportMix = 0.0f;
             float fringeDu = std::fabs(WrapUnit(uv.x) - 0.25f);
             fringeDu = std::min(fringeDu, 1.0f - fringeDu);
             const float fringeFactor = frontFactor * Smooth01(1.0f - Clamp(fringeDu / 0.11f, 0.0f, 1.0f));
@@ -1027,13 +1043,13 @@ namespace hairgpu
             }
 
             const Vec3 tangentOffset = rootOffset - normal * Dot(rootOffset, normal);
-            Vec3 root = rootSurface + normal * 0.0045f + tangentOffset * 0.30f;
+            Vec3 root = rootSurface + normal * (0.0035f + parameters.rootLift * 0.15f) + tangentOffset * 0.72f;
             root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0055f);
 
             const float baseStrandLength = ComputeReferenceStrandLength(segmentLength);
             const float regionalLength = ComputeGuideLength(root, scalpCenter, uv, baseStrandLength, parameters);
-            const float lengthJitter = 0.97f + 0.06f * Hash01(seed + 41u);
-            const float lengthScale = Clamp(0.96f + 0.05f * sideFactor + 0.08f * backFactor - 0.04f * fringeFactor + 0.03f * crownMask, 0.90f, 1.12f);
+            const float lengthJitter = 0.93f + 0.14f * Hash01(seed + 41u);
+            const float lengthScale = Clamp(0.98f + 0.025f * sideFactor + 0.035f * backFactor - 0.020f * fringeFactor + 0.015f * crownMask, 0.94f, 1.07f);
             const float baseStrandLengthMeters = regionalLength * lengthScale * lengthJitter;
             const float supportLengthScale = 0.28f + 0.18f * Hash01(seed + 157u);
             const float strandLength = Lerp(baseStrandLengthMeters, baseStrandLengthMeters * supportLengthScale, supportMix);
@@ -1065,7 +1081,17 @@ namespace hairgpu
                 p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase * (1.0f - 0.50f * supportMix));
                 p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
-                p += normal * (0.0050f * (1.0f - rootPhase) + 0.015f * supportMix * (1.0f - fallPhase));
+                p += normal * (0.0040f * (1.0f - rootPhase));
+
+                const float silhouetteBell = std::sin(kPi * Clamp(t, 0.0f, 1.0f));
+                const float radialVolume =
+                    parameters.silhouetteWidth * (0.30f + 0.45f * sideFactor) +
+                    parameters.sideVolume * sideFactor * 0.55f +
+                    parameters.backVolume * backFactor * 0.70f;
+                const float faceVolumeAttenuation = 1.0f - 0.72f * frontFactor;
+                p += radial * (radialVolume * silhouetteBell * faceVolumeAttenuation);
+                p += lateral * (parameters.silhouetteWidth * 0.28f * frontFactor * silhouetteBell);
+                p = p - radial * (parameters.tipInward * t * t * t);
 
                 if (t > 0.35f)
                 {
@@ -1237,18 +1263,18 @@ namespace hairgpu
     WigParameters DefaultWigParameters()
     {
         WigParameters parameters;
-        parameters.overallLength = 1.00f;
+        parameters.overallLength = 0.96f;
         parameters.partingOffset = 0.0f;
-        parameters.partWidth = 0.010f;
+        parameters.partWidth = 0.026f;
         parameters.scalpConform = 1.0f;
-        parameters.rootLift = 0.0f;
-        parameters.silhouetteWidth = 0.0025f;
-        parameters.sideVolume = 0.0008f;
-        parameters.backVolume = 0.0010f;
-        parameters.lowerRingLengthBias = 0.06f;
-        parameters.strandNoise = 0.00025f;
-        parameters.followerSpread = 0.00042f;
-        parameters.tipInward = 0.0002f;
+        parameters.rootLift = 0.006f;
+        parameters.silhouetteWidth = 0.050f;
+        parameters.sideVolume = 0.032f;
+        parameters.backVolume = 0.048f;
+        parameters.lowerRingLengthBias = 0.14f;
+        parameters.strandNoise = 0.0022f;
+        parameters.followerSpread = 0.0060f;
+        parameters.tipInward = 0.009f;
         return parameters;
     }
 
@@ -1276,8 +1302,8 @@ namespace hairgpu
             RootBinding binding = SampleAreaDistributedRootBinding(asset.scalpMesh, scalpAreaCdf, guideIndex);
 
             StrandMaterial material;
-            material.rootWidth = 0.0032f;
-            material.tipWidth = 0.00016f;
+            material.rootWidth = 0.00095f;
+            material.tipWidth = 0.000065f;
             material.stiffness = 0.95f;
             material.damping = 0.055f;
 
@@ -1379,9 +1405,9 @@ namespace hairgpu
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.948f + Hash01(seed + 7u) * 0.010f - edgeRisk * 0.028f;
-                followerFollow.clumpWeight = 0.76f + Hash01(seed + 19u) * 0.050f - edgeRisk * 0.12f;
-                followerFollow.noiseWeight = 0.00020f + Hash01(seed + 23u) * 0.00020f + edgeRisk * 0.00008f;
+                followerFollow.followWeight = 0.988f + Hash01(seed + 7u) * 0.006f - edgeRisk * 0.010f;
+                followerFollow.clumpWeight = 0.925f + Hash01(seed + 19u) * 0.035f - edgeRisk * 0.025f;
+                followerFollow.noiseWeight = 0.00008f + Hash01(seed + 23u) * 0.00008f;
 
                 AppendStaticWigStrand(
                     asset,
@@ -1400,15 +1426,9 @@ namespace hairgpu
         }
 
         RebuildRootRestPositionsFromScalp(asset);
-
-        WigStyleSettings wigSettings;
-        wigSettings.strength = 0.88f;
-        wigSettings.capRegion = 0.16f;
-        wigSettings.shellOffset = 0.0045f;
-        wigSettings.flowBlend = 0.18f;
-        wigSettings.outwardBlend = 0.02f;
-        wigSettings.restoreOriginalTowardsTip = 0.88f;
-        StyleAssetToScalpWig(asset, wigSettings);
+        // AppendStaticWigStrand already creates the benchmark silhouette. A second
+        // strong normal-directed cap styling pass made roots stand away from the
+        // scalp and created the crown halo seen in the Viewer.
         return asset;
     }
 

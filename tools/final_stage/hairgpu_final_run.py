@@ -1510,6 +1510,18 @@ def _validate_hardware_contract(
     return problems
 
 
+
+def _summary_visual_validation_passed(summary: Mapping[str, Any]) -> bool:
+    value = summary.get("visualValidationPassed")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "true", "yes", "pass", "passed"}
+
+
 def validate_outputs(case: Mapping[str, Any], paths: Mapping[str, Path],
                      process_summary: Mapping[str, Any],
                      environment_summary: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -1536,6 +1548,13 @@ def validate_outputs(case: Mapping[str, Any], paths: Mapping[str, Path],
         settings_payload = {}
         summary_payload = {}
     problems.extend(_validate_settings_contract(case, settings_payload, summary_payload))
+    if not _summary_visual_validation_passed(summary_payload):
+        problems.append(issue(
+  "E_VISUAL_VALIDATION",
+  "Viewer summary reported a failed visual-validation gate.",
+  expected=True,
+  observed=summary_payload.get("visualValidationPassed"),
+        ))
     problems.extend(_validate_hardware_contract(
         case,
         environment_summary or {},

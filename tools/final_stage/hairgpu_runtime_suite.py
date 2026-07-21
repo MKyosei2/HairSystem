@@ -1051,3 +1051,13 @@ if 'expand_run_matrix' in globals():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def visual_validation_passed(validation: Mapping[str, Any]) -> bool:
+    issues = validation.get("issues", [])
+    if not isinstance(issues, list):
+        return False
+    return not any(
+        isinstance(item, Mapping) and str(item.get("code", "")) == "E_VISUAL_VALIDATION"
+        for item in issues
+    )

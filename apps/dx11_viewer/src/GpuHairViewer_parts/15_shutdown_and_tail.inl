@@ -323,6 +323,18 @@
             std::fabs(kFixedTimeStepSeconds - (1.0f / 60.0f)) > 1.0e-7f) return 14;
         if (!std::isfinite(SegmentLengthForParticleCount(kFixedParticlesPerStrand)) ||
             SegmentLengthForParticleCount(kFixedParticlesPerStrand) <= 0.0f) return 15;
+
+        const hairgpu::HairAsset benchmarkAsset = hairgpu::BuildSampleHybridHairAsset(
+            256u,
+            2u,
+            kFixedParticlesPerStrand,
+            SegmentLengthForParticleCount(kFixedParticlesPerStrand));
+        const hairgpu::HairAssetValidationReport structuralReport =
+            hairgpu::ValidateHairAsset(benchmarkAsset);
+        if (!structuralReport.valid) return 16;
+        const hairgpu::BenchmarkWigValidationReport shapeReport =
+            hairgpu::ValidateBenchmarkWigShape(benchmarkAsset);
+        if (!shapeReport.valid) return 17;
         return 0;
     }
 

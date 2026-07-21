@@ -58,3 +58,11 @@ Thumbs.db
 # Frozen Novelty01 bundle is generated once by the Release viewer.
 benchmarks/novelty01/frozen_asset_bundle/*
 !benchmarks/novelty01/frozen_asset_bundle/frozen_asset_lock.json
+
+# Visual Studio local-debugger diagnostic evidence.
+# These files are intentionally versioned and are always marked formalEvidence=false.
+!results/
+!results/committed/
+!results/committed/local_debug/
+!results/committed/local_debug/**
+

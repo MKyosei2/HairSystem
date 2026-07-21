@@ -385,5 +385,22 @@ class PrenoveltyCompletionGateTests(unittest.TestCase):
         self.assertEqual(suite.PRENOVELTY_SMOKE_METHODS, {"B0", "B6", "B8"})
         self.assertIn("S17_CloseCamera100k", suite.PRENOVELTY_SMOKE_SCENARIOS)
 
+
+
+class P0VisualValidationTests(unittest.TestCase):
+    def test_explicit_failed_visual_gate_is_rejected(self) -> None:
+        self.assertFalse(final_run._summary_visual_validation_passed(
+  {"visualValidationPassed": False}
+        ))
+
+    def test_legacy_summary_without_visual_field_remains_compatible(self) -> None:
+        self.assertTrue(final_run._summary_visual_validation_passed({}))
+
+    def test_suite_detects_visual_validation_issue(self) -> None:
+        self.assertFalse(suite.visual_validation_passed({
+  "issues": [{"code": "E_VISUAL_VALIDATION"}]
+        }))
+        self.assertTrue(suite.visual_validation_passed({"issues": []}))
+
 if __name__ == "__main__":
     unittest.main()

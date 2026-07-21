@@ -55,6 +55,49 @@
         // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1: configuration was loaded before initialization.
         m_globalFrameIndex = 0u;
         m_measuredFrameIndex = 0u;
+        const bool localDebugCaptureEnabled =
+            EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE"));
+        const uint32_t localDebugWarmupFrames = localDebugCaptureEnabled
+            ? EnvironmentValueToUInt(
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_WARMUP_FRAMES"),
+                120u)
+            : 0u;
+        const uint32_t localDebugCaptureFrames = localDebugCaptureEnabled
+            ? std::max<uint32_t>(EnvironmentValueToUInt(
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES"),
+                1800u), 1u)
+            : 0u;
+        if (localDebugCaptureEnabled)
+        {
+            std::wstring runName =
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_RUN_NAME");
+            if (runName.empty())
+            {
+                runName = L"local_debug";
+            }
+            std::wstring methodCode =
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_METHOD");
+            if (methodCode.empty())
+            {
+                methodCode = L"DEV";
+            }
+            // Keep enabled=false so a debugger run can never satisfy the formal gate.
+            m_experimentCase.enabled = false;
+            m_experimentCase.caseId = runName;
+            m_experimentCase.variant = methodCode;
+            m_experimentCase.scenario = L"S01_LocalDebug";
+            m_experimentCase.seed = 1103u;
+            m_experimentCase.warmupFrames = localDebugWarmupFrames;
+            m_experimentCase.measurementFrames = localDebugCaptureFrames;
+            m_experimentCase.fixedTimeStepEnabled = true;
+            m_experimentCase.fixedTimeStepSeconds = m_simConfig.fixedTimeStep;
+            m_experimentCase.realMeasurement = false;
+            m_experimentCase.runStatus = ExperimentRunStatus::Incomplete;
+            m_experimentRunStatus = ExperimentRunStatus::Incomplete;
+            m_vsyncEnabled = false;
+            m_presentSyncInterval = 0u;
+            m_paused = false;
+        }
         while (m_running)
         {
             for (GpuTimingFrame& pendingTiming : m_gpuTimingFrames)
@@ -101,7 +144,9 @@
             // Formal measurements keep per-frame timing coverage. Interactive development
             // samples once every 16 frames to avoid query pressure while retaining diagnostics.
             const bool shouldIssueGpuTiming =
-                IsExperimentModeEnabled() || ((m_globalFrameIndex % 16u) == 0u);
+                IsExperimentModeEnabled() ||
+                localDebugCaptureEnabled ||
+                ((m_globalFrameIndex % 16u) == 0u);
             const bool canIssueGpuTiming =
                 shouldIssueGpuTiming &&
                 gpuFrame.disjoint &&
@@ -131,9 +176,11 @@
 
             if (!m_paused)
             {
-                if (IsExperimentModeEnabled())
+                if (IsExperimentModeEnabled() || localDebugCaptureEnabled)
                 {
-                    // Exactly one deterministic simulation tick per captured render frame.
+                    // Formal and local diagnostic captures both use exactly one fixed
+                    // simulation tick per rendered frame. The debugger result remains
+                    // diagnostic because m_experimentCase.enabled stays false.
                     ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
                     m_elapsedSeconds += m_simConfig.fixedTimeStep;
                 }
@@ -173,7 +220,12 @@
             LARGE_INTEGER frameWorkEnd = {};
             QueryPerformanceCounter(&frameWorkEnd);
             m_lastCpuFrameWorkMilliseconds = static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
-            const bool captureCurrentFrame = ShouldCaptureCurrentFrame();
+            const bool localDebugCaptureCurrentFrame =
+                localDebugCaptureEnabled &&
+                m_globalFrameIndex >= localDebugWarmupFrames &&
+                m_performanceSamples.size() < static_cast<size_t>(localDebugCaptureFrames);
+            const bool captureCurrentFrame =
+                ShouldCaptureCurrentFrame() || localDebugCaptureCurrentFrame;
             if (captureCurrentFrame)
             {
                 // Finalize availability-aware rates once, then persist the exact
@@ -191,6 +243,11 @@
                 }
             }
             ++m_globalFrameIndex;
+            if (localDebugCaptureEnabled &&
+                m_performanceSamples.size() >= static_cast<size_t>(localDebugCaptureFrames))
+            {
+                m_running = false;
+            }
             if (ShouldAutoExitAfterCurrentFrame())
             {
                 m_running = false;

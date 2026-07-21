@@ -94,7 +94,8 @@ void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& 
     constants.lightDirection[2] = 0.2f;
     constants.lightDirection[3] = 0.0f;
     constants.widthScale = m_widthScale;
-    const bool editVisualization = (m_interactionMode == InteractionMode::Edit);
+    const bool editVisualization = !IsExperimentModeEnabled() &&
+        (m_interactionMode == InteractionMode::Edit);
     const DebugColorMode effectiveDebugColorMode = editVisualization ? DebugColorMode::Editability : m_debugColorMode;
     constants.debugColorMode = static_cast<uint32_t>(effectiveDebugColorMode);
     constants.guideStrandCount = m_asset.guideStrandCount;
@@ -108,6 +109,14 @@ void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& 
     constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.95f : 1.02f) : (editVisualization ? 1.15f : 0.82f);
     constants.renderHiddenWidthThreshold = 0.0f;
     constants.renderStrandAlpha = fastEditPreview ? (heavyInteraction ? 0.82f : 0.90f) : (editVisualization ? 0.96f : 1.0f);
+    if (IsExperimentModeEnabled())
+    {
+        constants.renderFollowerStride = 1u;
+        constants.renderGuideOnlyAboveTier = 4u;
+        constants.renderReducedWidthBoost = 1.0f;
+        constants.renderHiddenWidthThreshold = 0.0f;
+        constants.renderStrandAlpha = 1.0f;
+    }
     constants.renderPadding0 = 0.0f;
 }
 

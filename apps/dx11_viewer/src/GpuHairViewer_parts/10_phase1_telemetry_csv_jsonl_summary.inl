@@ -1519,6 +1519,7 @@ return true;
         sample.syntheticMetricCount = m_noveltyTelemetry.syntheticMetricCount;
         sample.fullCpuGroupUploadCount = m_fullCpuGroupUploadCount;
         sample.sameFrameReadbackCount = m_sameFrameReadbackCount;
+        // P0 visual gate: non-finite position counters are emitted on every measured frame.
         sample.nanStateCount = m_nanStateCount;
         sample.infiniteStateCount = m_infiniteStateCount;
         sample.fatalFailure = m_noveltyTelemetry.fatalFailure;

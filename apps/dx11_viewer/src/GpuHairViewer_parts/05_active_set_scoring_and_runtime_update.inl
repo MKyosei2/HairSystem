@@ -280,7 +280,12 @@
         m_lastUsedCpuVisibilityFallback = false;
         std::vector<GpuParticle> cpuMeshParticles;
         const float aspectRatio = renderWidth / renderHeight;
-        const bool runVisibilityRecovery = ShouldRunVisibilityRecoveryThisFrame();
+        const wchar_t* visualValidationValue = _wgetenv(L"HAIRGPU_VISUAL_VALIDATION");
+        const bool visualValidationRequested = visualValidationValue &&
+            std::wstring(visualValidationValue) == L"1";
+        const bool runVisibilityRecovery =
+            ShouldRunVisibilityRecoveryThisFrame() ||
+            (visualValidationRequested && !IsExperimentModeEnabled());
         const bool haveReadbackParticles = runVisibilityRecovery
             ? RunVisibilityRecoveryPass(aspectRatio, true, &cpuMeshParticles)
             : false;

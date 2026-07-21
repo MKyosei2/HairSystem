@@ -12,6 +12,7 @@ on:
         required: false
         default: false
         type: boolean
+
 permissions:
   contents: read
 
@@ -69,6 +70,12 @@ jobs:
         shell: cmd
         run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
 
+      - name: Verify tests did not modify tracked source
+        shell: cmd
+        run: |
+          git diff --exit-code
+          git status --porcelain --untracked-files=no
+
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,7 +88,7 @@ jobs:
 
   formal-gpu-smoke:
     if: github.event_name == 'workflow_dispatch' && inputs.run_formal_smoke
-    runs-on: [self-hosted, Windows, X64, GTX1660, HairSystem]
+    runs-on: [self-hosted, Windows, X64, RTX4070TiSUPER, HairSystem]
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -100,18 +107,17 @@ jobs:
       - name: Prepare frozen asset
         shell: cmd
         env:
-          HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_SelfHosted
-        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
+          HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_RTX4070TiSUPER
+        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\prenovelty_runtime_suite.json prepare-asset
 
       - name: Pre-novelty baseline smoke with completion gates
         shell: cmd
-        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prenovelty-smoke out\ci_prenovelty_smoke
+        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\prenovelty_runtime_suite.json prenovelty-smoke out\ci_prenovelty_smoke
 
       - name: Upload formal smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prenovelty-gpu-smoke-${{ github.sha }}
+          name: rtx4070ti-super-prenovelty-smoke-${{ github.sha }}
           if-no-files-found: error
           path: out\ci_prenovelty_smoke
-

@@ -20,6 +20,7 @@ cbuffer RenderConstants : register(b0)
 StructuredBuffer<float4> Positions : register(t0);
 StructuredBuffer<float> Widths : register(t1);
 
+
 struct VSInput
 {
     uint vertexId : SV_VertexID;

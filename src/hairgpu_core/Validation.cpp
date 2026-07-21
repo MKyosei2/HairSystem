@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <numeric>
 #include <sstream>
 
 namespace hairgpu
@@ -286,6 +287,231 @@ namespace hairgpu
             {
                 ss << "\n[" << SeverityName(report.issues[i].severity) << "] "
                    << report.issues[i].message;
+            }
+        }
+        return ss.str();
+    }
+
+
+    BenchmarkWigValidationReport ValidateBenchmarkWigShape(const HairAsset& asset)
+    {
+        BenchmarkWigValidationReport report = {};
+        auto pushIssue = [&](ValidationSeverity severity, const std::string& message)
+        {
+            report.issues.push_back({ severity, message });
+            if (severity == ValidationSeverity::Error)
+            {
+                ++report.errorCount;
+                report.valid = false;
+            }
+            else if (severity == ValidationSeverity::Warning)
+            {
+                ++report.warningCount;
+            }
+        };
+
+        const HairAssetValidationReport structural = ValidateHairAsset(asset);
+        if (!structural.valid)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig failed the structural HairAsset validation.");
+        }
+        if (asset.guideStrandCount == 0u || asset.strands.size() < asset.guideStrandCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig does not contain the declared guide strands.");
+            return report;
+        }
+        if (asset.rootBindings.size() < asset.guideStrandCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig is missing guide root bindings.");
+            return report;
+        }
+
+        constexpr float kTau = 6.28318530717958647692f;
+        report.minimumGuideLength = std::numeric_limits<float>::max();
+        Vec3 boundsMin(
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max());
+        Vec3 boundsMax(
+            -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max());
+
+        double guideLengthSum = 0.0;
+        double frontLengthSum = 0.0;
+        double backLengthSum = 0.0;
+        std::vector<float> tipHeights;
+        tipHeights.reserve(asset.guideStrandCount);
+
+        for (uint32_t guideIndex = 0u; guideIndex < asset.guideStrandCount; ++guideIndex)
+        {
+            const StrandRange& strand = asset.strands[guideIndex];
+            const uint64_t strandEnd = static_cast<uint64_t>(strand.pointOffset) + strand.pointCount;
+            if (strand.pointCount < 2u || strandEnd > asset.restPoints.size())
+            {
+                pushIssue(ValidationSeverity::Error,
+                    "A guide strand has an invalid point range.");
+                continue;
+            }
+
+            float guideLength = 0.0f;
+            float minimumSegment = std::numeric_limits<float>::max();
+            float maximumSegment = 0.0f;
+            for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const Vec3& point = asset.restPoints[strand.pointOffset + localIndex];
+                boundsMin.x = std::min(boundsMin.x, point.x);
+                boundsMin.y = std::min(boundsMin.y, point.y);
+                boundsMin.z = std::min(boundsMin.z, point.z);
+                boundsMax.x = std::max(boundsMax.x, point.x);
+                boundsMax.y = std::max(boundsMax.y, point.y);
+                boundsMax.z = std::max(boundsMax.z, point.z);
+
+                if (localIndex > 0u)
+                {
+                    const Vec3& previous = asset.restPoints[strand.pointOffset + localIndex - 1u];
+                    const float segment = Distance(previous, point);
+                    guideLength += segment;
+                    minimumSegment = std::min(minimumSegment, segment);
+                    maximumSegment = std::max(maximumSegment, segment);
+                }
+            }
+
+            if (!std::isfinite(guideLength) || guideLength <= 0.0f)
+            {
+                pushIssue(ValidationSeverity::Error,
+                    "A guide strand has a non-finite or non-positive length.");
+                continue;
+            }
+
+            report.minimumGuideLength = std::min(report.minimumGuideLength, guideLength);
+            report.maximumGuideLength = std::max(report.maximumGuideLength, guideLength);
+            guideLengthSum += guideLength;
+            ++report.evaluatedGuideCount;
+            tipHeights.push_back(asset.restPoints[strand.pointOffset + strand.pointCount - 1u].y);
+
+            if (minimumSegment > 1.0e-7f)
+            {
+                report.maximumWithinStrandSegmentRatio = std::max(
+                    report.maximumWithinStrandSegmentRatio,
+                    maximumSegment / minimumSegment);
+            }
+
+            const float angle = asset.rootBindings[guideIndex].rootUv.x * kTau;
+            const float front = std::sin(angle);
+            if (front >= 0.60f)
+            {
+                frontLengthSum += guideLength;
+                ++report.frontGuideCount;
+            }
+            else if (front <= -0.60f)
+            {
+                backLengthSum += guideLength;
+                ++report.backGuideCount;
+            }
+        }
+
+        if (report.evaluatedGuideCount == 0u)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "No guide strand could be evaluated.");
+            report.minimumGuideLength = 0.0f;
+            return report;
+        }
+
+        report.averageGuideLength = static_cast<float>(
+            guideLengthSum / static_cast<double>(report.evaluatedGuideCount));
+        report.frontAverageGuideLength = report.frontGuideCount > 0u
+            ? static_cast<float>(frontLengthSum / static_cast<double>(report.frontGuideCount))
+            : 0.0f;
+        report.backAverageGuideLength = report.backGuideCount > 0u
+            ? static_cast<float>(backLengthSum / static_cast<double>(report.backGuideCount))
+            : 0.0f;
+
+        const double tipMean = std::accumulate(
+            tipHeights.begin(), tipHeights.end(), 0.0) /
+            static_cast<double>(std::max<size_t>(tipHeights.size(), 1u));
+        double tipVariance = 0.0;
+        for (float tipHeight : tipHeights)
+        {
+            const double delta = static_cast<double>(tipHeight) - tipMean;
+            tipVariance += delta * delta;
+        }
+        tipVariance /= static_cast<double>(std::max<size_t>(tipHeights.size(), 1u));
+        report.tipHeightStandardDeviation = static_cast<float>(std::sqrt(tipVariance));
+
+        report.boundsWidth = boundsMax.x - boundsMin.x;
+        report.boundsHeight = boundsMax.y - boundsMin.y;
+        report.boundsDepth = boundsMax.z - boundsMin.z;
+
+        const uint32_t minimumRegionalCount = std::max<uint32_t>(4u, asset.guideStrandCount / 20u);
+        if (report.frontGuideCount < minimumRegionalCount || report.backGuideCount < minimumRegionalCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Front/back guide coverage is insufficient for an orientation-readable benchmark wig.");
+        }
+        if (report.minimumGuideLength < 0.16f || report.maximumGuideLength > 0.72f ||
+            report.averageGuideLength < 0.28f || report.averageGuideLength > 0.58f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Guide lengths are outside the stable benchmark range.");
+        }
+        if (report.frontAverageGuideLength <= 0.0f || report.backAverageGuideLength <= 0.0f ||
+            report.frontAverageGuideLength >= report.backAverageGuideLength * 0.90f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Front hair is not sufficiently shorter than back hair.");
+        }
+        if (report.tipHeightStandardDeviation < 0.025f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Guide tips are too uniformly aligned and would form a blunt lower ring.");
+        }
+        if (report.maximumWithinStrandSegmentRatio > 1.10f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "A guide strand is not uniformly arc-length resampled.");
+        }
+        if (report.boundsWidth < 0.34f || report.boundsDepth < 0.28f ||
+            report.boundsHeight < 0.30f || report.boundsHeight > 0.90f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Benchmark wig bounds are too narrow, flat, short, or excessively long.");
+        }
+
+        return report;
+    }
+
+    std::string BuildBenchmarkWigValidationSummary(
+        const BenchmarkWigValidationReport& report,
+        bool includeIssueList,
+        size_t maxIssues)
+    {
+        std::ostringstream ss;
+        ss << "valid=" << (report.valid ? "true" : "false")
+           << ", errors=" << report.errorCount
+           << ", warnings=" << report.warningCount
+           << ", guides=" << report.evaluatedGuideCount
+           << ", minGuideLength=" << report.minimumGuideLength
+           << ", averageGuideLength=" << report.averageGuideLength
+           << ", maxGuideLength=" << report.maximumGuideLength
+           << ", frontAverageLength=" << report.frontAverageGuideLength
+           << ", backAverageLength=" << report.backAverageGuideLength
+           << ", tipHeightStdDev=" << report.tipHeightStandardDeviation
+           << ", maxSegmentRatio=" << report.maximumWithinStrandSegmentRatio
+           << ", bounds=" << report.boundsWidth << "x"
+           << report.boundsHeight << "x" << report.boundsDepth;
+
+        if (includeIssueList)
+        {
+            const size_t count = std::min(maxIssues, report.issues.size());
+            for (size_t index = 0u; index < count; ++index)
+            {
+                ss << "\n[" << SeverityName(report.issues[index].severity) << "] "
+                   << report.issues[index].message;
             }
         }
         return ss.str();

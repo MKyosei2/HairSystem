@@ -92,7 +92,7 @@
         SetWindowTextFormat(m_labelQuickEditBoundaryRadiusUv, L"Boundary Radius: " + FormatFloat(m_quickEditBoundaryRadiusUv, 2));
         SetWindowTextFormat(m_labelQuickEditGroupId, L"Group Filter: " + FormatOptionalGroupId(m_quickEditGroupId));
 
-        std::wstring previewLabel = std::wstring(L"Workspace: ") + GetWorkspaceDisplayName() +
+        std::wstring previewLabel = std::wstring(L"Workspace: ") + this->GetWorkspaceDisplayName() +
             L"  Tool: " + GetGroomToolDisplayName() +
             L"\r\nTip: sculpt in the viewport, then push to layer or duplicate a layer for non-destructive refinement.";
         std::vector<float> previewInfluence;

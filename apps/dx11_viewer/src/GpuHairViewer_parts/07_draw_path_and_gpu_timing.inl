@@ -59,7 +59,7 @@ namespace
         // Formal runs are rejected later when this differs from the requested
         // fixed resolution, preventing the UI panel from silently shrinking
         // a nominal 1920 x 1080 measurement.
-        const RECT observedViewport = GetRenderViewportRect();
+        const RECT observedViewport = this->GetRenderViewportRect();
         m_actualRenderWidth = static_cast<uint32_t>(
             (std::max<LONG>)(observedViewport.right - observedViewport.left, 0));
         m_actualRenderHeight = static_cast<uint32_t>(
@@ -215,7 +215,7 @@ namespace
             show(hwnd, false);
         }
 
-        SetWindowTextFormat(m_labelWorkspaceTitle, std::wstring(L"Workspace  •  ") + GetWorkspaceDisplayName());
+        SetWindowTextFormat(m_labelWorkspaceTitle, std::wstring(L"Workspace  •  ") + this->GetWorkspaceDisplayName());
         SetWindowTextFormat(m_labelInspectorTitle, IsGroomWorkspace() ? (std::wstring(L"Tool Options  •  ") + GetGroomToolDisplayName()) :
             (IsSimWorkspace() ? L"Tool Options  •  Simulation" : (IsReviewWorkspace() ? L"Tool Options  •  Review" : L"Tool Options  •  Report")));
         SetWindowTextFormat(m_labelTrayTitle, std::wstring(L"Panels  •  ") + GetBottomTrayDisplayName());

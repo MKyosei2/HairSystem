@@ -209,8 +209,12 @@ return true;
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_rootBindCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "IntegrateCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_integrateCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "ClearConstraintLambdasCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_clearConstraintLambdasCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "DistanceCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_distanceCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "StabilityGuardCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_stabilityGuardCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "BendCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_bendCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "CollisionCS", "cs_5_0", &csBlob, errorText) ||
@@ -515,6 +519,9 @@ return true;
                     SimConstantsHair constants = {};
                     FillHairSimConstants(constants, dt);
                     constants.dispatchBaseIndex = dispatchBaseIndex;
+                    // Interactive/F5 runs may recover a catastrophically corrupted guide.
+                    // Formal runs must expose the failure instead of silently repairing it.
+                    constants.enableCatastrophicRecovery = IsExperimentModeEnabled() ? 0u : 1u;
                     constants.broadphaseMode = effectiveBroadphaseMode;
                     constants.sortedPaddedEntryCount = std::max<uint32_t>(effectiveSortedEntryCount, 1u);
                     std::memcpy(mapped.pData, &constants, sizeof(constants));
@@ -639,6 +646,19 @@ return true;
         dispatchTiled(m_rootBindCS.Get(), totalStrandCount, kHairThreadsPerGroup);
         dispatchTiled(m_integrateCS.Get(), totalParticleCount, kHairThreadsPerGroup);
 
+        // XPBD multipliers are warm-started only inside one simulation time step.
+        // Carrying them across frames accumulates directional bias and was the main
+        // cause of the long-run rectangular/slab-shaped guide failure.
+        const uint32_t distanceConstraintCount = guideStrandCount *
+            ((particlesPerStrand > 1u) ? (particlesPerStrand - 1u) : 0u);
+        const uint32_t bendConstraintCount = guideStrandCount *
+            ((particlesPerStrand > 2u) ? (particlesPerStrand - 2u) : 0u);
+        bindPrimaryUavs();
+        dispatchTiled(
+            m_clearConstraintLambdasCS.Get(),
+            std::max<uint32_t>(distanceConstraintCount, bendConstraintCount),
+            kHairThreadsPerGroup);
+
         const uint32_t solverIterationCount = std::max<uint32_t>(m_simConfig.solverIterations, 1u);
 
         for (uint32_t iteration = 0u; iteration < solverIterationCount; ++iteration)
@@ -707,6 +727,12 @@ return true;
             }
 
         }
+
+        // Final guide validation happens after collision/self-collision and before
+        // one guide is replicated into its 24 followers. This both enforces authored
+        // segment length and prevents one poisoned guide from becoming a dense slab.
+        bindPrimaryUavs();
+        dispatchTiled(m_stabilityGuardCS.Get(), guideDispatchCount, kHairThreadsPerGroup);
 
         // Followers consume only the final solved guide state. Running this inside every
         // solver iteration produced the same final dependency but repeated 96k x 128 work.

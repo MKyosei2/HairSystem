@@ -765,7 +765,7 @@ namespace hairgpu::viewer
             uint32_t sortedPaddedEntryCount = 1u;
             uint32_t enableRuntimeAngularBend = 1u;
             uint32_t dispatchBaseIndex = 0u;
-            uint32_t runtimePadding1 = 0u;
+            uint32_t enableCatastrophicRecovery = 0u;
 
             float angularBendRadians = 0.18f;
             float angularBendCompliance = 5.0e-6f;
@@ -1577,7 +1577,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_hairMeshPS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_rootBindCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_integrateCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_clearConstraintLambdasCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_distanceCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_stabilityGuardCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_bendCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_collisionCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_clearGridCS;

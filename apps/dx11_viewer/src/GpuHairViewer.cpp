@@ -33,6 +33,7 @@
 #include "hairgpu/Math.h"
 #include "hairgpu/Metrics.h"
 #include "hairgpu/Wig.h"
+#include "hairgpu/Validation.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
