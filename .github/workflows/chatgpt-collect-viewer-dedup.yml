@@ -1,0 +1,72 @@
+name: Collect Viewer Dedup Diagnostics
+
+on:
+  pull_request:
+    branches: [Novelty]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect-viewer-dedup:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Apply corrected ownership
+        shell: cmd
+        run: python tools\final_stage\chatgpt_apply_viewer_dedup.py
+
+      - name: Build Release x64 and retain log
+        id: build
+        continue-on-error: true
+        shell: cmd
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+          /p:HairGpuFormalSelfTest=false
+          /fl /flp:logfile=viewer_dedup_msbuild.log;verbosity=diagnostic
+
+      - name: Package corrected Viewer files and log
+        if: always()
+        shell: powershell
+        run: |
+          $files = Get-Content viewer_dedup_modified_files.txt | Where-Object { $_ -ne '' }
+          $stage = 'viewer_dedup_stage'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          foreach ($file in ($files | Sort-Object -Unique)) {
+            $target = Join-Path $stage $file
+            New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
+            Copy-Item $file $target -Force
+          }
+          Copy-Item viewer_dedup_msbuild.log (Join-Path $stage 'viewer_dedup_msbuild.log') -Force -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$stage/*" -DestinationPath HairSystem_Viewer_Dedup_Diagnostics.zip -Force
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Viewer-Dedup-Diagnostics
+          path: HairSystem_Viewer_Dedup_Diagnostics.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Fail when build failed
+        if: steps.build.outcome != 'success'
+        shell: cmd
+        run: exit /b 1
