@@ -1,0 +1,177 @@
+name: Verify Viewer Foundation Dedup
+
+on:
+  pull_request:
+    branches: [Novelty]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-viewer-dedup:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Apply deterministic Viewer ownership fix
+        shell: python
+        run: |
+          from __future__ import annotations
+          import re
+          from pathlib import Path
+
+          root = Path.cwd()
+          parts = root / 'apps/dx11_viewer/src/GpuHairViewer_parts'
+          canonical = parts / '02a_required_runtime_foundation.inl'
+          ownership = {
+              'CreateUiControls',
+              'ApplyWorkspaceMode',
+              'ApplyGroomToolPreset',
+              'GetWorkspaceDisplayName',
+              'GetRenderViewportRect',
+              'CompileShaderFromFile',
+              'CreateStructuredBuffer',
+          }
+
+          def read(path: Path) -> str:
+              return path.read_text(encoding='utf-8-sig')
+
+          def write(path: Path, text: str) -> None:
+              path.write_text(text.replace('\r\n', '\n'), encoding='utf-8', newline='\n')
+
+          def find_function(text: str, name: str):
+              pattern = re.compile(
+                  rf'^[ \t]*(?:(?:const\s+)?[A-Za-z_][\w:<>,*&\s]*?\s+)GpuHairViewer::{re.escape(name)}\s*\(',
+                  re.MULTILINE,
+              )
+              match = pattern.search(text)
+              if not match:
+                  return None
+              open_brace = text.find('{', match.end())
+              if open_brace < 0:
+                  return None
+              depth = 0
+              state = 'code'
+              index = open_brace
+              while index < len(text):
+                  ch = text[index]
+                  nxt = text[index + 1] if index + 1 < len(text) else ''
+                  if state == 'code':
+                      if ch == '/' and nxt == '/': state = 'line'; index += 2; continue
+                      if ch == '/' and nxt == '*': state = 'block'; index += 2; continue
+                      if ch == '"': state = 'string'; index += 1; continue
+                      if ch == "'": state = 'char'; index += 1; continue
+                      if ch == '{': depth += 1
+                      elif ch == '}':
+                          depth -= 1
+                          if depth == 0:
+                              return match.start(), index + 1
+                      index += 1; continue
+                  if state == 'line':
+                      if ch == '\n': state = 'code'
+                      index += 1; continue
+                  if state == 'block':
+                      if ch == '*' and nxt == '/': state = 'code'; index += 2; continue
+                      index += 1; continue
+                  if state in {'string', 'char'}:
+                      if ch == '\\': index += 2; continue
+                      if (state == 'string' and ch == '"') or (state == 'char' and ch == "'"):
+                          state = 'code'
+                      index += 1
+              return None
+
+          canonical_text = read(canonical)
+          for name in ownership:
+              if find_function(canonical_text, name) is None:
+                  raise RuntimeError(f'Canonical foundation is missing {name}')
+
+          modified = set()
+          for path in sorted(parts.glob('*.inl')):
+              if path == canonical:
+                  continue
+              text = read(path)
+              original = text
+              for name in ownership:
+                  while True:
+                      bounds = find_function(text, name)
+                      if bounds is None:
+                          break
+                      begin, end = bounds
+                      text = text[:begin] + text[end:]
+                      text = re.sub(r'\n{3,}', '\n\n', text)
+              if text != original:
+                  write(path, text)
+                  modified.add(path)
+
+          call_paths = [
+              parts / '07_draw_path_and_gpu_timing.inl',
+              parts / '09_settings_load_save_and_export.inl',
+              parts / '11_experiment_env_and_performance_sample.inl',
+              parts / '12_strand_pick_gizmo_and_brush_edit.inl',
+              parts / '14_scalp_overlay_and_window_messages.inl',
+          ]
+          for path in call_paths:
+              text = read(path)
+              original = text
+              text = re.sub(r'(?<!::)(?<!->)(?<!\.)\bGetRenderViewportRect\s*\(\s*\)', 'this->GetRenderViewportRect()', text)
+              text = re.sub(r'(?<!::)(?<!->)(?<!\.)\bGetWorkspaceDisplayName\s*\(\s*\)', 'this->GetWorkspaceDisplayName()', text)
+              if text != original:
+                  write(path, text)
+                  modified.add(path)
+
+          # Verify exactly one implementation for each foundational function.
+          for name in ownership:
+              locations = []
+              for path in sorted(parts.glob('*.inl')):
+                  if find_function(read(path), name) is not None:
+                      locations.append(path.name)
+              if locations != [canonical.name]:
+                  raise RuntimeError(f'{name} ownership mismatch: {locations}')
+
+          manifest = root / 'viewer_dedup_modified_files.txt'
+          manifest.write_text('\n'.join(sorted(str(p.relative_to(root)).replace('\\', '/') for p in modified)) + '\n', encoding='utf-8')
+          print(manifest.read_text(encoding='utf-8'))
+
+      - name: Build Release x64
+        shell: cmd
+        run: >-
+          msbuild HairSystem.sln /m /t:Rebuild
+          /p:Configuration=Release /p:Platform=x64
+          /p:HairGpuStep0ProfileEnabled=false
+          /p:HairGpuFormalBuild=true
+          /p:HairGpuFormalSelfTest=false
+
+      - name: Package corrected Viewer files
+        shell: powershell
+        run: |
+          $files = Get-Content viewer_dedup_modified_files.txt | Where-Object { $_ -ne '' }
+          $files += 'apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl'
+          $stage = 'viewer_dedup_stage'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          foreach ($file in ($files | Sort-Object -Unique)) {
+            $target = Join-Path $stage $file
+            New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
+            Copy-Item $file $target -Force
+          }
+          Compress-Archive -Path "$stage/*" -DestinationPath HairSystem_Viewer_Dedup_Files.zip -Force
+
+      - name: Upload corrected Viewer files
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Viewer-Dedup-Files
+          path: HairSystem_Viewer_Dedup_Files.zip
+          if-no-files-found: error
+          retention-days: 7
