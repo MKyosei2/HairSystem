@@ -1,0 +1,581 @@
+name: ChatGPT P0 Visual Validation Package
+
+on:
+  pull_request:
+    branches:
+      - prenovelty-ready
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply P0 visual-validation patch to 16 existing files
+        shell: pwsh
+        run: |
+          @'
+          from __future__ import annotations
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+          touched: list[str] = []
+
+          def read(path: str) -> str:
+              return (ROOT / path).read_text(encoding="utf-8")
+
+          def write(path: str, text: str) -> None:
+              (ROOT / path).write_text(text, encoding="utf-8", newline="\n")
+              touched.append(path)
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              text = read(path)
+              if old not in text:
+                  raise RuntimeError(f"anchor not found in {path}: {old[:120]!r}")
+              text = text.replace(old, new, 1)
+              write(path, text)
+
+          def insert_before(path: str, anchor: str, block: str) -> None:
+              text = read(path)
+              if anchor not in text:
+                  raise RuntimeError(f"anchor not found in {path}: {anchor[:120]!r}")
+              text = text.replace(anchor, block + anchor, 1)
+              write(path, text)
+
+          # 1. AppMain.cpp: Visual Studio command-line switches are mirrored to the
+          # existing environment-driven Viewer contract before the Viewer is created.
+          path = "apps/dx11_viewer/src/AppMain.cpp"
+          text = read(path)
+          if "#include <cstdlib>" not in text:
+              text = text.replace("#include <cstdint>\n", "#include <cstdint>\n#include <cstdlib>\n", 1)
+          helper = r'''
+    void ApplyVisualStudioRuntimeArguments()
+    {
+        auto setEnvironment = [](const wchar_t* name, const wchar_t* value)
+        {
+            if (name && value)
+            {
+                _wputenv_s(name, value);
+            }
+        };
+
+        for (int index = 1; index < __argc; ++index)
+        {
+            const std::wstring argument = __wargv[index] ? __wargv[index] : L"";
+            auto nextValue = [&]() -> const wchar_t*
+            {
+                return (index + 1 < __argc && __wargv[index + 1]) ? __wargv[++index] : L"";
+            };
+
+            if (argument == L"--start-paused")
+                setEnvironment(L"HAIRGPU_START_PAUSED", L"1");
+            else if (argument == L"--visual-validation")
+                setEnvironment(L"HAIRGPU_VISUAL_VALIDATION", L"1");
+            else if (argument == L"--experiment-config")
+                setEnvironment(L"HAIRGPU_CASE_JSON", nextValue());
+            else if (argument == L"--max-frames")
+                setEnvironment(L"HAIRGPU_MAX_FRAMES", nextValue());
+            else if (argument == L"--render-mode")
+                setEnvironment(L"HAIRGPU_RENDER_MODE", nextValue());
+            else if (argument == L"--self-collision")
+                setEnvironment(L"HAIRGPU_SELF_COLLISION", nextValue());
+            else if (argument == L"--guides-only")
+                setEnvironment(L"HAIRGPU_GUIDES_ONLY", nextValue());
+        }
+    }
+
+'''
+          if "void ApplyVisualStudioRuntimeArguments()" not in text:
+              text = text.replace("int WINAPI wWinMain", helper + "int WINAPI wWinMain", 1)
+          text = text.replace(
+              "int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)\n{",
+              "int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)\n{\n    ApplyVisualStudioRuntimeArguments();",
+              1,
+          )
+          write(path, text)
+
+          # 2. Types.h: stable CPU-side visual-validation contract.
+          path = "include/hairgpu/Types.h"
+          block = r'''
+    struct VisualValidationSettings
+    {
+        float maximumRootDriftMillimeters = 0.5f;
+        float maximumSegmentStretchRatio = 1.20f;
+        float maximumBoundsExpansionRatio = 1.50f;
+        float maximumFollowerParentDeviationMeters = 0.08f;
+        uint32_t requireFinitePositions = 1u;
+        uint32_t reserved0 = 0u;
+        uint32_t reserved1 = 0u;
+        uint32_t reserved2 = 0u;
+    };
+
+    struct VisualValidationResult
+    {
+        uint32_t invalidPointCount = 0u;
+        uint32_t nanPointCount = 0u;
+        uint32_t infinitePointCount = 0u;
+        uint32_t invalidFollowerParentCount = 0u;
+        float rootDriftMaxMillimeters = 0.0f;
+        float segmentStretchP99 = 1.0f;
+        float segmentStretchMax = 1.0f;
+        float boundsExpansionRatio = 1.0f;
+        float followerParentDeviationMaxMeters = 0.0f;
+        float frameToFrameDisplacementMaxMeters = 0.0f;
+        uint32_t passed = 1u;
+        uint32_t reserved = 0u;
+    };
+
+'''
+          if "struct VisualValidationSettings" not in read(path):
+              insert_before(path, "    struct StrandMaterial\n", block)
+          else:
+              touched.append(path)
+
+          # 3. GpuHairViewer.h: make the validation contract visible to the Viewer.
+          path = "apps/dx11_viewer/src/GpuHairViewer.h"
+          text = read(path)
+          marker = "// HAIRGPU_P0_VISUAL_VALIDATION_CONTRACT_V1\n"
+          if marker not in text:
+              anchor = "namespace hairgpu"
+              if anchor not in text:
+                  raise RuntimeError("GpuHairViewer namespace anchor missing")
+              text = text.replace(anchor, marker + "static_assert(sizeof(hairgpu::VisualValidationResult) >= 48u, \"Visual validation ABI is incomplete.\");\n\n" + anchor, 1)
+          write(path, text)
+
+          # 4. Required runtime foundation: prevent the empty STATIC panel from
+          # painting an opaque white rectangle over the editor viewport.
+          replace_once(
+              "apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl",
+              "            WS_EX_CONTROLPARENT,\n",
+              "            WS_EX_CONTROLPARENT | WS_EX_TRANSPARENT,\n",
+          )
+
+          # 5. Simulation step: reset XPBD lambdas once per simulation step entirely
+          # on the GPU. Previous-frame lambdas are not valid without a warm-start contract.
+          path = "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"
+          block = r'''        const FLOAT zeroConstraintValues[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        if (m_distanceLambdaBuffer.uav)
+        {
+            m_context->ClearUnorderedAccessViewFloat(
+                m_distanceLambdaBuffer.uav.Get(), zeroConstraintValues);
+        }
+        if (m_bendLambdaBuffer.uav)
+        {
+            m_context->ClearUnorderedAccessViewFloat(
+                m_bendLambdaBuffer.uav.Get(), zeroConstraintValues);
+        }
+
+'''
+          if "zeroConstraintValues" not in read(path):
+              insert_before(path, "        // IntegrateCS writes every output point;", block)
+          else:
+              touched.append(path)
+
+          # 6. Constant-buffer sync: formal measurement never inherits edit-preview
+          # coloring or follower decimation from the interactive workspace.
+          path = "apps/dx11_viewer/src/GpuHairViewer_parts/04_constant_buffers_and_active_set_sync.inl"
+          replace_once(
+              path,
+              "    const bool editVisualization = (m_interactionMode == InteractionMode::Edit);\n",
+              "    const bool editVisualization = !IsExperimentModeEnabled() &&\n        (m_interactionMode == InteractionMode::Edit);\n",
+          )
+          text = read(path)
+          anchor = "    constants.renderStrandAlpha = fastEditPreview ? (heavyInteraction ? 0.82f : 0.90f) : (editVisualization ? 0.96f : 1.0f);\n"
+          formal = anchor + r'''    if (IsExperimentModeEnabled())
+    {
+        constants.renderFollowerStride = 1u;
+        constants.renderGuideOnlyAboveTier = 4u;
+        constants.renderReducedWidthBoost = 1.0f;
+        constants.renderHiddenWidthThreshold = 0.0f;
+        constants.renderStrandAlpha = 1.0f;
+    }
+'''
+          if "constants.renderFollowerStride = 1u;" not in text:
+              if anchor not in text:
+                  raise RuntimeError("render constant anchor missing")
+              text = text.replace(anchor, formal, 1)
+              write(path, text)
+          else:
+              touched.append(path)
+
+          # 7. Runtime update: visual readback is diagnostic-only and cannot contaminate
+          # formal timing.
+          path = "apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl"
+          replace_once(
+              path,
+              "        const bool runVisibilityRecovery = ShouldRunVisibilityRecoveryThisFrame();\n",
+              "        const wchar_t* visualValidationValue = _wgetenv(L\"HAIRGPU_VISUAL_VALIDATION\");\n"
+              "        const bool visualValidationRequested = visualValidationValue &&\n"
+              "            std::wstring(visualValidationValue) == L\"1\";\n"
+              "        const bool runVisibilityRecovery =\n"
+              "            ShouldRunVisibilityRecoveryThisFrame() ||\n"
+              "            (visualValidationRequested && !IsExperimentModeEnabled());\n",
+          )
+
+          # 8. Window title: zero and unavailable visibility are no longer conflated.
+          path = "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"
+          replace_once(
+              path,
+              "            << L\"  vis=\" << m_lastEstimatedVisibleParticles\n",
+              "            << L\"  vis=\"\n"
+              "            << ((m_cpuReadbackMode == CpuReadbackMode::Off)\n"
+              "                ? std::wstring(L\"n/a\")\n"
+              "                : std::to_wstring(m_lastEstimatedVisibleParticles))\n",
+          )
+
+          # 9. Telemetry capture: document that finite-state counters are the native
+          # per-frame visual validity source used by the formal runner.
+          path = "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"
+          text = read(path)
+          old = "        sample.nanStateCount = m_nanStateCount;\n"
+          new = "        // P0 visual gate: non-finite position counters are emitted on every measured frame.\n" + old
+          if "P0 visual gate" not in text:
+              if old not in text:
+                  raise RuntimeError("telemetry finite counter anchor missing")
+              text = text.replace(old, new, 1)
+          write(path, text)
+
+          # 10. Summary JSON: expose an explicit visual gate without fabricating a
+          # readback result during the measured interval.
+          path = "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl"
+          text = read(path)
+          anchor = '        out << "  \\\"infiniteStateCount\\\": " << m_infiniteStateCount << ",\\n";\n'
+          addition = anchor + '        out << "  \\\"visualValidationPassed\\\": "\n' \
+              '            << ((m_nanStateCount == 0u && m_infiniteStateCount == 0u) ? "true" : "false")\n' \
+              '            << ",\\n";\n'
+          if "visualValidationPassed" not in text:
+              if anchor not in text:
+                  raise RuntimeError("summary visual anchor missing")
+              text = text.replace(anchor, addition, 1)
+          write(path, text)
+
+          # 11. HairSim.hlsl: guard invalid follower parents and clamp self-collision
+          # displacement per solver iteration.
+          path = "apps/dx11_viewer/shaders/HairSim.hlsl"
+          text = read(path)
+          if "float3 ClampVectorLength" not in text:
+              safe_anchor = r'''float3 SafeNormalize(float3 v)
+{
+    float lenSq = dot(v, v);
+    return (lenSq > 1.0e-8f) ? (v * rsqrt(lenSq)) : float3(0.0f, 0.0f, 0.0f);
+}
+'''
+              helper = safe_anchor + r'''
+float3 ClampVectorLength(float3 value, float maximumLength)
+{
+    float lengthSquared = dot(value, value);
+    float maximumSquared = maximumLength * maximumLength;
+    if (lengthSquared > maximumSquared && lengthSquared > 1.0e-12f)
+    {
+        value *= maximumLength * rsqrt(lengthSquared);
+    }
+    return value;
+}
+'''
+              if safe_anchor not in text:
+                  raise RuntimeError("HairSim SafeNormalize anchor missing")
+              text = text.replace(safe_anchor, helper, 1)
+          text = text.replace(
+              "    if (follow.ParentGuide < 0) return;\n",
+              "    if (follow.ParentGuide < 0 || uint(follow.ParentGuide) >= GuideStrandCount) return;\n",
+              1,
+          )
+          old = r'''    if (pushSamples > 0u)
+    {
+        float densityGain = lerp(0.35f, 1.25f, saturate(float(pushSamples) / 8.0f));
+        p += (push / float(pushSamples)) * (SelfCollisionStiffness * densityGain);
+    }
+
+    if (springSamples > 0u)
+    {
+        p += (spring / float(springSamples)) * (SelfCollisionStiffness * 0.22f);
+    }
+'''
+          new = r'''    float3 collisionCorrection = float3(0.0f, 0.0f, 0.0f);
+    if (pushSamples > 0u)
+    {
+        float densityGain = lerp(0.35f, 1.25f, saturate(float(pushSamples) / 8.0f));
+        collisionCorrection +=
+            (push / float(pushSamples)) * (SelfCollisionStiffness * densityGain);
+    }
+
+    if (springSamples > 0u)
+    {
+        collisionCorrection +=
+            (spring / float(springSamples)) * (SelfCollisionStiffness * 0.22f);
+    }
+    collisionCorrection = ClampVectorLength(
+        collisionCorrection,
+        max(SelfCollisionRadius * 0.25f, 0.0005f));
+    p += collisionCorrection;
+'''
+          if old not in text:
+              raise RuntimeError("HairSim collision correction anchor missing")
+          text = text.replace(old, new, 1)
+          write(path, text)
+
+          # 12. Instanced ribbon shader: consume the tier SRV already bound by C++ and
+          # make edit-preview follower stride effective. Formal mode supplies stride=1.
+          path = "apps/dx11_viewer/shaders/HairStrandInstanced.hlsl"
+          text = read(path)
+          text = text.replace(
+              "StructuredBuffer<float> Widths : register(t1);\n",
+              "StructuredBuffer<float> Widths : register(t1);\nStructuredBuffer<uint> RenderStrandTiers : register(t2);\n",
+              1,
+          )
+          if "bool ShouldRenderStrand" not in text:
+              anchor = "struct VSInput\n"
+              helper = r'''bool ShouldRenderStrand(uint strandIndex)
+{
+    if (strandIndex < GuideStrandCount)
+    {
+        return true;
+    }
+    uint followerIndex = strandIndex - GuideStrandCount;
+    uint stride = max(RenderFollowerStride, 1u);
+    uint tier = RenderStrandTiers[strandIndex];
+    if (tier > RenderGuideOnlyAboveTier)
+    {
+        return false;
+    }
+    return stride == 1u || (followerIndex % stride) == 0u;
+}
+
+'''
+              if anchor not in text:
+                  raise RuntimeError("ribbon shader input anchor missing")
+              text = text.replace(anchor, helper + anchor, 1)
+          text = text.replace("    VSOutput output;\n", "    VSOutput output = (VSOutput)0;\n", 1)
+          strand_anchor = "    const uint strandIndex = min(input.instanceId, max(TotalStrandCount, 1u) - 1u);\n"
+          early = strand_anchor + r'''    if (!ShouldRenderStrand(strandIndex))
+    {
+        output.position = float4(2.0f, 2.0f, 2.0f, 1.0f);
+        return output;
+    }
+'''
+          if "if (!ShouldRenderStrand(strandIndex))" not in text:
+              if strand_anchor not in text:
+                  raise RuntimeError("ribbon strand anchor missing")
+              text = text.replace(strand_anchor, early, 1)
+          debug_anchor = r'''    if (DebugColorMode == 2)
+    {
+        return lerp(float3(0.12f, 0.35f, 1.0f), float3(1.0f, 0.20f, 0.10f), widthN);
+    }
+'''
+          if "DebugColorMode == 3" not in text:
+              text = text.replace(
+                  debug_anchor,
+                  debug_anchor + r'''    if (DebugColorMode == 3)
+    {
+        const bool isGuide = strandIndex < GuideStrandCount;
+        return isGuide ? float3(0.20f, 0.95f, 0.35f) : float3(0.96f, 0.72f, 0.18f);
+    }
+''',
+                  1,
+              )
+          write(path, text)
+
+          # 13. Sample asset generation: sanitize root bindings and follower-parent
+          # references before the asset can be frozen or uploaded to the GPU.
+          path = "src/hairgpu_core/SampleAsset.cpp"
+          text = read(path)
+          anchor = "        StyleAssetToScalpWig(asset, wigSettings);\n        return asset;\n"
+          replacement = r'''        StyleAssetToScalpWig(asset, wigSettings);
+
+        const uint32_t safeGuideCount = std::max<uint32_t>(asset.guideStrandCount, 1u);
+        const uint32_t triangleCount = static_cast<uint32_t>(asset.scalpMesh.triangles.size());
+        for (size_t strandIndex = 0; strandIndex < asset.strands.size(); ++strandIndex)
+        {
+            if (strandIndex < asset.rootBindings.size() && triangleCount > 0u)
+            {
+                asset.rootBindings[strandIndex].triangleIndex =
+                    std::min(asset.rootBindings[strandIndex].triangleIndex, triangleCount - 1u);
+            }
+            if (strandIndex >= asset.guideStrandCount && strandIndex < asset.followData.size())
+            {
+                const int32_t parent = asset.followData[strandIndex].parentGuide;
+                if (parent < 0 || static_cast<uint32_t>(parent) >= asset.guideStrandCount)
+                {
+                    asset.followData[strandIndex].parentGuide =
+                        static_cast<int32_t>((strandIndex - asset.guideStrandCount) % safeGuideCount);
+                }
+            }
+        }
+        return asset;
+'''
+          if "const uint32_t safeGuideCount" not in text:
+              if anchor not in text:
+                  raise RuntimeError("SampleAsset return anchor missing")
+              text = text.replace(anchor, replacement, 1)
+          write(path, text)
+
+          # 14. Formal runner: an explicit false summary visual gate is an integrity
+          # failure, while older summaries remain backward compatible.
+          path = "tools/final_stage/hairgpu_final_run.py"
+          text = read(path)
+          helper = r'''
+
+def _summary_visual_validation_passed(summary: Mapping[str, Any]) -> bool:
+    value = summary.get("visualValidationPassed")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "true", "yes", "pass", "passed"}
+'''
+          if "def _summary_visual_validation_passed" not in text:
+              text = text.replace("\ndef validate_outputs(", helper + "\n\ndef validate_outputs(", 1)
+          anchor = "    problems.extend(_validate_settings_contract(case, settings_payload, summary_payload))\n"
+          addition = anchor + r'''    if not _summary_visual_validation_passed(summary_payload):
+        problems.append(issue(
+            "E_VISUAL_VALIDATION",
+            "Viewer summary reported a failed visual-validation gate.",
+            expected=True,
+            observed=summary_payload.get("visualValidationPassed"),
+        ))
+'''
+          if "E_VISUAL_VALIDATION" not in text:
+              if anchor not in text:
+                  raise RuntimeError("final runner summary anchor missing")
+              text = text.replace(anchor, addition, 1)
+          write(path, text)
+
+          # 15. Runtime suite: carry visual validity into the compact suite metrics.
+          path = "tools/final_stage/hairgpu_runtime_suite.py"
+          text = read(path)
+          helper = r'''
+
+def visual_validation_passed(validation: Mapping[str, Any]) -> bool:
+    issues = validation.get("issues", [])
+    if not isinstance(issues, list):
+        return False
+    return not any(
+        isinstance(item, Mapping) and str(item.get("code", "")) == "E_VISUAL_VALIDATION"
+        for item in issues
+    )
+'''
+          if "def visual_validation_passed" not in text:
+              text += helper
+          write(path, text)
+
+          # 16. Unit tests for explicit/legacy visual-gate behavior.
+          path = "tests/final_stage/test_hairgpu_safe_runtime_suite.py"
+          text = read(path)
+          block = r'''
+
+class P0VisualValidationTests(unittest.TestCase):
+    def test_explicit_failed_visual_gate_is_rejected(self) -> None:
+        self.assertFalse(final_run._summary_visual_validation_passed(
+            {"visualValidationPassed": False}
+        ))
+
+    def test_legacy_summary_without_visual_field_remains_compatible(self) -> None:
+        self.assertTrue(final_run._summary_visual_validation_passed({}))
+
+    def test_suite_detects_visual_validation_issue(self) -> None:
+        self.assertFalse(suite.visual_validation_passed({
+            "issues": [{"code": "E_VISUAL_VALIDATION"}]
+        }))
+        self.assertTrue(suite.visual_validation_passed({"issues": []}))
+'''
+          if "class P0VisualValidationTests" not in text:
+              text = text.replace("if __name__ == \"__main__\":\n", block + "\nif __name__ == \"__main__\":\n", 1)
+          write(path, text)
+
+          expected = [
+              "apps/dx11_viewer/src/AppMain.cpp",
+              "apps/dx11_viewer/src/GpuHairViewer.h",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/04_constant_buffers_and_active_set_sync.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "apps/dx11_viewer/shaders/HairSim.hlsl",
+              "apps/dx11_viewer/shaders/HairStrandInstanced.hlsl",
+              "src/hairgpu_core/SampleAsset.cpp",
+              "include/hairgpu/Types.h",
+              "tools/final_stage/hairgpu_final_run.py",
+              "tools/final_stage/hairgpu_runtime_suite.py",
+              "tests/final_stage/test_hairgpu_safe_runtime_suite.py",
+          ]
+          missing = [item for item in expected if item not in touched]
+          if missing:
+              raise RuntimeError(f"P0 patch did not touch all requested files: {missing}")
+          Path("p0_modified_files.txt").write_text("\n".join(expected) + "\n", encoding="utf-8")
+          print("Patched files:")
+          print("\n".join(expected))
+          '@ | Set-Content -Encoding UTF8 apply_p0_patch.py
+          python apply_p0_patch.py
+
+      - name: Resolve MSBuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild was not found" }
+          "MSBUILD_EXE=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Release x64 build
+        shell: pwsh
+        run: |
+          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Native and shader self-tests
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Python unit tests
+        shell: pwsh
+        run: |
+          python -m py_compile tools\final_stage\hairgpu_final_run.py tools\final_stage\hairgpu_runtime_suite.py tests\final_stage\test_hairgpu_safe_runtime_suite.py
+          python -m unittest tests.final_stage.test_hairgpu_safe_runtime_suite -v
+
+      - name: Package only the 16 modified source files
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD "p0_package"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-Content p0_modified_files.txt | ForEach-Object {
+            $source = Join-Path $PWD $_
+            $destination = Join-Path $stage $_
+            New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+            Copy-Item $source $destination -Force
+          }
+          Compress-Archive -Path "$stage\*" -DestinationPath "HairSystem_P0_Visual_Validation_16_Files.zip" -Force
+          (Get-FileHash HairSystem_P0_Visual_Validation_16_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_P0_Visual_Validation_16_Files.sha256
+
+      - name: Upload package and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-P0-Visual-Validation-16-Files
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            HairSystem_P0_Visual_Validation_16_Files.zip
+            HairSystem_P0_Visual_Validation_16_Files.sha256
+            p0_modified_files.txt
+            bin-int\Release\HairSystem\HairSystem.log
