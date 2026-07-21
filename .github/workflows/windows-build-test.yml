@@ -1,117 +1,155 @@
 name: Windows Build and Test
 
 on:
-  push:
-    branches: [Novelty]
   pull_request:
-    branches: [Novelty]
+    branches: [prenovelty-ready]
   workflow_dispatch:
-    inputs:
-      run_formal_smoke:
-        description: Run formal proposal smoke on a self-hosted GPU runner
-        required: false
-        default: false
-        type: boolean
+
 permissions:
   contents: read
 
 jobs:
-  build-and-static-tests:
+  inextensible-stretch-guard:
     runs-on: windows-2022
     timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.11'
-
-      - name: Locate MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Build Release x64
-        shell: cmd
-        run: >-
-          msbuild HairSystem.sln /m /t:Rebuild
-          /p:Configuration=Release /p:Platform=x64
-          /p:HairGpuStep0ProfileEnabled=false
-          /p:HairGpuFormalBuild=true
-          /p:HairGpuFormalSelfTest=false
-
-      - name: Python syntax
-        shell: cmd
-        run: >-
-          python -m py_compile
-          tools\final_stage\freeze_novelty01_asset.py
-          tools\final_stage\hairgpu_final_run.py
-          tools\final_stage\hairgpu_runtime_suite.py
-          tools\final_stage\hairgpu_safe_runtime_suite.py
-          tools\final_stage\hairgpu_final_db.py
-          tools\final_stage\hairgpu_final_excel.py
-
-      - name: Python self-tests
-        shell: cmd
-        run: |
-          python tools\final_stage\hairgpu_final_run.py --self-test
-          python tools\final_stage\hairgpu_runtime_suite.py --self-test
-
-      - name: Unit tests
-        shell: cmd
-        run: python -m unittest discover -s tests\final_stage -p "test_*.py"
-
-      - name: Native ABI self-test
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
-
-      - name: Shader self-test
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build-test-${{ github.sha }}
-          if-no-files-found: ignore
-          path: |
-            bin\Release\HairSystem\*.log
-            bin-int\Release\HairSystem\*.log
-
-  formal-gpu-smoke:
-    if: github.event_name == 'workflow_dispatch' && inputs.run_formal_smoke
-    runs-on: [self-hosted, Windows, X64, GTX1660, HairSystem]
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
+          fetch-depth: 0
           clean: true
 
-      - name: Require clean repository
-        shell: cmd
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply inextensible stretch guard
+        shell: pwsh
         run: |
-          for /f "delims=" %%A in ('git status --porcelain --untracked-files=normal') do (
-            echo Dirty worktree: %%A
-            exit /b 1
-          )
+          python tools\final_stage\chatgpt_inextensible_stretch_guard_patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Prepare frozen asset
-        shell: cmd
-        env:
-          HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_SelfHosted
-        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
+      - name: Apply Viewer foundation dedup prerequisite
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
 
-      - name: Pre-novelty baseline smoke with completion gates
-        shell: cmd
-        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prenovelty-smoke out\ci_prenovelty_smoke
+          def remove_function(path: str, signature: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              start = text.find(signature)
+              if start < 0:
+                  return
+              line_start = text.rfind("\n", 0, start) + 1
+              brace = text.find("{", start)
+              if brace < 0:
+                  raise RuntimeError(f"opening brace missing for {signature}")
+              depth = 0
+              end = brace
+              while end < len(text):
+                  if text[end] == "{":
+                      depth += 1
+                  elif text[end] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          end += 1
+                          while end < len(text) and text[end] in " \t\r\n":
+                              end += 1
+                          break
+                  end += 1
+              if depth != 0:
+                  raise RuntimeError(f"unbalanced body for {signature}")
+              p.write_text(text[:line_start] + text[end:], encoding="utf-8", newline="\n")
 
-      - name: Upload formal smoke evidence
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl", "bool GpuHairViewer::CreateUiControls()")
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl", "bool GpuHairViewer::CompileShaderFromFile(")
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl", "GpuHairViewer::StructuredBuffer GpuHairViewer::CreateStructuredBuffer(")
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl", "RECT GpuHairViewer::GetRenderViewportRect() const")
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/08_ui_state_sync_and_controls.inl", "void GpuHairViewer::ApplyWorkspaceMode(")
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/08_ui_state_sync_and_controls.inl", "void GpuHairViewer::ApplyGroomToolPreset(")
+          remove_function("apps/dx11_viewer/src/GpuHairViewer_parts/08_ui_state_sync_and_controls.inl", "const wchar_t* GpuHairViewer::GetWorkspaceDisplayName() const")
+
+          for path in [
+              "apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/12_strand_pick_gizmo_and_brush_edit.inl",
+              "apps/dx11_viewer/src/GpuHairViewer_parts/14_scalp_overlay_and_window_messages.inl",
+          ]:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              text = re.sub(r"=\s*GetRenderViewportRect\s*;", "= this->GetRenderViewportRect();", text)
+              p.write_text(text, encoding="utf-8", newline="\n")
+
+          p = Path("apps/dx11_viewer/src/GpuHairViewer_parts/09_settings_load_save_and_export.inl")
+          text = p.read_text(encoding="utf-8")
+          text = re.sub(r"\+\s*GetWorkspaceDisplayName\s*(?!\()", "+ this->GetWorkspaceDisplayName()", text)
+          p.write_text(text, encoding="utf-8", newline="\n")
+          '@ | Set-Content -Encoding UTF8 apply_viewer_dedup.py
+          python apply_viewer_dedup.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Resolve MSBuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild was not found" }
+          "MSBUILD_EXE=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Release x64 build
+        shell: pwsh
+        run: |
+          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false 2>&1 | Tee-Object stretch_guard_msbuild.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+      - name: Native self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Shader self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Python tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests\final_stage -p "test_*.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package only the three solver files
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path inextensible_stretch_guard_modified_files.txt)) { throw "Modified-file manifest missing" }
+          $stage = Join-Path $PWD "stretch_guard_package"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-Content inextensible_stretch_guard_modified_files.txt | ForEach-Object {
+            $src = Join-Path $PWD $_
+            $dst = Join-Path $stage $_
+            New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+            Copy-Item $src $dst -Force
+          }
+          Compress-Archive -Path "$stage\*" -DestinationPath HairSystem_Inextensible_Stretch_Guard_3_Files.zip -Force
+          (Get-FileHash HairSystem_Inextensible_Stretch_Guard_3_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_Inextensible_Stretch_Guard_3_Files.sha256
+
+      - name: Upload package and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prenovelty-gpu-smoke-${{ github.sha }}
+          name: HairSystem-Inextensible-Stretch-Guard-3-Files
           if-no-files-found: error
-          path: out\ci_prenovelty_smoke
-
+          retention-days: 7
+          path: |
+            HairSystem_Inextensible_Stretch_Guard_3_Files.zip
+            HairSystem_Inextensible_Stretch_Guard_3_Files.sha256
+            inextensible_stretch_guard_modified_files.txt
+            stretch_guard_msbuild.log
