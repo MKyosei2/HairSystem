@@ -39,6 +39,99 @@ jobs:
           python apply_p0_patch.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Roll back regressive physics and rendering changes
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          root = Path.cwd()
+
+          path = root / "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"
+          text = path.read_text(encoding="utf-8")
+          text, count = re.subn(
+              r"\n\s*const FLOAT zeroConstraintValues\[4\] = \{ 0\.0f, 0\.0f, 0\.0f, 0\.0f \};\n"
+              r"\s*if \(m_distanceLambdaBuffer\.uav\)\n\s*\{\n"
+              r"\s*m_context->ClearUnorderedAccessViewFloat\(\n\s*m_distanceLambdaBuffer\.uav\.Get\(\), zeroConstraintValues\);\n\s*\}\n"
+              r"\s*if \(m_bendLambdaBuffer\.uav\)\n\s*\{\n"
+              r"\s*m_context->ClearUnorderedAccessViewFloat\(\n\s*m_bendLambdaBuffer\.uav\.Get\(\), zeroConstraintValues\);\n\s*\}\n",
+              "\n",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise RuntimeError("per-frame XPBD lambda reset rollback failed")
+          path.write_text(text, encoding="utf-8", newline="\n")
+
+          path = root / "apps/dx11_viewer/shaders/HairSim.hlsl"
+          text = path.read_text(encoding="utf-8")
+          text, count = re.subn(
+              r"\nfloat3 ClampVectorLength\(float3 value, float maximumLength\)\n\{\n.*?\n\}\n",
+              "\n",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise RuntimeError("self-collision clamp helper rollback failed")
+          regressive = """    float3 collisionCorrection = float3(0.0f, 0.0f, 0.0f);\n    if (pushSamples > 0u)\n    {\n        float densityGain = lerp(0.35f, 1.25f, saturate(float(pushSamples) / 8.0f));\n        collisionCorrection +=\n  (push / float(pushSamples)) * (SelfCollisionStiffness * densityGain);\n    }\n\n    if (springSamples > 0u)\n    {\n        collisionCorrection +=\n  (spring / float(springSamples)) * (SelfCollisionStiffness * 0.22f);\n    }\n    collisionCorrection = ClampVectorLength(\n        collisionCorrection,\n        max(SelfCollisionRadius * 0.25f, 0.0005f));\n    p += collisionCorrection;\n"""
+          baseline = """    if (pushSamples > 0u)\n    {\n        float densityGain = lerp(0.35f, 1.25f, saturate(float(pushSamples) / 8.0f));\n        p += (push / float(pushSamples)) * (SelfCollisionStiffness * densityGain);\n    }\n\n    if (springSamples > 0u)\n    {\n        p += (spring / float(springSamples)) * (SelfCollisionStiffness * 0.22f);\n    }\n"""
+          if regressive not in text:
+              raise RuntimeError("self-collision correction rollback anchor missing")
+          text = text.replace(regressive, baseline, 1)
+          text = text.replace(
+              "    if (follow.ParentGuide < 0 || uint(follow.ParentGuide) >= GuideStrandCount) return;\n",
+              "    if (follow.ParentGuide < 0) return;\n",
+              1,
+          )
+          path.write_text(text, encoding="utf-8", newline="\n")
+
+          path = root / "apps/dx11_viewer/shaders/HairStrandInstanced.hlsl"
+          text = path.read_text(encoding="utf-8")
+          text = text.replace("StructuredBuffer<uint> RenderStrandTiers : register(t2);\n", "", 1)
+          text, count = re.subn(
+              r"\nbool ShouldRenderStrand\(uint strandIndex\)\n\{\n.*?\n\}\n",
+              "\n",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise RuntimeError("render-tier helper rollback failed")
+          text = text.replace("    VSOutput output = (VSOutput)0;\n", "    VSOutput output;\n", 1)
+          early = """    if (!ShouldRenderStrand(strandIndex))\n    {\n        output.position = float4(2.0f, 2.0f, 2.0f, 1.0f);\n        return output;\n    }\n"""
+          if early not in text:
+              raise RuntimeError("render-tier early return rollback anchor missing")
+          text = text.replace(early, "", 1)
+          text, count = re.subn(
+              r"    if \(DebugColorMode == 3\)\n    \{\n.*?\n    \}\n",
+              "",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise RuntimeError("forced guide/follower debug colors rollback failed")
+          path.write_text(text, encoding="utf-8", newline="\n")
+
+          path = root / "src/hairgpu_core/SampleAsset.cpp"
+          text = path.read_text(encoding="utf-8")
+          text, count = re.subn(
+              r"\n\s*const uint32_t safeGuideCount = std::max<uint32_t>\(asset\.guideStrandCount, 1u\);\n"
+              r".*?\n\s*return asset;\n",
+              "\n        return asset;\n",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise RuntimeError("destructive follower-parent reassignment rollback failed")
+          path.write_text(text, encoding="utf-8", newline="\n")
+          '@ | Set-Content -Encoding UTF8 rollback_regressive_p0.py
+          python rollback_regressive_p0.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Apply previously approved Viewer dedup prerequisite
         shell: pwsh
         run: |
@@ -174,18 +267,18 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
             Copy-Item $sourcePath $destination -Force
           }
-          Compress-Archive -Path "$stage\*" -DestinationPath "HairSystem_P0_Visual_Validation_16_Files.zip" -Force
-          (Get-FileHash HairSystem_P0_Visual_Validation_16_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_P0_Visual_Validation_16_Files.sha256
+          Compress-Archive -Path "$stage\*" -DestinationPath "HairSystem_P0_Visual_Validation_SAFE_ROLLBACK_16_Files.zip" -Force
+          (Get-FileHash HairSystem_P0_Visual_Validation_SAFE_ROLLBACK_16_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_P0_Visual_Validation_SAFE_ROLLBACK_16_Files.sha256
 
-      - name: Upload P0 package and logs
+      - name: Upload corrected P0 package and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: HairSystem-P0-Visual-Validation-16-Files
+          name: HairSystem-P0-Visual-Validation-Safe-Rollback-16-Files
           if-no-files-found: error
           retention-days: 7
           path: |
-            HairSystem_P0_Visual_Validation_16_Files.zip
-            HairSystem_P0_Visual_Validation_16_Files.sha256
+            HairSystem_P0_Visual_Validation_SAFE_ROLLBACK_16_Files.zip
+            HairSystem_P0_Visual_Validation_SAFE_ROLLBACK_16_Files.sha256
             p0_modified_files.txt
             p0_msbuild.log
