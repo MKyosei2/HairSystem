@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  long-run-hair-stability:
+  fix-hairsim-runtime-compile:
     runs-on: windows-2022
     timeout-minutes: 60
     env:
@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Restore validation payload
+      - name: Restore long-run validation payload
         shell: pwsh
         run: |
           @'
@@ -43,8 +43,6 @@ jobs:
               source.extractall('.')
           '@ | Set-Content -Encoding UTF8 restore_longrun_payload.py
           python restore_longrun_payload.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m py_compile tools\final_stage\chatgpt_long_run_hair_stability_patch.py tests\final_stage\test_long_run_hair_stability.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Apply stable benchmark wig prerequisite
@@ -67,6 +65,105 @@ jobs:
         shell: pwsh
         run: |
           python tools\final_stage\chatgpt_long_run_hair_stability_patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Remove duplicate attributes and loop-variable conflicts
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          path = Path('apps/dx11_viewer/shaders/HairSim.hlsl')
+          text = path.read_text(encoding='utf-8')
+
+          duplicate_pattern = re.compile(
+              r'(\[numthreads\([^\n]+\)\])\s*\n\s*\1'
+          )
+          text, duplicate_count = duplicate_pattern.subn(r'\1', text)
+          if duplicate_count != 5:
+              raise RuntimeError(
+                  f'Expected 5 duplicate numthreads pairs, observed {duplicate_count}'
+              )
+
+          replacements = [
+              (
+                  'for (uint i = 1u; i < ParticlesPerStrand; ++i)\n'
+                  '    {\n'
+                  '        uint previousIndex = start + i - 1u;\n'
+                  '        uint currentIndex = start + i;\n'
+                  '        float3 restParent = RestPositions[previousIndex].xyz;',
+                  'for (uint scanIndex = 1u; scanIndex < ParticlesPerStrand; ++scanIndex)\n'
+                  '    {\n'
+                  '        uint previousIndex = start + scanIndex - 1u;\n'
+                  '        uint currentIndex = start + scanIndex;\n'
+                  '        float3 restParent = RestPositions[previousIndex].xyz;',
+              ),
+              (
+                  'for (uint i = 1u; i < ParticlesPerStrand; ++i)\n'
+                  '        {\n'
+                  '            uint pointIndex = start + i;\n',
+                  'for (uint recoveryIndex = 1u; recoveryIndex < ParticlesPerStrand; ++recoveryIndex)\n'
+                  '        {\n'
+                  '            uint pointIndex = start + recoveryIndex;\n',
+              ),
+              (
+                  'for (uint i = 1u; i < ParticlesPerStrand; ++i)\n'
+                  '    {\n'
+                  '        uint previousIndex = start + i - 1u;\n'
+                  '        uint currentIndex = start + i;\n'
+                  '        float3 parent = OutputPositions[previousIndex].xyz;',
+                  'for (uint clampIndex = 1u; clampIndex < ParticlesPerStrand; ++clampIndex)\n'
+                  '    {\n'
+                  '        uint previousIndex = start + clampIndex - 1u;\n'
+                  '        uint currentIndex = start + clampIndex;\n'
+                  '        float3 parent = OutputPositions[previousIndex].xyz;',
+              ),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise RuntimeError(f'Loop-variable correction anchor missing: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          if duplicate_pattern.search(text):
+              raise RuntimeError('A duplicate numthreads pair remains after correction')
+
+          expected_entries = [
+              'RootBindCS',
+              'IntegrateCS',
+              'ClearConstraintLambdasCS',
+              'DistanceCS',
+              'StabilityGuardCS',
+              'BendCS',
+              'CollisionCS',
+              'ClearGridCS',
+              'BuildGridCS',
+              'ClearHashGridCS',
+              'BuildHashGridCS',
+              'ClearSortedRangesCS',
+              'BuildSortedEntriesCS',
+              'BitonicSortCS',
+              'BuildSortedRangesCS',
+              'SelfCollisionCS',
+              'FollowCS',
+          ]
+          for entry in expected_entries:
+              pattern = re.compile(
+                  r'\[numthreads\([^\n]+\)\]\s*\n\s*void\s+' +
+                  re.escape(entry) + r'\s*\('
+              )
+              if len(pattern.findall(text)) != 1:
+                  raise RuntimeError(
+                      f'{entry} must have exactly one numthreads attribute'
+                  )
+
+          path.write_text(text, encoding='utf-8', newline='\n')
+          Path('hairsim_duplicate_numthreads_modified_files.txt').write_text(
+              'apps/dx11_viewer/shaders/HairSim.hlsl\n',
+              encoding='utf-8',
+          )
+          '@ | Set-Content -Encoding UTF8 fix_hairsim_runtime_compile.py
+          python fix_hairsim_runtime_compile.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Apply Viewer foundation dedup prerequisite
@@ -130,13 +227,42 @@ jobs:
           python apply_viewer_dedup.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Validate project and Python sources
+      - name: Compile every HairSim compute entry with FXC
         shell: pwsh
         run: |
-          python -c "import xml.etree.ElementTree as ET; ET.parse('HairSystem.vcxproj')"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m py_compile tools\final_stage\chatgpt_long_run_hair_stability_patch.py tests\final_stage\test_long_run_hair_stability.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter fxc.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\fxc\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $fxc) { throw "fxc.exe was not found" }
+
+          $shader = Resolve-Path "apps\dx11_viewer\shaders\HairSim.hlsl"
+          $output = Join-Path $PWD "fxc_output"
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          $entries = @(
+            "RootBindCS",
+            "IntegrateCS",
+            "ClearConstraintLambdasCS",
+            "DistanceCS",
+            "StabilityGuardCS",
+            "BendCS",
+            "CollisionCS",
+            "ClearGridCS",
+            "BuildGridCS",
+            "ClearHashGridCS",
+            "BuildHashGridCS",
+            "ClearSortedRangesCS",
+            "BuildSortedEntriesCS",
+            "BitonicSortCS",
+            "BuildSortedRangesCS",
+            "SelfCollisionCS",
+            "FollowCS"
+          )
+          foreach ($entry in $entries) {
+            Write-Host "Compiling $entry"
+            & $fxc.FullName /nologo /Ges /WX /T cs_5_0 /E $entry /Fo "$output\$entry.cso" $shader 2>&1 | Tee-Object -FilePath hairsim_fxc.log -Append
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Resolve MSBuild
         shell: pwsh
@@ -149,7 +275,7 @@ jobs:
       - name: Release x64 build
         shell: pwsh
         run: |
-          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false 2>&1 | Tee-Object long_run_stability_msbuild.log
+          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false 2>&1 | Tee-Object hairsim_fix_msbuild.log
           $code = $LASTEXITCODE
           if ($code -ne 0) { exit $code }
 
@@ -167,32 +293,33 @@ jobs:
           python -m unittest discover -s tests\final_stage -p "test_*.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Package corrected source files
+      - name: Package only the corrected file
         if: always()
         shell: pwsh
         run: |
-          if (-not (Test-Path long_run_hair_stability_modified_files.txt)) { throw "Modified-file manifest missing" }
-          $stage = Join-Path $PWD "long_run_stability_package"
+          if (-not (Test-Path hairsim_duplicate_numthreads_modified_files.txt)) { throw "Modified-file manifest missing" }
+          $stage = Join-Path $PWD "hairsim_fix_package"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Get-Content long_run_hair_stability_modified_files.txt | ForEach-Object {
+          Get-Content hairsim_duplicate_numthreads_modified_files.txt | ForEach-Object {
             $src = Join-Path $PWD $_
             if (-not (Test-Path $src)) { throw "Package source missing: $_" }
             $dst = Join-Path $stage $_
             New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
             Copy-Item $src $dst -Force
           }
-          Compress-Archive -Path "$stage\*" -DestinationPath HairSystem_Long_Run_Hair_Stability_11_Files.zip -Force
-          (Get-FileHash HairSystem_Long_Run_Hair_Stability_11_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_Long_Run_Hair_Stability_11_Files.sha256
+          Compress-Archive -Path "$stage\*" -DestinationPath HairSystem_HairSim_Runtime_Compile_Fix_1_File.zip -Force
+          (Get-FileHash HairSystem_HairSim_Runtime_Compile_Fix_1_File.zip -Algorithm SHA256).Hash | Set-Content HairSystem_HairSim_Runtime_Compile_Fix_1_File.sha256
 
-      - name: Upload corrected package and logs
+      - name: Upload corrected file and verification logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: HairSystem-Long-Run-Hair-Stability-11-Files
+          name: HairSystem-HairSim-Runtime-Compile-Fix-1-File
           if-no-files-found: error
           retention-days: 7
           path: |
-            HairSystem_Long_Run_Hair_Stability_11_Files.zip
-            HairSystem_Long_Run_Hair_Stability_11_Files.sha256
-            long_run_hair_stability_modified_files.txt
-            long_run_stability_msbuild.log
+            HairSystem_HairSim_Runtime_Compile_Fix_1_File.zip
+            HairSystem_HairSim_Runtime_Compile_Fix_1_File.sha256
+            hairsim_duplicate_numthreads_modified_files.txt
+            hairsim_fxc.log
+            hairsim_fix_msbuild.log
