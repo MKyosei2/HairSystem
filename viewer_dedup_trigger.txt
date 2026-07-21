@@ -1,0 +1,1 @@
+Temporary trigger for Windows verification of the corrected Viewer foundation ownership.
