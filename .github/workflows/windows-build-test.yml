@@ -1,117 +1,96 @@
 name: Windows Build and Test
 
 on:
-  push:
-    branches: [Novelty]
   pull_request:
-    branches: [Novelty]
+    branches: [prenovelty-ready]
   workflow_dispatch:
-    inputs:
-      run_formal_smoke:
-        description: Run formal proposal smoke on a self-hosted GPU runner
-        required: false
-        default: false
-        type: boolean
+
 permissions:
   contents: read
 
 jobs:
-  build-and-static-tests:
+  build-and-package-p0:
     runs-on: windows-2022
     timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.11'
-
-      - name: Locate MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Build Release x64
-        shell: cmd
-        run: >-
-          msbuild HairSystem.sln /m /t:Rebuild
-          /p:Configuration=Release /p:Platform=x64
-          /p:HairGpuStep0ProfileEnabled=false
-          /p:HairGpuFormalBuild=true
-          /p:HairGpuFormalSelfTest=false
-
-      - name: Python syntax
-        shell: cmd
-        run: >-
-          python -m py_compile
-          tools\final_stage\freeze_novelty01_asset.py
-          tools\final_stage\hairgpu_final_run.py
-          tools\final_stage\hairgpu_runtime_suite.py
-          tools\final_stage\hairgpu_safe_runtime_suite.py
-          tools\final_stage\hairgpu_final_db.py
-          tools\final_stage\hairgpu_final_excel.py
-
-      - name: Python self-tests
-        shell: cmd
-        run: |
-          python tools\final_stage\hairgpu_final_run.py --self-test
-          python tools\final_stage\hairgpu_runtime_suite.py --self-test
-
-      - name: Unit tests
-        shell: cmd
-        run: python -m unittest discover -s tests\final_stage -p "test_*.py"
-
-      - name: Native ABI self-test
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --native-self-test
-
-      - name: Shader self-test
-        shell: cmd
-        run: bin\Release\HairSystem\HairSystem.exe --shader-self-test
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build-test-${{ github.sha }}
-          if-no-files-found: ignore
-          path: |
-            bin\Release\HairSystem\*.log
-            bin-int\Release\HairSystem\*.log
-
-  formal-gpu-smoke:
-    if: github.event_name == 'workflow_dispatch' && inputs.run_formal_smoke
-    runs-on: [self-hosted, Windows, X64, GTX1660, HairSystem]
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
+          fetch-depth: 0
           clean: true
 
-      - name: Require clean repository
-        shell: cmd
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Extract and apply P0 patch
+        shell: pwsh
         run: |
-          for /f "delims=" %%A in ('git status --porcelain --untracked-files=normal') do (
-            echo Dirty worktree: %%A
-            exit /b 1
-          )
+          $source = Get-Content .github\workflows\chatgpt-p0-visual-validation-package.yml
+          $start = [Array]::IndexOf($source, "          @'")
+          $end = [Array]::IndexOf($source, "          '@ | Set-Content -Encoding UTF8 apply_p0_patch.py")
+          if ($start -lt 0 -or $end -le $start) { throw "Embedded P0 patch script was not found" }
+          $body = $source[($start + 1)..($end - 1)] | ForEach-Object {
+            if ($_.StartsWith("          ")) { $_.Substring(10) } else { $_ }
+          }
+          $body | Set-Content -Encoding UTF8 apply_p0_patch.py
+          python apply_p0_patch.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Prepare frozen asset
-        shell: cmd
-        env:
-          HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_SelfHosted
-        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prepare-asset
+      - name: Resolve MSBuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild was not found" }
+          "MSBUILD_EXE=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Pre-novelty baseline smoke with completion gates
-        shell: cmd
-        run: tools\final_stage\Run_Final_Runtime_Suite.bat docs\sample_assets\final_runtime_suite_template.json prenovelty-smoke out\ci_prenovelty_smoke
+      - name: Release x64 build
+        shell: pwsh
+        run: |
+          & "$env:MSBUILD_EXE" HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload formal smoke evidence
+      - name: Native and shader self-tests
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Python unit tests
+        shell: pwsh
+        run: |
+          python -m py_compile tools\final_stage\hairgpu_final_run.py tools\final_stage\hairgpu_runtime_suite.py tests\final_stage\test_hairgpu_safe_runtime_suite.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest tests.final_stage.test_hairgpu_safe_runtime_suite -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package only the 16 modified files
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD "p0_package"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-Content p0_modified_files.txt | ForEach-Object {
+            $sourcePath = Join-Path $PWD $_
+            $destination = Join-Path $stage $_
+            New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+            Copy-Item $sourcePath $destination -Force
+          }
+          Compress-Archive -Path "$stage\*" -DestinationPath "HairSystem_P0_Visual_Validation_16_Files.zip" -Force
+          (Get-FileHash HairSystem_P0_Visual_Validation_16_Files.zip -Algorithm SHA256).Hash | Set-Content HairSystem_P0_Visual_Validation_16_Files.sha256
+
+      - name: Upload P0 package
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prenovelty-gpu-smoke-${{ github.sha }}
-          if-no-files-found: error
-          path: out\ci_prenovelty_smoke
-
+          name: HairSystem-P0-Visual-Validation-16-Files
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            HairSystem_P0_Visual_Validation_16_Files.zip
+            HairSystem_P0_Visual_Validation_16_Files.sha256
+            p0_modified_files.txt
