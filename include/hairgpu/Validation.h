@@ -49,6 +49,14 @@ namespace hairgpu
         uint32_t evaluatedGuideCount = 0u;
         uint32_t frontGuideCount = 0u;
         uint32_t backGuideCount = 0u;
+        uint32_t evaluatedRootCount = 0u;
+        uint32_t crownRootCount = 0u;
+        uint32_t frontHairlineRootCount = 0u;
+        uint32_t crownAzimuthBinCount = 0u;
+        uint32_t frontHairlineBinCount = 0u;
+        float minimumRootV = 1.0f;
+        float crownRootFraction = 0.0f;
+        float frontHairlineRootFraction = 0.0f;
         float minimumGuideLength = 0.0f;
         float averageGuideLength = 0.0f;
         float maximumGuideLength = 0.0f;

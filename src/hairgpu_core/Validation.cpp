@@ -346,6 +346,90 @@ namespace hairgpu
         std::vector<float> tipHeights;
         tipHeights.reserve(asset.guideStrandCount);
 
+        const size_t rootCount = std::min(
+            asset.rootBindings.size(),
+            asset.strands.size());
+        uint32_t crownAzimuthMask = 0u;
+        uint32_t frontHairlineMask = 0u;
+        for (size_t rootIndex = 0u; rootIndex < rootCount; ++rootIndex)
+        {
+            const Vec2& uv = asset.rootBindings[rootIndex].rootUv;
+            if (!std::isfinite(uv.x) || !std::isfinite(uv.y))
+            {
+                continue;
+            }
+
+            float wrappedU = uv.x - std::floor(uv.x);
+            if (wrappedU < 0.0f)
+            {
+                wrappedU += 1.0f;
+            }
+
+            report.minimumRootV = std::min(
+                report.minimumRootV,
+                uv.y);
+            ++report.evaluatedRootCount;
+
+            if (uv.y <= 0.11f)
+            {
+                ++report.crownRootCount;
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(wrappedU * 16.0f),
+                    15u);
+                crownAzimuthMask |= (1u << bin);
+            }
+
+            float frontDu = std::fabs(wrappedU - 0.25f);
+            frontDu = std::min(frontDu, 1.0f - frontDu);
+            if (frontDu <= 0.13f &&
+                uv.y >= 0.16f &&
+                uv.y <= 0.34f)
+            {
+                ++report.frontHairlineRootCount;
+                const float normalizedFront = std::clamp(
+                    (wrappedU - 0.12f) / 0.26f,
+                    0.0f,
+                    0.999999f);
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(
+                        normalizedFront * 8.0f),
+                    7u);
+                frontHairlineMask |= (1u << bin);
+            }
+        }
+
+        for (uint32_t bit = 0u; bit < 16u; ++bit)
+        {
+            report.crownAzimuthBinCount +=
+                (crownAzimuthMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+        for (uint32_t bit = 0u; bit < 8u; ++bit)
+        {
+            report.frontHairlineBinCount +=
+                (frontHairlineMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+
+        if (report.evaluatedRootCount > 0u)
+        {
+            const float rootCountFloat =
+                static_cast<float>(report.evaluatedRootCount);
+            report.crownRootFraction =
+                static_cast<float>(report.crownRootCount) /
+                rootCountFloat;
+            report.frontHairlineRootFraction =
+                static_cast<float>(
+                    report.frontHairlineRootCount) /
+                rootCountFloat;
+        }
+        else
+        {
+            report.minimumRootV = 1.0f;
+        }
+
         for (uint32_t guideIndex = 0u; guideIndex < asset.guideStrandCount; ++guideIndex)
         {
             const StrandRange& strand = asset.strands[guideIndex];
@@ -447,6 +531,33 @@ namespace hairgpu
         report.boundsHeight = boundsMax.y - boundsMin.y;
         report.boundsDepth = boundsMax.z - boundsMin.z;
 
+        if (report.evaluatedRootCount == 0u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "No finite root binding could be evaluated for scalp coverage.");
+        }
+        if (report.minimumRootV > 0.025f)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "The scalp pole is not covered by roots; a circular crown hole would remain visible.");
+        }
+        if (report.crownRootFraction < 0.025f ||
+            report.crownAzimuthBinCount < 14u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Crown root coverage is too sparse or azimuthally incomplete.");
+        }
+        if (report.frontHairlineRootFraction < 0.020f ||
+            report.frontHairlineBinCount < 6u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Front hairline root coverage is too sparse or discontinuous.");
+        }
+
         const uint32_t minimumRegionalCount = std::max<uint32_t>(4u, asset.guideStrandCount / 20u);
         if (report.frontGuideCount < minimumRegionalCount || report.backGuideCount < minimumRegionalCount)
         {
@@ -495,6 +606,12 @@ namespace hairgpu
            << ", errors=" << report.errorCount
            << ", warnings=" << report.warningCount
            << ", guides=" << report.evaluatedGuideCount
+           << ", roots=" << report.evaluatedRootCount
+           << ", minRootV=" << report.minimumRootV
+           << ", crownRootFraction=" << report.crownRootFraction
+           << ", crownAzimuthBins=" << report.crownAzimuthBinCount
+           << ", frontHairlineRootFraction=" << report.frontHairlineRootFraction
+           << ", frontHairlineBins=" << report.frontHairlineBinCount
            << ", minGuideLength=" << report.minimumGuideLength
            << ", averageGuideLength=" << report.averageGuideLength
            << ", maxGuideLength=" << report.maximumGuideLength

@@ -82,10 +82,7 @@
             m_cameraPitch = 0.05f;
         }
 
-        const Vec3 extents = m_assetBoundsMax - m_assetBoundsMin;
-        const float framingOffsetX = -0.10f * std::max(extents.x, 0.20f);
-        const float framingOffsetY = -0.18f * std::max(extents.y, 0.20f);
-        m_cameraTarget = m_assetBoundsCenter + Vec3(framingOffsetX, framingOffsetY, 0.0f);
+        m_cameraTarget = m_assetBoundsCenter;
 
         RECT renderRect = GetRenderViewportRect();
         const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));

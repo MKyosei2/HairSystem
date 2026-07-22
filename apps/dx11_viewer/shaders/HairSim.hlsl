@@ -1668,7 +1668,7 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         0.25f,
         1.0f,
         saturate(follow.ClumpWeight));
-    float rootCoverageBlend = smoothstep(0.035f, 0.20f, t);
+    float rootCoverageBlend = smoothstep(0.18f, 0.58f, t);
     float clumpGain = lerp(
         1.0f,
         authoredClumpGain,
