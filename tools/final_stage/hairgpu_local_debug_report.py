@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 EVIDENCE_CLASS = "diagnostic_debugger"
-SCHEMA_VERSION = "hairgpu-local-debug-evidence-v1"
+SCHEMA_VERSION = "hairgpu-local-debug-evidence-v2"
 
 
 def _run(command: Sequence[str], cwd: Path, *, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -115,6 +115,144 @@ def _stats(values: Sequence[float]) -> dict[str, float | int | None]:
     }
 
 
+
+def _write_per_second_csv(
+    path: Path,
+    frame_rows: Sequence[Mapping[str, str]],
+) -> list[dict[str, Any]]:
+    """Create deterministic one-second buckets when the viewer sidecar is absent."""
+
+    buckets: list[dict[str, Any]] = []
+    current: list[Mapping[str, str]] = []
+    current_seconds = 0.0
+    second_index = 1
+    wall_start = 0.0
+
+    def flush(complete: bool) -> None:
+        nonlocal current, current_seconds, second_index, wall_start
+        if not current:
+            return
+
+        frame_ms = [
+            value for value in (_to_float(row.get("renderFrameMilliseconds"))
+                                or _to_float(row.get("frameMilliseconds"))
+                                for row in current)
+            if value is not None and value > 0.0
+        ]
+        duration = max(sum(frame_ms) / 1000.0, 1.0e-6)
+        ticks = sum(_to_int(row.get("simulationTicksThisFrame")) for row in current)
+        gpu_frame = [
+            value for value in (_to_float(row.get("gpuFrameMilliseconds")) for row in current)
+            if value is not None and value > 0.0
+        ]
+        gpu_sim = [
+            value for value in (_to_float(row.get("gpuSimulationMilliseconds")) for row in current)
+            if value is not None and value > 0.0
+        ]
+        gpu_draw = [
+            value for value in (_to_float(row.get("gpuHairDrawMilliseconds")) for row in current)
+            if value is not None and value > 0.0
+        ]
+        throughput = [
+            value for value in (_to_float(row.get("gpuThroughputFps")) for row in current)
+            if value is not None and value > 0.0
+        ]
+        dropped = [
+            value for value in (_to_float(row.get("droppedSimulationMilliseconds")) for row in current)
+            if value is not None
+        ]
+        first_dropped = dropped[0] if dropped else 0.0
+        last_dropped = dropped[-1] if dropped else 0.0
+        dropped_delta = max(0.0, last_dropped - first_dropped)
+        render_fps = len(current) / duration
+        simulation_hz = ticks / duration
+
+        last = current[-1]
+        status = "realtime_60"
+        if (
+            _to_int(last.get("fatalFailure")) != 0
+            or _to_int(last.get("nanStateCount")) != 0
+            or _to_int(last.get("infiniteStateCount")) != 0
+        ):
+            status = "invalid"
+        elif simulation_hz < 58.0 or dropped_delta > 1.0:
+            status = "simulation_lag"
+        elif render_fps < 24.0:
+            status = "below_24"
+        elif render_fps < 59.0:
+            status = "realtime_24"
+
+        row: dict[str, Any] = {
+            "secondIndex": second_index,
+            "wallTimeStartSeconds": wall_start,
+            "wallTimeEndSeconds": wall_start + duration,
+            "durationSeconds": duration,
+            "completeSecond": 1 if complete else 0,
+            "frameCount": len(current),
+            "simulationTickCount": ticks,
+            "renderFps": render_fps,
+            "simulationHz": simulation_hz,
+            "meanFrameMilliseconds": statistics.fmean(frame_ms) if frame_ms else 0.0,
+            "p95FrameMilliseconds": _percentile(frame_ms, 95.0) or 0.0,
+            "maxFrameMilliseconds": max(frame_ms) if frame_ms else 0.0,
+            "meanCpuWorkMilliseconds": statistics.fmean(_column(current, "cpuFrameWorkMilliseconds")) if _column(current, "cpuFrameWorkMilliseconds") else 0.0,
+            "meanSimulationMilliseconds": statistics.fmean(_column(current, "simulationMilliseconds")) if _column(current, "simulationMilliseconds") else 0.0,
+            "meanGpuFrameMilliseconds": statistics.fmean(gpu_frame) if gpu_frame else 0.0,
+            "meanGpuSimulationMilliseconds": statistics.fmean(gpu_sim) if gpu_sim else 0.0,
+            "meanGpuHairDrawMilliseconds": statistics.fmean(gpu_draw) if gpu_draw else 0.0,
+            "gpuTimingCoverage": len(gpu_frame) / max(len(current), 1),
+            "meanGpuThroughputFps": statistics.fmean(throughput) if throughput else 0.0,
+            "droppedSimulationMillisecondsDelta": dropped_delta,
+            "droppedSimulationMillisecondsEnd": last_dropped,
+            "nanStateCountEnd": _to_int(last.get("nanStateCount")),
+            "infiniteStateCountEnd": _to_int(last.get("infiniteStateCount")),
+            "fatalFailureEnd": _to_int(last.get("fatalFailure")),
+            "collisionCandidateCountDelta": 0,
+            "collisionMissCountDelta": 0,
+            "wakeRequestGroupCountDelta": 0,
+            "repairAttemptCountDelta": 0,
+            "repairSuccessCountDelta": 0,
+            "stateTransitionCountDelta": 0,
+            "stateOscillationCountDelta": 0,
+            "meanStaticCachedGroupCount": statistics.fmean(_column(current, "staticCachedGroupCount")) if _column(current, "staticCachedGroupCount") else 0.0,
+            "meanStaticTransformedGroupCount": statistics.fmean(_column(current, "staticTransformedGroupCount")) if _column(current, "staticTransformedGroupCount") else 0.0,
+            "meanDynamicGroupCount": statistics.fmean(_column(current, "dynamicGroupCount")) if _column(current, "dynamicGroupCount") else 0.0,
+            "meanRepairRequiredGroupCount": statistics.fmean(_column(current, "repairRequiredGroupCount")) if _column(current, "repairRequiredGroupCount") else 0.0,
+            "maxFalseStaticRate": max(_column(current, "falseStaticRate"), default=0.0),
+            "maxBoundaryErrorMm": max(_column(current, "staticDynamicBoundaryMaxErrorMm"), default=0.0),
+            "presentSyncInterval": _to_int(last.get("presentSyncInterval")),
+            "evidenceClass": last.get("evidenceClass", EVIDENCE_CLASS),
+            "realtimeStatus": status,
+        }
+        buckets.append(row)
+        wall_start += duration
+        second_index += 1
+        current = []
+        current_seconds = 0.0
+
+    for frame in frame_rows:
+        frame_ms = (
+            _to_float(frame.get("renderFrameMilliseconds"))
+            or _to_float(frame.get("frameMilliseconds"))
+            or 0.0
+        )
+        frame_seconds = max(frame_ms, 0.0) / 1000.0
+        if current and current_seconds + frame_seconds > 1.0 and current_seconds >= 0.50:
+            flush(True)
+        current.append(frame)
+        current_seconds += frame_seconds
+
+    if current:
+        flush(current_seconds >= 0.95)
+
+    if buckets:
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(buckets[0].keys()))
+            writer.writeheader()
+            writer.writerows(buckets)
+    return buckets
+
+
 def _fmt(value: Any, digits: int = 3) -> str:
     number = _to_float(value)
     return "n/a" if number is None else f"{number:.{digits}f}"
@@ -144,6 +282,7 @@ def _line_svg(
     *,
     horizontal_lines: Sequence[tuple[str, float]] = (),
     y_label: str = "",
+    x_label: str = "captured frame",
 ) -> None:
     width, height = 1280, 720
     left, top, right, bottom = 92, 72, 36, 82
@@ -197,7 +336,7 @@ def _line_svg(
         svg.append(f'<line x1="{legend_x}" y1="{height - 38}" x2="{legend_x + 28}" y2="{height - 38}" stroke="{color}" stroke-width="4"/>')
         svg.append(f'<text x="{legend_x + 36}" y="{height - 32}" font-family="Segoe UI, sans-serif" font-size="15">{_escape_xml(name)}</text>')
         legend_x += 36 + max(130, len(name) * 9)
-    svg.append(f'<text x="{left + plot_w / 2:.2f}" y="{height - 12}" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="15">captured frame</text>')
+    svg.append(f'<text x="{left + plot_w / 2:.2f}" y="{height - 12}" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="15">{_escape_xml(x_label)}</text>')
     svg.append("</svg>")
     path.write_text("\n".join(svg) + "\n", encoding="utf-8")
 
@@ -324,6 +463,13 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
     if not rows:
         raise RuntimeError("Telemetry CSV contains no captured rows.")
 
+    per_second_path = run_dir / f"{inputs.run_name}_per_second.csv"
+    if per_second_path.is_file():
+        with per_second_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            per_second_rows = list(csv.DictReader(handle))
+    else:
+        per_second_rows = _write_per_second_csv(per_second_path, rows)
+
     frame_ms = _column(rows, "frameMilliseconds")
     sim_ms = _column(rows, "simulationMilliseconds")
     gpu_ms = _column(rows, "gpuHairMilliseconds")
@@ -335,6 +481,14 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
     repair = _column(rows, "repairRequiredGroupCount")
     boundary_error = _column(rows, "staticDynamicBoundaryMaxErrorMm")
     false_static_rate = _column(rows, "falseStaticRate")
+    per_second_render_fps = _column(per_second_rows, "renderFps")
+    per_second_simulation_hz = _column(per_second_rows, "simulationHz")
+    per_second_gpu_throughput_fps = _column(per_second_rows, "meanGpuThroughputFps")
+    per_second_dropped_ms = _column(per_second_rows, "droppedSimulationMillisecondsDelta")
+    per_second_status_counts: dict[str, int] = {}
+    for row in per_second_rows:
+        status = str(row.get("realtimeStatus", "unknown"))
+        per_second_status_counts[status] = per_second_status_counts.get(status, 0) + 1
 
     context = _read_json(run_dir / "capture_context.json")
     native_summary = _read_json(run_dir / f"{inputs.run_name}_summary.json")
@@ -372,6 +526,12 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         "gpuHairMilliseconds": _stats(gpu_ms),
         "totalHairGpuMilliseconds": _stats(total_hair_gpu),
         "fps": _stats(fps),
+        "perSecondSampleCount": len(per_second_rows),
+        "perSecondRenderFps": _stats(per_second_render_fps),
+        "perSecondSimulationHz": _stats(per_second_simulation_hz),
+        "perSecondGpuThroughputFps": _stats(per_second_gpu_throughput_fps),
+        "perSecondDroppedSimulationMilliseconds": _stats(per_second_dropped_ms),
+        "perSecondRealtimeStatusCounts": per_second_status_counts,
         "gpuTimingNonzeroSampleCount": nonzero_gpu_samples,
         "gpuTimingNonzeroCoverage": nonzero_gpu_samples / max(len(rows), 1),
         "staticCachedGroups": _stats(static_cached),
@@ -405,6 +565,18 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         [("frame ms", frame_ms), ("simulation ms", sim_ms), ("GPU hair ms", gpu_ms)],
         horizontal_lines=(("60 FPS budget", 1000.0 / 60.0), ("24 FPS baseline budget", 1000.0 / 24.0)),
         y_label="milliseconds",
+    )
+    _line_svg(
+        run_dir / "per_second_realtime.svg",
+        "Per-second realtime status",
+        [
+            ("render FPS", per_second_render_fps),
+            ("simulation Hz", per_second_simulation_hz),
+            ("GPU throughput FPS", per_second_gpu_throughput_fps),
+        ],
+        horizontal_lines=(("60 Hz target", 60.0), ("24 FPS baseline gate", 24.0)),
+        y_label="frames or ticks per second",
+        x_label="second",
     )
     _line_svg(
         run_dir / "segment_group_state.svg",
@@ -473,6 +645,17 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
 
 GPU timing non-zero coverage: `{summary['gpuTimingNonzeroCoverage']:.3%}`
 
+## Per-second realtime evidence
+
+| Metric | Mean | Minimum | p95 | Maximum |
+|---|---:|---:|---:|---:|
+| Render FPS | {_fmt(summary['perSecondRenderFps']['mean'])} | {_fmt(summary['perSecondRenderFps']['minimum'])} | {_fmt(summary['perSecondRenderFps']['p95'])} | {_fmt(summary['perSecondRenderFps']['maximum'])} |
+| Simulation Hz | {_fmt(summary['perSecondSimulationHz']['mean'])} | {_fmt(summary['perSecondSimulationHz']['minimum'])} | {_fmt(summary['perSecondSimulationHz']['p95'])} | {_fmt(summary['perSecondSimulationHz']['maximum'])} |
+| GPU throughput FPS | {_fmt(summary['perSecondGpuThroughputFps']['mean'])} | {_fmt(summary['perSecondGpuThroughputFps']['minimum'])} | {_fmt(summary['perSecondGpuThroughputFps']['p95'])} | {_fmt(summary['perSecondGpuThroughputFps']['maximum'])} |
+| Dropped simulation ms | {_fmt(summary['perSecondDroppedSimulationMilliseconds']['mean'])} | {_fmt(summary['perSecondDroppedSimulationMilliseconds']['minimum'])} | {_fmt(summary['perSecondDroppedSimulationMilliseconds']['p95'])} | {_fmt(summary['perSecondDroppedSimulationMilliseconds']['maximum'])} |
+
+Realtime-status counts: `{summary['perSecondRealtimeStatusCounts']}`
+
 ## Novelty 01 diagnostics
 
 | Metric | Mean | Maximum |
@@ -487,6 +670,7 @@ GPU timing non-zero coverage: `{summary['gpuTimingNonzeroCoverage']:.3%}`
 ## Graphs
 
 - [Frame and GPU time](frame_time.svg)
+- [Per-second realtime status](per_second_realtime.svg)
 - [Segment-group states](segment_group_state.svg)
 - [GPU pass breakdown](gpu_pass_breakdown.svg)
 

@@ -130,6 +130,14 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             m_showInspectorPane = false;
             m_showBottomTray = false;
             m_fastGroomViewport = false;
+            m_showScalpMesh = false;
+            m_showGuideSkeleton = false;
+            m_showFollowerSkeleton = false;
+            m_showRootMarkers = false;
+            m_showFollowLinks = false;
+            m_showFloorGuide = false;
+            m_showColliderDebug = false;
+            m_showGridBounds = false;
             // The pre-novelty baseline must simulate all guides and rebuild
             // all followers. Active-set/tier skipping is evaluated only in its
             // designated comparison methods after correctness is established.
@@ -216,24 +224,22 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
         const uint64_t followerParticles = totalParticles > guideParticles ? (totalParticles - guideParticles) : 0ull;
 
         std::wstringstream ss;
-        const wchar_t* cadenceSource = m_compositorCadenceValid
-            ? L"GPU complete + DWM composed"
-            : (m_gpuCompletionCadenceValid
-                ? L"GPU complete"
-                : L"CPU submit only");
         ss << L"Runtime\n"
            << L"Preset: " << m_activePresetName << L"\n"
-           << L"Presented FPS (0.5 s window): " << std::fixed << std::setprecision(1)
-           << (m_completedCadenceWindowValid ? m_completedPresentFps : 0.0f)
+           << L"Render FPS (0.5 s QPC window): " << std::fixed << std::setprecision(1)
+           << (m_renderCadenceWindowValid ? m_renderFps : 0.0f)
            << L"  Simulation Hz: "
-           << (m_completedCadenceWindowValid ? m_completedSimulationHz : 0.0f) << L"\n"
-           << L"Completed Frame: " << std::setprecision(2)
+           << (m_renderCadenceWindowValid ? m_simulationHz : 0.0f) << L"\n"
+           << L"Frame interval: " << std::setprecision(2)
            << m_lastFrameIntervalMilliseconds << L" ms"
-           << L"  Source: " << cadenceSource << L"\n"
+           << L"  Evidence: " << GetPerformanceEvidenceClassDisplayName() << L"\n"
            << L"CPU Work: " << m_lastCpuFrameWorkMilliseconds << L" ms"
-           << L"  GPU Wait: " << m_lastGpuCompletionWaitMilliseconds << L" ms\n"
-           << L"DWM Wait: " << m_lastCompositorWaitMilliseconds << L" ms"
-           << L"  Pace Wait: " << m_lastPacingWaitMilliseconds << L" ms\n"
+           << L"  PresentSync: " << m_lastObservedPresentSyncInterval << L"\n"
+           << L"GPU Frame (delayed): " << m_lastGpuFrameMilliseconds << L" ms"
+           << L"  GPU Throughput: " << std::setprecision(1)
+           << m_gpuThroughputFps << L" FPS\n"
+           << L"Dropped simulation backlog: " << std::setprecision(2)
+           << m_droppedSimulationMilliseconds << L" ms\n"
            << L"Sim Step: " << std::setprecision(2) << m_lastSimulationStepMilliseconds << L" ms"
            << L"  AvgSim: " << avgSimMs << L" ms\n"
            << L"GPU Frame: " << m_lastGpuFrameMilliseconds << L" ms"

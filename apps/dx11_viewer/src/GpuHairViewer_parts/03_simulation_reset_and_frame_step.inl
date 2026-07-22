@@ -733,8 +733,13 @@ return true;
         // Followers consume only the final solved guide state. Running this inside every
         // solver iteration produced the same final dependency but repeated 96k x 128 work.
         bindPrimaryUavs();
-        const uint32_t followerPointDispatchCount = followerDispatchCount * particlesPerStrand;
-        dispatchTiled(m_followCS.Get(), followerPointDispatchCount, kHairThreadsPerGroup);
+        const uint32_t followerPointDispatchCount =
+            followerDispatchCount * particlesPerStrand;
+        constexpr uint32_t kFollowerPointThreadsPerGroup = 256u;
+        dispatchTiled(
+            m_followCS.Get(),
+            followerPointDispatchCount,
+            kFollowerPointThreadsPerGroup);
 
         unbindComputeState();
 
@@ -744,6 +749,12 @@ return true;
     void GpuHairViewer::ResetSimulation()
     {
         m_currentBufferIndex = 0;
+        m_accumulator = 0.0f;
+        m_simulationTicksThisFrame = 0u;
+        m_droppedSimulationMilliseconds = 0.0f;
+        m_renderFps = 0.0f;
+        m_simulationHz = 0.0f;
+        m_renderCadenceWindowValid = false;
         // Reset the four 204.8 MiB state buffers entirely on the GPU. The immutable rest
         // buffer already contains the exact initial pose, so CPU re-upload is redundant.
         m_context->CopyResource(m_positions[0].buffer.Get(), m_restPositions.buffer.Get());

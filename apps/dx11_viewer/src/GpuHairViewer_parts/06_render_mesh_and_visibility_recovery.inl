@@ -217,25 +217,22 @@ if (FAILED(m_lastPresentResult))
 
     void GpuHairViewer::UpdateWindowTitle()
     {
-        const wchar_t* cadenceSource = m_compositorCadenceValid
-            ? L"gpu-complete+dwm-composed"
-            : (m_gpuCompletionCadenceValid
-                ? L"gpu-complete"
-                : L"cpu-submit-only");
         std::wstringstream ss;
         ss << L"Hair GPU Viewer"
-            << L"  |  presentFPS=" << std::fixed << std::setprecision(1)
-            << (m_completedCadenceWindowValid ? m_completedPresentFps : 0.0f)
+            << L"  |  renderFPS=" << std::fixed << std::setprecision(1)
+            << (m_renderCadenceWindowValid ? m_renderFps : 0.0f)
             << L"  simHz=" << std::setprecision(1)
-            << (m_completedCadenceWindowValid ? m_completedSimulationHz : 0.0f)
-            << L"  completedFrameMs=" << std::setprecision(2)
+            << (m_renderCadenceWindowValid ? m_simulationHz : 0.0f)
+            << L"  frameMs=" << std::setprecision(2)
             << m_lastFrameIntervalMilliseconds
             << L"  cpuWorkMs=" << m_lastCpuFrameWorkMilliseconds
-            << L"  gpuTimestampMs=" << m_lastGpuFrameMilliseconds
-            << L"  gpuWaitMs=" << m_lastGpuCompletionWaitMilliseconds
-            << L"  dwmWaitMs=" << m_lastCompositorWaitMilliseconds
-            << L"  paceWaitMs=" << m_lastPacingWaitMilliseconds
-            << L"  source=" << cadenceSource
+            << L"  gpuFrameMs=" << m_lastGpuFrameMilliseconds
+            << L"  gpuThroughputFPS=" << std::setprecision(1)
+            << m_gpuThroughputFps
+            << L"  droppedSimMs=" << std::setprecision(2)
+            << m_droppedSimulationMilliseconds
+            << L"  presentSync=" << m_lastObservedPresentSyncInterval
+            << L"  evidence=" << GetPerformanceEvidenceClassDisplayName()
             << L"  |  preset=" << m_activePresetName
             << L"  guides=" << m_asset.guideStrandCount
             << L"  followers=" << m_asset.followerStrandCount

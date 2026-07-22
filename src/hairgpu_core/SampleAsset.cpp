@@ -750,9 +750,16 @@ namespace hairgpu
             const float shoulderL = std::exp(-((dx + 0.028f) * (dx + 0.028f)) / 0.0018f) * std::exp(-(dy * dy) / 0.060f);
             const float shoulderR = std::exp(-((dx - 0.028f) * (dx - 0.028f)) / 0.0018f) * std::exp(-(dy * dy) / 0.060f);
             const float frontHairline = std::exp(-((v - 0.86f) * (v - 0.86f)) / 0.010f);
-            const float crownBoost = 0.90f * crown + 0.28f * crownMask;
-            const float partLinePenalty = 0.45f * partLine;
-            const float partShoulderBoost = 0.70f * (shoulderL + shoulderR);
+            // Keep a readable whorl/parting, but do not remove enough roots to
+            // expose a circular scalp patch when viewed from above.
+            const float crownCoreFill = std::exp(
+                -(dx * dx * 3.0f + dy * dy * 1.8f) / 0.012f);
+            const float crownBoost =
+                1.18f * crown +
+                0.42f * crownMask +
+                0.55f * crownCoreFill;
+            const float partLinePenalty = 0.12f * partLine;
+            const float partShoulderBoost = 0.48f * (shoulderL + shoulderR);
             const float templeBoost = 0.18f * templeMask;
             const float napeBoost = 0.12f * napeMask;
             const float frontBoost = 0.22f * frontHairline * (1.0f - 0.35f * faceOpening);
@@ -838,6 +845,35 @@ namespace hairgpu
                 out = out / sum;
             }
             return out;
+        }
+
+        RootBinding OffsetBindingWithinTriangle(
+            const ScalpMesh& scalp,
+            const RootBinding& guideBinding,
+            float angle,
+            float radius)
+        {
+            RootBinding followerBinding = guideBinding;
+
+            // Three phase-shifted cosine terms sum to zero, so the offset moves
+            // the barycentric point around the guide root without changing the
+            // total barycentric weight. This gives every follower its own scalp
+            // root instead of stacking all 24 followers on the guide root.
+            Vec3 barycentric = guideBinding.barycentric;
+            barycentric.x += std::cos(angle) * radius;
+            barycentric.y += std::cos(angle + kTau / 3.0f) * radius;
+            barycentric.z += std::cos(angle + 2.0f * kTau / 3.0f) * radius;
+
+            barycentric.x = std::max(barycentric.x, 0.002f);
+            barycentric.y = std::max(barycentric.y, 0.002f);
+            barycentric.z = std::max(barycentric.z, 0.002f);
+            const float sum = barycentric.x + barycentric.y + barycentric.z;
+            followerBinding.barycentric = (sum > 1.0e-6f)
+                ? barycentric / sum
+                : guideBinding.barycentric;
+            followerBinding.rootUv = EvaluateTriangleUv(scalp, followerBinding);
+            followerBinding.rootUv.x = WrapUnit(followerBinding.rootUv.x);
+            return followerBinding;
         }
 
         RootBinding BuildBindingFromTriangleSample(const ScalpMesh& scalp, uint32_t triangleIndex, float sampleA, float sampleB, uint32_t seed = 0u)
@@ -1353,11 +1389,16 @@ namespace hairgpu
                 faceOpeningLocal * 0.40f,
                 0.0f,
                 1.0f);
-            const float followerSpreadScale =
+            const float followerSpreadScale = Clamp(
                 (1.0f - 0.10f * templeMaskLocal) *
                 (1.0f - 0.08f * napeMaskLocal) *
                 (1.0f - 0.04f * faceOpeningLocal) *
-                (0.96f + 0.16f * crownMaskLocal + 0.12f * partShoulderLocal - 0.10f * partLineCenterLocal);
+                (0.92f -
+                 0.12f * crownMaskLocal +
+                 0.06f * partShoulderLocal -
+                 0.10f * partLineCenterLocal),
+                0.62f,
+                1.00f);
             const float guideRotation = Hash01(guideIndex * 29u + 3u) * kTau;
             const float goldenAngle = 2.39996323f;
 
@@ -1366,8 +1407,28 @@ namespace hairgpu
                 const uint32_t seed = guideIndex * 97u + followerIndex * 17u + 13u;
                 const float ring01 = std::sqrt((static_cast<float>(followerIndex) + 0.5f) / static_cast<float>(std::max(followersPerGuide, 1u)));
                 const bool isSupportHair = false;
-                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.12f, 0.44f, ring01);
+                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.10f, 0.38f, ring01);
                 const float angle = guideRotation + goldenAngle * static_cast<float>(followerIndex) + (Hash01(seed + 9u) - 0.5f) * 0.12f;
+
+                // The previous asset stored the same RootBinding for the guide and
+                // all 24 followers. RebuildRootRestPositionsFromScalp therefore
+                // collapsed every follower root back onto the guide root, leaving
+                // only 4,000 effective scalp roots. Spread the follower bindings
+                // deterministically inside the same scalp triangle so all 100,000
+                // strands contribute to root coverage without changing strand count.
+                const float rootDistributionRadius =
+                    Lerp(0.040f, 0.165f, ring01) *
+                    Clamp(
+                        1.0f -
+                        0.12f * crownMaskLocal -
+                        0.08f * partLineCenterLocal,
+                        0.72f,
+                        1.0f);
+                RootBinding followerBinding = OffsetBindingWithinTriangle(
+                    asset.scalpMesh,
+                    binding,
+                    angle,
+                    rootDistributionRadius);
                 const float radialJitter = 0.94f + 0.10f * Hash01(seed + 5u);
                 const float tangentJitter = (Hash01(seed + 3u) - 0.5f) * 0.10f;
                 const float bitangentScale = 0.74f + 0.12f * Hash01(seed + 37u);
@@ -1385,13 +1446,26 @@ namespace hairgpu
                 }
 
                 Vec3 rootOffset = planarOffset + normal * (verticalBias * ring * (1.0f - 0.70f * edgeRisk));
-                rootOffset += radialDir * (ring * (0.10f * crownMaskLocal + 0.14f * partShoulderLocal - 0.18f * partLineCenterLocal));
+                rootOffset += radialDir * (
+                    ring *
+                    (-0.06f * crownMaskLocal +
+                      0.08f * partShoulderLocal -
+                      0.08f * partLineCenterLocal));
                 if (isSupportHair)
                 {
                     rootOffset += normal * (parameters.followerSpread * 0.16f);
                     rootOffset = rootOffset - radialDir * (ring * 0.04f);
                 }
-                const float maxOffset = parameters.followerSpread * Lerp(0.54f, 0.88f, 1.0f - edgeRisk) * (1.0f + 0.10f * crownMaskLocal + 0.08f * partShoulderLocal);
+                const float maxOffset =
+                    parameters.followerSpread *
+                    Lerp(0.54f, 0.88f, 1.0f - edgeRisk) *
+                    Clamp(
+                        1.0f -
+                        0.18f * crownMaskLocal -
+                        0.10f * partLineCenterLocal +
+                        0.05f * partShoulderLocal,
+                        0.68f,
+                        1.05f);
                 const float rootOffsetLength = Length(rootOffset);
                 if (rootOffsetLength > maxOffset && rootOffsetLength > 1.0e-6f)
                 {
@@ -1400,7 +1474,14 @@ namespace hairgpu
 
                 StrandMaterial followerMaterial = material;
                 const float widthJitter = 0.88f + 0.16f * Hash01(seed + 71u);
-                followerMaterial.rootWidth *= (0.54f + 0.08f * crownMaskLocal + 0.06f * partShoulderLocal) * widthJitter;
+                const float rootCoverageWidthScale = Clamp(
+                    0.60f +
+                    0.24f * crownMaskLocal +
+                    0.16f * partLineCenterLocal +
+                    0.08f * partShoulderLocal,
+                    0.58f,
+                    0.96f);
+                followerMaterial.rootWidth *= rootCoverageWidthScale * widthJitter;
                 followerMaterial.tipWidth *= 0.34f * widthJitter;
 
                 FollowData followerFollow;
@@ -1411,7 +1492,7 @@ namespace hairgpu
 
                 AppendStaticWigStrand(
                     asset,
-                    binding,
+                    followerBinding,
                     scalpCenter,
                     followerMaterial,
                     followerFollow,

@@ -67,6 +67,10 @@
                 GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES"),
                 1800u), 1u)
             : 0u;
+        m_localDebugCaptureActive = localDebugCaptureEnabled;
+        double cadenceWindowSeconds = 0.0;
+        uint64_t cadenceWindowRenderFrames = 0ull;
+        uint64_t cadenceWindowSimulationTicks = 0ull;
         if (localDebugCaptureEnabled)
         {
             std::wstring runName =
@@ -94,52 +98,14 @@
             m_experimentCase.realMeasurement = false;
             m_experimentCase.runStatus = ExperimentRunStatus::Incomplete;
             m_experimentRunStatus = ExperimentRunStatus::Incomplete;
-            // Local debugger capture is diagnostic real-time playback. It is
-            // explicitly paced to 60 Hz below; formal throughput measurements
-            // remain uncapped in the BAT runner.
-            m_vsyncEnabled = false;
-            m_presentSyncInterval = 0u;
+            // Visual Studio/F5 is interactive real-time evidence. Present(1)
+            // provides display pacing without Flush/GetData/DwmFlush busy waits.
+            // Formal BAT throughput remains Present(0) through experiment config.
+            m_vsyncEnabled = true;
+            m_presentSyncInterval = 1u;
             m_accumulator = 0.0f;
             m_paused = false;
         }
-
-        // In a Visual Studio local-debug capture, CPU submission FPS can be much
-        // higher than the cadence actually completed by the GPU/compositor. Use
-        // an EVENT query plus DwmFlush (loaded dynamically) so the displayed FPS
-        // is based on completed, composed frames rather than queued submissions.
-        Microsoft::WRL::ComPtr<ID3D11Query> localFrameCompletionQuery;
-        if (localDebugCaptureEnabled && m_device)
-        {
-            D3D11_QUERY_DESC completionDesc = {};
-            completionDesc.Query = D3D11_QUERY_EVENT;
-            completionDesc.MiscFlags = 0u;
-            if (FAILED(m_device->CreateQuery(
-                    &completionDesc,
-                    localFrameCompletionQuery.ReleaseAndGetAddressOf())))
-            {
-                localFrameCompletionQuery.Reset();
-            }
-        }
-
-        using DwmFlushFunction = HRESULT(WINAPI*)();
-        HMODULE dwmApiModule = nullptr;
-        DwmFlushFunction dwmFlushFunction = nullptr;
-        if (localDebugCaptureEnabled)
-        {
-            dwmApiModule = LoadLibraryW(L"dwmapi.dll");
-            if (dwmApiModule)
-            {
-                dwmFlushFunction = reinterpret_cast<DwmFlushFunction>(
-                    GetProcAddress(dwmApiModule, "DwmFlush"));
-            }
-        }
-
-        LARGE_INTEGER lastCompletedFrameTick = {};
-        QueryPerformanceCounter(&lastCompletedFrameTick);
-        double completedCadenceWindowSeconds = 0.0;
-        uint32_t completedCadenceWindowFrames = 0u;
-        uint32_t completedCadenceWindowSimulationTicks = 0u;
-
         while (m_running)
         {
             for (GpuTimingFrame& pendingTiming : m_gpuTimingFrames)
@@ -172,12 +138,17 @@
 
             LARGE_INTEGER now = {};
             QueryPerformanceCounter(&now);
-            const float dt = static_cast<float>(now.QuadPart - m_lastTick.QuadPart) / static_cast<float>(m_qpcFrequency.QuadPart);
+            float dt = static_cast<float>(
+                static_cast<double>(now.QuadPart - m_lastTick.QuadPart) /
+                static_cast<double>(m_qpcFrequency.QuadPart));
             m_lastTick = now;
-            // dt is the wall-clock input for the fixed-step accumulator. It is
-            // deliberately not presented as FPS because it is sampled before
-            // this frame reaches the GPU/compositor.
-            const float wallClockDeltaSeconds = dt;
+            if (!std::isfinite(dt) || dt <= 1.0e-6f || dt > 1.0f)
+            {
+                dt = m_simConfig.fixedTimeStep;
+            }
+            m_lastFrameSeconds = dt;
+            m_lastFrameIntervalMilliseconds = dt * 1000.0f;
+            m_statsUpdateAccumulator += dt;
 
             GpuTimingFrame& gpuFrame = m_gpuTimingFrames[m_gpuTimingWriteIndex];
             m_activeGpuTimingFrameIndex = -1;
@@ -216,46 +187,46 @@
             QueryPerformanceCounter(&simBegin);
 
             uint32_t simulationStepCountThisFrame = 0u;
+            float droppedSimulationSecondsThisFrame = 0.0f;
             if (!m_paused)
             {
                 if (IsExperimentModeEnabled())
                 {
-                    // Formal evidence measures solver throughput with one deterministic
-                    // fixed tick per recorded frame. It is intentionally not wall-clock
-                    // paced and is labelled formal throughput by the runner.
+                    // Formal evidence is deterministic throughput: one fixed solver
+                    // tick per captured frame and no VSync/pacing.
                     ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
                     m_elapsedSeconds += m_simConfig.fixedTimeStep;
                     simulationStepCountThisFrame = 1u;
                 }
                 else
                 {
-                    // Interactive and Visual Studio debugger playback follow wall-clock
-                    // time. This prevents a 140 Hz render loop from advancing 1/60 s of
-                    // physics 140 times per second (2.33x real time). At most two ticks
-                    // are allowed to recover a small scheduling delay without a spiral.
-                    const float maximumAccumulatedTime =
-                        m_simConfig.fixedTimeStep * 2.0f;
-                    m_accumulator += std::min(wallClockDeltaSeconds, maximumAccumulatedTime);
-                    const uint32_t maximumSimulationSteps =
-                        localDebugCaptureEnabled ? 2u : 1u;
+                    // Interactive/F5 playback follows wall-clock time. Two catch-up
+                    // ticks absorb short scheduler delays without entering a spiral.
+                    const float safeDt = std::clamp(dt, 0.0f, 0.10f);
+                    m_accumulator += safeDt;
+                    constexpr uint32_t kMaximumCatchUpTicks = 2u;
                     while (m_accumulator >= m_simConfig.fixedTimeStep &&
-                           simulationStepCountThisFrame < maximumSimulationSteps)
+                           simulationStepCountThisFrame < kMaximumCatchUpTicks)
                     {
                         ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
                         m_elapsedSeconds += m_simConfig.fixedTimeStep;
                         m_accumulator -= m_simConfig.fixedTimeStep;
                         ++simulationStepCountThisFrame;
                     }
-                    if (simulationStepCountThisFrame >= maximumSimulationSteps &&
-                        m_accumulator >= m_simConfig.fixedTimeStep)
+                    if (m_accumulator >= m_simConfig.fixedTimeStep)
                     {
-                        // Drop only excess backlog; never accelerate the simulation.
-                        m_accumulator = std::fmod(
+                        const float remainder = std::fmod(
                             m_accumulator,
                             m_simConfig.fixedTimeStep);
+                        droppedSimulationSecondsThisFrame =
+                            std::max(m_accumulator - remainder, 0.0f);
+                        m_accumulator = remainder;
                     }
                 }
             }
+            m_simulationTicksThisFrame = simulationStepCountThisFrame;
+            m_droppedSimulationMilliseconds +=
+                droppedSimulationSecondsThisFrame * 1000.0f;
 
             QueryPerformanceCounter(&simEnd);
             m_lastSimulationStepMilliseconds =
@@ -278,148 +249,25 @@
             Render();
             LARGE_INTEGER frameWorkEnd = {};
             QueryPerformanceCounter(&frameWorkEnd);
-            m_lastCpuFrameWorkMilliseconds =
-                static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) *
-                1000.0f /
-                static_cast<float>(m_qpcFrequency.QuadPart);
-
-            m_lastGpuCompletionWaitMilliseconds = 0.0f;
-            m_lastCompositorWaitMilliseconds = 0.0f;
-            m_lastPacingWaitMilliseconds = 0.0f;
-            m_gpuCompletionCadenceValid = false;
-            m_compositorCadenceValid = false;
-
-            if (localDebugCaptureEnabled && localFrameCompletionQuery && m_context)
+            m_lastCpuFrameWorkMilliseconds = static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
+            // Non-invasive cadence window: no GPU wait, no DWM wait and no
+            // manual busy-loop pacing. Present(1) paces local F5 naturally.
+            cadenceWindowSeconds += static_cast<double>(dt);
+            ++cadenceWindowRenderFrames;
+            cadenceWindowSimulationTicks += simulationStepCountThisFrame;
+            if (cadenceWindowSeconds >= 0.50)
             {
-                LARGE_INTEGER gpuWaitBegin = {};
-                LARGE_INTEGER gpuWaitEnd = {};
-                QueryPerformanceCounter(&gpuWaitBegin);
-                m_context->End(localFrameCompletionQuery.Get());
-                m_context->Flush();
-
-                BOOL frameCompleted = FALSE;
-                HRESULT completionResult = S_FALSE;
-                constexpr double kCompletionTimeoutSeconds = 2.0;
-                while (completionResult == S_FALSE)
-                {
-                    completionResult = m_context->GetData(
-                        localFrameCompletionQuery.Get(),
-                        &frameCompleted,
-                        sizeof(frameCompleted),
-                        D3D11_ASYNC_GETDATA_DONOTFLUSH);
-                    if (completionResult == S_FALSE)
-                    {
-                        SwitchToThread();
-                        QueryPerformanceCounter(&gpuWaitEnd);
-                        const double elapsedWaitSeconds =
-                            static_cast<double>(gpuWaitEnd.QuadPart - gpuWaitBegin.QuadPart) /
-                            static_cast<double>(m_qpcFrequency.QuadPart);
-                        if (elapsedWaitSeconds >= kCompletionTimeoutSeconds)
-                        {
-                            break;
-                        }
-                    }
-                }
-                QueryPerformanceCounter(&gpuWaitEnd);
-                m_lastGpuCompletionWaitMilliseconds = static_cast<float>(
-                    static_cast<double>(gpuWaitEnd.QuadPart - gpuWaitBegin.QuadPart) *
-                    1000.0 /
-                    static_cast<double>(m_qpcFrequency.QuadPart));
-                m_gpuCompletionCadenceValid =
-                    completionResult == S_OK && frameCompleted != FALSE;
-            }
-
-            if (localDebugCaptureEnabled && dwmFlushFunction)
-            {
-                LARGE_INTEGER compositorWaitBegin = {};
-                LARGE_INTEGER compositorWaitEnd = {};
-                QueryPerformanceCounter(&compositorWaitBegin);
-                const HRESULT compositorResult = dwmFlushFunction();
-                QueryPerformanceCounter(&compositorWaitEnd);
-                m_lastCompositorWaitMilliseconds = static_cast<float>(
-                    static_cast<double>(
-                        compositorWaitEnd.QuadPart - compositorWaitBegin.QuadPart) *
-                    1000.0 /
-                    static_cast<double>(m_qpcFrequency.QuadPart));
-                m_compositorCadenceValid = SUCCEEDED(compositorResult);
-            }
-
-            if (localDebugCaptureEnabled)
-            {
-                // Pace against this frame's QPC start after GPU/compositor
-                // completion. Sleep is measured separately and is included in the
-                // final completed-frame interval shown to the user.
-                const LONGLONG targetFrameTicks = static_cast<LONGLONG>(
-                    static_cast<double>(m_simConfig.fixedTimeStep) *
-                    static_cast<double>(m_qpcFrequency.QuadPart));
-                const LONGLONG targetEnd = now.QuadPart + targetFrameTicks;
-                LARGE_INTEGER pacingBegin = {};
-                LARGE_INTEGER paceNow = {};
-                QueryPerformanceCounter(&pacingBegin);
-                paceNow = pacingBegin;
-                while (paceNow.QuadPart < targetEnd)
-                {
-                    const double remainingSeconds =
-                        static_cast<double>(targetEnd - paceNow.QuadPart) /
-                        static_cast<double>(m_qpcFrequency.QuadPart);
-                    if (remainingSeconds > 0.0025)
-                    {
-                        const DWORD sleepMilliseconds = static_cast<DWORD>(
-                            (remainingSeconds - 0.0010) * 1000.0);
-                        if (sleepMilliseconds > 0u)
-                        {
-                            Sleep(sleepMilliseconds);
-                        }
-                    }
-                    else
-                    {
-                        SwitchToThread();
-                    }
-                    QueryPerformanceCounter(&paceNow);
-                }
-                m_lastPacingWaitMilliseconds = static_cast<float>(
-                    static_cast<double>(paceNow.QuadPart - pacingBegin.QuadPart) *
-                    1000.0 /
-                    static_cast<double>(m_qpcFrequency.QuadPart));
-            }
-
-            LARGE_INTEGER completedFrameTick = {};
-            QueryPerformanceCounter(&completedFrameTick);
-            float completedFrameSeconds = static_cast<float>(
-                static_cast<double>(
-                    completedFrameTick.QuadPart - lastCompletedFrameTick.QuadPart) /
-                static_cast<double>(m_qpcFrequency.QuadPart));
-            lastCompletedFrameTick = completedFrameTick;
-            if (!std::isfinite(completedFrameSeconds) ||
-                completedFrameSeconds <= 1.0e-6f ||
-                completedFrameSeconds > 2.0f)
-            {
-                completedFrameSeconds = std::max(
-                    wallClockDeltaSeconds,
-                    1.0e-6f);
-            }
-
-            m_lastFrameSeconds = completedFrameSeconds;
-            m_lastFrameIntervalMilliseconds = completedFrameSeconds * 1000.0f;
-            m_statsUpdateAccumulator += completedFrameSeconds;
-
-            completedCadenceWindowSeconds +=
-                static_cast<double>(completedFrameSeconds);
-            ++completedCadenceWindowFrames;
-            completedCadenceWindowSimulationTicks += simulationStepCountThisFrame;
-            if (completedCadenceWindowSeconds >= 0.50)
-            {
-                m_completedPresentFps = static_cast<float>(
-                    static_cast<double>(completedCadenceWindowFrames) /
-                    completedCadenceWindowSeconds);
-                m_completedSimulationHz = static_cast<float>(
-                    static_cast<double>(completedCadenceWindowSimulationTicks) /
-                    completedCadenceWindowSeconds);
-                m_smoothedFps = m_completedPresentFps;
-                m_completedCadenceWindowValid = true;
-                completedCadenceWindowSeconds = 0.0;
-                completedCadenceWindowFrames = 0u;
-                completedCadenceWindowSimulationTicks = 0u;
+                m_renderFps = static_cast<float>(
+                    static_cast<double>(cadenceWindowRenderFrames) /
+                    cadenceWindowSeconds);
+                m_simulationHz = static_cast<float>(
+                    static_cast<double>(cadenceWindowSimulationTicks) /
+                    cadenceWindowSeconds);
+                m_smoothedFps = m_renderFps;
+                m_renderCadenceWindowValid = true;
+                cadenceWindowSeconds = 0.0;
+                cadenceWindowRenderFrames = 0ull;
+                cadenceWindowSimulationTicks = 0ull;
             }
             const bool localDebugCaptureCurrentFrame =
                 localDebugCaptureEnabled &&
@@ -433,15 +281,12 @@
                 // same frame evidence to CSV/JSONL/formal sidecar.
                 hairgpu::FinalizeNoveltyTelemetryRates(m_noveltyTelemetry);
             }
-            const float sampleFrameSeconds = localDebugCaptureEnabled
-                ? completedFrameSeconds
-                : wallClockDeltaSeconds;
-            const float sampleFps = (sampleFrameSeconds > 1.0e-6f)
-                ? (1.0f / sampleFrameSeconds)
-                : 0.0f;
+            const float sampledRenderFps = m_renderCadenceWindowValid
+                ? m_renderFps
+                : ((dt > 1.0e-6f) ? (1.0f / dt) : 0.0f);
             PerformanceSample sample = BuildPerformanceSample(
-                sampleFrameSeconds,
-                sampleFps);
+                dt,
+                sampledRenderFps);
             if (captureCurrentFrame)
             {
                 sample.measuredFrameIndex = m_measuredFrameIndex++;
@@ -472,13 +317,6 @@
                 UpdateWindowTitle();
                 m_statsUpdateAccumulator = 0.0f;
             }
-        }
-
-        if (dwmApiModule)
-        {
-            FreeLibrary(dwmApiModule);
-            dwmApiModule = nullptr;
-            dwmFlushFunction = nullptr;
         }
 
         DrainGpuTimingAndCounterReadbacks();
@@ -562,6 +400,10 @@
             const std::filesystem::path settingsJsonPath = telemetryDir / (runName + L"_settings.json");
             ExportPerformanceCsv(frameCsvPath.wstring());
             ExportPerformanceJsonl(frameJsonlPath.wstring());
+            ExportRealtimeCadenceCsv(
+                (telemetryDir / (runName + L"_realtime_cadence.csv")).wstring());
+            ExportPerSecondTelemetryCsv(
+                (telemetryDir / (runName + L"_per_second.csv")).wstring());
             ExportExperimentSettingsJson(settingsJsonPath.wstring());
             ExportRuntimeReport(summaryPath.wstring());
         }
@@ -1541,6 +1383,9 @@
             m_lastGpuSimulationMilliseconds = static_cast<float>(static_cast<double>(simEnd - simStart) * invFreqMs);
             m_lastGpuHairDrawMilliseconds = static_cast<float>(static_cast<double>(hairEnd - hairStart) * invFreqMs);
             m_lastGpuDebugDrawMilliseconds = static_cast<float>(static_cast<double>(debugEnd - debugStart) * invFreqMs);
+            m_gpuThroughputFps = m_lastGpuFrameMilliseconds > 1.0e-6f
+                ? (1000.0f / m_lastGpuFrameMilliseconds)
+                : 0.0f;
             for (size_t passIndex = 0u; passIndex < kGpuPassCount; ++passIndex)
             {
                 if (frame.passIssued[passIndex] != 0u && passEnds[passIndex] >= passStarts[passIndex])
@@ -1557,6 +1402,10 @@
                 {
                     sample.sourceFrameIndex = frame.sourceFrameIndex;
                     sample.gpuHairMilliseconds = m_lastGpuSimulationMilliseconds + m_lastGpuHairDrawMilliseconds;
+                    sample.gpuFrameMilliseconds = m_lastGpuFrameMilliseconds;
+                    sample.gpuSimulationMilliseconds = m_lastGpuSimulationMilliseconds;
+                    sample.gpuHairDrawMilliseconds = m_lastGpuHairDrawMilliseconds;
+                    sample.gpuThroughputFps = m_gpuThroughputFps;
                     sample.blockClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BlockClassification)];
                     sample.groupClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::GroupClassification)];
                     sample.compactionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Compaction)];

@@ -6,6 +6,32 @@ namespace
     constexpr UINT kHairGpuNonBlockingQueryFlags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
 }
 
+    const wchar_t* GpuHairViewer::GetPerformanceEvidenceClassDisplayName() const
+    {
+        if (IsExperimentModeEnabled())
+        {
+            return L"formal-throughput";
+        }
+        if (m_localDebugCaptureActive)
+        {
+            return L"diagnostic-debugger";
+        }
+        return L"interactive-realtime";
+    }
+
+    const char* GpuHairViewer::GetPerformanceEvidenceClassCode() const
+    {
+        if (IsExperimentModeEnabled())
+        {
+            return "formal_throughput";
+        }
+        if (m_localDebugCaptureActive)
+        {
+            return "diagnostic_debugger";
+        }
+        return "interactive_realtime";
+    }
+
     const wchar_t* GpuHairViewer::GetGroomToolDisplayName() const
     {
         switch (m_groomTool)

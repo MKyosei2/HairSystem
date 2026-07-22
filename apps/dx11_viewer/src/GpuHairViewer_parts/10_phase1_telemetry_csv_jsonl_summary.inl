@@ -1477,6 +1477,395 @@ return true;
         return totalFrames > 0u && m_globalFrameIndex >= totalFrames;
     }
 
+    bool GpuHairViewer::ExportRealtimeCadenceCsv(const std::wstring& filePath) const
+    {
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+        out << "sampleIndex,globalFrameIndex,measuredFrameIndex,renderFps,"
+               "simulationHz,renderFrameMilliseconds,cpuFrameWorkMilliseconds,"
+               "simulationMilliseconds,gpuFrameMilliseconds,"
+               "gpuSimulationMilliseconds,gpuHairDrawMilliseconds,"
+               "gpuThroughputFps,simulationTicksThisFrame,"
+               "droppedSimulationMilliseconds,presentSyncInterval,evidenceClass\n";
+        out << std::fixed << std::setprecision(6);
+        for (size_t sampleIndex = 0u; sampleIndex < m_performanceSamples.size(); ++sampleIndex)
+        {
+            const PerformanceSample& sample = m_performanceSamples[sampleIndex];
+            const char* evidence = "interactive_realtime";
+            switch (static_cast<PerformanceEvidenceClass>(sample.evidenceClass))
+            {
+            case PerformanceEvidenceClass::DiagnosticDebugger:
+                evidence = "diagnostic_debugger";
+                break;
+            case PerformanceEvidenceClass::FormalThroughput:
+                evidence = "formal_throughput";
+                break;
+            default:
+                break;
+            }
+            out << sampleIndex << ','
+                << sample.globalFrameIndex << ','
+                << sample.measuredFrameIndex << ','
+                << sample.renderFps << ','
+                << sample.simulationHz << ','
+                << sample.renderFrameMilliseconds << ','
+                << sample.cpuFrameWorkMilliseconds << ','
+                << sample.simulationMilliseconds << ','
+                << sample.gpuFrameMilliseconds << ','
+                << sample.gpuSimulationMilliseconds << ','
+                << sample.gpuHairDrawMilliseconds << ','
+                << sample.gpuThroughputFps << ','
+                << sample.simulationTicksThisFrame << ','
+                << sample.droppedSimulationMilliseconds << ','
+                << sample.presentSyncInterval << ','
+                << evidence << '\n';
+        }
+        return true;
+    }
+
+
+    bool GpuHairViewer::ExportPerSecondTelemetryCsv(const std::wstring& filePath) const
+    {
+        std::ofstream out{ std::filesystem::path(filePath) };
+        if (!out)
+        {
+            return false;
+        }
+
+        out << "secondIndex,wallTimeStartSeconds,wallTimeEndSeconds,durationSeconds,"
+               "completeSecond,frameCount,simulationTickCount,renderFps,simulationHz,"
+               "meanFrameMilliseconds,p95FrameMilliseconds,maxFrameMilliseconds,"
+               "meanCpuWorkMilliseconds,meanSimulationMilliseconds,"
+               "meanGpuFrameMilliseconds,meanGpuSimulationMilliseconds,"
+               "meanGpuHairDrawMilliseconds,gpuTimingCoverage,meanGpuThroughputFps,"
+               "droppedSimulationMillisecondsDelta,droppedSimulationMillisecondsEnd,"
+               "nanStateCountEnd,infiniteStateCountEnd,fatalFailureEnd,"
+               "collisionCandidateCountDelta,collisionMissCountDelta,"
+               "wakeRequestGroupCountDelta,repairAttemptCountDelta,repairSuccessCountDelta,"
+               "stateTransitionCountDelta,stateOscillationCountDelta,"
+               "meanStaticCachedGroupCount,meanStaticTransformedGroupCount,"
+               "meanDynamicGroupCount,meanRepairRequiredGroupCount,"
+               "maxFalseStaticRate,maxBoundaryErrorMm,presentSyncInterval,"
+               "evidenceClass,realtimeStatus\n";
+        out << std::fixed << std::setprecision(6);
+
+        if (m_performanceSamples.empty())
+        {
+            return true;
+        }
+
+        struct Bucket
+        {
+            uint32_t secondIndex = 0u;
+            double startSeconds = 0.0;
+            double durationSeconds = 0.0;
+            uint32_t frameCount = 0u;
+            uint64_t simulationTickCount = 0ull;
+            double frameMillisecondsSum = 0.0;
+            double cpuWorkMillisecondsSum = 0.0;
+            double simulationMillisecondsSum = 0.0;
+            double gpuFrameMillisecondsSum = 0.0;
+            double gpuSimulationMillisecondsSum = 0.0;
+            double gpuHairDrawMillisecondsSum = 0.0;
+            double gpuThroughputFpsSum = 0.0;
+            uint32_t gpuFrameSampleCount = 0u;
+            uint32_t gpuSimulationSampleCount = 0u;
+            uint32_t gpuHairDrawSampleCount = 0u;
+            uint32_t gpuThroughputSampleCount = 0u;
+            double staticCachedGroupCountSum = 0.0;
+            double staticTransformedGroupCountSum = 0.0;
+            double dynamicGroupCountSum = 0.0;
+            double repairRequiredGroupCountSum = 0.0;
+            float maxFalseStaticRate = 0.0f;
+            float maxBoundaryErrorMm = 0.0f;
+            std::vector<float> frameMilliseconds;
+            PerformanceSample lastSample = {};
+            bool hasSample = false;
+        };
+
+        auto evidenceName = [](uint32_t value) -> const char*
+        {
+            switch (static_cast<PerformanceEvidenceClass>(value))
+            {
+            case PerformanceEvidenceClass::DiagnosticDebugger:
+                return "diagnostic_debugger";
+            case PerformanceEvidenceClass::FormalThroughput:
+                return "formal_throughput";
+            default:
+                return "interactive_realtime";
+            }
+        };
+
+        auto safeDelta = [](uint64_t current, uint64_t previous) -> uint64_t
+        {
+            return current >= previous ? current - previous : current;
+        };
+
+        const PerformanceSample& firstCapturedSample = m_performanceSamples.front();
+        uint64_t previousCollisionCandidateCount =
+            firstCapturedSample.collisionCandidateCount;
+        uint64_t previousCollisionMissCount =
+            firstCapturedSample.collisionMissCount;
+        uint64_t previousWakeRequestGroupCount =
+            firstCapturedSample.wakeRequestGroupCount;
+        uint64_t previousRepairAttemptCount =
+            firstCapturedSample.repairAttemptCount;
+        uint64_t previousRepairSuccessCount =
+            firstCapturedSample.repairSuccessCount;
+        uint64_t previousStateTransitionCount =
+            firstCapturedSample.stateTransitionCount;
+        uint64_t previousStateOscillationCount =
+            firstCapturedSample.stateOscillationCount;
+        double previousDroppedSimulationMilliseconds = std::max(
+            0.0,
+            static_cast<double>(firstCapturedSample.droppedSimulationMilliseconds));
+        double wallTimeSeconds = 0.0;
+        Bucket bucket = {};
+        bucket.secondIndex = 1u;
+        bucket.startSeconds = 0.0;
+
+        auto flushBucket = [&](bool completeSecond)
+        {
+            if (!bucket.hasSample || bucket.frameCount == 0u)
+            {
+                return;
+            }
+
+            std::vector<float> orderedFrameMilliseconds = bucket.frameMilliseconds;
+            std::sort(orderedFrameMilliseconds.begin(), orderedFrameMilliseconds.end());
+            const size_t p95Index = orderedFrameMilliseconds.empty()
+                ? 0u
+                : static_cast<size_t>(std::ceil(
+                    0.95 * static_cast<double>(orderedFrameMilliseconds.size() - 1u)));
+            const float p95FrameMilliseconds = orderedFrameMilliseconds.empty()
+                ? 0.0f
+                : orderedFrameMilliseconds[std::min(p95Index, orderedFrameMilliseconds.size() - 1u)];
+            const float maxFrameMilliseconds = orderedFrameMilliseconds.empty()
+                ? 0.0f
+                : orderedFrameMilliseconds.back();
+
+            const double durationSeconds = std::max(bucket.durationSeconds, 1.0e-6);
+            const double renderFps =
+                static_cast<double>(bucket.frameCount) / durationSeconds;
+            const double simulationHz =
+                static_cast<double>(bucket.simulationTickCount) / durationSeconds;
+            const double meanFrameMilliseconds =
+                bucket.frameMillisecondsSum / static_cast<double>(bucket.frameCount);
+            const double meanCpuWorkMilliseconds =
+                bucket.cpuWorkMillisecondsSum / static_cast<double>(bucket.frameCount);
+            const double meanSimulationMilliseconds =
+                bucket.simulationMillisecondsSum / static_cast<double>(bucket.frameCount);
+            const double meanGpuFrameMilliseconds = bucket.gpuFrameSampleCount > 0u
+                ? bucket.gpuFrameMillisecondsSum / static_cast<double>(bucket.gpuFrameSampleCount)
+                : 0.0;
+            const double meanGpuSimulationMilliseconds = bucket.gpuSimulationSampleCount > 0u
+                ? bucket.gpuSimulationMillisecondsSum / static_cast<double>(bucket.gpuSimulationSampleCount)
+                : 0.0;
+            const double meanGpuHairDrawMilliseconds = bucket.gpuHairDrawSampleCount > 0u
+                ? bucket.gpuHairDrawMillisecondsSum / static_cast<double>(bucket.gpuHairDrawSampleCount)
+                : 0.0;
+            const double gpuTimingCoverage =
+                static_cast<double>(bucket.gpuFrameSampleCount) /
+                static_cast<double>(bucket.frameCount);
+            const double meanGpuThroughputFps = bucket.gpuThroughputSampleCount > 0u
+                ? bucket.gpuThroughputFpsSum / static_cast<double>(bucket.gpuThroughputSampleCount)
+                : 0.0;
+            const double droppedSimulationMillisecondsEnd =
+                std::max(0.0, static_cast<double>(bucket.lastSample.droppedSimulationMilliseconds));
+            const double droppedSimulationMillisecondsDelta =
+                droppedSimulationMillisecondsEnd >= previousDroppedSimulationMilliseconds
+                    ? droppedSimulationMillisecondsEnd - previousDroppedSimulationMilliseconds
+                    : droppedSimulationMillisecondsEnd;
+
+            const uint64_t collisionCandidateCountDelta = safeDelta(
+                bucket.lastSample.collisionCandidateCount,
+                previousCollisionCandidateCount);
+            const uint64_t collisionMissCountDelta = safeDelta(
+                bucket.lastSample.collisionMissCount,
+                previousCollisionMissCount);
+            const uint64_t wakeRequestGroupCountDelta = safeDelta(
+                bucket.lastSample.wakeRequestGroupCount,
+                previousWakeRequestGroupCount);
+            const uint64_t repairAttemptCountDelta = safeDelta(
+                bucket.lastSample.repairAttemptCount,
+                previousRepairAttemptCount);
+            const uint64_t repairSuccessCountDelta = safeDelta(
+                bucket.lastSample.repairSuccessCount,
+                previousRepairSuccessCount);
+            const uint64_t stateTransitionCountDelta = safeDelta(
+                bucket.lastSample.stateTransitionCount,
+                previousStateTransitionCount);
+            const uint64_t stateOscillationCountDelta = safeDelta(
+                bucket.lastSample.stateOscillationCount,
+                previousStateOscillationCount);
+
+            const double sampleDenominator = static_cast<double>(bucket.frameCount);
+            const double meanStaticCachedGroupCount =
+                bucket.staticCachedGroupCountSum / sampleDenominator;
+            const double meanStaticTransformedGroupCount =
+                bucket.staticTransformedGroupCountSum / sampleDenominator;
+            const double meanDynamicGroupCount =
+                bucket.dynamicGroupCountSum / sampleDenominator;
+            const double meanRepairRequiredGroupCount =
+                bucket.repairRequiredGroupCountSum / sampleDenominator;
+
+            const char* realtimeStatus = "realtime_60";
+            if (bucket.lastSample.fatalFailure != 0u ||
+                bucket.lastSample.nanStateCount != 0u ||
+                bucket.lastSample.infiniteStateCount != 0u)
+            {
+                realtimeStatus = "invalid";
+            }
+            else if (simulationHz < 58.0 ||
+                     droppedSimulationMillisecondsDelta > 1.0)
+            {
+                realtimeStatus = "simulation_lag";
+            }
+            else if (renderFps < 24.0)
+            {
+                realtimeStatus = "below_24";
+            }
+            else if (renderFps < 59.0)
+            {
+                realtimeStatus = "realtime_24";
+            }
+
+            out << bucket.secondIndex << ','
+                << bucket.startSeconds << ','
+                << (bucket.startSeconds + durationSeconds) << ','
+                << durationSeconds << ','
+                << (completeSecond ? 1 : 0) << ','
+                << bucket.frameCount << ','
+                << bucket.simulationTickCount << ','
+                << renderFps << ','
+                << simulationHz << ','
+                << meanFrameMilliseconds << ','
+                << p95FrameMilliseconds << ','
+                << maxFrameMilliseconds << ','
+                << meanCpuWorkMilliseconds << ','
+                << meanSimulationMilliseconds << ','
+                << meanGpuFrameMilliseconds << ','
+                << meanGpuSimulationMilliseconds << ','
+                << meanGpuHairDrawMilliseconds << ','
+                << gpuTimingCoverage << ','
+                << meanGpuThroughputFps << ','
+                << droppedSimulationMillisecondsDelta << ','
+                << droppedSimulationMillisecondsEnd << ','
+                << bucket.lastSample.nanStateCount << ','
+                << bucket.lastSample.infiniteStateCount << ','
+                << bucket.lastSample.fatalFailure << ','
+                << collisionCandidateCountDelta << ','
+                << collisionMissCountDelta << ','
+                << wakeRequestGroupCountDelta << ','
+                << repairAttemptCountDelta << ','
+                << repairSuccessCountDelta << ','
+                << stateTransitionCountDelta << ','
+                << stateOscillationCountDelta << ','
+                << meanStaticCachedGroupCount << ','
+                << meanStaticTransformedGroupCount << ','
+                << meanDynamicGroupCount << ','
+                << meanRepairRequiredGroupCount << ','
+                << bucket.maxFalseStaticRate << ','
+                << bucket.maxBoundaryErrorMm << ','
+                << bucket.lastSample.presentSyncInterval << ','
+                << evidenceName(bucket.lastSample.evidenceClass) << ','
+                << realtimeStatus << '\n';
+
+            previousDroppedSimulationMilliseconds = droppedSimulationMillisecondsEnd;
+            previousCollisionCandidateCount = bucket.lastSample.collisionCandidateCount;
+            previousCollisionMissCount = bucket.lastSample.collisionMissCount;
+            previousWakeRequestGroupCount = bucket.lastSample.wakeRequestGroupCount;
+            previousRepairAttemptCount = bucket.lastSample.repairAttemptCount;
+            previousRepairSuccessCount = bucket.lastSample.repairSuccessCount;
+            previousStateTransitionCount = bucket.lastSample.stateTransitionCount;
+            previousStateOscillationCount = bucket.lastSample.stateOscillationCount;
+        };
+
+        for (const PerformanceSample& sample : m_performanceSamples)
+        {
+            float frameMilliseconds = sample.renderFrameMilliseconds;
+            if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
+            {
+                frameMilliseconds = sample.frameMilliseconds;
+            }
+            if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
+            {
+                continue;
+            }
+
+            const double frameSeconds =
+                static_cast<double>(frameMilliseconds) / 1000.0;
+            if (bucket.hasSample &&
+                bucket.durationSeconds + frameSeconds > 1.0 &&
+                bucket.durationSeconds >= 0.50)
+            {
+                const uint32_t nextSecondIndex = bucket.secondIndex + 1u;
+                const double completedBucketSeconds = bucket.durationSeconds;
+                flushBucket(true);
+                wallTimeSeconds += completedBucketSeconds;
+                bucket = {};
+                bucket.secondIndex = nextSecondIndex;
+                bucket.startSeconds = wallTimeSeconds;
+            }
+
+            bucket.hasSample = true;
+            ++bucket.frameCount;
+            bucket.durationSeconds += frameSeconds;
+            bucket.simulationTickCount += sample.simulationTicksThisFrame;
+            bucket.frameMillisecondsSum += frameMilliseconds;
+            bucket.cpuWorkMillisecondsSum += sample.cpuFrameWorkMilliseconds;
+            bucket.simulationMillisecondsSum += sample.simulationMilliseconds;
+            bucket.frameMilliseconds.push_back(frameMilliseconds);
+
+            if (std::isfinite(sample.gpuFrameMilliseconds) &&
+                sample.gpuFrameMilliseconds > 0.0f)
+            {
+                bucket.gpuFrameMillisecondsSum += sample.gpuFrameMilliseconds;
+                ++bucket.gpuFrameSampleCount;
+            }
+            if (std::isfinite(sample.gpuSimulationMilliseconds) &&
+                sample.gpuSimulationMilliseconds > 0.0f)
+            {
+                bucket.gpuSimulationMillisecondsSum += sample.gpuSimulationMilliseconds;
+                ++bucket.gpuSimulationSampleCount;
+            }
+            if (std::isfinite(sample.gpuHairDrawMilliseconds) &&
+                sample.gpuHairDrawMilliseconds > 0.0f)
+            {
+                bucket.gpuHairDrawMillisecondsSum += sample.gpuHairDrawMilliseconds;
+                ++bucket.gpuHairDrawSampleCount;
+            }
+            if (std::isfinite(sample.gpuThroughputFps) &&
+                sample.gpuThroughputFps > 0.0f)
+            {
+                bucket.gpuThroughputFpsSum += sample.gpuThroughputFps;
+                ++bucket.gpuThroughputSampleCount;
+            }
+
+            bucket.staticCachedGroupCountSum += sample.staticCachedGroupCount;
+            bucket.staticTransformedGroupCountSum += sample.staticTransformedGroupCount;
+            bucket.dynamicGroupCountSum += sample.dynamicGroupCount;
+            bucket.repairRequiredGroupCountSum += sample.repairRequiredGroupCount;
+            bucket.maxFalseStaticRate = std::max(
+                bucket.maxFalseStaticRate,
+                sample.falseStaticRate);
+            bucket.maxBoundaryErrorMm = std::max(
+                bucket.maxBoundaryErrorMm,
+                sample.staticDynamicBoundaryMaxErrorMm);
+            bucket.lastSample = sample;
+        }
+
+        if (bucket.hasSample)
+        {
+            flushBucket(bucket.durationSeconds >= 0.95);
+        }
+
+        return true;
+    }
+
     GpuHairViewer::PerformanceSample GpuHairViewer::BuildPerformanceSample(float frameSeconds, float instantFps) const
     {
         PerformanceSample sample = {};
@@ -1486,6 +1875,22 @@ return true;
         sample.cpuFrameWorkMilliseconds = m_lastCpuFrameWorkMilliseconds;
         sample.simulationMilliseconds = m_lastSimulationStepMilliseconds;
         sample.fps = instantFps;
+        sample.renderFps = instantFps;
+        sample.simulationHz = m_simulationHz;
+        sample.renderFrameMilliseconds = frameSeconds * 1000.0f;
+        sample.gpuFrameMilliseconds = 0.0f;
+        sample.gpuSimulationMilliseconds = 0.0f;
+        sample.gpuHairDrawMilliseconds = 0.0f;
+        sample.gpuThroughputFps = 0.0f;
+        sample.simulationTicksThisFrame = m_simulationTicksThisFrame;
+        sample.droppedSimulationMilliseconds = m_droppedSimulationMilliseconds;
+        sample.presentSyncInterval = m_lastObservedPresentSyncInterval;
+        sample.evidenceClass = static_cast<uint32_t>(
+            IsExperimentModeEnabled()
+                ? PerformanceEvidenceClass::FormalThroughput
+                : (m_localDebugCaptureActive
+                    ? PerformanceEvidenceClass::DiagnosticDebugger
+                    : PerformanceEvidenceClass::InteractiveRealtime));
         sample.guideCount = m_asset.guideStrandCount;
         sample.followerCount = m_asset.followerStrandCount;
         sample.totalStrandCount = static_cast<uint32_t>(m_asset.strands.size());

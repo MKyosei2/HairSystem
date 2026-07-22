@@ -1594,7 +1594,7 @@ void SelfCollisionCS(uint3 id : SV_DispatchThreadID)
     OutputPositions[particleIndex] = float4(p, 1.0f);
 }
 
-[numthreads(64, 1, 1)]
+[numthreads(256, 1, 1)]
 void FollowCS(uint3 id : SV_DispatchThreadID)
 {
     uint followerPointDispatchIndex = DispatchBaseIndex + id.x;
@@ -1657,7 +1657,23 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         OutputPreviousPositions[previousParentIndex].xyz);
 
     float3 restOffset = followerRest - parentRest;
-    float clumpGain = lerp(0.25f, 1.0f, saturate(follow.ClumpWeight));
+    float t = (ParticlesPerStrand > 1u)
+        ? float(localPointIndex) / float(ParticlesPerStrand - 1u)
+        : 0.0f;
+
+    // Keep the authored root coverage through the first part of the strand.
+    // Applying clump contraction at point 1 immediately pulled the newly
+    // distributed follower roots back toward the guide and reopened the crown.
+    float authoredClumpGain = lerp(
+        0.25f,
+        1.0f,
+        saturate(follow.ClumpWeight));
+    float rootCoverageBlend = smoothstep(0.035f, 0.20f, t);
+    float clumpGain = lerp(
+        1.0f,
+        authoredClumpGain,
+        rootCoverageBlend);
+
     float3 currentOffset = RotateVectorFromTo(
         restOffset,
         restTangent,
@@ -1666,10 +1682,6 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         restOffset,
         restTangent,
         previousTangent) * clumpGain;
-
-    float t = (ParticlesPerStrand > 1u)
-        ? float(localPointIndex) / float(ParticlesPerStrand - 1u)
-        : 0.0f;
     float noiseAmplitude = min(
         follow.NoiseWeight * (0.0015f + t * 0.0065f),
         max(length(restOffset) * 0.15f, 0.00025f));

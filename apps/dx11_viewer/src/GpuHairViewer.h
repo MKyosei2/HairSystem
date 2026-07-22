@@ -277,6 +277,13 @@ namespace hairgpu::viewer
             uint32_t strandIndex = 0;
         };
 
+        enum class PerformanceEvidenceClass : uint32_t
+        {
+            InteractiveRealtime = 0u,
+            DiagnosticDebugger = 1u,
+            FormalThroughput = 2u
+        };
+
         struct PerformanceSample
         {
             float elapsedSeconds = 0.0f;
@@ -284,7 +291,21 @@ namespace hairgpu::viewer
             float frameIntervalMilliseconds = 0.0f;
             float cpuFrameWorkMilliseconds = 0.0f;
             float simulationMilliseconds = 0.0f;
+            // Explicit cadence metrics. fps/frameMilliseconds remain compatibility
+            // aliases for renderFps/renderFrameMilliseconds in existing exporters.
             float fps = 0.0f;
+            float renderFps = 0.0f;
+            float simulationHz = 0.0f;
+            float renderFrameMilliseconds = 0.0f;
+            float gpuFrameMilliseconds = 0.0f;
+            float gpuSimulationMilliseconds = 0.0f;
+            float gpuHairDrawMilliseconds = 0.0f;
+            float gpuThroughputFps = 0.0f;
+            uint32_t simulationTicksThisFrame = 0u;
+            float droppedSimulationMilliseconds = 0.0f;
+            uint32_t presentSyncInterval = 0u;
+            uint32_t evidenceClass =
+                static_cast<uint32_t>(PerformanceEvidenceClass::InteractiveRealtime);
             uint32_t guideCount = 0;
             uint32_t followerCount = 0;
             uint32_t totalStrandCount = 0;
@@ -1212,6 +1233,8 @@ namespace hairgpu::viewer
         void Resize(UINT width, UINT height);
         void UpdateCamera();
         void UpdateWindowTitle();
+        const wchar_t* GetPerformanceEvidenceClassDisplayName() const;
+        const char* GetPerformanceEvidenceClassCode() const;
         void Shutdown();
         void UpdateAnimatedScalp(float elapsedSeconds);
         void RebuildActiveSetFoundation();
@@ -1247,6 +1270,8 @@ namespace hairgpu::viewer
         bool LoadSettingsFromFile(const std::wstring& filePath);
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
+        bool ExportRealtimeCadenceCsv(const std::wstring& filePath) const;
+        bool ExportPerSecondTelemetryCsv(const std::wstring& filePath) const;
         bool ExportPerformanceJsonl(const std::wstring& filePath) const;
         bool ExportExperimentSettingsJson(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
@@ -1494,23 +1519,21 @@ namespace hairgpu::viewer
         float m_scalpPartLineWidth = 0.034f;
         float m_scalpTintDarkness = 0.55f;
         float m_scalpHairBlend = 0.70f;
-        // Presentation cadence is measured after GPU completion, compositor
-        // synchronization, and optional 60 Hz pacing. m_smoothedFps remains as
-        // a compatibility alias for the completed-frame rolling-window value.
-        float m_smoothedFps = 0.0f;
-        float m_completedPresentFps = 0.0f;
-        float m_completedSimulationHz = 0.0f;
+        // Non-invasive cadence metrics. Render cadence uses QPC start-to-start
+        // intervals; GPU throughput uses delayed timestamp queries and never waits.
+        float m_smoothedFps = 0.0f; // compatibility alias for m_renderFps
+        float m_renderFps = 0.0f;
+        float m_simulationHz = 0.0f;
+        float m_gpuThroughputFps = 0.0f;
         float m_lastFrameSeconds = 0.0f;
         float m_lastFrameIntervalMilliseconds = 0.0f;
         float m_lastCpuFrameWorkMilliseconds = 0.0f;
         float m_lastSimulationStepMilliseconds = 0.0f;
-        float m_lastGpuCompletionWaitMilliseconds = 0.0f;
-        float m_lastCompositorWaitMilliseconds = 0.0f;
-        float m_lastPacingWaitMilliseconds = 0.0f;
+        float m_droppedSimulationMilliseconds = 0.0f;
         float m_statsUpdateAccumulator = 0.0f;
-        bool m_gpuCompletionCadenceValid = false;
-        bool m_compositorCadenceValid = false;
-        bool m_completedCadenceWindowValid = false;
+        uint32_t m_simulationTicksThisFrame = 0u;
+        bool m_renderCadenceWindowValid = false;
+        bool m_localDebugCaptureActive = false;
         hairgpu::HairAsset m_asset;
         hairgpu::GpuSimulationConfig m_simConfig;
         hairgpu::ColliderSet m_colliders;

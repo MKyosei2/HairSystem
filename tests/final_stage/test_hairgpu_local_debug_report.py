@@ -103,6 +103,8 @@ class LocalDebugReportTests(unittest.TestCase):
             self.assertTrue(summary["novelty01Interpretation"]["proposalComparable"])
             for name in (
                 "frame_time.svg",
+                "per_second_realtime.svg",
+                f"{run_name}_per_second.csv",
                 "segment_group_state.svg",
                 "gpu_pass_breakdown.svg",
                 "summary_metrics.csv",
@@ -114,6 +116,8 @@ class LocalDebugReportTests(unittest.TestCase):
             manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
             self.assertFalse(manifest["formalEvidence"])
             self.assertGreater(manifest["frameMilliseconds"]["p95"], 0.0)
+            self.assertGreaterEqual(manifest["perSecondSampleCount"], 1)
+            self.assertGreater(manifest["perSecondRenderFps"]["mean"], 0.0)
 
     def test_auto_commit_refuses_unapproved_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
