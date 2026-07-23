@@ -1,9 +1,9 @@
 name: Build corrected pre-novelty source ZIP
 
 on:
-  push:
+  pull_request:
     branches:
-      - prenovelty-ready-test-env-fixed
+      - prenovelty-ready
 
 permissions:
   contents: read
