@@ -1,0 +1,84 @@
+name: Package Dynamic Branch Suite Fix
+
+on:
+  push:
+    branches:
+      - chatgpt/dynamic-branch-suite-fix-20260723
+    paths-ignore:
+      - .chatgpt_artifact_run_id
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout corrected branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate branch context helper
+        shell: bash
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_branch_context.py
+          python -m unittest discover -s tests/final_stage -p 'test_hairgpu_branch_context.py' -v
+
+      - name: Record artifact run ID
+        shell: bash
+        run: |
+          printf '%s\n' "$GITHUB_RUN_ID" > .chatgpt_artifact_run_id
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .chatgpt_artifact_run_id
+          git commit -m 'record corrected source artifact run id'
+          git push
+
+      - name: Build full tracked-source ZIP
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import zipfile
+
+          root = Path('.').resolve()
+          output = root / 'HairSystem_dynamic_branch_suite_fix_full.zip'
+          tracked = subprocess.run(
+              ['git', 'ls-files', '-z'],
+              check=True,
+              capture_output=True,
+          ).stdout.split(b'\0')
+          prefix = 'HairSystem_dynamic_branch_suite_fix/'
+          with zipfile.ZipFile(
+              output,
+              'w',
+              compression=zipfile.ZIP_DEFLATED,
+              compresslevel=9,
+          ) as archive:
+              for raw in tracked:
+                  if not raw:
+                      continue
+                  relative = raw.decode('utf-8')
+                  path = root / relative
+                  if path.is_file():
+                      archive.write(path, prefix + relative)
+          print(output)
+          PY
+
+      - name: Upload corrected full source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Dynamic-Branch-Suite-Fix-Full
+          path: HairSystem_dynamic_branch_suite_fix_full.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
