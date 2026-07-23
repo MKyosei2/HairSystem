@@ -369,6 +369,36 @@
             }
         }
 
+        // Interactive preview hides the scalp color, but still needs the head
+        // to occlude back-side transparent ribbons. Without this depth-only pass,
+        // front and back hair layers blend together as a persistent inner shell.
+        if (!drewCpuHairMesh && !m_showScalpMesh && m_depthOnlyBlendState &&
+            m_scalpVertexBuffer && m_scalpIndexBuffer && m_scalpIndexCount > 0u)
+        {
+            const UINT scalpStride = sizeof(ScalpVertex);
+            ID3D11Buffer* scalpVB = m_scalpVertexBuffer.Get();
+            ID3D11ShaderResourceView* scalpSrv = m_scalpPositions.srv.Get();
+            m_context->OMSetDepthStencilState(m_depthState.Get(), 0);
+            const float depthBlendFactor[4] = { 0, 0, 0, 0 };
+            m_context->OMSetBlendState(m_depthOnlyBlendState.Get(), depthBlendFactor, 0xFFFFFFFFu);
+            m_context->IASetInputLayout(m_scalpInputLayout.Get());
+            m_context->IASetVertexBuffers(0, 1, &scalpVB, &scalpStride, &offset);
+            m_context->IASetIndexBuffer(m_scalpIndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_context->VSSetConstantBuffers(0, 1, &renderCb);
+            m_context->PSSetConstantBuffers(0, 1, &renderCb);
+            m_context->VSSetShaderResources(0, 1, &scalpSrv);
+            m_context->VSSetShader(m_scalpVS.Get(), nullptr, 0);
+            m_context->GSSetShader(nullptr, nullptr, 0);
+            m_context->PSSetShader(m_scalpPS.Get(), nullptr, 0);
+            m_context->DrawIndexed(m_scalpIndexCount, 0, 0);
+            ID3D11ShaderResourceView* nullScalpSrv[1] = {};
+            m_context->VSSetShaderResources(0, 1, nullScalpSrv);
+            const float normalBlendFactor[4] = { 0, 0, 0, 0 };
+            m_context->OMSetBlendState(m_blendState.Get(), normalBlendFactor, 0xFFFFFFFFu);
+            ++m_lastTotalDrawCalls;
+        }
+
         if (!drewCpuHairMesh && m_showScalpMesh && m_scalpVertexBuffer && m_scalpIndexBuffer && m_scalpIndexCount > 0u)
         {
             const UINT scalpStride = sizeof(ScalpVertex);

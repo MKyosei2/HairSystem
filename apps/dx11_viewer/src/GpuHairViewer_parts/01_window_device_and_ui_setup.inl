@@ -658,7 +658,7 @@
         if (!m_experimentCase.enabled)
         {
             m_activePresetName = L"Stable Benchmark Wig";
-            m_widthScale = 0.82f;
+            m_widthScale = 1.00f;
             m_simConfig.gravity = 9.81f;
             m_simConfig.globalDamping = 0.065f;
             m_simConfig.windStrength = 0.0f;
@@ -763,7 +763,7 @@
             // v5-v8 caches whose interleaved order made FollowCS read followers
             // as guides and most real guides as followers.
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v10_parted_flow_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v15_depth_occluded_single_volume_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -864,7 +864,10 @@
         m_showColliderDebug = false;
         if (!m_experimentCase.enabled)
         {
-            m_widthScale = 0.68f;
+            // Preserve the Stable Benchmark Wig coverage chosen before asset
+            // creation. The old 0.68 override made the full-density preview
+            // visibly sparse even after follower layout was corrected.
+            m_widthScale = 0.96f;
             m_enableSelfCollision = false;
             m_enableGridSelfCollision = false;
             m_selfCollisionBroadphaseMode = 1u; // Spatial hash; bitonic mode is comparison-only.

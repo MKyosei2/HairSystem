@@ -218,7 +218,7 @@ if (FAILED(m_lastPresentResult))
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer"
+        ss << L"Hair GPU Viewer | visualFix=V15 depthOccluder=on"
             << L"  |  renderFPS=" << std::fixed << std::setprecision(1)
             << (m_renderCadenceWindowValid ? m_renderFps : 0.0f)
             << L"  simHz=" << std::setprecision(1)
@@ -247,7 +247,7 @@ if (FAILED(m_lastPresentResult))
             << L"  mode="
             << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
             << L"  scalp=" << (m_showScalpMesh ? L"on" : L"off")
-            << L"  visualFix=V10"
+            << L"  visualFix=V15  previewFollowers=100%  depthOccluder=on"
             << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
     }

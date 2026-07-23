@@ -1725,6 +1725,7 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_renderConstants;
         Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
         Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendState;
+        Microsoft::WRL::ComPtr<ID3D11BlendState> m_depthOnlyBlendState;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthState;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_hairDepthState;
         size_t m_hairMeshVertexCapacity = 0;

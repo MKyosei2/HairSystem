@@ -1529,6 +1529,16 @@
             return false;
         }
 
+        // Invisible scalp occluder: keep depth writes but suppress all color
+        // writes. This blocks back-side strands without drawing a scalp sphere.
+        D3D11_BLEND_DESC depthOnlyBlend = {};
+        depthOnlyBlend.RenderTarget[0].BlendEnable = FALSE;
+        depthOnlyBlend.RenderTarget[0].RenderTargetWriteMask = 0u;
+        if (FAILED(m_device->CreateBlendState(&depthOnlyBlend, &m_depthOnlyBlendState)))
+        {
+            return false;
+        }
+
         D3D11_DEPTH_STENCIL_DESC depthDesc = {};
         depthDesc.DepthEnable = TRUE;
         depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;

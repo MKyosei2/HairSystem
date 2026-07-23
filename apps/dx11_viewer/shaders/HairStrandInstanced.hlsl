@@ -1,4 +1,5 @@
-// HAIRGPU_STRAND_RIBBON_VISIBILITY_V6_COVERAGE_BALANCED
+// HAIRGPU_STRAND_RIBBON_VISIBILITY_V15_DEPTH_OCCLUDED
+// HAIRGPU_STRAND_RIBBON_SHADER_ABI_1
 // Guaranteed-visible, thin camera-facing ribbon path.
 // - never treats authored width/alpha as strand validity
 // - keeps hidden LOD instances off-screen instead of alpha-clipping
@@ -225,38 +226,44 @@ VSOutput VSMain(VSInput input)
 
     // Keep a sub-pixel coverage floor without inflating every strand to a
     // one-pixel ribbon. The old floor made 50k crown followers merge into a cap.
-    const float screenStableFloor = cameraDistance * (isGuide ? 0.00042f : 0.00030f);
-    const float authoredScale = isGuide ? 0.78f : 0.64f;
+    const float screenStableFloor = cameraDistance * (isGuide ? 0.00022f : 0.00040f);
+    const float authoredScale = isGuide ? 0.34f : 1.02f;
     float width = max(authoredWidth * authoredScale, screenStableFloor);
     width = clamp(
         width,
-        isGuide ? 0.00018f : 0.00012f,
-        isGuide ? 0.00140f : 0.00090f);
+        isGuide ? 0.00008f : 0.00020f,
+        isGuide ? 0.00060f : 0.00138f);
 
-    const float strandVariation = lerp(0.86f, 1.06f, Hash01(strandIndex + 17u));
-    const float rootOpening = lerp(0.60f, 1.0f, smoothstep(0.0f, 0.10f, u));
-    const float rootToTipTaper = lerp(1.0f, 0.14f, smoothstep(0.50f, 1.0f, u));
+    const float strandVariation = lerp(0.92f, 1.10f, Hash01(strandIndex + 17u));
+    const float rootOpening = lerp(0.94f, 1.0f, smoothstep(0.0f, 0.10f, u));
+    const float rootToTipTaper = lerp(1.0f, 0.24f, smoothstep(0.58f, 1.0f, u));
     width *= strandVariation * rootOpening * rootToTipTaper;
     if (!isGuide && StrandTiers[strandIndex] == 1u)
     {
-        width *= max(RenderReducedWidthBoost, 0.75f);
+        width *= max(RenderReducedWidthBoost, 0.84f);
     }
 
     const float sideSign = ((input.vertexId & 1u) == 0u) ? -1.0f : 1.0f;
     const float3 worldPosition = center + ribbonSide * (0.5f * width * sideSign);
     const float widthN = saturate(width / 0.0014f);
 
-    const float rootAlpha = lerp(0.58f, 1.0f, smoothstep(0.0f, 0.12f, u));
-    const float tipAlpha = lerp(1.0f, 0.34f, smoothstep(0.68f, 1.0f, u));
+    const float rootAlpha = lerp(0.90f, 1.0f, smoothstep(0.0f, 0.08f, u));
+    const float tipAlpha = lerp(1.0f, 0.44f, smoothstep(0.74f, 1.0f, u));
     const float materialAlpha = max(RenderStrandAlpha, 0.02f);
-    const float alphaScale = isGuide ? 0.68f : 0.50f;
+    const float alphaScale = isGuide ? 0.06f : 0.88f;
 
     output.position = mul(float4(worldPosition, 1.0f), ViewProjection);
     output.worldNormal = ribbonNormal;
     output.worldTangent = tangent;
     output.worldPosition = worldPosition;
     output.color = ComputeHairColor(strandIndex, widthN);
-    output.alpha = saturate(materialAlpha * alphaScale * rootAlpha * tipAlpha);
+    const float baseAlpha = saturate(materialAlpha * alphaScale * rootAlpha * tipAlpha);
+    // A stochastic 1/N follower subset must preserve the optical coverage of
+    // the full set. Without this compensation, editing/LOD preview looked bald.
+    const float followerCoverageAlpha = 1.0f - pow(
+        saturate(1.0f - baseAlpha),
+        float(max(RenderFollowerStride, 1u)));
+    output.alpha = isGuide ? baseAlpha : saturate(followerCoverageAlpha);
     return output;
 }
 

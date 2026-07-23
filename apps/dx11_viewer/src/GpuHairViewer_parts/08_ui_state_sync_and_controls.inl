@@ -17,7 +17,9 @@
 void GpuHairViewer::ApplyPreset(int presetIndex)
     {
         m_renderMode = RenderMode::StrandRibbon;
-        m_showScalpMesh = true;
+        // The mannequin scalp is formal-evidence geometry, not an interactive
+        // density mask. Re-enabling it here made preview tuning misleading.
+        m_showScalpMesh = IsExperimentModeEnabled();
         m_showGuideSkeleton = false;
         m_showFollowerSkeleton = false;
         m_showRootMarkers = false;
@@ -32,7 +34,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             m_builderGuideCount = kFixedGuideCount;
             m_builderFollowersPerGuide = kFixedFollowersPerGuide;
             m_builderParticlesPerStrand = kFixedParticlesPerStrand;
-            m_widthScale = 0.82f;
+            m_widthScale = 1.00f;
             m_simConfig.gravity = 9.81f;
             m_simConfig.globalDamping = 0.065f;
             m_simConfig.windStrength = 0.0f;

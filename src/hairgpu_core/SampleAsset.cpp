@@ -1254,7 +1254,7 @@ namespace hairgpu
             const float partFlowMask = partDistanceMask * upperScalpMask;
             if (Length(partFlow) > 1.0e-6f && partFlowMask > 0.0f)
             {
-                const float partFlowBlend = 0.54f * partFlowMask;
+                const float partFlowBlend = 0.26f * partFlowMask;
                 tangentDown = Normalize(
                     tangentDown * (1.0f - partFlowBlend) +
                     partFlow * partFlowBlend);
@@ -1329,16 +1329,16 @@ namespace hairgpu
 
             auto evaluatePointAt = [&](float t, uint32_t noiseIndex)
             {
-                const float rootPhase = Clamp(t / 0.22f, 0.0f, 1.0f);
-                const float fallPhase = Clamp((t - 0.22f) / 0.78f, 0.0f, 1.0f);
+                const float rootPhase = Clamp(t / 0.10f, 0.0f, 1.0f);
+                const float fallPhase = Clamp((t - 0.10f) / 0.90f, 0.0f, 1.0f);
 
                 Vec3 p = root;
-                p += tangentDown * (rootTravel * 0.88f * Smooth01(rootPhase));
+                p += tangentDown * (rootTravel * 0.46f * Smooth01(rootPhase));
                 const float crownLiftBell =
                     std::sin(kPi * rootPhase) * (1.0f - fallPhase);
                 p += normal * (
                     strandLength *
-                    (0.010f + 0.016f * crownMask) *
+                    (0.0012f + 0.0020f * crownMask) *
                     crownLiftBell);
                 p += Vec3(0.0f, -1.0f, 0.0f) * (
                     strandLength *
@@ -1346,30 +1346,34 @@ namespace hairgpu
                     Smooth01(fallPhase));
                 p += tangentDown * (
                     strandLength *
-                    0.095f *
+                    0.022f *
                     (1.0f - fallPhase) *
                     fallPhase *
                     (1.0f - 0.50f * supportMix));
                 p += partFlow * (
                     strandLength *
-                    0.050f *
+                    0.018f *
                     partFlowMask *
                     Smooth01(fallPhase) *
                     (1.0f - 0.35f * fallPhase));
                 p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
                 const float rootShellBlend =
-                    1.0f - Smooth01(Clamp(t / 0.22f, 0.0f, 1.0f));
-                p += normal * (0.0020f * rootShellBlend);
+                    1.0f - Smooth01(Clamp(t / 0.10f, 0.0f, 1.0f));
+                p += normal * (0.00005f * rootShellBlend);
 
                 const float silhouetteBell = std::sin(kPi * Clamp(t, 0.0f, 1.0f));
+                // Keep only a small styling volume. The previous coefficients
+                // expanded the median strand radius by more than 8 cm at mid
+                // length, creating a second balloon-like silhouette.
                 const float radialVolume =
-                    parameters.silhouetteWidth * (0.30f + 0.45f * sideFactor) +
-                    parameters.sideVolume * sideFactor * 0.55f +
-                    parameters.backVolume * backFactor * 0.70f;
-                const float faceVolumeAttenuation = 1.0f - 0.72f * frontFactor;
-                p += radial * (radialVolume * silhouetteBell * faceVolumeAttenuation);
-                p += lateral * (parameters.silhouetteWidth * 0.28f * frontFactor * silhouetteBell);
+                    parameters.silhouetteWidth * (0.06f + 0.10f * sideFactor) +
+                    parameters.sideVolume * sideFactor * 0.10f +
+                    parameters.backVolume * backFactor * 0.12f;
+                const float faceVolumeAttenuation = 1.0f - 0.82f * frontFactor;
+                const float singleVolumeBell = silhouetteBell * (1.0f - 0.30f * Smooth01(t));
+                p += radial * (radialVolume * singleVolumeBell * faceVolumeAttenuation);
+                p += lateral * (parameters.silhouetteWidth * 0.06f * frontFactor * singleVolumeBell);
                 p = p - radial * (parameters.tipInward * t * t * t);
 
                 if (t > 0.35f)
@@ -1529,11 +1533,11 @@ namespace hairgpu
 
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, asset.rootBindings[strandIndex]);
             const Vec3 rootNormal = EvaluateTriangleNormal(asset.scalpMesh, asset.rootBindings[strandIndex]);
-            constexpr float kVisualRootLiftMeters = 0.0025f;
+            constexpr float kVisualRootLiftMeters = 0.0014f;
             const Vec3 reboundRoot = ProjectPointOutsideHeadVolume(
                 rootSurface + rootNormal * kVisualRootLiftMeters,
                 Vec3(0.0f, 1.60f, 0.0f),
-                0.0030f);
+                0.0018f);
             Vec3 originalRoot = asset.restPoints[strand.pointOffset];
             Vec3 delta = reboundRoot - originalRoot;
             for (uint32_t i = 0; i < strand.pointCount; ++i)
@@ -1541,11 +1545,18 @@ namespace hairgpu
                 const uint32_t pointIndex = strand.pointOffset + i;
                 const float t = static_cast<float>(i) / static_cast<float>(std::max(strand.pointCount - 1u, 1u));
                 asset.restPoints[pointIndex] += delta;
-                const float shell = Lerp(0.0030f, 0.0015f, t);
-                asset.restPoints[pointIndex] = ProjectPointOutsideHeadVolume(
-                    asset.restPoints[pointIndex],
-                    Vec3(0.0f, 1.60f, 0.0f),
-                    shell);
+                // Only the root neighborhood needs a scalp-clearance projection.
+                // Projecting every point created an inner spherical shell beneath
+                // the follower volume and produced the persistent double bulge.
+                if (t < 0.10f)
+                {
+                    const float rootGuard = 1.0f - Smooth01(Clamp(t / 0.10f, 0.0f, 1.0f));
+                    const float shell = Lerp(0.0005f, 0.0018f, rootGuard);
+                    asset.restPoints[pointIndex] = ProjectPointOutsideHeadVolume(
+                        asset.restPoints[pointIndex],
+                        Vec3(0.0f, 1.60f, 0.0f),
+                        shell);
+                }
             }
         }
     }
@@ -1554,13 +1565,13 @@ namespace hairgpu
     {
         WigParameters parameters;
         parameters.overallLength = 0.96f;
-        parameters.partingOffset = 0.0f;
-        parameters.partWidth = 0.026f;
+        parameters.partingOffset = 0.075f;
+        parameters.partWidth = 0.015f;
         parameters.scalpConform = 1.0f;
-        parameters.rootLift = 0.0100f;
-        parameters.silhouetteWidth = 0.050f;
-        parameters.sideVolume = 0.032f;
-        parameters.backVolume = 0.048f;
+        parameters.rootLift = 0.0045f;
+        parameters.silhouetteWidth = 0.040f;
+        parameters.sideVolume = 0.025f;
+        parameters.backVolume = 0.040f;
         parameters.lowerRingLengthBias = 0.14f;
         parameters.strandNoise = 0.0022f;
         parameters.followerSpread = 0.0060f;

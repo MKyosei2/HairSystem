@@ -214,9 +214,15 @@
                 const std::string sourceText(
                     (std::istreambuf_iterator<char>(sourceStream)),
                     std::istreambuf_iterator<char>());
-                if (sourceText.find("HAIRGPU_STRAND_RIBBON_VISIBILITY_V6_COVERAGE_BALANCED") == std::string::npos)
+                // Visual tuning versions (V12, V13, ...) may change without
+                // changing the CPU/HLSL binding contract. Validate the stable ABI
+                // marker instead of hard-coding a visual-fix version; otherwise a
+                // newer valid shader is incorrectly rejected as stale.
+                constexpr const char* kRequiredStrandShaderAbi =
+                    "HAIRGPU_STRAND_RIBBON_SHADER_ABI_1";
+                if (sourceText.find(kRequiredStrandShaderAbi) == std::string::npos)
                 {
-                    attemptedPaths << L"  [rejected: stale visibility shader]\r\n";
+                    attemptedPaths << L"  [rejected: incompatible strand shader ABI]\r\n";
                     continue;
                 }
             }

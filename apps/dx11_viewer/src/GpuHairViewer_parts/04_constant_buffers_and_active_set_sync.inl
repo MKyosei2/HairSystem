@@ -109,13 +109,14 @@ void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& 
     // same angular follower slots are not removed around every guide.
     constants.renderFollowerStride = fastEditPreview
         ? (heavyInteraction ? 8u : 4u)
-        : (editVisualization ? 2u : 3u);
+        : (editVisualization ? 2u : 1u);
     constants.renderGuideOnlyAboveTier = fastEditPreview ? (heavyInteraction ? 2u : 3u) : (editVisualization ? 6u : 4u);
-    constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.62f : 0.70f) : (editVisualization ? 0.82f : 0.68f);
+    constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.76f : 0.84f) : (editVisualization ? 0.90f : 1.02f);
+    // V14: guide visibility is reduced in the shader; follower density stays 100%.
     constants.renderHiddenWidthThreshold = 0.0f;
     constants.renderStrandAlpha = fastEditPreview
-        ? (heavyInteraction ? 0.16f : 0.20f)
-        : (editVisualization ? 0.28f : 0.24f);
+        ? (heavyInteraction ? 0.18f : 0.20f)
+        : (editVisualization ? 0.22f : 0.26f);
     if (IsExperimentModeEnabled())
     {
         constants.renderFollowerStride = 1u;
