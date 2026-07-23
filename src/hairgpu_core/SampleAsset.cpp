@@ -1195,7 +1195,15 @@ namespace hairgpu
             const Vec3& rootOffset)
         {
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, binding);
-            const Vec3 normal = EvaluateTriangleNormal(asset.scalpMesh, binding);
+            Vec3 normal;
+            Vec3 scalpTangent;
+            Vec3 scalpBitangent;
+            EvaluateScalpFrameFromBinding(
+                asset.scalpMesh,
+                binding,
+                normal,
+                scalpTangent,
+                scalpBitangent);
             const Vec2 uv = EvaluateTriangleUv(asset.scalpMesh, binding);
             const Vec3 scalpRegions = EvaluateScalpRegionMap(uv.x, uv.y);
             const float crownMask = scalpRegions.x;
@@ -1223,21 +1231,33 @@ namespace hairgpu
             const float backFactor = std::max(-std::sin(angle), 0.0f);
             const float sideFactor = std::fabs(std::cos(angle));
 
-            // A purely radial fallback at the scalp pole made every crown
-            // strand leave the centre in the same direction, reopening the
-            // cap even when roots were present. Blend in a deterministic
-            // azimuthal whorl through the first crown band.
-            const float topFlowMask = Smooth01(
-                1.0f - Clamp(uv.y / 0.18f, 0.0f, 1.0f));
-            Vec3 crownFlow = ProjectOntoPlaneDir(
-                Vec3(-std::sin(angle), -0.10f, std::cos(angle)),
+            // Use a stable side-part field instead of an azimuthal crown whorl.
+            // The old circular flow produced a spherical shell and forced many
+            // strands into the same vertical curtain. Hair now leaves the part
+            // toward opposite sides before gravity takes over.
+            const float partCenterU = WrapUnit(0.47f - parameters.partingOffset);
+            const float signedPartDistance = WrapSignedUnitDelta(uv.x - partCenterU);
+            const float partSideSign = (signedPartDistance >= 0.0f) ? 1.0f : -1.0f;
+            Vec3 partFlow = ProjectOntoPlaneDir(
+                scalpTangent * partSideSign,
                 normal);
-            if (Length(crownFlow) > 1.0e-6f && topFlowMask > 0.0f)
+            if (Length(partFlow) <= 1.0e-6f)
             {
-                const float crownFlowBlend = 0.62f * topFlowMask;
+                partFlow = ProjectOntoPlaneDir(
+                    Vec3(partSideSign, -0.08f, 0.0f),
+                    normal);
+            }
+            const float partDistanceMask = Smooth01(
+                1.0f - Clamp(std::fabs(signedPartDistance) / 0.24f, 0.0f, 1.0f));
+            const float upperScalpMask = Smooth01(
+                1.0f - Clamp(uv.y / 0.46f, 0.0f, 1.0f));
+            const float partFlowMask = partDistanceMask * upperScalpMask;
+            if (Length(partFlow) > 1.0e-6f && partFlowMask > 0.0f)
+            {
+                const float partFlowBlend = 0.54f * partFlowMask;
                 tangentDown = Normalize(
-                    tangentDown * (1.0f - crownFlowBlend) +
-                    crownFlow * crownFlowBlend);
+                    tangentDown * (1.0f - partFlowBlend) +
+                    partFlow * partFlowBlend);
             }
 
             const bool isGuideStrand = (flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u;
@@ -1309,13 +1329,33 @@ namespace hairgpu
 
             auto evaluatePointAt = [&](float t, uint32_t noiseIndex)
             {
-                const float rootPhase = Clamp(t / 0.36f, 0.0f, 1.0f);
-                const float fallPhase = Clamp((t - 0.36f) / 0.64f, 0.0f, 1.0f);
+                const float rootPhase = Clamp(t / 0.22f, 0.0f, 1.0f);
+                const float fallPhase = Clamp((t - 0.22f) / 0.78f, 0.0f, 1.0f);
 
                 Vec3 p = root;
-                p += tangentDown * (rootTravel * Smooth01(rootPhase));
-                p += Vec3(0.0f, -1.0f, 0.0f) * (strandLength * Lerp(0.64f, 0.58f, supportMix) * Smooth01(fallPhase));
-                p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase * (1.0f - 0.50f * supportMix));
+                p += tangentDown * (rootTravel * 0.88f * Smooth01(rootPhase));
+                const float crownLiftBell =
+                    std::sin(kPi * rootPhase) * (1.0f - fallPhase);
+                p += normal * (
+                    strandLength *
+                    (0.010f + 0.016f * crownMask) *
+                    crownLiftBell);
+                p += Vec3(0.0f, -1.0f, 0.0f) * (
+                    strandLength *
+                    Lerp(0.72f, 0.66f, supportMix) *
+                    Smooth01(fallPhase));
+                p += tangentDown * (
+                    strandLength *
+                    0.095f *
+                    (1.0f - fallPhase) *
+                    fallPhase *
+                    (1.0f - 0.50f * supportMix));
+                p += partFlow * (
+                    strandLength *
+                    0.050f *
+                    partFlowMask *
+                    Smooth01(fallPhase) *
+                    (1.0f - 0.35f * fallPhase));
                 p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
                 const float rootShellBlend =

@@ -41,6 +41,16 @@
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+        const bool startInGroom = EnvironmentValueIsTrue(
+            GetEnvironmentVariableString(L"HAIRGPU_START_IN_GROOM"));
+        if (!IsExperimentModeEnabled() && !startInGroom)
+        {
+            m_workspaceMode = WorkspaceMode::Sim;
+            m_interactionMode = InteractionMode::View;
+            m_selectedStrandIndex = -1;
+            m_gizmoDragging = false;
+            m_gpuDebugLinesDirty = true;
+        }
         SyncControlsFromState();
         LayoutUiControls();
         UpdateStatsLabel();

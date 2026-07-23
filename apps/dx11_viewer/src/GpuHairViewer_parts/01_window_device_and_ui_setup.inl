@@ -763,7 +763,7 @@
             // v5-v8 caches whose interleaved order made FollowCS read followers
             // as guides and most real guides as followers.
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v9_contiguous_guides_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v10_parted_flow_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;

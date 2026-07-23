@@ -709,10 +709,10 @@
         m_quickEditFollowerInfluence = hairgpu::Clamp(layer.edit.followerInfluence, 0.0f, 1.5f);
         m_quickEditGroupId = layer.region.groupId;
         m_quickEditGuidesOnly = layer.region.guidesOnly;
-        if (!layer.strandSelection.empty())
-        {
-            m_selectedStrandIndex = static_cast<int32_t>(layer.strandSelection.front());
-        }
+        // Loading an edit layer into the form must not mutate viewport selection.
+        // Explicit picking and session restore own m_selectedStrandIndex.
+        // The old implicit assignment made a selected-strand comb/gizmo appear
+        // immediately on startup even though the user had not selected hair.
         RefreshInlineLayerListFromText(layerIndex);
         SyncQuickEditFormControlsFromState();
         if (IsEditInfluenceOverlayMode())

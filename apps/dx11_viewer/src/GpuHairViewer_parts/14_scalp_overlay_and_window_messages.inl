@@ -15,7 +15,13 @@
             }
         }
 
-        if (m_selectedStrandIndex >= 0 && static_cast<size_t>(m_selectedStrandIndex) < m_asset.strands.size())
+        const bool showSelectedStrandOverlay =
+            !IsExperimentModeEnabled() &&
+            m_workspaceMode == WorkspaceMode::Groom &&
+            m_interactionMode == InteractionMode::Edit;
+        if (showSelectedStrandOverlay &&
+            m_selectedStrandIndex >= 0 &&
+            static_cast<size_t>(m_selectedStrandIndex) < m_asset.strands.size())
         {
             const bool rootMode = (m_strandGizmoMode == StrandGizmoMode::RootTranslate);
             const Vec3 anchor = GetSelectedStrandAnchorPoint(rootMode);

@@ -17,7 +17,7 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
 
     def test_asset_cache_is_versioned_and_semantically_validated(self) -> None:
         source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl").read_text(encoding="utf-8")
-        self.assertIn("sample_hybrid_cache_v9_contiguous_guides", source)
+        self.assertIn("sample_hybrid_cache_v10_parted_flow", source)
         self.assertIn("ValidateHairAsset(cachedAsset)", source)
         self.assertIn("ValidateBenchmarkWigShape(cachedAsset)", source)
 
@@ -106,7 +106,7 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         self.assertNotIn("guideCount / 2u", sample)
         self.assertNotIn("guideCount / 4u", sample)
         startup = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl").read_text(encoding="utf-8")
-        self.assertIn("sample_hybrid_cache_v9_contiguous_guides", startup)
+        self.assertIn("sample_hybrid_cache_v10_parted_flow", startup)
 
 
     def test_generated_asset_uses_contiguous_guide_then_follower_layout(self) -> None:
@@ -151,7 +151,27 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
             / "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"
         ).read_text(encoding="utf-8")
         self.assertIn('L"  scalp="', source)
-        self.assertIn('L"  visualFix=V9"', source)
+        self.assertIn('L"  visualFix=V10"', source)
+
+    def test_startup_does_not_auto_select_or_draw_edit_gizmo(self) -> None:
+        form = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/09_settings_load_save_and_export.inl").read_text(encoding="utf-8")
+        startup = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl").read_text(encoding="utf-8")
+        overlay = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/14_scalp_overlay_and_window_messages.inl").read_text(encoding="utf-8")
+        self.assertNotIn("m_selectedStrandIndex = static_cast<int32_t>(layer.strandSelection.front())", form)
+        self.assertIn("HAIRGPU_START_IN_GROOM", startup)
+        self.assertIn("m_selectedStrandIndex = -1", startup)
+        self.assertIn("showSelectedStrandOverlay", overlay)
+        self.assertIn("m_workspaceMode == WorkspaceMode::Groom", overlay)
+        self.assertIn("m_interactionMode == InteractionMode::Edit", overlay)
+
+    def test_procedural_groom_uses_parted_flow_not_circular_crown_shell(self) -> None:
+        sample = (ROOT / "src/hairgpu_core/SampleAsset.cpp").read_text(encoding="utf-8")
+        self.assertIn("signedPartDistance", sample)
+        self.assertIn("partFlowMask", sample)
+        self.assertIn("scalpTangent * partSideSign", sample)
+        self.assertIn("const float rootPhase = Clamp(t / 0.22f", sample)
+        self.assertIn("const float fallPhase = Clamp((t - 0.22f) / 0.78f", sample)
+        self.assertNotIn("const float crownFlowBlend = 0.62f", sample)
 
 
 if __name__ == "__main__":
