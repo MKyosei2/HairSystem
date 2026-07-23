@@ -31,6 +31,16 @@ jobs:
         id: patch
         shell: bash
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/final_stage/apply_prenovelty_test_env_fixes.py')
+          text = path.read_text(encoding='utf-8')
+          old = 'text, count = pattern.subn(replacement, text, count=1)'
+          new = 'text, count = pattern.subn(lambda _match: replacement, text, count=1)'
+          if text.count(old) != 1:
+              raise SystemExit('startup20 replacement call was not found exactly once')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           set +e
           python tools/final_stage/apply_prenovelty_test_env_fixes.py > patch.log 2>&1
           status=$?
