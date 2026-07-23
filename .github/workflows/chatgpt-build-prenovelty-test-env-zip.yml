@@ -35,19 +35,16 @@ jobs:
           from pathlib import Path
           path = Path('tools/final_stage/apply_prenovelty_test_env_fixes.py')
           text = path.read_text(encoding='utf-8')
-
           old_subn = 'text, count = pattern.subn(replacement, text, count=1)'
           new_subn = 'text, count = pattern.subn(lambda _match: replacement, text, count=1)'
           if text.count(old_subn) != 1:
               raise SystemExit('startup20 replacement call was not found exactly once')
           text = text.replace(old_subn, new_subn, 1)
-
           old_test = '''        source = (\n            ROOT\n            / "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"\n        ).read_text(encoding="utf-8")\n        self.assertIn("allowsZeroMeasuredEvents", source)\n        self.assertIn("ExperimentScenarioId::S01_Idle", source)\n'''
           new_test = '''        parts_dir = ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts"\n        source = "\\n".join(\n            path.read_text(encoding="utf-8")\n            for path in sorted(parts_dir.glob("*.inl"))\n        )\n        self.assertIn("allowsZeroMeasuredEvents", source)\n        self.assertIn("ExperimentScenarioId::S01_Idle", source)\n'''
           if text.count(old_test) != 1:
               raise SystemExit('idle regression test block was not found exactly once')
-          text = text.replace(old_test, new_test, 1)
-          path.write_text(text, encoding='utf-8')
+          path.write_text(text.replace(old_test, new_test, 1), encoding='utf-8')
           PY
           set +e
           python tools/final_stage/apply_prenovelty_test_env_fixes.py > patch.log 2>&1
@@ -65,19 +62,41 @@ jobs:
         shell: bash
         run: |
           set +e
-          python -m py_compile \
-            tools/final_stage/hairgpu_final_run.py \
-            tools/final_stage/hairgpu_runtime_suite.py \
-            tools/final_stage/hairgpu_local_debug_report.py \
-            tools/final_stage/hairgpu_startup_self_test.py \
-            tools/final_stage/apply_prenovelty_test_env_fixes.py \
-            tests/final_stage/test_prenovelty_test_environment_contract.py > syntax.log 2>&1
+          python -m py_compile tools/final_stage/hairgpu_final_run.py tools/final_stage/hairgpu_runtime_suite.py tools/final_stage/hairgpu_local_debug_report.py tools/final_stage/hairgpu_startup_self_test.py tools/final_stage/apply_prenovelty_test_env_fixes.py tests/final_stage/test_prenovelty_test_environment_contract.py > syntax.log 2>&1
           status=$?
           error=$(tail -n 1 syntax.log | tr -cd '[:alnum:]_./: -' | cut -c1-180)
           echo "syntax_status=$status" >> "$GITHUB_OUTPUT"
           echo "syntax_error=$error" >> "$GITHUB_OUTPUT"
           cat syntax.log
           exit 0
+
+      - name: Package patched diagnostics
+        if: steps.syntax.outputs.syntax_status == '0'
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+          files = [
+              Path('docs/sample_assets/prenovelty_runtime_suite.json'),
+              Path('tools/final_stage/hairgpu_runtime_suite.py'),
+              Path('tools/final_stage/Run_Final_Runtime_Suite.bat'),
+              Path('tools/final_stage/apply_prenovelty_test_env_fixes.py'),
+              Path('tests/final_stage/test_prenovelty_test_environment_contract.py'),
+              Path('apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl'),
+          ]
+          with zipfile.ZipFile('patched_diagnostics.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+              for path in files:
+                  z.write(path, path.as_posix())
+
+      - name: Upload patched diagnostics
+        if: steps.syntax.outputs.syntax_status == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-diagnostics-${{ github.run_id }}
+          path: patched_diagnostics.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
       - name: Focused regression tests
         id: tests
