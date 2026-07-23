@@ -12,6 +12,9 @@ jobs:
   patch-test-package:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      patch_status: ${{ steps.patch.outputs.patch_status }}
+      patch_error: ${{ steps.patch.outputs.patch_error }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -19,12 +22,9 @@ jobs:
           fetch-depth: 1
           show-progress: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Apply stability and test-environment fixes
+        id: patch
+        continue-on-error: true
         shell: bash
         run: |
           python - <<'PY'
@@ -37,9 +37,17 @@ jobs:
               raise SystemExit('startup20 replacement call was not found exactly once')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
-          python tools/final_stage/apply_prenovelty_test_env_fixes.py
+          set +e
+          python tools/final_stage/apply_prenovelty_test_env_fixes.py > patch.log 2>&1
+          status=$?
+          error=$(tail -n 1 patch.log | tr -cd '[:alnum:]_./: -' | cut -c1-180)
+          echo "patch_status=$status" >> "$GITHUB_OUTPUT"
+          echo "patch_error=$error" >> "$GITHUB_OUTPUT"
+          cat patch.log
+          exit 0
 
       - name: Python syntax checks
+        if: steps.patch.outputs.patch_status == '0'
         run: |
           python -m py_compile \
             tools/final_stage/hairgpu_final_run.py \
@@ -50,12 +58,15 @@ jobs:
             tests/final_stage/test_prenovelty_test_environment_contract.py
 
       - name: Focused regression tests
+        if: steps.patch.outputs.patch_status == '0'
         run: python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v
 
       - name: Verify immutable scenario inputs
+        if: steps.patch.outputs.patch_status == '0'
         run: git diff --exit-code -- benchmarks/novelty01/scenarios
 
       - name: Create full corrected source ZIP
+        if: steps.patch.outputs.patch_status == '0'
         shell: python
         run: |
           from pathlib import Path
@@ -85,6 +96,7 @@ jobs:
           print(output)
 
       - name: Upload corrected full source
+        if: steps.patch.outputs.patch_status == '0'
         uses: actions/upload-artifact@v4
         with:
           name: HairSystem-prenovelty-test-env-fixed-full-${{ github.sha }}
@@ -92,3 +104,17 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Fail when patch generation failed
+        if: steps.patch.outputs.patch_status != '0'
+        run: exit 1
+
+  patch-diagnostic:
+    needs: patch-test-package
+    if: always()
+    name: patch-status-${{ needs.patch-test-package.outputs.patch_status }}-${{ needs.patch-test-package.outputs.patch_error }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "status=${{ needs.patch-test-package.outputs.patch_status }}"
+          echo "error=${{ needs.patch-test-package.outputs.patch_error }}"
