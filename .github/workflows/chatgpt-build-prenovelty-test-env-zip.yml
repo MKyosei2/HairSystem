@@ -17,6 +17,8 @@ jobs:
       patch_error: ${{ steps.patch.outputs.patch_error }}
       syntax_status: ${{ steps.syntax.outputs.syntax_status }}
       syntax_error: ${{ steps.syntax.outputs.syntax_error }}
+      test_status: ${{ steps.tests.outputs.test_status }}
+      test_error: ${{ steps.tests.outputs.test_error }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -70,15 +72,27 @@ jobs:
           exit 0
 
       - name: Focused regression tests
+        id: tests
         if: steps.patch.outputs.patch_status == '0' && steps.syntax.outputs.syntax_status == '0'
-        run: python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v > tests.log 2>&1
+          status=$?
+          error=$(grep -E '^(FAIL|ERROR):' tests.log | head -n 1 | tr -cd '[:alnum:]_./: ()-,' | cut -c1-180)
+          if [ -z "$error" ]; then error=$(tail -n 1 tests.log | tr -cd '[:alnum:]_./: ()-,' | cut -c1-180); fi
+          echo "test_status=$status" >> "$GITHUB_OUTPUT"
+          echo "test_error=$error" >> "$GITHUB_OUTPUT"
+          cat tests.log
+          exit 0
 
       - name: Verify immutable scenario inputs
-        if: steps.patch.outputs.patch_status == '0' && steps.syntax.outputs.syntax_status == '0'
+        if: steps.tests.outputs.test_status == '0'
         run: git diff --exit-code -- benchmarks/novelty01/scenarios
 
       - name: Create full corrected source ZIP
-        if: steps.patch.outputs.patch_status == '0' && steps.syntax.outputs.syntax_status == '0'
+        if: steps.tests.outputs.test_status == '0'
         shell: python
         run: |
           from pathlib import Path
@@ -100,7 +114,7 @@ jobs:
                   archive.write(path, f'HairSystem_prenovelty_test_env_fixed/{text}')
 
       - name: Upload corrected full source
-        if: steps.patch.outputs.patch_status == '0' && steps.syntax.outputs.syntax_status == '0'
+        if: steps.tests.outputs.test_status == '0'
         uses: actions/upload-artifact@v4
         with:
           name: HairSystem-prenovelty-test-env-fixed-full-${{ github.sha }}
@@ -110,13 +124,13 @@ jobs:
           compression-level: 0
 
       - name: Fail on generation error
-        if: steps.patch.outputs.patch_status != '0' || steps.syntax.outputs.syntax_status != '0'
+        if: steps.patch.outputs.patch_status != '0' || steps.syntax.outputs.syntax_status != '0' || steps.tests.outputs.test_status != '0'
         run: exit 1
 
   patch-diagnostic:
     needs: patch-test-package
     if: always()
-    name: p${{ needs.patch-test-package.outputs.patch_status }}-${{ needs.patch-test-package.outputs.patch_error }}-s${{ needs.patch-test-package.outputs.syntax_status }}-${{ needs.patch-test-package.outputs.syntax_error }}
+    name: p${{ needs.patch-test-package.outputs.patch_status }}-${{ needs.patch-test-package.outputs.patch_error }}-s${{ needs.patch-test-package.outputs.syntax_status }}-${{ needs.patch-test-package.outputs.syntax_error }}-t${{ needs.patch-test-package.outputs.test_status }}-${{ needs.patch-test-package.outputs.test_error }}
     runs-on: ubuntu-latest
     steps:
       - run: echo diagnostic
