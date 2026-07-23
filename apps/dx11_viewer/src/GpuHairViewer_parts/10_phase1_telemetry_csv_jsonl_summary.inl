@@ -187,45 +187,101 @@ return true;
         }
     }
 
-    void GpuHairViewer::EvaluateScalpCoverageTint(float u, float v, float& r, float& g, float& b) const
+    void GpuHairViewer::EvaluateScalpCoverageTint(
+        float u,
+        float v,
+        float& r,
+        float& g,
+        float& b) const
     {
-        const float dx = u - 0.58f;
-        const float dy = v - 0.28f;
-        const float crown = hairgpu::Clamp(1.0f - std::sqrt(dx * dx * 2.4f + dy * dy * 1.4f) / 0.34f, 0.0f, 1.0f);
+        auto wrapSigned = [](float value)
+        {
+            while (value > 0.5f)
+            {
+                value -= 1.0f;
+            }
+            while (value < -0.5f)
+            {
+                value += 1.0f;
+            }
+            return value;
+        };
 
-        const float partWidth = std::max(m_scalpPartLineWidth, 1.0e-4f);
-        const float partLine = std::exp(-(dx * dx) / std::max(partWidth * partWidth, 1.0e-5f)) * std::exp(-(dy * dy) / 0.070f);
+        // The scalp mesh is a hair-cap underlayer in the normal preview. Match it
+        // to the root colour so tiny raster/depth gaps do not appear as a large
+        // skin-coloured bald patch. This changes rendering only, not simulation.
+        const float dx = wrapSigned(u - 0.50f);
+        const float crownDy = v - 0.085f;
+        const float crown = hairgpu::Clamp(
+            1.0f -
+                std::sqrt(
+                    dx * dx * 2.0f +
+                    crownDy * crownDy * 1.35f) /
+                    0.30f,
+            0.0f,
+            1.0f);
 
-        const float shoulderOffset = std::max(partWidth * 1.15f, 0.022f);
-        const float shoulderWidth = std::max(partWidth * 1.75f, 0.040f);
-        const float shoulderL = std::exp(-((dx + shoulderOffset) * (dx + shoulderOffset)) / std::max(shoulderWidth * shoulderWidth, 1.0e-5f)) * std::exp(-(dy * dy) / 0.085f);
-        const float shoulderR = std::exp(-((dx - shoulderOffset) * (dx - shoulderOffset)) / std::max(shoulderWidth * shoulderWidth, 1.0e-5f)) * std::exp(-(dy * dy) / 0.085f);
-        const float frontBand = std::exp(-((v - 0.84f) * (v - 0.84f)) / 0.018f);
+        const float partWidth =
+            std::max(m_scalpPartLineWidth, 1.0e-4f);
+        const float partLine =
+            std::exp(
+                -(dx * dx) /
+                std::max(partWidth * partWidth, 1.0e-5f)) *
+            std::exp(
+                -(crownDy * crownDy) / 0.028f);
 
-        const float rawCoverage = 0.18f + 0.58f * crown - 0.34f * partLine + 0.26f * (shoulderL + shoulderR) + 0.10f * frontBand;
-        const float coverage = hairgpu::Clamp(rawCoverage * m_scalpCoverageStrength, 0.0f, 1.0f);
+        float frontDu = std::fabs(u - 0.25f);
+        frontDu = std::min(frontDu, 1.0f - frontDu);
+        const float frontHairline =
+            std::exp(
+                -((v - 0.27f) * (v - 0.27f)) /
+                0.020f) *
+            hairgpu::Clamp(
+                1.0f - frontDu / 0.11f,
+                0.0f,
+                1.0f);
 
-        const float darkness = hairgpu::Clamp(m_scalpTintDarkness, 0.0f, 1.0f);
-        const float hairBlend = hairgpu::Clamp(m_scalpHairBlend, 0.0f, 1.0f);
+        const float rawCoverage =
+            0.76f +
+            0.30f * crown +
+            0.16f * frontHairline -
+            0.035f * partLine;
+        const float coverage = hairgpu::Clamp(
+            rawCoverage * m_scalpCoverageStrength,
+            0.0f,
+            1.0f);
 
-        const float scalpBaseR = 0.46f, scalpBaseG = 0.34f, scalpBaseB = 0.25f;
-        const float scalpDarkR = 0.26f, scalpDarkG = 0.18f, scalpDarkB = 0.12f;
-        const float hairBaseR = 0.18f, hairBaseG = 0.12f, hairBaseB = 0.08f;
-        const float hairTintR = 0.14f, hairTintG = 0.10f, hairTintB = 0.07f;
+        const float darkness = hairgpu::Clamp(
+            m_scalpTintDarkness,
+            0.0f,
+            1.0f);
+        const float hairBlend = hairgpu::Clamp(
+            m_scalpHairBlend,
+            0.0f,
+            1.0f);
 
-        const float scalpR = scalpBaseR * (1.0f - darkness) + scalpDarkR * darkness;
-        const float scalpG = scalpBaseG * (1.0f - darkness) + scalpDarkG * darkness;
-        const float scalpB = scalpBaseB * (1.0f - darkness) + scalpDarkB * darkness;
+        const float scalpR = 0.30f * (1.0f - darkness) + 0.12f * darkness;
+        const float scalpG = 0.20f * (1.0f - darkness) + 0.075f * darkness;
+        const float scalpB = 0.13f * (1.0f - darkness) + 0.045f * darkness;
 
-        const float hairR = hairBaseR * (1.0f - hairBlend) + hairTintR * hairBlend;
-        const float hairG = hairBaseG * (1.0f - hairBlend) + hairTintG * hairBlend;
-        const float hairB = hairBaseB * (1.0f - hairBlend) + hairTintB * hairBlend;
+        const float hairR = 0.20f * (1.0f - hairBlend) + 0.15f * hairBlend;
+        const float hairG = 0.13f * (1.0f - hairBlend) + 0.095f * hairBlend;
+        const float hairB = 0.070f * (1.0f - hairBlend) + 0.050f * hairBlend;
 
-        const float partLight = hairgpu::Clamp(0.08f + 0.40f * partLine, 0.0f, 0.38f);
+        const float partLight = hairgpu::Clamp(
+            0.02f + 0.08f * partLine,
+            0.0f,
+            0.10f);
 
-        r = scalpR * (1.0f - coverage) + hairR * coverage + partLight * 0.08f;
-        g = scalpG * (1.0f - coverage) + hairG * coverage + partLight * 0.06f;
-        b = scalpB * (1.0f - coverage) + hairB * coverage + partLight * 0.04f;
+        r = scalpR * (1.0f - coverage) +
+            hairR * coverage +
+            partLight * 0.035f;
+        g = scalpG * (1.0f - coverage) +
+            hairG * coverage +
+            partLight * 0.025f;
+        b = scalpB * (1.0f - coverage) +
+            hairB * coverage +
+            partLight * 0.015f;
 
         r = hairgpu::Clamp(r, 0.0f, 1.0f);
         g = hairgpu::Clamp(g, 0.0f, 1.0f);

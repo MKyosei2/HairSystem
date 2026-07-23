@@ -1515,10 +1515,10 @@ namespace hairgpu::viewer
         hairgpu::HairAsset m_baseAsset;
         MaskSourceMode m_maskSourceMode = MaskSourceMode::Auto;
         MaskOverlayMode m_maskOverlayMode = MaskOverlayMode::None;
-        float m_scalpCoverageStrength = 1.00f;
-        float m_scalpPartLineWidth = 0.034f;
-        float m_scalpTintDarkness = 0.55f;
-        float m_scalpHairBlend = 0.70f;
+        float m_scalpCoverageStrength = 1.30f;
+        float m_scalpPartLineWidth = 0.012f;
+        float m_scalpTintDarkness = 0.88f;
+        float m_scalpHairBlend = 0.96f;
         // Non-invasive cadence metrics. Render cadence uses QPC start-to-start
         // intervals; GPU throughput uses delayed timestamp queries and never waits.
         float m_smoothedFps = 0.0f; // compatibility alias for m_renderFps

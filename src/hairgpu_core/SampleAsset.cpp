@@ -107,11 +107,11 @@ namespace hairgpu
         {
             float du = std::fabs(WrapUnit(u) - 0.25f);
             du = std::min(du, 1.0f - du);
-            const float frontCenter = SmoothDistanceBand(du, 0.115f);
-            const float foreheadBand = SmoothRamp(v, 0.10f, 0.10f) *
-                                       SmoothFalloff01((v - 0.64f) / 0.14f);
-            const float cheekTaper = SmoothBand(v, 0.34f, 0.24f);
-            return frontCenter * foreheadBand * cheekTaper;
+            const float frontCenter = SmoothDistanceBand(du, 0.074f);
+            const float foreheadBand = SmoothRamp(v, 0.12f, 0.08f) *
+                                       SmoothFalloff01((v - 0.48f) / 0.10f);
+            const float cheekTaper = SmoothBand(v, 0.30f, 0.18f);
+            return frontCenter * foreheadBand * cheekTaper * 0.72f;
         }
 
         float EvaluatePartLineCenterMask(float u, float v, float partingOffset = 0.0f)
@@ -169,7 +169,7 @@ namespace hairgpu
             du = std::min(du, 1.0f - du);
             const float fringe = SmoothDistanceBand(du, 0.12f);
             maxV = std::min(maxV, Lerp(maxV, 0.32f, fringe));
-            return Clamp(maxV, 0.16f, 0.82f);
+            return Clamp(maxV, 0.28f, 0.58f);
         }
 
         Vec3 ProjectOntoPlaneDir(const Vec3& v, const Vec3& n)
@@ -768,14 +768,14 @@ namespace hairgpu
             // Explicitly weight the pole and first latitude rings. The former
             // distribution was centred at v=0.20 while minV=0.06 removed the
             // actual crown cap, leaving a stable circular hole.
-            const float topCap = 0.0f;
+            const float topCap = std::exp(-(v * v) / 0.0180f);
             const float crown = std::exp(
                 -(dx * dx * 2.0f + crownDy * crownDy * 1.5f) /
-                0.018f);
+                0.036f);
             const float crownCoreFill = std::exp(
                 -(dx * dx * 2.6f +
                   crownDy * crownDy * 1.8f) /
-                0.010f);
+                0.022f);
 
             const float partLine = std::exp(-(dx * dx) / 0.0008f) *
                                    std::exp(
@@ -800,8 +800,8 @@ namespace hairgpu
             // v=0.86 was outside the allowed front-root range and therefore
             // never increased front-hairline density.
             const float frontHairline = std::exp(
-                -((v - 0.27f) * (v - 0.27f)) /
-                0.008f);
+                -((v - 0.24f) * (v - 0.24f)) /
+                0.018f);
             float frontDu = std::fabs(WrapUnit(u) - 0.25f);
             frontDu = std::min(frontDu, 1.0f - frontDu);
             const float frontSector =
@@ -813,13 +813,13 @@ namespace hairgpu
                 0.40f * crownMask +
                 0.70f * crownCoreFill;
             const float partLinePenalty =
-                0.035f * partLine * partPenaltyEnable;
+                0.008f * partLine * partPenaltyEnable;
             const float partShoulderBoost =
                 0.36f * (shoulderL + shoulderR);
             const float templeBoost = 0.16f * templeMask;
             const float napeBoost = 0.10f * napeMask;
             const float frontBoost =
-                0.75f * frontHairline * frontSector *
+                1.10f * frontHairline * frontSector *
                 (1.0f - 0.10f * faceOpening);
 
             float coverage =
@@ -832,7 +832,7 @@ namespace hairgpu
                 frontBoost;
             coverage *= bandWindow;
             coverage *= (1.0f - 0.02f * faceOpening);
-            return Clamp(coverage, 0.40f, 4.20f);
+            return Clamp(coverage, 0.85f, 4.60f);
         }
 
         std::vector<float> BuildScalpAreaDistributionCdf(const ScalpMesh& scalp)
@@ -1122,7 +1122,8 @@ namespace hairgpu
             // strand leave the centre in the same direction, reopening the
             // cap even when roots were present. Blend in a deterministic
             // azimuthal whorl through the first crown band.
-            const float topFlowMask = 0.92f;
+            const float topFlowMask = Smooth01(
+                1.0f - Clamp(uv.y / 0.18f, 0.0f, 1.0f));
             Vec3 crownFlow = ProjectOntoPlaneDir(
                 Vec3(-std::sin(angle), -0.10f, std::cos(angle)),
                 normal);
@@ -1161,8 +1162,16 @@ namespace hairgpu
             }
 
             const Vec3 tangentOffset = rootOffset - normal * Dot(rootOffset, normal);
-            Vec3 root = rootSurface + normal * (0.0035f + parameters.rootLift * 0.15f) + tangentOffset * 0.72f;
-            root = ProjectPointOutsideHeadVolume(root, scalpCenter, 0.0055f);
+            const float authoredRootLift =
+                0.0065f + parameters.rootLift * 0.25f;
+            Vec3 root =
+                rootSurface +
+                normal * authoredRootLift +
+                tangentOffset * 0.72f;
+            root = ProjectPointOutsideHeadVolume(
+                root,
+                scalpCenter,
+                0.0100f);
 
             const float baseStrandLength = ComputeReferenceStrandLength(segmentLength);
             const float regionalLength = ComputeGuideLength(root, scalpCenter, uv, baseStrandLength, parameters);
@@ -1204,7 +1213,9 @@ namespace hairgpu
                 p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase * (1.0f - 0.50f * supportMix));
                 p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
-                p += normal * (0.0040f * (1.0f - rootPhase));
+                const float rootShellBlend =
+                    1.0f - Smooth01(Clamp(t / 0.22f, 0.0f, 1.0f));
+                p += normal * (0.0080f * rootShellBlend);
 
                 const float silhouetteBell = std::sin(kPi * Clamp(t, 0.0f, 1.0f));
                 const float radialVolume =
@@ -1225,7 +1236,10 @@ namespace hairgpu
                     p += orthoB * (noiseB * noise * 0.5f);
                 }
 
-                return ProjectPointOutsideHeadVolume(p, scalpCenter, Lerp(0.0055f, 0.0020f, t));
+                return ProjectPointOutsideHeadVolume(
+                    p,
+                    scalpCenter,
+                    Lerp(0.0100f, 0.0025f, t));
             };
 
             for (uint32_t sampleIndex = 0; sampleIndex < denseSampleCount; ++sampleIndex)
@@ -1370,7 +1384,11 @@ namespace hairgpu
 
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, asset.rootBindings[strandIndex]);
             const Vec3 rootNormal = EvaluateTriangleNormal(asset.scalpMesh, asset.rootBindings[strandIndex]);
-            const Vec3 reboundRoot = ProjectPointOutsideHeadVolume(rootSurface + rootNormal * 0.0045f, Vec3(0.0f, 1.60f, 0.0f), 0.0055f);
+            constexpr float kVisualRootLiftMeters = 0.0090f;
+            const Vec3 reboundRoot = ProjectPointOutsideHeadVolume(
+                rootSurface + rootNormal * kVisualRootLiftMeters,
+                Vec3(0.0f, 1.60f, 0.0f),
+                0.0100f);
             Vec3 originalRoot = asset.restPoints[strand.pointOffset];
             Vec3 delta = reboundRoot - originalRoot;
             for (uint32_t i = 0; i < strand.pointCount; ++i)
@@ -1378,7 +1396,11 @@ namespace hairgpu
                 const uint32_t pointIndex = strand.pointOffset + i;
                 const float t = static_cast<float>(i) / static_cast<float>(std::max(strand.pointCount - 1u, 1u));
                 asset.restPoints[pointIndex] += delta;
-                asset.restPoints[pointIndex] = ProjectPointOutsideHeadVolume(asset.restPoints[pointIndex], Vec3(0.0f, 1.60f, 0.0f), Lerp(0.0055f, 0.0020f, t));
+                const float shell = Lerp(0.0100f, 0.0025f, t);
+                asset.restPoints[pointIndex] = ProjectPointOutsideHeadVolume(
+                    asset.restPoints[pointIndex],
+                    Vec3(0.0f, 1.60f, 0.0f),
+                    shell);
             }
         }
     }
@@ -1390,7 +1412,7 @@ namespace hairgpu
         parameters.partingOffset = 0.0f;
         parameters.partWidth = 0.026f;
         parameters.scalpConform = 1.0f;
-        parameters.rootLift = 0.006f;
+        parameters.rootLift = 0.0100f;
         parameters.silhouetteWidth = 0.050f;
         parameters.sideVolume = 0.032f;
         parameters.backVolume = 0.048f;
@@ -1420,12 +1442,18 @@ namespace hairgpu
         const Vec3 scalpCenter(0.0f, 1.60f, 0.0f);
         const std::vector<float> scalpAreaCdf = BuildScalpAreaDistributionCdf(asset.scalpMesh);
 
-        const uint32_t crownGuideQuota = std::max<uint32_t>(guideCount / 3u, 224u);
+        const uint32_t crownGuideQuota =
+            std::min<uint32_t>(
+                guideCount,
+                std::max<uint32_t>(384u, guideCount / 2u));
         const uint32_t remainingAfterCrown =
             guideCount > crownGuideQuota
                 ? guideCount - crownGuideQuota
                 : 0u;
-        const uint32_t frontHairlineGuideQuota = std::max<uint32_t>(guideCount / 5u, 160u);
+        const uint32_t frontHairlineGuideQuota =
+            std::min<uint32_t>(
+                remainingAfterCrown,
+                std::max<uint32_t>(224u, guideCount / 4u));
 
         for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
         {
@@ -1481,7 +1509,7 @@ namespace hairgpu
             }
 
             StrandMaterial material;
-            material.rootWidth = 0.00125f;
+            material.rootWidth = 0.00160f;
             material.tipWidth = 0.000065f;
             material.stiffness = 0.95f;
             material.damping = 0.055f;

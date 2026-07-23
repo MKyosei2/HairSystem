@@ -343,6 +343,21 @@ float3 EvaluateBoundRoot(uint strandIndex)
     return a * binding.Barycentric.x + b * binding.Barycentric.y + c * binding.Barycentric.z;
 }
 
+float3 EvaluateBoundRootNormal(uint strandIndex)
+{
+    RootBindingData binding = RootBindings[strandIndex];
+    TriangleData tri = ScalpTriangles[binding.TriangleIndex];
+    float3 a = ScalpPositions[tri.A].xyz;
+    float3 b = ScalpPositions[tri.B].xyz;
+    float3 c = ScalpPositions[tri.C].xyz;
+    float3 triangleNormal = SafeNormalize(cross(b - a, c - a));
+    if (dot(triangleNormal, triangleNormal) <= 1.0e-8f)
+    {
+        triangleNormal = float3(0.0f, 1.0f, 0.0f);
+    }
+    return triangleNormal;
+}
+
 float3 ResolveCapsule(float3 p, float3 a, float ra, float3 b, float rb)
 {
     float3 ab = b - a;
@@ -555,7 +570,22 @@ void RootBindCS(uint3 id : SV_DispatchThreadID)
     uint rootIndex = strandIndex * ParticlesPerStrand;
     float3 restRoot = RestPositions[rootIndex].xyz;
     float3 scalpRoot = EvaluateBoundRoot(strandIndex);
-    float3 boundRoot = lerp(restRoot, scalpRoot, saturate(ScalpMotionBlend));
+    float3 scalpNormal = EvaluateBoundRootNormal(strandIndex);
+
+    // Preserve an authored scalp-normal clearance even when the animated scalp
+    // becomes the binding source. The previous lerp ended exactly on the scalp
+    // surface and the depth buffer hid the first hair segments.
+    float authoredLift = clamp(
+        dot(restRoot - scalpRoot, scalpNormal),
+        0.0085f,
+        0.0120f);
+    float3 liftedScalpRoot =
+        scalpRoot + scalpNormal * authoredLift;
+    float3 boundRoot = lerp(
+        restRoot,
+        liftedScalpRoot,
+        saturate(ScalpMotionBlend));
+
     if (!IsFinite3(boundRoot))
     {
         boundRoot = restRoot;
@@ -1668,7 +1698,7 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         0.25f,
         1.0f,
         saturate(follow.ClumpWeight));
-    float rootCoverageBlend = smoothstep(0.18f, 0.58f, t);
+    float rootCoverageBlend = smoothstep(0.42f, 0.82f, t);
     float clumpGain = lerp(
         1.0f,
         authoredClumpGain,
