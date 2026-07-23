@@ -650,6 +650,37 @@
         ApplyExperimentConfigBeforeAssetCreation();
         EnforceFixedWorkload();
 
+        // Interactive startup must begin from the same conservative baseline as
+        // preset 0. Previously only the title said "Rapunzel Preview" while the
+        // default members still enabled self collision, loose constraints and
+        // freeze/support terms. That mismatch made a normal F5 launch much less
+        // stable than selecting "Stable Benchmark Wig" manually.
+        if (!m_experimentCase.enabled)
+        {
+            m_activePresetName = L"Stable Benchmark Wig";
+            m_widthScale = 0.82f;
+            m_simConfig.gravity = 9.81f;
+            m_simConfig.globalDamping = 0.065f;
+            m_simConfig.windStrength = 0.0f;
+            m_simConfig.followStiffness = 0.995f;
+            m_simConfig.stretchCompliance = 5.0e-8f;
+            m_simConfig.bendCompliance = 7.5e-6f;
+            m_simConfig.looseConstraintStiffness = 0.0f;
+            m_simConfig.supportCollisionRadius = 0.0f;
+            m_simConfig.supportCollisionStiffness = 0.0f;
+            m_simConfig.freezeBlend = 0.0f;
+            m_selfCollisionRadius = 0.0045f;
+            m_selfCollisionStiffness = 0.08f;
+            m_simConfig.selfCollisionCellSize = 0.040f;
+            m_enableSelfCollision = false;
+            m_enableGridSelfCollision = false;
+            m_enableActiveSetRuntime = false;
+            m_enableScalpMotion = false;
+            m_debugColorMode = DebugColorMode::Natural;
+            m_renderMode = RenderMode::StrandRibbon;
+            m_showScalpMesh = false;
+        }
+
         const float initialSegmentLength = SegmentLengthForParticleCount(m_builderParticlesPerStrand);
 
         // HAIRGPU_FORMAL_ASSET_BINDING_V1: a formal run may never fall back to a generated/cache asset.
@@ -727,8 +758,12 @@
             GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
             const std::filesystem::path assetCacheDirectory =
                 std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
+            // v4 encodes the post-root-distribution/post-follower-stability asset
+            // contract. A count-only v1 cache could keep reloading an older asset
+            // where all followers shared the guide root, creating a persistent
+            // crown hole even after the generator had been fixed.
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v1_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v4_stable_roots_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -746,6 +781,10 @@
             if (std::filesystem::exists(assetCachePath, assetCacheEc) && !assetCacheEc &&
                 hairgpu::LoadHairAssetFromHairBinary(assetCachePath, cachedAsset, assetCacheError))
             {
+                const hairgpu::HairAssetValidationReport structuralReport =
+                    hairgpu::ValidateHairAsset(cachedAsset);
+                const hairgpu::BenchmarkWigValidationReport shapeReport =
+                    hairgpu::ValidateBenchmarkWigShape(cachedAsset);
                 loadedCachedAsset =
                     cachedAsset.guideStrandCount == m_builderGuideCount &&
                     cachedAsset.followerStrandCount == m_builderGuideCount * m_builderFollowersPerGuide &&
@@ -754,7 +793,9 @@
                     cachedAsset.restPoints.size() == expectedCachedPoints &&
                     cachedAsset.pointWidths.size() == expectedCachedPoints &&
                     cachedAsset.rootBindings.size() == expectedCachedStrands &&
-                    cachedAsset.followData.size() == expectedCachedStrands;
+                    cachedAsset.followData.size() == expectedCachedStrands &&
+                    structuralReport.valid &&
+                    shapeReport.valid;
             }
 
             if (loadedCachedAsset)

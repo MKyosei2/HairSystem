@@ -66,7 +66,9 @@ class LongRunHairStabilityContractTests(unittest.TestCase):
     def test_static_root_preserves_authored_scalp_lift(self) -> None:
         body = _function_body(self.hlsl, "void RootBindCS(")
         self.assertIn("float3 restRoot = RestPositions[rootIndex].xyz", body)
-        self.assertIn("lerp(restRoot, scalpRoot, saturate(ScalpMotionBlend))", body)
+        self.assertIn("float3 liftedScalpRoot", body)
+        self.assertIn("scalpRoot + scalpNormal * authoredLift", body)
+        self.assertIn("liftedScalpRoot,", body)
 
     def test_bend_constraint_is_rest_chord_and_not_direction_free_offset(self) -> None:
         body = _function_body(self.hlsl, "void BendCS(")
@@ -89,7 +91,8 @@ class LongRunHairStabilityContractTests(unittest.TestCase):
         self.assertIn("uint(follow.ParentGuide) >= GuideStrandCount", body)
         self.assertIn("maximumFollowerRadius", body)
         self.assertIn("target = translatedRest", body)
-        self.assertIn("!IsFinite3(parentPos)", body)
+        self.assertIn("!IsFinite3(parentPosition)", body)
+        self.assertIn("previousFollowerRoot", body)
 
     def test_cpu_analogue_remains_finite_and_inextensible(self) -> None:
         # Small deterministic analogue of the shader ordering. It exercises 128 points,

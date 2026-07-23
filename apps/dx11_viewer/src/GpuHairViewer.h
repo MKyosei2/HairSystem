@@ -1388,7 +1388,7 @@ namespace hairgpu::viewer
         bool m_dragging = false;
         POINT m_mouseDownPoint = {};
         bool m_syncingControls = false;
-        bool m_enableSelfCollision = true;
+        bool m_enableSelfCollision = false;
         bool m_enableScalpMotion = false;
         bool m_showColliderDebug = false;
         bool m_showScalpWireframe = false;
@@ -1456,10 +1456,10 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
         hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
         float m_assetBoundsRadius = 0.75f;
-        float m_widthScale = 0.56f;
-        float m_selfCollisionRadius = 0.012f;
-        float m_selfCollisionStiffness = 0.35f;
-        bool m_enableGridSelfCollision = true;
+        float m_widthScale = 0.82f;
+        float m_selfCollisionRadius = 0.0045f;
+        float m_selfCollisionStiffness = 0.08f;
+        bool m_enableGridSelfCollision = false;
         uint32_t m_selfCollisionBroadphaseMode = 1u; // Spatial hash runtime default.
         bool m_enableRuntimeAngularBend = true;
         float m_runtimeAngularBendRadians = 0.18f;
@@ -1470,7 +1470,7 @@ namespace hairgpu::viewer
         uint32_t m_builderGuideCount = kFixedGuideCount;
         uint32_t m_builderFollowersPerGuide = kFixedFollowersPerGuide;
         uint32_t m_builderParticlesPerStrand = kFixedParticlesPerStrand;
-        std::wstring m_activePresetName = L"Rapunzel Preview";
+        std::wstring m_activePresetName = L"Stable Benchmark Wig";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
         enum class MaskSourceMode : uint32_t

@@ -1634,10 +1634,6 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    // Pre-novelty correctness baseline: every follower point is reconstructed on
-    // every simulation tick. Tiered skipping without a coherent cached transform
-    // left the root at the current scalp position while the remaining points kept
-    // an older pose, which produced the long one-sided spikes visible in the Viewer.
     uint followerIndex = followerPointDispatchIndex / ParticlesPerStrand;
     uint localPointIndex = followerPointDispatchIndex % ParticlesPerStrand;
     if (followerIndex >= FollowerStrandCount)
@@ -1664,57 +1660,61 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     uint parentStart = parentGuide * ParticlesPerStrand;
     uint parentPointIndex = parentStart + localPointIndex;
 
-    uint previousLocal = (localPointIndex > 0u) ? (localPointIndex - 1u) : 0u;
-    uint nextLocal = min(localPointIndex + 1u, ParticlesPerStrand - 1u);
-    uint previousParentIndex = parentStart + previousLocal;
-    uint nextParentIndex = parentStart + nextLocal;
+    float3 guideRoot = OutputPositions[parentStart].xyz;
+    float3 previousGuideRoot = OutputPreviousPositions[parentStart].xyz;
+    float3 guideRestRoot = RestPositions[parentStart].xyz;
+    float3 followerRoot = OutputPositions[strandStart].xyz;
+    float3 previousFollowerRoot = OutputPreviousPositions[strandStart].xyz;
+    float3 followerRestRoot = RestPositions[strandStart].xyz;
 
     float3 parentPosition = OutputPositions[parentPointIndex].xyz;
     float3 previousParentPosition = OutputPreviousPositions[parentPointIndex].xyz;
     float3 parentRest = RestPositions[parentPointIndex].xyz;
     float3 followerRest = RestPositions[strandPointIndex].xyz;
-    float3 followerRestRoot = RestPositions[strandStart].xyz;
-    float3 followerRoot = OutputPositions[strandStart].xyz;
 
-    float3 restTangent = SafeNormalize(
-        RestPositions[nextParentIndex].xyz -
-        RestPositions[previousParentIndex].xyz);
-    float3 currentTangent = SafeNormalize(
-        OutputPositions[nextParentIndex].xyz -
-        OutputPositions[previousParentIndex].xyz);
-    float3 previousTangent = SafeNormalize(
-        OutputPreviousPositions[nextParentIndex].xyz -
-        OutputPreviousPositions[previousParentIndex].xyz);
+    float3 guideCurrentLocal = parentPosition - guideRoot;
+    float3 guidePreviousLocal = previousParentPosition - previousGuideRoot;
+    float3 guideRestLocal = parentRest - guideRestRoot;
+    float3 followerRestLocal = followerRest - followerRestRoot;
 
-    float3 restOffset = followerRest - parentRest;
+    // Singularity-free deformation transfer. The previous implementation rotated
+    // an independent radial offset at every point from rest tangent to current
+    // tangent. Near a 180-degree tangent reversal the selected half-turn axis can
+    // flip from one frame to the next, fanning 96,000 followers into an explosion.
+    // Transfer the guide's root-relative deformation instead; it is continuous for
+    // every finite guide pose and preserves authored follower root coverage.
+    float followWeight = saturate(follow.FollowWeight);
+    float3 currentFollowerLocal =
+        followerRestLocal +
+        (guideCurrentLocal - guideRestLocal) * followWeight;
+    float3 previousFollowerLocal =
+        followerRestLocal +
+        (guidePreviousLocal - guideRestLocal) * followWeight;
+
     float t = (ParticlesPerStrand > 1u)
         ? float(localPointIndex) / float(ParticlesPerStrand - 1u)
         : 0.0f;
-
-    // Keep the authored root coverage through the first part of the strand.
-    // Applying clump contraction at point 1 immediately pulled the newly
-    // distributed follower roots back toward the guide and reopened the crown.
     float authoredClumpGain = lerp(
         0.25f,
         1.0f,
         saturate(follow.ClumpWeight));
     float rootCoverageBlend = smoothstep(0.42f, 0.82f, t);
-    float clumpGain = lerp(
+    float followerRetention = lerp(
         1.0f,
         authoredClumpGain,
         rootCoverageBlend);
+    currentFollowerLocal = lerp(
+        guideCurrentLocal,
+        currentFollowerLocal,
+        followerRetention);
+    previousFollowerLocal = lerp(
+        guidePreviousLocal,
+        previousFollowerLocal,
+        followerRetention);
 
-    float3 currentOffset = RotateVectorFromTo(
-        restOffset,
-        restTangent,
-        currentTangent) * clumpGain;
-    float3 previousOffset = RotateVectorFromTo(
-        restOffset,
-        restTangent,
-        previousTangent) * clumpGain;
     float noiseAmplitude = min(
         follow.NoiseWeight * (0.0015f + t * 0.0065f),
-        max(length(restOffset) * 0.15f, 0.00025f));
+        max(length(followerRestLocal - guideRestLocal) * 0.15f, 0.00025f));
     float currentNoisePhase = ElapsedTime *
         (1.7f + 0.6f * follow.NoiseWeight) +
         strandIndex * 0.173f + localPointIndex * 0.217f;
@@ -1730,28 +1730,35 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         0.0f,
         cos(previousNoisePhase * 1.17f)) * noiseAmplitude;
 
-    float3 target = parentPosition + currentOffset + currentNoise;
-    float3 previousTarget = previousParentPosition + previousOffset + previousNoise;
-    float3 translatedRest = followerRest + (followerRoot - followerRestRoot);
+    float3 target = followerRoot + currentFollowerLocal + currentNoise;
+    float3 previousTarget =
+        previousFollowerRoot + previousFollowerLocal + previousNoise;
+    float3 translatedRest = followerRoot + followerRestLocal;
+    float3 previousTranslatedRest = previousFollowerRoot + followerRestLocal;
 
-    float authoredRootRadius = length(followerRest - followerRestRoot);
-    float maximumRootRadius = max(0.08f, authoredRootRadius * 1.20f + 0.025f);
-    if (!IsFinite3(parentPosition) ||
+    float authoredDistanceFromRoot = max(
+        length(followerRestLocal),
+        length(guideRestLocal));
+    float maximumFollowerRadius = max(
+        0.08f,
+        authoredDistanceFromRoot * 1.30f + 0.030f);
+    if (!IsFinite3(guideRoot) ||
+        !IsFinite3(parentPosition) ||
         !IsFinite3(target) ||
-        length(target - followerRoot) > maximumRootRadius)
+        length(target - followerRoot) > maximumFollowerRadius)
     {
         target = translatedRest;
     }
-    if (!IsFinite3(previousParentPosition) ||
+    if (!IsFinite3(previousGuideRoot) ||
+        !IsFinite3(previousParentPosition) ||
         !IsFinite3(previousTarget) ||
-        length(previousTarget - followerRoot) > maximumRootRadius)
+        length(previousTarget - previousFollowerRoot) > maximumFollowerRadius)
     {
-        previousTarget = target;
+        previousTarget = previousTranslatedRest;
     }
 
     // Followers are kinematic reconstructions of their guide, not independent
-    // particles. Direct assignment avoids temporal trails and keeps all 24
-    // followers coherent with the current guide pose in the same frame.
+    // particles. Direct assignment prevents temporal trails and stale poses.
     OutputPositions[strandPointIndex] = float4(target, 1.0f);
     OutputPreviousPositions[strandPointIndex] = float4(previousTarget, 1.0f);
 }

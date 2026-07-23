@@ -141,6 +141,31 @@
             float dt = static_cast<float>(
                 static_cast<double>(now.QuadPart - m_lastTick.QuadPart) /
                 static_cast<double>(m_qpcFrequency.QuadPart));
+
+            // Present(1) follows the monitor refresh rate, not the 60 Hz solver.
+            // On a 144 Hz display the old loop submitted 144 copies of a 25.6 M
+            // vertex ribbon draw every second while the GPU sustained about 116.
+            // Pace only interactive playback to the fixed solver cadence; formal
+            // throughput measurements remain completely uncapped.
+            if (!IsExperimentModeEnabled() &&
+                std::isfinite(dt) &&
+                dt > 0.0f &&
+                dt < m_simConfig.fixedTimeStep)
+            {
+                const double remainingSeconds =
+                    static_cast<double>(m_simConfig.fixedTimeStep - dt);
+                const DWORD waitMilliseconds = std::max<DWORD>(
+                    1u,
+                    static_cast<DWORD>(remainingSeconds * 1000.0));
+                MsgWaitForMultipleObjectsEx(
+                    0u,
+                    nullptr,
+                    waitMilliseconds,
+                    QS_ALLINPUT,
+                    MWMO_INPUTAVAILABLE);
+                continue;
+            }
+
             m_lastTick = now;
             if (!std::isfinite(dt) || dt <= 1.0e-6f || dt > 1.0f)
             {
@@ -203,7 +228,31 @@
                     // Interactive/F5 playback follows wall-clock time. Two catch-up
                     // ticks absorb short scheduler delays without entering a spiral.
                     const float safeDt = std::clamp(dt, 0.0f, 0.10f);
-                    m_accumulator += safeDt;
+                    constexpr float kTemporalDiscontinuitySeconds = 0.050f;
+                    const bool temporalDiscontinuity =
+                        safeDt >= kTemporalDiscontinuitySeconds;
+                    if (temporalDiscontinuity)
+                    {
+                        // A debugger break, window drag or GPU hitch must not feed
+                        // stale Verlet velocity back into the solver. Preserve one
+                        // fixed tick, account for the skipped wall time, and make the
+                        // current pose the previous pose before resuming.
+                        droppedSimulationSecondsThisFrame += std::max(
+                            safeDt - m_simConfig.fixedTimeStep,
+                            0.0f);
+                        m_accumulator = m_simConfig.fixedTimeStep;
+                        if (m_positions[m_currentBufferIndex].buffer &&
+                            m_previousPositions[m_currentBufferIndex].buffer)
+                        {
+                            m_context->CopyResource(
+                                m_previousPositions[m_currentBufferIndex].buffer.Get(),
+                                m_positions[m_currentBufferIndex].buffer.Get());
+                        }
+                    }
+                    else
+                    {
+                        m_accumulator += safeDt;
+                    }
                     constexpr uint32_t kMaximumCatchUpTicks = 2u;
                     while (m_accumulator >= m_simConfig.fixedTimeStep &&
                            simulationStepCountThisFrame < kMaximumCatchUpTicks)
@@ -250,8 +299,9 @@
             LARGE_INTEGER frameWorkEnd = {};
             QueryPerformanceCounter(&frameWorkEnd);
             m_lastCpuFrameWorkMilliseconds = static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
-            // Non-invasive cadence window: no GPU wait, no DWM wait and no
-            // manual busy-loop pacing. Present(1) paces local F5 naturally.
+            // Interactive pacing occurs before frame submission so a high-refresh
+            // monitor cannot outrun the 60 Hz simulation or build a long GPU queue.
+            // Formal throughput mode remains unpaced and uses Present(0).
             cadenceWindowSeconds += static_cast<double>(dt);
             ++cadenceWindowRenderFrames;
             cadenceWindowSimulationTicks += simulationStepCountThisFrame;
@@ -514,6 +564,15 @@
                 L"- use x64 configuration if available";
             ShowStartupDialog(m_hwnd, L"Hair GPU Viewer Startup Failure", message);
             return false;
+        }
+
+        ComPtr<IDXGIDevice1> dxgiDeviceForLatency;
+        if (SUCCEEDED(m_device.As(&dxgiDeviceForLatency)) &&
+            dxgiDeviceForLatency)
+        {
+            // Keep at most one submitted frame ahead. This is especially important
+            // for the 100k x 128 ribbon path, where a deep queue looks like a freeze.
+            dxgiDeviceForLatency->SetMaximumFrameLatency(1u);
         }
 
         if (IsExperimentModeEnabled() &&
