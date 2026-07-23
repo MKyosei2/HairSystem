@@ -4,10 +4,6 @@ on:
   push:
     branches:
       - prenovelty-ready-test-env-fixed
-  pull_request:
-    branches:
-      - Novelty
-      - prenovelty-ready
 
 permissions:
   contents: read
@@ -20,7 +16,8 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          show-progress: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
