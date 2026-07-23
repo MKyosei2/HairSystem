@@ -111,7 +111,9 @@ VSOutput VSMain(VSInput input)
         width *= RenderReducedWidthBoost;
     }
 
-    width *= (1.0f + 0.28f * rootMask);
+    width *= isGuide ? 0.30f : 0.18f;
+    width *= (1.0f + 0.10f * rootMask);
+    width *= lerp(1.0f, 0.08f, smoothstep(0.55f, 1.0f, strandT));
     if (DebugColorMode == 3u)
     {
         width *= EditabilityWidthScale(strandTier);
@@ -128,16 +130,23 @@ struct GSOutput
 {
     float4 position : SV_Position;
     float3 worldNormal : NORMAL0;
+    float3 worldTangent : TANGENT0;
     float3 worldPosition : TEXCOORD0;
     float3 color : COLOR0;
     float alpha : TEXCOORD1;
 };
 
-GSOutput MakeVertex(float3 worldPosition, float3 worldNormal, float3 color, float alpha)
+GSOutput MakeVertex(
+    float3 worldPosition,
+    float3 worldNormal,
+    float3 worldTangent,
+    float3 color,
+    float alpha)
 {
     GSOutput o;
     o.position = mul(float4(worldPosition, 1.0f), ViewProjection);
     o.worldNormal = worldNormal;
+    o.worldTangent = worldTangent;
     o.worldPosition = worldPosition;
     o.color = color;
     o.alpha = alpha;
@@ -159,7 +168,7 @@ void BuildStableBasis(float3 tangent, out float3 axisX, out float3 axisY)
     axisY = SafeNormalize(cross(tangent, axisX), float3(0.0f, 0.0f, 1.0f));
 }
 
-[maxvertexcount(48)]
+[maxvertexcount(4)]
 void GSMain(line VSOutput input[2], inout TriangleStream<GSOutput> outStream)
 {
     if ((input[0].alpha <= 0.0f) && (input[1].alpha <= 0.0f))
@@ -177,53 +186,65 @@ void GSMain(line VSOutput input[2], inout TriangleStream<GSOutput> outStream)
     }
 
     const float3 tangent = normalize(segment);
-    float3 axisX;
-    float3 axisY;
-    BuildStableBasis(tangent, axisX, axisY);
+    const float3 midpoint = (p0 + p1) * 0.5f;
+    const float3 viewDirection = SafeNormalize(
+        CameraPosition.xyz - midpoint,
+        float3(0.0f, 0.0f, 1.0f));
 
-    const float radius0 = max(input[0].width * 0.52f, 0.0020f);
-    const float radius1 = max(input[1].width * 0.52f, 0.0018f);
-    const uint sides = min(max(TubeRingSides, 4u), 8u);
-    const float kTau = 6.28318530718f;
+    float3 basisX;
+    float3 basisY;
+    BuildStableBasis(tangent, basisX, basisY);
+    const float3 ribbonSide = SafeNormalize(
+        cross(tangent, viewDirection),
+        basisX);
+    const float3 ribbonNormal = SafeNormalize(
+        cross(ribbonSide, tangent),
+        basisY);
 
-    [loop]
-    for (uint side = 0u; side < sides; ++side)
-    {
-        const float a0 = (float(side) / float(sides)) * kTau;
-        const float a1 = (float(side + 1u) / float(sides)) * kTau;
+    // Width is already tapered and reduced in VSMain. No hard 2 mm tube
+    // radius remains, so dense followers read as separate strands instead of
+    // merging into an opaque shell.
+    const float halfWidth0 = max(input[0].width * 0.5f, 0.00006f);
+    const float halfWidth1 = max(input[1].width * 0.5f, 0.00004f);
 
-        const float3 ringDir0 = normalize(axisX * cos(a0) + axisY * sin(a0));
-        const float3 ringDir1 = normalize(axisX * cos(a1) + axisY * sin(a1));
-
-        const float3 v00 = p0 + ringDir0 * radius0;
-        const float3 v01 = p0 + ringDir1 * radius0;
-        const float3 v10 = p1 + ringDir0 * radius1;
-        const float3 v11 = p1 + ringDir1 * radius1;
-
-        outStream.Append(MakeVertex(v00, ringDir0, input[0].color, input[0].alpha));
-        outStream.Append(MakeVertex(v10, ringDir0, input[1].color, input[1].alpha));
-        outStream.Append(MakeVertex(v01, ringDir1, input[0].color, input[0].alpha));
-
-        outStream.Append(MakeVertex(v01, ringDir1, input[0].color, input[0].alpha));
-        outStream.Append(MakeVertex(v10, ringDir0, input[1].color, input[1].alpha));
-        outStream.Append(MakeVertex(v11, ringDir1, input[1].color, input[1].alpha));
-
-        outStream.RestartStrip();
-    }
+    outStream.Append(MakeVertex(
+        p0 - ribbonSide * halfWidth0,
+        ribbonNormal,
+        tangent,
+        input[0].color,
+        input[0].alpha));
+    outStream.Append(MakeVertex(
+        p0 + ribbonSide * halfWidth0,
+        ribbonNormal,
+        tangent,
+        input[0].color,
+        input[0].alpha));
+    outStream.Append(MakeVertex(
+        p1 - ribbonSide * halfWidth1,
+        ribbonNormal,
+        tangent,
+        input[1].color,
+        input[1].alpha));
+    outStream.Append(MakeVertex(
+        p1 + ribbonSide * halfWidth1,
+        ribbonNormal,
+        tangent,
+        input[1].color,
+        input[1].alpha));
 }
 
 float4 PSMain(GSOutput input) : SV_Target
 {
-    const float3 N = normalize(input.worldNormal);
+    const float3 N = SafeNormalize(input.worldNormal, float3(0.0f, 0.0f, 1.0f));
+    const float3 T = SafeNormalize(input.worldTangent, float3(0.0f, 1.0f, 0.0f));
     const float3 L = normalize(-LightDirection.xyz);
     const float3 V = normalize(CameraPosition.xyz - input.worldPosition);
-    const float3 H = normalize(L + V);
+    const float3 H = SafeNormalize(L + V, V);
 
-    const float diffuseFront = saturate(dot(N, L));
-    const float diffuseWrap = saturate(dot(N, L) * 0.5f + 0.5f);
-    const float specular = pow(saturate(dot(N, H)), 20.0f) * 0.16f;
-    const float rim = pow(1.0f - saturate(abs(dot(N, V))), 2.0f) * 0.12f;
-    const float lighting = 0.16f + 0.52f * diffuseFront + 0.20f * diffuseWrap;
-    const float3 shaded = input.color * lighting + (specular + rim).xxx;
-    return float4(shaded, input.alpha);
+    const float diffuseWrap = saturate(dot(N, L) * 0.42f + 0.58f);
+    const float tangentHalf = saturate(abs(dot(T, H)));
+    const float anisotropic = pow(saturate(1.0f - tangentHalf * tangentHalf), 18.0f) * 0.24f;
+    const float rim = pow(1.0f - saturate(abs(dot(N, V))), 2.5f) * 0.10f;
+    const float3 shaded = input.color * (0.18f + 0.72f * diffuseWrap) + (anisotropic + rim).xxx;
+    return float4(shaded, saturate(input.alpha));
 }

@@ -1528,6 +1528,16 @@
             return false;
         }
 
+        // Blended hair must test against the opaque scalp, but must not write
+        // depth per ribbon. Writing depth here made the first visible ribbons
+        // occlude all later strands, producing a solid helmet/curtain shell.
+        D3D11_DEPTH_STENCIL_DESC hairDepthDesc = depthDesc;
+        hairDepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(m_device->CreateDepthStencilState(&hairDepthDesc, &m_hairDepthState)))
+        {
+            return false;
+        }
+
         if (!m_debugLineTemplateVertexBuffer)
         {
             const DebugLineTemplateVertex debugTemplate[2] = { { 0.0f }, { 1.0f } };

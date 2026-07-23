@@ -104,18 +104,25 @@ void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& 
     constants.tubeRingSides = m_strandTubeRingSides;
     const bool fastEditPreview = m_fastGroomViewport && IsGroomWorkspace();
     const bool heavyInteraction = m_brushStrokeActive || m_gizmoDragging;
-    constants.renderFollowerStride = fastEditPreview ? (heavyInteraction ? 4u : 2u) : 1u;
+    // Keep enough independent followers to cover the scalp while preserving
+    // separation. A stable stochastic subset is selected in the shader, so the
+    // same angular follower slots are not removed around every guide.
+    constants.renderFollowerStride = fastEditPreview
+        ? (heavyInteraction ? 8u : 4u)
+        : (editVisualization ? 2u : 3u);
     constants.renderGuideOnlyAboveTier = fastEditPreview ? (heavyInteraction ? 2u : 3u) : (editVisualization ? 6u : 4u);
-    constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.95f : 1.02f) : (editVisualization ? 1.15f : 0.82f);
+    constants.renderReducedWidthBoost = fastEditPreview ? (heavyInteraction ? 0.62f : 0.70f) : (editVisualization ? 0.82f : 0.68f);
     constants.renderHiddenWidthThreshold = 0.0f;
-    constants.renderStrandAlpha = fastEditPreview ? (heavyInteraction ? 0.82f : 0.90f) : (editVisualization ? 0.96f : 1.0f);
+    constants.renderStrandAlpha = fastEditPreview
+        ? (heavyInteraction ? 0.16f : 0.20f)
+        : (editVisualization ? 0.28f : 0.24f);
     if (IsExperimentModeEnabled())
     {
         constants.renderFollowerStride = 1u;
         constants.renderGuideOnlyAboveTier = 4u;
-        constants.renderReducedWidthBoost = 1.0f;
+        constants.renderReducedWidthBoost = 0.60f;
         constants.renderHiddenWidthThreshold = 0.0f;
-        constants.renderStrandAlpha = 1.0f;
+        constants.renderStrandAlpha = 0.080f;
     }
     constants.renderPadding0 = 0.0f;
 }

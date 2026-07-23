@@ -217,6 +217,18 @@ exit /b 0</Command>
     <None Include="apps\hairgpu_cli\src\main.cpp" />
     <None Include="docs\PROJECT_ONE_PROJECT_NOTES.md" />
   </ItemGroup>
+  <ItemGroup>
+    <HairGpuShader Include="apps\dx11_viewer\shaders\*.hlsl" />
+    <UpToDateCheckInput Include="@(HairGpuShader)" />
+    <UpToDateCheckOutput Include="$(OutDir)HairStrandInstanced.hlsl" />
+    <UpToDateCheckOutput Include="$(OutDir)shaders\HairStrandInstanced.hlsl" />
+  </ItemGroup>
+  <Target Name="CopyHairGpuShaders" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)" />
+    <MakeDir Directories="$(OutDir)shaders" />
+    <Copy SourceFiles="@(HairGpuShader)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(HairGpuShader)" DestinationFolder="$(OutDir)shaders" SkipUnchangedFiles="false" />
+  </Target>
   <Target Name="HairGpuFormalSelfTests" AfterTargets="Build" Condition="'$(HairGpuFormalSelfTest)' == 'true'">
     <Exec Command="&quot;$(TargetPath)&quot; --native-self-test" />
     <Exec Command="&quot;$(TargetPath)&quot; --shader-self-test" />

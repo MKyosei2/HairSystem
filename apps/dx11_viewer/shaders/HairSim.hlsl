@@ -577,8 +577,8 @@ void RootBindCS(uint3 id : SV_DispatchThreadID)
     // surface and the depth buffer hid the first hair segments.
     float authoredLift = clamp(
         dot(restRoot - scalpRoot, scalpNormal),
-        0.0085f,
-        0.0120f);
+        0.0020f,
+        0.0040f);
     float3 liftedScalpRoot =
         scalpRoot + scalpNormal * authoredLift;
     float3 boundRoot = lerp(
@@ -961,6 +961,149 @@ float3 ResolveSdfCollider(float3 p, inout bool touchedSurface)
         p += n * (shell - sdf);
         touchedSurface = true;
     }
+    return p;
+}
+
+
+float3 StableCollisionFallback(uint strandIndex, uint localPointIndex, float3 axis)
+{
+    const float seed = frac(sin((float(strandIndex) + 1.0f) * 12.9898f + (float(localPointIndex) + 1.0f) * 78.233f) * 43758.5453f);
+    float3 reference = (abs(axis.y) < 0.85f) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+    float3 radial = SafeNormalize(cross(axis, reference));
+    float3 binormal = SafeNormalize(cross(axis, radial));
+    float angle = seed * 6.28318530718f;
+    float3 result = radial * cos(angle) + binormal * sin(angle);
+    return (dot(result, result) > 1.0e-8f) ? result : float3(0.0f, 1.0f, 0.0f);
+}
+
+float3 ResolveFollowerExternalCollisions(
+    uint strandIndex,
+    uint localPointIndex,
+    float3 p,
+    out float3 collisionNormal,
+    out bool touchedSurface)
+{
+    collisionNormal = float3(0.0f, 0.0f, 0.0f);
+    touchedSurface = false;
+    const float shell = max(SelfCollisionRadius * 0.38f, 0.0018f);
+
+    [loop]
+    for (uint sphereIndex = 0u; sphereIndex < SphereColliderCount; ++sphereIndex)
+    {
+        const float4 sphere = SphereData[sphereIndex];
+        const float radius = sphere.w + shell;
+        float3 delta = p - sphere.xyz;
+        float distSq = dot(delta, delta);
+        if (distSq < radius * radius)
+        {
+            float3 normal = (distSq > 1.0e-10f)
+                ? delta * rsqrt(distSq)
+                : StableCollisionFallback(strandIndex, localPointIndex, float3(0.0f, 1.0f, 0.0f));
+            p = sphere.xyz + normal * radius;
+            collisionNormal += normal;
+            touchedSurface = true;
+        }
+    }
+
+    [loop]
+    for (uint capsuleIndex = 0u; capsuleIndex < CapsuleColliderCount; ++capsuleIndex)
+    {
+        const float4 capsuleA = CapsuleData[capsuleIndex * 2u + 0u];
+        const float4 capsuleB = CapsuleData[capsuleIndex * 2u + 1u];
+        const float3 axis = capsuleB.xyz - capsuleA.xyz;
+        const float axisLengthSq = max(dot(axis, axis), 1.0e-8f);
+        const float axisT = saturate(dot(p - capsuleA.xyz, axis) / axisLengthSq);
+        const float3 center = lerp(capsuleA.xyz, capsuleB.xyz, axisT);
+        const float radius = lerp(capsuleA.w, capsuleB.w, axisT) + shell;
+        float3 delta = p - center;
+        float distSq = dot(delta, delta);
+        if (distSq < radius * radius)
+        {
+            const float3 axisDirection = axis * rsqrt(axisLengthSq);
+            float3 normal = (distSq > 1.0e-10f)
+                ? delta * rsqrt(distSq)
+                : StableCollisionFallback(strandIndex, localPointIndex, axisDirection);
+            p = center + normal * radius;
+            collisionNormal += normal;
+            touchedSurface = true;
+        }
+    }
+
+    [loop]
+    for (uint planeIndex = 0u; planeIndex < PlaneColliderCount; ++planeIndex)
+    {
+        float3 normal = SafeNormalize(PlaneData[planeIndex].xyz);
+        if (dot(normal, normal) <= 1.0e-8f)
+        {
+            continue;
+        }
+        const float signedDistance = dot(normal, p) + PlaneData[planeIndex].w;
+        if (signedDistance < shell)
+        {
+            p += normal * (shell - signedDistance);
+            collisionNormal += normal;
+            touchedSurface = true;
+        }
+    }
+
+    [loop]
+    for (uint aabbIndex = 0u; aabbIndex < AabbColliderCount; ++aabbIndex)
+    {
+        const float3 before = p;
+        p = ResolveAabb(p, AabbData[aabbIndex * 2u + 0u].xyz, AabbData[aabbIndex * 2u + 1u].xyz);
+        const float3 correction = p - before;
+        if (dot(correction, correction) > 1.0e-10f)
+        {
+            collisionNormal += SafeNormalize(correction);
+            touchedSurface = true;
+        }
+    }
+
+    if (p.y < FloorY + shell)
+    {
+        p.y = FloorY + shell;
+        collisionNormal += float3(0.0f, 1.0f, 0.0f);
+        touchedSurface = true;
+    }
+
+    if (UseSdfCollider != 0u && SdfValueCount > 0u)
+    {
+        const float sdf = SampleSdfTrilinear(p);
+        const float sdfShell = max(shell, 0.0032f);
+        if (sdf < sdfShell)
+        {
+            const float3 normal = EstimateSdfGradient(p);
+            p += normal * (sdfShell - sdf);
+            collisionNormal += normal;
+            touchedSurface = true;
+        }
+    }
+
+    // Near the root, preserve a small outward shell from the bound scalp
+    // triangle. This closes the gap where follower reconstruction previously
+    // bypassed CollisionCS and could cut through the forehead/crown.
+    const float strandT = (ParticlesPerStrand > 1u)
+        ? float(localPointIndex) / float(ParticlesPerStrand - 1u)
+        : 0.0f;
+    if (strandT < 0.12f)
+    {
+        const float3 scalpPoint = EvaluateBoundRoot(strandIndex);
+        const float3 scalpNormal = EvaluateBoundRootNormal(strandIndex);
+        const float rootDistance = length(p - scalpPoint);
+        if (rootDistance < 0.30f)
+        {
+            const float requiredClearance = lerp(0.0030f, 0.0012f, smoothstep(0.01f, 0.12f, strandT));
+            const float signedClearance = dot(p - scalpPoint, scalpNormal);
+            if (signedClearance < requiredClearance)
+            {
+                p += scalpNormal * (requiredClearance - signedClearance);
+                collisionNormal += scalpNormal;
+                touchedSurface = true;
+            }
+        }
+    }
+
+    collisionNormal = SafeNormalize(collisionNormal);
     return p;
 }
 
@@ -1677,12 +1820,8 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     float3 guideRestLocal = parentRest - guideRestRoot;
     float3 followerRestLocal = followerRest - followerRestRoot;
 
-    // Singularity-free deformation transfer. The previous implementation rotated
-    // an independent radial offset at every point from rest tangent to current
-    // tangent. Near a 180-degree tangent reversal the selected half-turn axis can
-    // flip from one frame to the next, fanning 96,000 followers into an explosion.
-    // Transfer the guide's root-relative deformation instead; it is continuous for
-    // every finite guide pose and preserves authored follower root coverage.
+    // Build a continuous guide-relative target. This remains free of the
+    // rest-tangent/current-tangent half-turn singularity that caused explosions.
     float followWeight = saturate(follow.FollowWeight);
     float3 currentFollowerLocal =
         followerRestLocal +
@@ -1694,11 +1833,14 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     float t = (ParticlesPerStrand > 1u)
         ? float(localPointIndex) / float(ParticlesPerStrand - 1u)
         : 0.0f;
+
+    // Keep authored root coverage and allow gradually stronger clumping only
+    // toward the tip. Followers therefore do not collapse into one guide sheet.
     float authoredClumpGain = lerp(
-        0.25f,
-        1.0f,
+        0.42f,
+        0.88f,
         saturate(follow.ClumpWeight));
-    float rootCoverageBlend = smoothstep(0.42f, 0.82f, t);
+    float rootCoverageBlend = smoothstep(0.48f, 0.92f, t);
     float followerRetention = lerp(
         1.0f,
         authoredClumpGain,
@@ -1712,27 +1854,26 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
         previousFollowerLocal,
         followerRetention);
 
+    // Strand-coherent micro motion. One follower receives one phase, while the
+    // amplitude increases smoothly toward the tip. This avoids point-to-point
+    // glitter and gives neighbouring followers independent secondary motion.
+    float followerSeed = frac(sin((float(followerIndex) + 1.0f) * 12.9898f) * 43758.5453f);
+    float strandPhase = ElapsedTime * lerp(1.15f, 2.05f, followerSeed) + followerSeed * 6.2831853f;
+    float previousStrandPhase = (ElapsedTime - DeltaTime) * lerp(1.15f, 2.05f, followerSeed) + followerSeed * 6.2831853f;
     float noiseAmplitude = min(
-        follow.NoiseWeight * (0.0015f + t * 0.0065f),
-        max(length(followerRestLocal - guideRestLocal) * 0.15f, 0.00025f));
-    float currentNoisePhase = ElapsedTime *
-        (1.7f + 0.6f * follow.NoiseWeight) +
-        strandIndex * 0.173f + localPointIndex * 0.217f;
-    float previousNoisePhase = (ElapsedTime - DeltaTime) *
-        (1.7f + 0.6f * follow.NoiseWeight) +
-        strandIndex * 0.173f + localPointIndex * 0.217f;
+        (0.00035f + follow.NoiseWeight * 0.0022f) * smoothstep(0.18f, 1.0f, t),
+        max(length(followerRestLocal - guideRestLocal) * 0.10f, 0.00018f));
     float3 currentNoise = float3(
-        sin(currentNoisePhase),
-        0.0f,
-        cos(currentNoisePhase * 1.17f)) * noiseAmplitude;
+        sin(strandPhase),
+        0.35f * sin(strandPhase * 0.73f + 1.2f),
+        cos(strandPhase * 1.11f)) * noiseAmplitude;
     float3 previousNoise = float3(
-        sin(previousNoisePhase),
-        0.0f,
-        cos(previousNoisePhase * 1.17f)) * noiseAmplitude;
+        sin(previousStrandPhase),
+        0.35f * sin(previousStrandPhase * 0.73f + 1.2f),
+        cos(previousStrandPhase * 1.11f)) * noiseAmplitude;
 
     float3 target = followerRoot + currentFollowerLocal + currentNoise;
-    float3 previousTarget =
-        previousFollowerRoot + previousFollowerLocal + previousNoise;
+    float3 previousTarget = previousFollowerRoot + previousFollowerLocal + previousNoise;
     float3 translatedRest = followerRoot + followerRestLocal;
     float3 previousTranslatedRest = previousFollowerRoot + followerRestLocal;
 
@@ -1742,25 +1883,142 @@ void FollowCS(uint3 id : SV_DispatchThreadID)
     float maximumFollowerRadius = max(
         0.08f,
         authoredDistanceFromRoot * 1.30f + 0.030f);
-    if (!IsFinite3(guideRoot) ||
+
+    bool targetInvalid =
+        !IsFinite3(guideRoot) ||
         !IsFinite3(parentPosition) ||
         !IsFinite3(target) ||
-        length(target - followerRoot) > maximumFollowerRadius)
+        length(target - followerRoot) > maximumFollowerRadius;
+    bool previousTargetInvalid =
+        !IsFinite3(previousGuideRoot) ||
+        !IsFinite3(previousParentPosition) ||
+        !IsFinite3(previousTarget) ||
+        length(previousTarget - previousFollowerRoot) > maximumFollowerRadius;
+    if (targetInvalid)
     {
         target = translatedRest;
     }
-    if (!IsFinite3(previousGuideRoot) ||
-        !IsFinite3(previousParentPosition) ||
-        !IsFinite3(previousTarget) ||
-        length(previousTarget - previousFollowerRoot) > maximumFollowerRadius)
+    if (previousTargetInvalid)
     {
         previousTarget = previousTranslatedRest;
     }
 
-    // Followers are kinematic reconstructions of their guide, not independent
-    // particles. Direct assignment prevents temporal trails and stale poses.
-    OutputPositions[strandPointIndex] = float4(target, 1.0f);
-    OutputPreviousPositions[strandPointIndex] = float4(previousTarget, 1.0f);
+    float3 currentPosition = OutputPositions[strandPointIndex].xyz;
+    float3 previousPosition = OutputPreviousPositions[strandPointIndex].xyz;
+    bool stateInvalid =
+        !IsFinite3(currentPosition) ||
+        !IsFinite3(previousPosition) ||
+        length(currentPosition - followerRoot) > maximumFollowerRadius * 1.10f ||
+        length(previousPosition - previousFollowerRoot) > maximumFollowerRadius * 1.10f;
+    if (stateInvalid)
+    {
+        currentPosition = target;
+        previousPosition = previousTarget;
+    }
+
+    // Lightweight per-follower secondary physics. Guide deformation is a moving
+    // target rather than a direct position overwrite. Each follower keeps bounded
+    // temporal inertia, making the 24 followers around one guide visibly distinct.
+    float3 secondaryVelocity = currentPosition - previousPosition;
+    float maximumVelocity = lerp(0.0035f, 0.0200f, t);
+    float velocityLength = length(secondaryVelocity);
+    if (velocityLength > maximumVelocity && velocityLength > 1.0e-7f)
+    {
+        secondaryVelocity *= maximumVelocity / velocityLength;
+    }
+
+    float damping = lerp(0.28f, 0.80f, t) * lerp(0.94f, 1.03f, followerSeed);
+    float targetResponse = lerp(0.74f, 0.16f, t) * lerp(0.86f, 1.10f, followerSeed);
+
+    // Drive secondary motion in the local strand frame instead of using the
+    // same world-space wobble for every follower. Authored radial placement,
+    // phase and damping now produce coherent but visibly independent layers.
+    uint parentPreviousLocal = (localPointIndex > 0u) ? (localPointIndex - 1u) : localPointIndex;
+    uint parentNextLocal = min(localPointIndex + 1u, ParticlesPerStrand - 1u);
+    float3 guideTangent = SafeNormalize(
+        OutputPositions[parentStart + parentNextLocal].xyz -
+        OutputPositions[parentStart + parentPreviousLocal].xyz);
+    if (dot(guideTangent, guideTangent) <= 1.0e-8f)
+    {
+        guideTangent = float3(0.0f, -1.0f, 0.0f);
+    }
+    float3 authoredRadial = followerRestLocal - guideRestLocal;
+    authoredRadial -= guideTangent * dot(authoredRadial, guideTangent);
+    if (dot(authoredRadial, authoredRadial) <= 1.0e-8f)
+    {
+        authoredRadial = StableCollisionFallback(strandIndex, localPointIndex, guideTangent);
+    }
+    authoredRadial = SafeNormalize(authoredRadial);
+    float3 authoredBinormal = SafeNormalize(cross(guideTangent, authoredRadial));
+    if (dot(authoredBinormal, authoredBinormal) <= 1.0e-8f)
+    {
+        authoredBinormal = StableCollisionFallback(strandIndex + 17u, localPointIndex, guideTangent);
+    }
+
+    float airStrength = lerp(0.90f, 5.20f, smoothstep(0.10f, 1.0f, t)) *
+        lerp(0.62f, 1.25f, saturate(follow.NoiseWeight + followerSeed * 0.35f));
+    float3 lateralAir =
+        authoredRadial * sin(strandPhase * 0.67f + followerSeed * 2.1f) +
+        authoredBinormal * cos(strandPhase * 0.89f + 1.7f);
+    float3 gravitySlip = float3(0.0f, -1.0f, 0.0f) * lerp(0.30f, 2.10f, t);
+    float3 secondaryAcceleration = lateralAir * airStrength + gravitySlip;
+
+    float safeDt = max(DeltaTime, 1.0e-5f);
+
+    // Keep the guide-relative target untouched and project only the final
+    // prediction. A single analytic follower collision pass is enough for
+    // sphere/capsule/plane/SDF shells and avoids tripling collider work across
+    // 12.288 million follower points.
+    float3 predicted =
+        currentPosition +
+        secondaryVelocity * damping +
+        (target - currentPosition) * targetResponse +
+        secondaryAcceleration * (safeDt * safeDt);
+
+    float maximumSecondaryLag = lerp(0.0015f, 0.0220f, t) * lerp(0.85f, 1.15f, followerSeed);
+    float3 lag = predicted - target;
+    float lagLength = length(lag);
+    if (lagLength > maximumSecondaryLag && lagLength > 1.0e-7f)
+    {
+        predicted = target + lag * (maximumSecondaryLag / lagLength);
+    }
+
+    float3 collisionNormal = float3(0.0f, 0.0f, 0.0f);
+    bool touchedSurface = false;
+    predicted = ResolveFollowerExternalCollisions(
+        strandIndex,
+        localPointIndex,
+        predicted,
+        collisionNormal,
+        touchedSurface);
+
+    if (!IsFinite3(predicted) ||
+        length(predicted - followerRoot) > maximumFollowerRadius)
+    {
+        predicted = target;
+        currentPosition = previousTarget;
+        touchedSurface = false;
+    }
+
+    // Remove inward normal velocity and retain damped tangential sliding after
+    // collision. This prevents the spring target from repeatedly pulling a
+    // follower back through the head on the next frame.
+    if (touchedSurface && dot(collisionNormal, collisionNormal) > 1.0e-8f)
+    {
+        float3 resolvedVelocity = predicted - currentPosition;
+        float normalSpeed = dot(resolvedVelocity, collisionNormal);
+        if (normalSpeed < 0.0f)
+        {
+            resolvedVelocity -= collisionNormal * normalSpeed;
+        }
+        resolvedVelocity *= 0.72f;
+        currentPosition = predicted - resolvedVelocity;
+    }
+
+    // Preserve Verlet history instead of replacing it with the guide's previous
+    // target. This is the state that produces follower-specific inertia.
+    OutputPositions[strandPointIndex] = float4(predicted, 1.0f);
+    OutputPreviousPositions[strandPointIndex] = float4(currentPosition, 1.0f);
 }
 
 

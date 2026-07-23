@@ -405,6 +405,7 @@
 
             if (m_renderMode == RenderMode::StrandRibbon && m_ribbonVS && m_ribbonPS)
             {
+                m_context->OMSetDepthStencilState(m_hairDepthState.Get(), 0);
                 m_context->IASetInputLayout(nullptr);
                 m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
                 m_context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0u);
@@ -419,6 +420,7 @@
                 m_lastCurrentHairVertexCount = static_cast<uint64_t>(verticesPerStrand) * instanceCount;
                 m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_asset.particlesPerStrand - 1u) * 2ull * instanceCount;
                 m_lastCurrentHairInstanceCount = instanceCount;
+                m_context->OMSetDepthStencilState(m_depthState.Get(), 0);
             }
             else if (m_particleVS && m_particlePS)
             {

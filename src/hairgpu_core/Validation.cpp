@@ -148,6 +148,51 @@ namespace hairgpu
             PushIssue(report, ValidationSeverity::Warning, "guideStrandCount + followerStrandCount does not match strands count.");
         }
 
+        if (asset.strands.size() ==
+                static_cast<size_t>(asset.guideStrandCount) +
+                asset.followerStrandCount &&
+            asset.followData.size() == asset.strands.size())
+        {
+            uint32_t layoutViolationCount = 0u;
+            const uint32_t guideFlag =
+                static_cast<uint32_t>(StrandFlags::Guide);
+            for (uint32_t strandIndex = 0u;
+                 strandIndex < static_cast<uint32_t>(asset.strands.size());
+                 ++strandIndex)
+            {
+                const bool hasGuideFlag =
+                    (asset.strands[strandIndex].flags & guideFlag) != 0u;
+                if (strandIndex < asset.guideStrandCount)
+                {
+                    const bool parentMatches =
+                        asset.followData[strandIndex].parentGuide ==
+                        static_cast<int32_t>(strandIndex);
+                    if (!hasGuideFlag || !parentMatches)
+                    {
+                        ++layoutViolationCount;
+                    }
+                }
+                else
+                {
+                    const int32_t parent =
+                        asset.followData[strandIndex].parentGuide;
+                    if (hasGuideFlag || parent < 0 ||
+                        static_cast<uint32_t>(parent) >=
+                            asset.guideStrandCount)
+                    {
+                        ++layoutViolationCount;
+                    }
+                }
+            }
+            if (layoutViolationCount > 0u)
+            {
+                std::ostringstream ss;
+                ss << "Guide/follower storage layout violates the runtime contract at "
+                   << layoutViolationCount << " strand entries; guides must occupy [0, guideStrandCount).";
+                PushIssue(report, ValidationSeverity::Error, ss.str());
+            }
+        }
+
         for (size_t pointIndex = 0; pointIndex < asset.restPoints.size(); ++pointIndex)
         {
             if (!IsFinite(asset.restPoints[pointIndex]))
@@ -550,12 +595,24 @@ namespace hairgpu
                 ValidationSeverity::Error,
                 "Crown root coverage is too sparse or azimuthally incomplete.");
         }
+        if (report.crownRootFraction > 0.340f)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Crown roots are over-concentrated and would form a flat cap.");
+        }
         if (report.frontHairlineRootFraction < 0.020f ||
             report.frontHairlineBinCount < 6u)
         {
             pushIssue(
                 ValidationSeverity::Error,
                 "Front hairline root coverage is too sparse or discontinuous.");
+        }
+        if (report.frontHairlineRootFraction > 0.300f)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Front hairline roots are over-concentrated and would form a curtain wall.");
         }
 
         const uint32_t minimumRegionalCount = std::max<uint32_t>(4u, asset.guideStrandCount / 20u);

@@ -246,6 +246,8 @@ if (FAILED(m_lastPresentResult))
                     : L"ribbon"))
             << L"  mode="
             << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
+            << L"  scalp=" << (m_showScalpMesh ? L"on" : L"off")
+            << L"  visualFix=V9"
             << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
     }

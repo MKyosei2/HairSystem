@@ -232,6 +232,111 @@ namespace hairgpu
             return p;
         }
 
+        bool ReorderGeneratedGuideFollowerLayout(
+            HairAsset& asset,
+            uint32_t guideCount,
+            uint32_t followersPerGuide)
+        {
+            const uint64_t expectedStrands =
+                static_cast<uint64_t>(guideCount) *
+                static_cast<uint64_t>(followersPerGuide + 1u);
+            if (asset.strands.size() != expectedStrands ||
+                asset.materials.size() != expectedStrands ||
+                asset.rootBindings.size() != expectedStrands ||
+                asset.followData.size() != expectedStrands ||
+                asset.pointWidths.size() != asset.restPoints.size())
+            {
+                return false;
+            }
+
+            std::vector<StrandRange> reorderedStrands;
+            std::vector<Vec3> reorderedRestPoints;
+            std::vector<float> reorderedPointWidths;
+            std::vector<StrandMaterial> reorderedMaterials;
+            std::vector<RootBinding> reorderedRootBindings;
+            std::vector<FollowData> reorderedFollowData;
+
+            reorderedStrands.reserve(asset.strands.size());
+            reorderedRestPoints.reserve(asset.restPoints.size());
+            reorderedPointWidths.reserve(asset.pointWidths.size());
+            reorderedMaterials.reserve(asset.materials.size());
+            reorderedRootBindings.reserve(asset.rootBindings.size());
+            reorderedFollowData.reserve(asset.followData.size());
+
+            auto appendOldStrand = [&](uint32_t oldStrandIndex)
+            {
+                if (oldStrandIndex >= asset.strands.size())
+                {
+                    return false;
+                }
+                const StrandRange& oldRange = asset.strands[oldStrandIndex];
+                const uint64_t oldEnd =
+                    static_cast<uint64_t>(oldRange.pointOffset) +
+                    oldRange.pointCount;
+                if (oldEnd > asset.restPoints.size() ||
+                    oldEnd > asset.pointWidths.size())
+                {
+                    return false;
+                }
+
+                StrandRange newRange = oldRange;
+                newRange.pointOffset =
+                    static_cast<uint32_t>(reorderedRestPoints.size());
+                reorderedStrands.push_back(newRange);
+                reorderedRestPoints.insert(
+                    reorderedRestPoints.end(),
+                    asset.restPoints.begin() + oldRange.pointOffset,
+                    asset.restPoints.begin() + oldEnd);
+                reorderedPointWidths.insert(
+                    reorderedPointWidths.end(),
+                    asset.pointWidths.begin() + oldRange.pointOffset,
+                    asset.pointWidths.begin() + oldEnd);
+                reorderedMaterials.push_back(asset.materials[oldStrandIndex]);
+                reorderedRootBindings.push_back(asset.rootBindings[oldStrandIndex]);
+                reorderedFollowData.push_back(asset.followData[oldStrandIndex]);
+                return true;
+            };
+
+            // AppendStaticWigStrand historically emitted
+            // [guide0, followers0..., guide1, followers1...]. The runtime,
+            // FollowCS, rendering LOD and telemetry all require
+            // [all guides][all followers]. Keep authoring local and normalize
+            // the layout once before the asset is exposed to the runtime.
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                const uint32_t oldGuideIndex =
+                    guideIndex * (followersPerGuide + 1u);
+                if (!appendOldStrand(oldGuideIndex))
+                {
+                    return false;
+                }
+            }
+            for (uint32_t guideIndex = 0u; guideIndex < guideCount; ++guideIndex)
+            {
+                const uint32_t oldGuideIndex =
+                    guideIndex * (followersPerGuide + 1u);
+                for (uint32_t followerIndex = 0u;
+                     followerIndex < followersPerGuide;
+                     ++followerIndex)
+                {
+                    if (!appendOldStrand(
+                            oldGuideIndex + 1u + followerIndex))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            asset.strands = std::move(reorderedStrands);
+            asset.restPoints = std::move(reorderedRestPoints);
+            asset.pointWidths = std::move(reorderedPointWidths);
+            asset.materials = std::move(reorderedMaterials);
+            asset.rootBindings = std::move(reorderedRootBindings);
+            asset.followData = std::move(reorderedFollowData);
+            asset.segmentGroupTopology = {};
+            return true;
+        }
+
         void RecomputeScalpNormals(ScalpMesh& mesh, const Vec3& center)
         {
             mesh.normals.assign(mesh.positions.size(), Vec3(0.0f, 0.0f, 0.0f));
@@ -1163,7 +1268,7 @@ namespace hairgpu
 
             const Vec3 tangentOffset = rootOffset - normal * Dot(rootOffset, normal);
             const float authoredRootLift =
-                0.0065f + parameters.rootLift * 0.25f;
+                0.0015f + parameters.rootLift * 0.10f;
             Vec3 root =
                 rootSurface +
                 normal * authoredRootLift +
@@ -1171,7 +1276,7 @@ namespace hairgpu
             root = ProjectPointOutsideHeadVolume(
                 root,
                 scalpCenter,
-                0.0100f);
+                0.0030f);
 
             const float baseStrandLength = ComputeReferenceStrandLength(segmentLength);
             const float regionalLength = ComputeGuideLength(root, scalpCenter, uv, baseStrandLength, parameters);
@@ -1215,7 +1320,7 @@ namespace hairgpu
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
                 const float rootShellBlend =
                     1.0f - Smooth01(Clamp(t / 0.22f, 0.0f, 1.0f));
-                p += normal * (0.0080f * rootShellBlend);
+                p += normal * (0.0020f * rootShellBlend);
 
                 const float silhouetteBell = std::sin(kPi * Clamp(t, 0.0f, 1.0f));
                 const float radialVolume =
@@ -1239,7 +1344,7 @@ namespace hairgpu
                 return ProjectPointOutsideHeadVolume(
                     p,
                     scalpCenter,
-                    Lerp(0.0100f, 0.0025f, t));
+                    Lerp(0.0030f, 0.0015f, t));
             };
 
             for (uint32_t sampleIndex = 0; sampleIndex < denseSampleCount; ++sampleIndex)
@@ -1384,11 +1489,11 @@ namespace hairgpu
 
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, asset.rootBindings[strandIndex]);
             const Vec3 rootNormal = EvaluateTriangleNormal(asset.scalpMesh, asset.rootBindings[strandIndex]);
-            constexpr float kVisualRootLiftMeters = 0.0090f;
+            constexpr float kVisualRootLiftMeters = 0.0025f;
             const Vec3 reboundRoot = ProjectPointOutsideHeadVolume(
                 rootSurface + rootNormal * kVisualRootLiftMeters,
                 Vec3(0.0f, 1.60f, 0.0f),
-                0.0100f);
+                0.0030f);
             Vec3 originalRoot = asset.restPoints[strand.pointOffset];
             Vec3 delta = reboundRoot - originalRoot;
             for (uint32_t i = 0; i < strand.pointCount; ++i)
@@ -1396,7 +1501,7 @@ namespace hairgpu
                 const uint32_t pointIndex = strand.pointOffset + i;
                 const float t = static_cast<float>(i) / static_cast<float>(std::max(strand.pointCount - 1u, 1u));
                 asset.restPoints[pointIndex] += delta;
-                const float shell = Lerp(0.0100f, 0.0025f, t);
+                const float shell = Lerp(0.0030f, 0.0015f, t);
                 asset.restPoints[pointIndex] = ProjectPointOutsideHeadVolume(
                     asset.restPoints[pointIndex],
                     Vec3(0.0f, 1.60f, 0.0f),
@@ -1442,10 +1547,14 @@ namespace hairgpu
         const Vec3 scalpCenter(0.0f, 1.60f, 0.0f);
         const std::vector<float> scalpAreaCdf = BuildScalpAreaDistributionCdf(asset.scalpMesh);
 
+        // Keep dedicated coverage bands, but never let them dominate the wig.
+        // The old 50% crown + 25% front allocation concentrated roughly 75,000
+        // displayed strands into two small scalp regions and produced a flat cap
+        // plus a curtain-like front wall. The remainder is now area-distributed.
         const uint32_t crownGuideQuota =
             std::min<uint32_t>(
                 guideCount,
-                std::max<uint32_t>(384u, guideCount / 2u));
+                std::max<uint32_t>(320u, (guideCount * 18u) / 100u));
         const uint32_t remainingAfterCrown =
             guideCount > crownGuideQuota
                 ? guideCount - crownGuideQuota
@@ -1453,7 +1562,7 @@ namespace hairgpu
         const uint32_t frontHairlineGuideQuota =
             std::min<uint32_t>(
                 remainingAfterCrown,
-                std::max<uint32_t>(224u, guideCount / 4u));
+                std::max<uint32_t>(240u, (guideCount * 14u) / 100u));
 
         for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
         {
@@ -1468,7 +1577,9 @@ namespace hairgpu
                 const float u = ::hairgpu::Fract(crownIndex * 0.61803398875f);
                 const float radial01 =
                     std::sqrt(crownIndex / crownCount);
-                const float v = 0.006f + 0.094f * radial01;
+                // Spread crown roots through the upper scalp instead of
+                // packing half the guides into the top 10% UV band.
+                const float v = 0.008f + 0.180f * radial01;
                 binding = FindClosestBindingForUv(
                     asset.scalpMesh,
                     u,
@@ -1509,8 +1620,11 @@ namespace hairgpu
             }
 
             StrandMaterial material;
-            material.rootWidth = 0.00160f;
-            material.tipWidth = 0.000065f;
+            // Physical-looking authored widths. The previous 1.6 mm root
+            // width was an order of magnitude above real hair and became an
+            // opaque surface when multiplied by 100,000 strands.
+            material.rootWidth = 0.00032f;
+            material.tipWidth = 0.000050f;
             material.stiffness = 0.95f;
             material.damping = 0.055f;
 
@@ -1659,9 +1773,9 @@ namespace hairgpu
 
                 FollowData followerFollow;
                 followerFollow.parentGuide = static_cast<int32_t>(guideIndex);
-                followerFollow.followWeight = 0.988f + Hash01(seed + 7u) * 0.006f - edgeRisk * 0.010f;
-                followerFollow.clumpWeight = 0.925f + Hash01(seed + 19u) * 0.035f - edgeRisk * 0.025f;
-                followerFollow.noiseWeight = 0.00008f + Hash01(seed + 23u) * 0.00008f;
+                followerFollow.followWeight = 0.955f + Hash01(seed + 7u) * 0.025f - edgeRisk * 0.015f;
+                followerFollow.clumpWeight = 0.740f + Hash01(seed + 19u) * 0.120f - edgeRisk * 0.030f;
+                followerFollow.noiseWeight = 0.080f + Hash01(seed + 23u) * 0.100f;
 
                 AppendStaticWigStrand(
                     asset,
@@ -1677,6 +1791,14 @@ namespace hairgpu
                     parameters,
                     rootOffset);
             }
+        }
+
+        if (!ReorderGeneratedGuideFollowerLayout(
+                asset,
+                guideCount,
+                followersPerGuide))
+        {
+            return {};
         }
 
         RebuildRootRestPositionsFromScalp(asset);

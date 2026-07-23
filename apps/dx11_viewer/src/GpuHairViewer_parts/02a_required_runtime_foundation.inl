@@ -160,12 +160,15 @@
         }
         else
         {
-            addCandidate(requested);
-            addCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / requested);
-            addCandidate(exeDirectory / requested);
+            // Prefer the deployed shader next to the executable. Relative
+            // current-directory candidates may contain stale copies when Visual
+            // Studio launches Release builds with the solution directory as CWD.
             addCandidate(exeDirectory / L"shaders" / requested);
-            addCandidate(std::filesystem::current_path() / requested);
+            addCandidate(exeDirectory / requested);
             addCandidate(std::filesystem::current_path() / L"shaders" / requested);
+            addCandidate(std::filesystem::current_path() / requested);
+            addCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / requested);
+            addCandidate(requested);
 
             std::filesystem::path root = exeDirectory;
             for (int depth = 0; depth < 7; ++depth)
@@ -200,6 +203,22 @@
             if (!exists)
             {
                 continue;
+            }
+
+            // HairStrandInstanced previously appeared unchanged because an older
+            // output copy was silently compiled. Require the visibility-fix marker
+            // and continue searching until the current shader source is found.
+            if (requested.filename() == L"HairStrandInstanced.hlsl")
+            {
+                std::ifstream sourceStream(candidate, std::ios::binary);
+                const std::string sourceText(
+                    (std::istreambuf_iterator<char>(sourceStream)),
+                    std::istreambuf_iterator<char>());
+                if (sourceText.find("HAIRGPU_STRAND_RIBBON_VISIBILITY_V6_COVERAGE_BALANCED") == std::string::npos)
+                {
+                    attemptedPaths << L"  [rejected: stale visibility shader]\r\n";
+                    continue;
+                }
             }
 
             shaderBlob.Reset();

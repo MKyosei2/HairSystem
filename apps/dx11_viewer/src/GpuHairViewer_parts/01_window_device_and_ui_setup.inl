@@ -758,12 +758,12 @@
             GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
             const std::filesystem::path assetCacheDirectory =
                 std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
-            // v4 encodes the post-root-distribution/post-follower-stability asset
-            // contract. A count-only v1 cache could keep reloading an older asset
-            // where all followers shared the guide root, creating a persistent
-            // crown hole even after the generator had been fixed.
+            // v9 enforces the runtime layout contract: all guides are stored
+            // contiguously before all followers. It intentionally invalidates
+            // v5-v8 caches whose interleaved order made FollowCS read followers
+            // as guides and most real guides as followers.
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v4_stable_roots_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v9_contiguous_guides_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -832,20 +832,8 @@
         m_activeSetBudget.promoteScoreThreshold = 0.52f;
         m_simConfig.solverIterations = kFixedSolverIterations;
         m_simConfig.fixedTimeStep = kFixedTimeStepSeconds;
-        m_simConfig.gravity = 18.5f;
-        m_simConfig.globalDamping = 0.100f;
         m_simConfig.segmentLength = initialSegmentLength;
-        m_simConfig.bendStiffness = 0.14f;
-        m_simConfig.followStiffness = 0.985f;
-        m_simConfig.windStrength = 0.03f;
-        m_simConfig.windDirection = { 0.90f, 0.0f, 0.25f };
         m_simConfig.floorY = -1.05f;
-        m_simConfig.selfCollisionRadius = 0.0042f;
-        m_simConfig.selfCollisionStiffness = 0.18f;
-        m_simConfig.stretchCompliance = 2.0e-7f;
-        m_simConfig.bendCompliance = 1.5e-5f;
-        m_simConfig.rootStiffness = 0.28f;
-        m_simConfig.velocityShockPropagation = 0.72f;
         m_simConfig.selfCollisionGridDimX = 18;
         m_simConfig.selfCollisionGridDimY = 18;
         m_simConfig.selfCollisionGridDimZ = 18;
@@ -854,14 +842,18 @@
         m_simConfig.selfCollisionCellSize = 0.040f;
         m_selfCollisionRadius = m_simConfig.selfCollisionRadius;
         m_selfCollisionStiffness = m_simConfig.selfCollisionStiffness;
-        m_enableRuntimeAngularBend = true;
-        m_runtimeAngularBendRadians = 0.16f;
-        m_runtimeAngularBendCompliance = 5.0e-6f;
-        m_runtimeAngularBendStiffness = 0.36f;
-        m_runtimeAngularBendDamping = 0.08f;
-        m_widthScale = 0.56f;
-        m_renderMode = RenderMode::ParticleBillboard;
-        m_showScalpMesh = true;
+
+        // Do not overwrite the profile selected before asset creation. The old
+        // unconditional block silently replaced the stable 9.81 m/s^2 profile
+        // with a much harsher setup and switched rendering back to millions of
+        // particle billboards. That produced the apparent solid wall and made
+        // the preview differ from the configured experiment case.
+        m_renderMode = RenderMode::StrandRibbon;
+        // Interactive preview must not be covered by the opaque mannequin scalp.
+        // The earlier initialization correctly disabled it, but this later
+        // unconditional assignment re-enabled it and made density changes appear
+        // to have no effect. Formal experiment rendering retains the scalp.
+        m_showScalpMesh = m_experimentCase.enabled;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
         m_showGuideSkeleton = false;
@@ -870,9 +862,13 @@
         m_showFollowLinks = false;
         m_showFloorGuide = false;
         m_showColliderDebug = false;
-        m_enableSelfCollision = false;
-        m_enableGridSelfCollision = false;
-        m_selfCollisionBroadphaseMode = 1u; // Spatial hash; bitonic mode is comparison-only.
+        if (!m_experimentCase.enabled)
+        {
+            m_widthScale = 0.68f;
+            m_enableSelfCollision = false;
+            m_enableGridSelfCollision = false;
+            m_selfCollisionBroadphaseMode = 1u; // Spatial hash; bitonic mode is comparison-only.
+        }
 
         if (m_experimentCase.enabled)
         {
