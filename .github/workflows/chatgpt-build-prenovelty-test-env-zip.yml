@@ -37,9 +37,9 @@ jobs:
           text = path.read_text(encoding='utf-8')
           old_subn = 'text, count = pattern.subn(replacement, text, count=1)'
           new_subn = 'text, count = pattern.subn(lambda _match: replacement, text, count=1)'
-          if text.count(old_subn) != 1:
-              raise SystemExit('startup20 replacement call was not found exactly once')
-          text = text.replace(old_subn, new_subn, 1)
+          if text.count(old_subn) != 2:
+              raise SystemExit('expected two pattern.subn replacement calls')
+          text = text.replace(old_subn, new_subn)
           old_test = '''        source = (\n            ROOT\n            / "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"\n        ).read_text(encoding="utf-8")\n        self.assertIn("allowsZeroMeasuredEvents", source)\n        self.assertIn("ExperimentScenarioId::S01_Idle", source)\n'''
           new_test = '''        parts_dir = ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts"\n        source = "\\n".join(\n            path.read_text(encoding="utf-8")\n            for path in sorted(parts_dir.glob("*.inl"))\n        )\n        self.assertIn("allowsZeroMeasuredEvents", source)\n        self.assertIn("ExperimentScenarioId::S01_Idle", source)\n'''
           if text.count(old_test) != 1:
