@@ -1,0 +1,85 @@
+name: Build corrected pre-novelty source ZIP
+
+on:
+  push:
+    branches:
+      - prenovelty-ready-test-env-fixed
+  pull_request:
+    branches:
+      - Novelty
+      - prenovelty-ready
+
+permissions:
+  contents: read
+
+jobs:
+  patch-test-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Apply stability and test-environment fixes
+        run: python tools/final_stage/apply_prenovelty_test_env_fixes.py
+
+      - name: Python syntax checks
+        run: |
+          python -m py_compile \
+            tools/final_stage/hairgpu_final_run.py \
+            tools/final_stage/hairgpu_runtime_suite.py \
+            tools/final_stage/hairgpu_local_debug_report.py \
+            tools/final_stage/hairgpu_startup_self_test.py \
+            tools/final_stage/apply_prenovelty_test_env_fixes.py \
+            tests/final_stage/test_prenovelty_test_environment_contract.py
+
+      - name: Focused regression tests
+        run: python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v
+
+      - name: Verify immutable scenario inputs
+        run: git diff --exit-code -- benchmarks/novelty01/scenarios
+
+      - name: Create full corrected source ZIP
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+
+          root = Path.cwd()
+          output = root / 'HairSystem_prenovelty_test_env_fixed_full.zip'
+          excluded_parts = {
+              '.git', '.vs', 'bin', 'bin-int', 'build', 'out',
+              '__pycache__', '.pytest_cache', '.mypy_cache'
+          }
+          excluded_prefixes = {
+              'results/committed/local_debug',
+              'benchmarks/novelty01/frozen_asset_bundle',
+          }
+          with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for path in sorted(root.rglob('*')):
+                  if not path.is_file() or path == output:
+                      continue
+                  relative = path.relative_to(root)
+                  if any(part in excluded_parts for part in relative.parts):
+                      continue
+                  relative_text = relative.as_posix()
+                  if any(relative_text.startswith(prefix) for prefix in excluded_prefixes):
+                      continue
+                  archive.write(path, f'HairSystem_prenovelty_test_env_fixed/{relative_text}')
+          print(output)
+
+      - name: Upload corrected full source
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-prenovelty-test-env-fixed-full-${{ github.sha }}
+          path: HairSystem_prenovelty_test_env_fixed_full.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
