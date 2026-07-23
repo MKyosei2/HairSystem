@@ -2,9 +2,7 @@ name: Windows Build and Test
 
 on:
   push:
-    branches: [Novelty]
   pull_request:
-    branches: [Novelty]
   workflow_dispatch:
     inputs:
       run_formal_smoke:

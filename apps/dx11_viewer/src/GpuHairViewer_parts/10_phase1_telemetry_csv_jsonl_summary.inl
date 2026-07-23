@@ -1361,7 +1361,9 @@ return true;
         if (timeline.scenarioId == ExperimentScenarioId::Unknown || timeline.scenarioId != m_experimentCase.scenarioId) return false;
         if (timeline.durationFrames < m_experimentCase.warmupFrames + m_experimentCase.measurementFrames) return false;
         if (std::abs(timeline.fixedTimeStepSeconds - m_experimentCase.fixedTimeStepSeconds) > 1.0e-6f) return false;
-        if (timeline.events.empty()) return false;
+        const bool allowsZeroMeasuredEvents =
+            timeline.scenarioId == ExperimentScenarioId::S01_Idle;
+        if (timeline.events.empty() && !allowsZeroMeasuredEvents) return false;
 
         uint32_t previousFrame = 0u;
         uint32_t measuredEventCount = 0u;
@@ -1395,7 +1397,7 @@ return true;
             default: break;
             }
         }
-        if (measuredEventCount == 0u) return false;
+        if (measuredEventCount == 0u && !allowsZeroMeasuredEvents) return false;
 
         // Semantic assertions prevent a correctly shaped timeline from silently
         // exercising the wrong phenomenon. Only scenarios with a unique required

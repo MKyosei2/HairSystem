@@ -1,6 +1,6 @@
 {
   "suite_name": "novelty01_prenovelty_runtime_suite",
-  "suite_version": "phase13-prenovelty-rtx4070ti-super-v1",
+  "suite_version": "phase13-prenovelty-rtx4070ti-super-v1-branch-detect-v2",
   "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
   "outputs_dir": "../../out/prenovelty_baseline",
   "telemetry_dir": "../../out/prenovelty_baseline/telemetry",
@@ -23,7 +23,13 @@
     "schema": "../../tools/final_stage/schema.sql",
     "asset_manifest": "../../benchmarks/novelty01/frozen_asset_bundle/frozen_asset_manifest.json",
     "shader_root": "../../apps/dx11_viewer/shaders",
-    "required_branch": "Novelty"
+    "branch_contract": {
+      "mode": "detect_current",
+      "require_attached_head": true,
+      "record_branch": true,
+      "record_commit": true,
+      "allow_any_named_branch": true
+    }
   },
   "preflight": {
     "strict": true,
@@ -446,6 +452,24 @@
       "method": "B8",
       "scenario": "S03_Walk",
       "seed": 2207,
+      "measurement_frames": 108000,
+      "timeline_repeat": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "L30_B6_Walk",
+      "method": "B6",
+      "scenario": "S03_Walk",
+      "seed": 3301,
+      "measurement_frames": 108000,
+      "timeline_repeat": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "L30_B8_StrongWind",
+      "method": "B8",
+      "scenario": "S09_StrongWind",
+      "seed": 4409,
       "measurement_frames": 108000,
       "timeline_repeat": true,
       "timeout_seconds": 2400

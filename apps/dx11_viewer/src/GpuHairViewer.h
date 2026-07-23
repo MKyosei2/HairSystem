@@ -39,6 +39,7 @@ namespace hairgpu::viewer
         int RunNativeSelfTests() const;
         int ExportCanonicalFrozenAssetSource(const std::filesystem::path& outputDirectory);
         int ValidateCanonicalFrozenAssetSource(const std::filesystem::path& sourceDirectory);
+        bool ExportLocalDebugCapture(const std::filesystem::path& outputDirectory, const std::wstring& runName) const;
 
     private:
         static constexpr uint32_t kFixedGuideCount = 4000u;

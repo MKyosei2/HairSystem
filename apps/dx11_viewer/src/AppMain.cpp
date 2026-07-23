@@ -651,6 +651,9 @@ namespace
         SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES", std::to_wstring(options.captureFrames));
         SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_METHOD", options.methodCode);
         SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_RUN_NAME", options.runName);
+        SetEnvironmentValue(
+            L"HAIRGPU_MAX_FRAMES",
+            std::to_wstring(options.warmupFrames + options.captureFrames));
         SetEnvironmentValue(L"HAIRGPU_AUTO_TELEMETRY", L"1");
         SetEnvironmentValue(L"HAIRGPU_TELEMETRY_DIR", options.runDirectory.wstring());
         SetEnvironmentValue(L"HAIRGPU_TELEMETRY_RUN_NAME", options.runName);
@@ -729,6 +732,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     if (!localCapture.enabled)
     {
         return viewerExitCode;
+    }
+
+    if (!app.ExportLocalDebugCapture(localCapture.runDirectory, localCapture.runName))
+    {
+        std::ofstream error(localCapture.runDirectory / L"TELEMETRY_EXPORT_ERROR.txt");
+        error << "Viewer failed to export local debugger telemetry.\n";
+        return viewerExitCode == 0 ? 89 : viewerExitCode;
     }
 
     const DWORD postprocessExitCode =

@@ -900,6 +900,26 @@ return sample;
         return true;
     }
 
+    bool GpuHairViewer::ExportLocalDebugCapture(
+        const std::filesystem::path& outputDirectory,
+        const std::wstring& runName) const
+    {
+        std::error_code errorCode;
+        std::filesystem::create_directories(outputDirectory, errorCode);
+        if (errorCode || runName.empty())
+        {
+            return false;
+        }
+
+        const std::filesystem::path stem = outputDirectory / runName;
+        const bool frameCsvOk = ExportPerformanceCsv((stem.wstring() + L"_frames.csv"));
+        const bool frameJsonlOk = ExportPerformanceJsonl((stem.wstring() + L"_frames.jsonl"));
+        const bool perSecondOk = ExportPerSecondTelemetryCsv((stem.wstring() + L"_per_second.csv"));
+        const bool settingsOk = ExportExperimentSettingsJson((stem.wstring() + L"_settings.json"));
+        const bool summaryOk = ExportRuntimeReport((stem.wstring() + L"_summary.json"));
+        return frameCsvOk && frameJsonlOk && perSecondOk && settingsOk && summaryOk;
+    }
+
     bool GpuHairViewer::ProjectWorldToScreen(const Vec3& world, float& outX, float& outY) const
     {
         const RECT renderRect = GetRenderViewportRect();

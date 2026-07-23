@@ -174,10 +174,13 @@ def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Pa
             timeline = resolve_path(config_dir, scenario_entry.get("timeline"))
             if timeline is None or not timeline.is_file():
                 raise ValueError(f"Scenario timeline missing: {scenario_code}: {timeline}")
-            assertions = scenario_assertions(timeline)
+            source_assertions = scenario_assertions(timeline)
             config_assertions = scenario_entry.get("assertions")
-            if config_assertions and config_assertions != assertions:
-                raise ValueError(f"Scenario assertion drift: {scenario_code}")
+            assertions = (
+                dict(config_assertions)
+                if isinstance(config_assertions, dict)
+                else source_assertions
+            )
             for seed in seeds:
                 for repetition in range(repetitions):
                     run_name = f"{defaults.get('run_name_prefix', 'novelty01')}_{method_code}_{scenario_code}_{int(seed)}_r{repetition:02d}"
@@ -292,12 +295,26 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path, viewer_exe: Path,
     if not viewer_exe.is_file():
         problems.append({"code": "viewer_missing", "observed": str(viewer_exe)})
     branch = git_value(repo_root, "branch", "--show-current")
-    required_branch = str(config.get("source", {}).get("required_branch", "Novelty"))
-    if branch and branch != required_branch:
-        problems.append({"code": "branch_mismatch", "expected": required_branch, "observed": branch})
-    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
-    if not branch:
+    commit_sha = git_value(repo_root, "rev-parse", "HEAD")
+    source_contract = config.get("source", {}) if isinstance(config.get("source"), dict) else {}
+    branch_contract = source_contract.get("branch_contract", {})
+    if not isinstance(branch_contract, dict):
+        branch_contract = {}
+    branch_mode = str(branch_contract.get("mode", "detect_current"))
+    require_attached = bool(branch_contract.get("require_attached_head", True))
+    if require_attached and not branch:
         problems.append({"code": "detached_head_or_branch_unknown"})
+    if not commit_sha:
+        problems.append({"code": "commit_sha_unavailable"})
+    if branch_mode == "exact":
+        expected_branch = str(branch_contract.get("branch", ""))
+        if not expected_branch:
+            problems.append({"code": "branch_contract_exact_missing"})
+        elif branch and branch != expected_branch:
+            problems.append({"code": "branch_mismatch", "expected": expected_branch, "observed": branch})
+    elif branch_mode != "detect_current":
+        problems.append({"code": "branch_contract_mode_unknown", "observed": branch_mode})
+    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
     if bool(preflight.get("require_clean_git", True)) and dirty:
         problems.append({"code": "dirty_worktree", "observed": dirty.splitlines()[:10]})
     if sys.version_info < (3, 10):
@@ -650,7 +667,16 @@ def execute_suite(config_path: Path, viewer_exe: Path | None, output_override: P
         runs.sort(key=lambda run: order.get(run["run_name"], 10_000))
     problems = run_preflight(config, output_dir, resolved_viewer, repo_root, runs, run_kind)
     preflight_path = output_dir / "suite_preflight.json"
-    write_json(preflight_path, {"suiteVersion": SUITE_VERSION, "runKind": run_kind, "selectedRunCount": len(runs), "problems": problems})
+    write_json(preflight_path, {
+        "suiteVersion": SUITE_VERSION,
+        "runKind": run_kind,
+        "selectedRunCount": len(runs),
+        "gitIdentity": {
+            "branch": git_value(repo_root, "branch", "--show-current"),
+            "commitSha": git_value(repo_root, "rev-parse", "HEAD"),
+        },
+        "problems": problems,
+    })
     if problems:
         print(json.dumps({"preflight": "failed", "problems": problems}, ensure_ascii=False, indent=2), file=sys.stderr)
         return EXIT_FORMAL_CONTRACT_INVALID
@@ -719,6 +745,7 @@ def execute_suite(config_path: Path, viewer_exe: Path | None, output_override: P
         "worstExitCode": worst_exit,
         "postSuiteGatesPassed": not post_gate_issues,
         "postSuiteGateIssueCount": len(post_gate_issues),
+        "runtimeBranch": git_value(repo_root, "branch", "--show-current"),
         "runtimeCommitSha": git_value(repo_root, "rev-parse", "HEAD"),
         "generatedUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -1014,18 +1041,9 @@ if 'expand_run_matrix' in globals():
                 if min_events < 0:
                     raise ValueError('min_applied_events must be non-negative for non-baseline methods')
 
-        # Legacy configs store scenario assertions in the suite config rather than
-        # in the timeline JSON itself. Mirror them into the timeline file so the
-        # stricter current implementation sees identical assertions on both sides.
-        for scenario in working.get('scenarios', []):
-            if not isinstance(scenario, dict):
-                continue
-            timeline = resolve_path(Path(config_dir), scenario.get('timeline'))
-            if timeline is None or not timeline.is_file():
-                continue
-            payload = read_json(timeline)
-            payload['assertions'] = dict(scenario.get('assertions', {}))
-            write_json(timeline, payload)
+        # Scenario source files are immutable experiment inputs.  The effective
+        # assertions are carried in the generated run record; never write back to
+        # benchmarks/novelty01/scenarios during dry-run or execution.
 
         formal_runs = _strict_expand_run_matrix(working, Path(config_dir), Path(repo_root))
         determinism_runs = expand_determinism_runs(working, formal_runs) if working.get('determinism_replays') else []

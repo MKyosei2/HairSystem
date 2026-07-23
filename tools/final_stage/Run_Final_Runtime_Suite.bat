@@ -10,7 +10,11 @@ set "ROOT=%~dp0..\.."
 for %%I in ("%ROOT%") do set "ROOT=%%~fI"
 set "CONFIG=%~f1"
 set "MODE=%~2"
-if "%MODE%"=="" set "MODE=proposal-smoke"
+if "%MODE%"=="" (
+  echo ERROR: mode is required.
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> ^<mode^> [output_dir]
+  exit /b 2
+)
 if /I "%MODE%"=="phase13-full" (
   call "%~f0" "%CONFIG%" prepare-asset "%~f3"
   if errorlevel 1 exit /b !errorlevel!
@@ -99,7 +103,7 @@ set "RUN_KIND_ARGS=--run-kind formal"
 if /I "%MODE%"=="prenovelty-smoke" set "FILTER_ARGS=--only-method B0 --only-method B6 --only-method B8 --only-scenario S01_Idle --only-scenario S03_Walk --only-scenario S09_StrongWind --only-scenario S17_CloseCamera100k --only-seed 1103"
 if /I "%MODE%"=="prenovelty-soak30" (
   set "RUN_KIND_ARGS=--run-kind long-run"
-  set "FILTER_ARGS=--only-run-name L30_B8_Walk"
+  set "FILTER_ARGS=--only-run-name L30_B0_Walk --only-run-name L30_B6_Walk --only-run-name L30_B8_Walk --only-run-name L30_B8_StrongWind"
 )
 if /I "%MODE%"=="proposal-smoke" set "FILTER_ARGS=--only-method P --only-scenario S01_Idle --only-seed 1103"
 if /I "%MODE%"=="comparison-smoke" set "FILTER_ARGS=--only-method B0 --only-method P --only-scenario S01_Idle --only-seed 1103"
@@ -229,16 +233,18 @@ exit /b 0
 
 
 :startup20
-echo Running 20 hidden viewer startup and shader initialization repetitions...
-for /L %%N in (1,1,20) do (
-  echo Startup repetition %%N/20
-  "%VIEWER%" --native-self-test
-  if errorlevel 1 exit /b !errorlevel!
-  "%VIEWER%" --shader-self-test
-  if errorlevel 1 exit /b !errorlevel!
-)
-echo Startup20 completed without failure.
-exit /b 0
+set "STARTUP_REPORT=%ROOT%\out\startup20\startup20_summary.json"
+if not "%~3"=="" set "STARTUP_REPORT=%~f3\startup20_summary.json"
+for %%I in ("%STARTUP_REPORT%") do if not exist "%%~dpI" mkdir "%%~dpI"
+echo Running 20 real Viewer startup/render-loop/shutdown repetitions...
+python "%~dp0hairgpu_startup_self_test.py" ^
+  --viewer "%VIEWER%" ^
+  --repetitions 20 ^
+  --startup-timeout 120 ^
+  --run-seconds 5 ^
+  --shutdown-timeout 30 ^
+  --report "%STARTUP_REPORT%"
+exit /b %errorlevel%
 
 
 :projection4070_to_1660
