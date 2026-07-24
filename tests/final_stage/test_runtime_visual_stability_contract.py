@@ -75,7 +75,10 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         self.assertIn("SetMaximumFrameLatency(1u)", self.run_loop)
         self.assertIn("interactiveCadenceWarmupFrames", self.run_loop)
         self.assertIn("m_lastTick = cadenceWindowStart", self.run_loop)
-        self.assertIn("m_previousPositions[m_currentBufferIndex].buffer.Get()", self.run_loop)
+        self.assertIn(
+            "m_sessionWallSeconds += static_cast<double>(wallFrameSeconds);",
+            self.run_loop,
+        )
         self.assertIn("const double rawFrameSeconds", self.run_loop)
         self.assertIn("const float wallFrameSeconds", self.run_loop)
         self.assertNotIn("dt > 1.0f", self.run_loop)
