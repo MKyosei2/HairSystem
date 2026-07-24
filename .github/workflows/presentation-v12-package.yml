@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - chatgpt-presentation-v12-package
+  pull_request:
+    branches:
+      - prenovelty-ready
 
 permissions:
   contents: read
