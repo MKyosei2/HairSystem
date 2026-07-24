@@ -27,10 +27,10 @@ _REGRESSION_ANCHOR = '''        source = (
 
 
 def main() -> int:
-    generator_path = ROOT / ".github" / "scripts" / "generate_visual_fix_artifact.py"
-    if not generator_path.is_file():
-        raise RuntimeError(f"Visual fix generator is missing: {generator_path}")
-    runpy.run_path(str(generator_path), run_name="__main__")
+    runner_path = ROOT / ".github" / "scripts" / "run_visual_fix_generator.py"
+    if not runner_path.is_file():
+        raise RuntimeError(f"Visual fix generator runner is missing: {runner_path}")
+    runpy.run_path(str(runner_path), run_name="__main__")
     return 0
 
 
