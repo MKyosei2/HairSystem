@@ -73,7 +73,8 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
 
     def test_interactive_loop_preserves_real_frame_truth(self) -> None:
         self.assertIn("SetMaximumFrameLatency(1u)", self.run_loop)
-        self.assertIn("kTemporalDiscontinuitySeconds", self.run_loop)
+        self.assertIn("interactiveCadenceWarmupFrames", self.run_loop)
+        self.assertIn("m_lastTick = cadenceWindowStart", self.run_loop)
         self.assertIn("m_previousPositions[m_currentBufferIndex].buffer.Get()", self.run_loop)
         self.assertIn("const double rawFrameSeconds", self.run_loop)
         self.assertIn("const float wallFrameSeconds", self.run_loop)
@@ -106,7 +107,13 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         self.assertIn("HAIRGPU_STRAND_RIBBON_SHADER_ABI_1", self.strand_shader)
         self.assertIn("StructuredBuffer<uint> RenderTiers", self.strand_shader)
         self.assertIn("StructuredBuffer<uint> EditCategories", self.strand_shader)
-        for token in ("ribbonSide", "screenStableFloor", "rootOpening", "rootAlpha", "materialAlpha"):
+        for token in (
+            "ribbonSide",
+            "distanceScaledHalfWidth",
+            "rootMask",
+            "rootAlphaBoost",
+            "output.alpha",
+        ):
             self.assertIn(token, self.strand_shader)
         self.assertNotIn("clip(", self.strand_shader)
         self.assertNotIn("discard;", self.strand_shader)
@@ -179,7 +186,7 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         selection = self.quick_edit[marker : marker + 500]
         self.assertIn("m_workspaceMode == WorkspaceMode::Groom", selection)
         self.assertIn("m_interactionMode == InteractionMode::Edit", selection)
-        self.assertIn("showSelectedStrandOverlay", self.overlay)
+        self.assertIn("m_selectedStrandIndex >= 0", self.overlay)
         self.assertIn("m_workspaceMode == WorkspaceMode::Groom", self.overlay)
         self.assertIn("m_interactionMode == InteractionMode::Edit", self.overlay)
 
