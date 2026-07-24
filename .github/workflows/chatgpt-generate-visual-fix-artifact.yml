@@ -1,0 +1,38 @@
+name: ChatGPT Generate Visual Fix Artifact
+
+on:
+  push:
+    branches:
+      - chatgpt-visual-fix-artifact-temp
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: ${{ !contains(github.event.head_commit.message, '[artifact-ready]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout temporary branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate modified-file-only ZIP chunks
+        run: python .github/scripts/generate_visual_fix_artifact.py
+
+      - name: Commit artifact chunks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f .artifact_chunks
+          git commit -m "[artifact-ready] Generate visual stability fix ZIP"
+          git push
