@@ -60,6 +60,11 @@ class PrenoveltyCompleteV2ContractTests(unittest.TestCase):
             module.PHASES,
             ("smoke", "startup20", "coverage18", "determinism", "soak30"),
         )
+        self.assertEqual(
+            module.ANALYSIS_PHASES,
+            ("coverage18", "determinism", "soak30"),
+        )
+        self.assertNotIn("smoke", module.ANALYSIS_PHASES)
         config = {
             "methods": [{"code": "B0"}, {"code": "B6"}, {"code": "B8"}],
             "scenarios": [{"code": f"S{index:02d}"} for index in range(1, 19)],
@@ -67,6 +72,14 @@ class PrenoveltyCompleteV2ContractTests(unittest.TestCase):
             "long_runs": [{"id": str(index)} for index in range(4)],
         }
         self.assertEqual(module.expected_counts(config, 1103)["coverage18"], 54)
+
+    def test_analysis_prevents_duplicate_identity_and_statistical_reweighting(self) -> None:
+        source = (TOOLS / "hairgpu_prenovelty_complete_v2.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('experiment_name = f"{base_experiment}__{phase}"', source)
+        self.assertIn("run_name LIKE 'coverage18__%'", source)
+        self.assertIn("Smoke is a fast acceptance subset of coverage18", source)
 
     def test_postprocess_outputs_are_mandatory(self) -> None:
         source = (TOOLS / "hairgpu_prenovelty_complete_v2.py").read_text(encoding="utf-8")
