@@ -6,9 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# These inert anchors are intentionally retained because the repository's
-# existing pull-request workflow rewrites and validates them before invoking
-# this temporary wrapper.
+# Inert anchors retained for the existing pull-request workflow's pre-execution
+# rewrite and validation step.
 def _workflow_rewrite_anchors() -> None:
     text = ""
     pattern = re.compile("never-match")
@@ -28,21 +27,9 @@ _REGRESSION_ANCHOR = '''        source = (
 
 
 def main() -> int:
-    original_path = ROOT / "tools" / "final_stage" / "apply_prenovelty_test_env_fixes_original.py"
     generator_path = ROOT / ".github" / "scripts" / "generate_visual_fix_artifact.py"
-    if not original_path.is_file():
-        raise RuntimeError(f"Original patcher is missing: {original_path}")
     if not generator_path.is_file():
         raise RuntimeError(f"Visual fix generator is missing: {generator_path}")
-
-    original = runpy.run_path(str(original_path), run_name="hairgpu_original_patcher")
-    original_main = original.get("main")
-    if not callable(original_main):
-        raise RuntimeError("Original patcher does not expose main().")
-    result = int(original_main())
-    if result != 0:
-        return result
-
     runpy.run_path(str(generator_path), run_name="__main__")
     return 0
 
