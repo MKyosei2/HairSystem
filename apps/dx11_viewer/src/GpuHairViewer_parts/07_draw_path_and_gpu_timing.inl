@@ -77,7 +77,15 @@ namespace
 
         RECT client = {};
         GetClientRect(m_hwnd, &client);
-        const int panelX = (std::max)(static_cast<int>(client.right) - kUiPanelWidth, 0);
+        // Sim/View starts as an uncluttered full-width review viewport. The
+        // controls are moved outside the client area while the panel is hidden,
+        // so direct child controls cannot leave a blank 500-pixel reservation.
+        const bool showUiPanel =
+            IsGroomWorkspace() || m_showInspectorPane || m_showBottomTray;
+        ShowWindow(m_uiPanel, showUiPanel ? SW_SHOW : SW_HIDE);
+        const int panelX = showUiPanel
+            ? (std::max)(static_cast<int>(client.right) - kUiPanelWidth, 0)
+            : static_cast<int>(client.right);
         const int panelHeight = (std::max)(static_cast<int>(client.bottom), 1);
         MoveWindow(m_uiPanel, panelX, 0, kUiPanelWidth, panelHeight, TRUE);
 

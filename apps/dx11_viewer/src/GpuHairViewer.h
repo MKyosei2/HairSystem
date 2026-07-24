@@ -1172,6 +1172,7 @@ namespace hairgpu::viewer
         bool CreateWindowAndDevice(HINSTANCE instance, int showCommand);
         bool CreateSimulationResources();
         bool CreateRenderResources();
+        bool CreateHairOitResources(UINT width, UINT height);
         bool LoadShaders();
         bool CreateUiControls();
         bool RebuildAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand);
@@ -1381,6 +1382,9 @@ namespace hairgpu::viewer
         HWND m_hwnd = nullptr;
         UINT m_width = 1600;
         UINT m_height = 900;
+        UINT m_pendingResizeWidth = 0u;
+        UINT m_pendingResizeHeight = 0u;
+        bool m_resizePending = false;
         bool m_vsyncEnabled = true;
         UINT m_presentSyncInterval = 1u;
         UINT m_lastObservedPresentSyncInterval = 1u;
@@ -1616,6 +1620,12 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_rtv;
         Microsoft::WRL::ComPtr<ID3D11Texture2D> m_depthTexture;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_dsv;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> m_hairOitAccumTexture;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_hairOitAccumRtv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_hairOitAccumSrv;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> m_hairOitRevealTexture;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_hairOitRevealRtv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_hairOitRevealSrv;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_particleVS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particlePointGS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particleBillboardGS;
@@ -1623,6 +1633,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_ribbonVS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_ribbonGS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ribbonPS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ribbonOitPS;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_hairOitCompositeVS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_hairOitCompositePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_debugLineVS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_debugLinePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_scalpVS;
@@ -1749,7 +1762,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_renderConstants;
         Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
         Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendState;
+        Microsoft::WRL::ComPtr<ID3D11BlendState> m_hairOitBlendState;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthState;
+        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_overlayDepthState;
         // Transparent hair ribbons test depth but do not write it.
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_hairDepthState;
         size_t m_hairMeshVertexCapacity = 0;

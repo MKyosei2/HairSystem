@@ -912,33 +912,21 @@ namespace hairgpu
             return out;
         }
 
-        RootBinding OffsetBindingWithinTriangle(
+        RootBinding OffsetBindingAcrossScalpUv(
             const ScalpMesh& scalp,
             const RootBinding& guideBinding,
             float angle,
-            float radius)
+            float radiusUv)
         {
-            RootBinding followerBinding = guideBinding;
-
-            // Three phase-shifted cosine terms sum to zero, so the offset moves
-            // the barycentric point around the guide root without changing the
-            // total barycentric weight. This gives every follower its own scalp
-            // root instead of stacking all 24 followers on the guide root.
-            Vec3 barycentric = guideBinding.barycentric;
-            barycentric.x += std::cos(angle) * radius;
-            barycentric.y += std::cos(angle + kTau / 3.0f) * radius;
-            barycentric.z += std::cos(angle + 2.0f * kTau / 3.0f) * radius;
-
-            barycentric.x = std::max(barycentric.x, 0.002f);
-            barycentric.y = std::max(barycentric.y, 0.002f);
-            barycentric.z = std::max(barycentric.z, 0.002f);
-            const float sum = barycentric.x + barycentric.y + barycentric.z;
-            followerBinding.barycentric = (sum > 1.0e-6f)
-                ? barycentric / sum
-                : guideBinding.barycentric;
-            followerBinding.rootUv = EvaluateTriangleUv(scalp, followerBinding);
-            followerBinding.rootUv.x = WrapUnit(followerBinding.rootUv.x);
-            return followerBinding;
+            const Vec2 guideUv = EvaluateTriangleUv(scalp, guideBinding);
+            const float targetU = WrapUnit(guideUv.x + std::cos(angle) * radiusUv);
+            const float minV = EvaluateAllowedRootMinV(targetU) + 0.002f;
+            const float maxV = EvaluateAllowedRootMaxV(targetU) - 0.002f;
+            const float targetV = Clamp(
+                guideUv.y + std::sin(angle) * radiusUv * 0.72f,
+                minV,
+                std::max(minV, maxV));
+            return FindClosestBindingForUv(scalp, targetU, targetV);
         }
 
         RootBinding BuildBindingFromTriangleSample(const ScalpMesh& scalp, uint32_t triangleIndex, float sampleA, float sampleB, uint32_t seed = 0u)
@@ -1183,6 +1171,14 @@ namespace hairgpu
             const float rootTravel = strandLength * Lerp(0.12f, 0.07f, supportMix) * (0.86f + 0.12f * sideFactor + 0.10f * backFactor);
             const float sideDrift = (0.0040f + 0.0065f * sideFactor + 0.0035f * backFactor) * (0.92f + 0.12f * Hash01(seed + 67u)) * (1.0f - 0.72f * supportMix);
             const float forwardDrift = 0.012f * fringeFactor * (0.90f + 0.14f * Hash01(seed + 73u)) * (1.0f - 0.70f * supportMix);
+            Vec3 fringeCrossDirection = ProjectOntoPlaneDir(Vec3(1.0f, 0.0f, 0.0f), normal);
+            if (Length(fringeCrossDirection) <= 1.0e-6f)
+            {
+                fringeCrossDirection = lateral;
+            }
+            const float fringeCrossSign = ((seed & 1u) == 0u) ? -1.0f : 1.0f;
+            const float fringeCrossDrift = fringeFactor * fringeCrossSign *
+                (0.008f + 0.006f * Hash01(seed + 79u));
             const float curlNoise = parameters.strandNoise * Lerp(0.20f, 0.11f, supportMix);
             const float rootWidthBoost =
                 1.0f +
@@ -1213,6 +1209,10 @@ namespace hairgpu
                 p += tangentDown * (strandLength * 0.14f * (1.0f - fallPhase) * fallPhase * (1.0f - 0.50f * supportMix));
                 p += lateral * (sideDrift * (0.35f + 0.65f * Smooth01(fallPhase)));
                 p += frontDir * (forwardDrift * (1.0f - 0.35f * fallPhase));
+                p += fringeCrossDirection * (
+                    fringeCrossDrift *
+                    Smooth01(Clamp((t - 0.12f) / 0.58f, 0.0f, 1.0f)) *
+                    (1.0f - 0.20f * fallPhase));
                 const float rootShellBlend =
                     1.0f - Smooth01(Clamp(t / 0.22f, 0.0f, 1.0f));
                 p += normal * (0.0080f * rootShellBlend);
@@ -1479,12 +1479,24 @@ namespace hairgpu
             RootBinding binding;
             if (guideIndex < crownGuideQuota)
             {
-                const float crownIndex = static_cast<float>(guideIndex) + 0.5f;
-                const float crownCount = static_cast<float>(std::max<uint32_t>(crownGuideQuota, 1u));
-                const float u = ::hairgpu::Fract(crownIndex * 0.61803398875f);
-                const float radial01 = std::sqrt(crownIndex / crownCount);
-                // Overlap the transition stratum instead of ending at v=0.10.
-                const float v = 0.006f + 0.164f * radial01;
+                constexpr uint32_t crownColumns = 32u;
+                constexpr uint32_t crownRows = 8u;
+                constexpr uint32_t crownCellCount = crownColumns * crownRows;
+                const uint32_t cellIndex = guideIndex % crownCellCount;
+                const uint32_t layerIndex = guideIndex / crownCellCount;
+                const uint32_t column = cellIndex % crownColumns;
+                const uint32_t row = cellIndex / crownColumns;
+                const uint32_t seed = guideIndex * 747796405u + 2891336453u;
+                const float jitterU = (Hash01(seed + 11u) - 0.5f) * 0.60f;
+                const float jitterV = (Hash01(seed + 17u) - 0.5f) * 0.50f;
+                const float u = ::hairgpu::WrapUnit(
+                    (static_cast<float>(column) + 0.5f + jitterU +
+                     0.21f * static_cast<float>(layerIndex)) /
+                    static_cast<float>(crownColumns));
+                const float row01 =
+                    (static_cast<float>(row) + 0.5f + jitterV) /
+                    static_cast<float>(crownRows);
+                const float v = 0.014f + 0.166f * Clamp(row01, 0.0f, 1.0f);
                 binding = FindClosestBindingForUv(asset.scalpMesh, u, v);
             }
             else if (guideIndex < crownGuideQuota + transitionGuideQuota)
@@ -1608,23 +1620,23 @@ namespace hairgpu
                 // The previous asset stored the same RootBinding for the guide and
                 // all 24 followers. RebuildRootRestPositionsFromScalp therefore
                 // collapsed every follower root back onto the guide root, leaving
-                // only 4,000 effective scalp roots. Spread the follower bindings
-                // deterministically inside the same scalp triangle so all 100,000
-                // strands contribute to root coverage without changing strand count.
-                const float rootDistributionRadius =
-                    Lerp(0.045f, 0.180f, ring01) *
+                // only 4,000 effective scalp roots. Rebind deterministic UV rings
+                // across neighboring scalp triangles so all 100,000 strands
+                // contribute to root coverage without changing strand count.
+                const float rootDistributionRadiusUv =
+                    Lerp(0.0035f, 0.0140f, ring01) *
                     Clamp(
                         1.0f +
-                        0.08f * crownMaskLocal +
-                        0.04f * partShoulderLocal -
+                        0.18f * crownMaskLocal +
+                        0.08f * partShoulderLocal -
                         0.04f * partLineCenterLocal,
-                        0.88f,
-                        1.12f);
-                RootBinding followerBinding = OffsetBindingWithinTriangle(
+                        0.90f,
+                        1.22f);
+                RootBinding followerBinding = OffsetBindingAcrossScalpUv(
                     asset.scalpMesh,
                     binding,
                     angle,
-                    rootDistributionRadius);
+                    rootDistributionRadiusUv);
                 const float radialJitter = 0.94f + 0.10f * Hash01(seed + 5u);
                 const float tangentJitter = (Hash01(seed + 3u) - 0.5f) * 0.10f;
                 const float bitangentScale = 0.74f + 0.12f * Hash01(seed + 37u);

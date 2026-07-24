@@ -754,7 +754,8 @@
                     }
                     const std::wstring name = entry.path().filename().wstring();
                     if (name.rfind(L"sample_hybrid_cache_v1", 0u) == 0u ||
-                        name.rfind(L"sample_hybrid_cache_v2", 0u) == 0u)
+                        name.rfind(L"sample_hybrid_cache_v2", 0u) == 0u ||
+                        name.rfind(L"sample_hybrid_cache_v3", 0u) == 0u)
                     {
                         std::error_code removeError;
                         std::filesystem::remove(entry.path(), removeError);
@@ -762,7 +763,7 @@
                 }
             }
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v3_runtime_verified_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v5_root_oit_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -875,22 +876,32 @@
         // Stable preview must start in the production ribbon path. Particle modes are
         // diagnostics only; starting in Billboard mode produces the dotted/helmet-like
         // appearance when the scalp is hidden by the benchmark preset.
-        m_widthScale = 0.82f;
+        // The 100k-strand preview uses narrower authored ribbons than the old
+        // emergency visibility preset. Keeping the fixed workload intact while
+        // reducing width prevents the fringe from becoming a solid plate.
+        m_widthScale = 0.66f;
         m_renderMode = RenderMode::StrandRibbon;
         // Stable startup is a reviewable simulation view, never an implicit edit
-        // session inherited from the inline Edit Stack.
+        // session inherited from the inline Edit Stack. The editor panel starts
+        // collapsed so the canonical subject is centered in the full viewport.
         m_activePresetName = L"Stable Benchmark Wig";
         m_workspaceMode = WorkspaceMode::Sim;
         m_interactionMode = InteractionMode::View;
+        m_showInspectorPane = false;
+        m_showBottomTray = false;
+        m_showAdvancedInspector = false;
+        m_fastGroomViewport = false;
         m_groomTool = GroomTool::Select;
         m_debugColorMode = DebugColorMode::Natural;
         m_maskOverlayMode = MaskOverlayMode::None;
         m_selectedStrandIndex = -1;
         m_cpuReadbackMode = CpuReadbackMode::Off;
         m_showScalpMesh = true;
-        m_scalpCoverageStrength = 0.92f;
-        m_scalpTintDarkness = 0.48f;
-        m_scalpHairBlend = 0.62f;
+        // A slightly darker, better blended scalp closes sub-pixel root gaps
+        // without changing strand count, topology, simulation, or formal data.
+        m_scalpCoverageStrength = 1.04f;
+        m_scalpTintDarkness = 0.58f;
+        m_scalpHairBlend = 0.76f;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
         m_showGuideSkeleton = false;

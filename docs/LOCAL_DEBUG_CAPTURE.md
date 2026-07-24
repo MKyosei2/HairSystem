@@ -2,75 +2,73 @@
 
 ## Purpose
 
-This workflow captures diagnostic data automatically when `HairSystem` is started from the Visual Studio local debugger. It is designed for rapid development, regression detection, graph generation, and Git history during the pre-novelty and Novelty 01 implementation phases.
+Visual Studio F5 is a development and diagnosis path. It is useful for visual inspection,
+regression discovery, graph generation, and checking the Novelty 01 telemetry columns, but
+it is **not formal thesis evidence**.
 
-It does **not** replace the formal runtime suite.
-
-| Launch path | Evidence class | May be used as formal paper evidence |
+| Launch path | Evidence class | Formal thesis evidence |
 |---|---|---:|
 | Visual Studio F5 / Local Windows Debugger | `diagnostic_debugger` | No |
-| `Run_Final_Runtime_Suite.bat` with frozen asset and strict gate | `formal_evidence` | Yes, after all gates pass |
+| `Run_Final_Runtime_Suite.bat` with all strict gates | `formal_evidence` | Yes |
 
-A debugger changes CPU scheduling, frame pacing, driver synchronization, and query resolution. Therefore the F5 graphs are useful for comparison and fault discovery, but their FPS and frame-time values must never be reported as the formal result.
+A debugger changes scheduling, frame pacing, synchronization, and GPU-query resolution.
+Do not report F5 FPS or frame-time values as the formal result.
 
-## Novelty 01 relationship
+## Current default F5 behavior
 
-The proposed data type uses a point-line-point segment group as its minimum state unit. Each group can be:
+`Release | x64` currently has no automatic command arguments. Pressing F5 starts the normal
+interactive Viewer and does **not** automatically start capture, terminate the Viewer,
+commit files, or push a branch.
 
-- static cached: reuse the last valid solved result without recomputation;
-- static transformed: reuse cached local state while applying a valid parent/head transform;
-- dynamic: compact and solve on the GPU;
-- repair required: resolve shared-point, boundary, collision, certificate, or wake failures;
-- fallback: reject unsafe compact data and use a safe representation.
+This is intentional. A normal visual check must not unexpectedly close the Viewer or modify
+Git history.
 
-Adjacent groups share the middle point. Directional responsibility and hemisphere ownership determine which side owns the shared point for a specific correction. Static reuse must be invalidated by head motion, collision risk, edit changes, boundary error, certificate failure, watchdog findings, or predictive wake.
+## Starting an explicit diagnostic capture
 
-The local debugger capture includes the same columns used to inspect these mechanisms:
-
-- static/dynamic/repair group counts;
-- cache hit, miss, and invalidation counts;
-- shared-point conflicts and hemisphere resolutions;
-- false-static rate;
-- static/dynamic boundary error;
-- predictive-wake precision, recall, and delay;
-- repair success and recurrence;
-- state transition and oscillation counts;
-- pass-level GPU timings;
-- full-position and direction-cache memory estimates;
-- determinism hashes when available.
-
-## Default Visual Studio behavior
-
-For `Release | x64`, the project supplies these debugger arguments:
+Add the following arguments temporarily in:
 
 ```text
---local-capture --local-capture-warmup 120 --local-capture-frames 1800 --local-capture-autocommit --local-capture-push
+HairSystem project
+  -> Properties
+  -> Configuration Properties
+  -> Debugging
+  -> Command Arguments
 ```
 
-The Viewer:
+Recommended local-only command:
 
-1. starts normally from Visual Studio;
-2. runs 120 warm-up frames;
-3. records 1,800 diagnostic frames;
-4. exits automatically;
-5. writes CSV, JSONL, settings, summary, graphs, report, hashes, and context;
-6. commits only the generated run directory;
-7. pushes the current branch to `origin` when authentication is available.
+```text
+--local-capture --local-capture-warmup 120 --local-capture-frames 1800
+```
 
-The default output directory is:
+Optional local commit, without push:
+
+```text
+--local-capture --local-capture-warmup 120 --local-capture-frames 1800 --local-capture-autocommit
+```
+
+Automatic push is not the default. Use `--local-capture-push` only when the current branch,
+remote authentication, and generated run have been reviewed.
+
+Disable capture explicitly with:
+
+```text
+--no-local-capture
+```
+
+## Diagnostic output directory
 
 ```text
 results/committed/local_debug/<UTC timestamp>_<process id>/
 ```
 
-The exact run is isolated in its own directory. Source-code changes are not staged by the automatic data commit.
-
-## Generated files
+A successfully postprocessed run can contain:
 
 ```text
 capture_context.json
 local_debug_frames.csv
 local_debug_frames.jsonl
+local_debug_per_second.csv
 local_debug_settings.json
 local_debug_summary.json
 frame_time.svg
@@ -83,7 +81,7 @@ files.sha256
 postprocess_status.json
 ```
 
-`run_manifest.json` always contains:
+`run_manifest.json` identifies the output as diagnostic:
 
 ```json
 {
@@ -92,74 +90,45 @@ postprocess_status.json
 }
 ```
 
-## Graphs
+## Novelty 01 telemetry available for diagnosis
 
-### `frame_time.svg`
+The capture path can record:
 
-Plots frame time, simulation time, and resolved GPU hair time. It includes reference lines for:
+- static-cached, static-transformed, dynamic, and repair-required group counts;
+- cache hits, misses, and invalidations;
+- shared-point conflicts and directional-responsibility resolutions;
+- false-static and static/dynamic-boundary errors;
+- predictive-wake precision, recall, and delay;
+- repair attempts, verified success, and recurrence;
+- state transitions and oscillations;
+- delayed per-pass GPU timings;
+- memory estimates and determinism hashes when available.
 
-- 60 FPS: 16.6667 ms;
-- pre-novelty 24 FPS gate: 41.6667 ms.
+Unavailable values must remain unavailable. They must not be replaced by synthetic zeroes.
 
-### `segment_group_state.svg`
+## Commit and postprocessing safety
 
-Plots static-cached, static-transformed, dynamic, and repair-required group counts. This graph becomes especially important after the Novelty 01 integrated segment-group runtime is enabled.
-
-### `gpu_pass_breakdown.svg`
-
-Shows the average GPU cost of classification, compaction, static transform, dynamic solve, boundary repair, watchdog, follower reconstruction, and hair draw.
-
-SVG is used so graph generation has no third-party Python dependency and GitHub can display the result directly.
-
-## Automatic Git commit safety
-
-The postprocessor refuses to commit outside:
+The postprocessor may stage only the exact generated run directory under:
 
 ```text
 results/committed/local_debug/
 ```
 
-It uses a path-limited commit, so unrelated modified source files remain untouched. Generated local-debug data is explicitly re-included by `.gitignore` rules.
+A missing `git.exe`, unavailable authentication, or push failure must not prevent local
+CSV, JSON, SVG, and Markdown generation. Failed or partial postprocessing remains local and
+must not be committed automatically.
 
-Automatic push requires an authenticated `origin`. When push fails, the local commit and files remain available and `postprocess_status.json` records `pushError`; graph and report generation remain successful. If `git.exe` is unavailable in the Visual Studio environment, report generation still completes and automatic commit/push is skipped. A failed postprocess run is never committed automatically.
+## Formal experiment path
 
-`files.sha256` is regenerated after `postprocess_status.json` is written, so the success/failure status is covered by the run-directory integrity list.
-
-## Disabling or changing capture
-
-Remove the debugger arguments from:
-
-```text
-HairSystem project
-  -> Properties
-  -> Configuration Properties
-  -> Debugging
-  -> Command Arguments
-```
-
-Or use:
-
-```text
---no-local-capture
-```
-
-Useful alternatives:
-
-```text
---local-capture --local-capture-warmup 60 --local-capture-frames 600
---local-capture --local-capture-warmup 120 --local-capture-frames 1800 --local-capture-autocommit
---local-capture --local-capture-warmup 120 --local-capture-frames 1800 --local-capture-autocommit --local-capture-push
-```
-
-## Formal experiment workflow
-
-Formal evidence remains separate:
+Use the strict Release x64 suite for measurements used in the thesis:
 
 ```bat
 tools\final_stage\Run_Final_Runtime_Suite.bat ^
   docs\sample_assets\prenovelty_runtime_suite.json ^
-  prenovelty-smoke ^
-  out\prenovelty_smoke
+  prenovelty-complete ^
+  out\prenovelty_complete
 ```
 
-After Novelty 01 implementation, use the final template and the B0-B8/P comparison modes. Formal runs must use the frozen asset, Release x64, fixed 1/60 timestep, 1920x1080, VSync off, strict hardware/environment checks, delayed GPU timing, and the formal validator.
+Formal runs require the frozen workload, 1920x1080, fixed 1/60 timestep, VSync off, clean
+Git state, hardware/environment checks, delayed GPU timing, artifact hashes, per-run
+validation, and suite-level gates.

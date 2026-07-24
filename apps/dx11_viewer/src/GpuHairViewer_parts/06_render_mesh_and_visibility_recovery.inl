@@ -209,25 +209,94 @@ if (FAILED(m_lastPresentResult))
 // Window title is refreshed by Run() at the UI statistics cadence.
     }
 
+    bool GpuHairViewer::CreateHairOitResources(UINT width, UINT height)
+    {
+        m_hairOitAccumSrv.Reset();
+        m_hairOitAccumRtv.Reset();
+        m_hairOitAccumTexture.Reset();
+        m_hairOitRevealSrv.Reset();
+        m_hairOitRevealRtv.Reset();
+        m_hairOitRevealTexture.Reset();
+
+        if (!m_device || width == 0u || height == 0u)
+        {
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC textureDesc = {};
+        textureDesc.Width = width;
+        textureDesc.Height = height;
+        textureDesc.MipLevels = 1u;
+        textureDesc.ArraySize = 1u;
+        textureDesc.SampleDesc.Count = 1u;
+        textureDesc.Usage = D3D11_USAGE_DEFAULT;
+        textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+        textureDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if (FAILED(m_device->CreateTexture2D(&textureDesc, nullptr, &m_hairOitAccumTexture)) ||
+            FAILED(m_device->CreateRenderTargetView(m_hairOitAccumTexture.Get(), nullptr, &m_hairOitAccumRtv)) ||
+            FAILED(m_device->CreateShaderResourceView(m_hairOitAccumTexture.Get(), nullptr, &m_hairOitAccumSrv)))
+        {
+            return false;
+        }
+
+        textureDesc.Format = DXGI_FORMAT_R16_FLOAT;
+        if (FAILED(m_device->CreateTexture2D(&textureDesc, nullptr, &m_hairOitRevealTexture)) ||
+            FAILED(m_device->CreateRenderTargetView(m_hairOitRevealTexture.Get(), nullptr, &m_hairOitRevealRtv)) ||
+            FAILED(m_device->CreateShaderResourceView(m_hairOitRevealTexture.Get(), nullptr, &m_hairOitRevealSrv)))
+        {
+            return false;
+        }
+        return true;
+    }
+
     void GpuHairViewer::Resize(UINT width, UINT height)
     {
-        m_width = std::max<UINT>(width, 1u);
-        m_height = std::max<UINT>(height, 1u);
+        if (width == 0u || height == 0u)
+        {
+            return;
+        }
+        if (width == m_width && height == m_height && m_rtv && m_dsv &&
+            m_hairOitAccumRtv && m_hairOitRevealRtv)
+        {
+            return;
+        }
+
+        m_width = width;
+        m_height = height;
         if (!m_swapChain)
         {
             return;
         }
 
+        m_context->OMSetRenderTargets(0u, nullptr, nullptr);
+        ID3D11ShaderResourceView* nullOitSrvs[2] = {};
+        m_context->PSSetShaderResources(4u, 2u, nullOitSrvs);
+        m_hairOitAccumSrv.Reset();
+        m_hairOitAccumRtv.Reset();
+        m_hairOitAccumTexture.Reset();
+        m_hairOitRevealSrv.Reset();
+        m_hairOitRevealRtv.Reset();
+        m_hairOitRevealTexture.Reset();
         m_rtv.Reset();
         m_dsv.Reset();
         m_depthTexture.Reset();
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
-        m_swapChain->ResizeBuffers(0, m_width, m_height, DXGI_FORMAT_UNKNOWN, 0);
+        const HRESULT resizeResult =
+            m_swapChain->ResizeBuffers(0, m_width, m_height, DXGI_FORMAT_UNKNOWN, 0);
+        if (FAILED(resizeResult))
+        {
+            m_lastPresentResult = resizeResult;
+            return;
+        }
 
         ComPtr<ID3D11Texture2D> backBuffer;
-        m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-        m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, &m_rtv);
+        if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))) ||
+            FAILED(m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, &m_rtv)))
+        {
+            return;
+        }
 
         D3D11_TEXTURE2D_DESC depthDesc = {};
         depthDesc.Width = m_width;
@@ -237,8 +306,12 @@ if (FAILED(m_lastPresentResult))
         depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
         depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
         depthDesc.SampleDesc.Count = 1;
-        m_device->CreateTexture2D(&depthDesc, nullptr, &m_depthTexture);
-        m_device->CreateDepthStencilView(m_depthTexture.Get(), nullptr, &m_dsv);
+        if (FAILED(m_device->CreateTexture2D(&depthDesc, nullptr, &m_depthTexture)) ||
+            FAILED(m_device->CreateDepthStencilView(m_depthTexture.Get(), nullptr, &m_dsv)))
+        {
+            return;
+        }
+        CreateHairOitResources(m_width, m_height);
         QueueVisibilityRecovery();
         LayoutUiControls();
     }
@@ -246,7 +319,7 @@ if (FAILED(m_lastPresentResult))
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"[HAIRGPU V9 FORCE-APPLIED] Hair GPU Viewer"
+        ss << L"[HAIRGPU V11 PRESENTATION-STABLE] Hair GPU Viewer"
             << L"  |  sessionFPS=" << std::fixed << std::setprecision(1)
             << m_sessionEffectiveFps
             << L"  rollingFPS=" << m_recentEffectiveFps

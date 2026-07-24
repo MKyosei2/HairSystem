@@ -162,6 +162,23 @@ return true;
         {
             return false;
         }
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "PSOitMain", "ps_5_0", &psBlob, errorText) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_ribbonOitPS)))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Hair OIT shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "VSCompositeMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairStrandInstanced.hlsl", "PSCompositeMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Hair OIT composite shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_hairOitCompositeVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_hairOitCompositePS)))
+        {
+            return false;
+        }
         m_ribbonGS.Reset();
 
         // Particle-only runtime:

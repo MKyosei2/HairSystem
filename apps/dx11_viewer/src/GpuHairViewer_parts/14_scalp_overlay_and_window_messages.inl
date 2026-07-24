@@ -257,8 +257,20 @@
             PostQuitMessage(0);
             return 0;
         case WM_SIZE:
-            Resize(LOWORD(lParam), HIWORD(lParam));
+        {
+            if (wParam != SIZE_MINIMIZED)
+            {
+                const UINT width = static_cast<UINT>(LOWORD(lParam));
+                const UINT height = static_cast<UINT>(HIWORD(lParam));
+                if (width > 0u && height > 0u)
+                {
+                    m_pendingResizeWidth = width;
+                    m_pendingResizeHeight = height;
+                    m_resizePending = true;
+                }
+            }
             return 0;
+        }
         case WM_LBUTTONDOWN:
         {
             const RECT renderRect = this->GetRenderViewportRect();

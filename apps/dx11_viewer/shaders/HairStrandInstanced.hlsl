@@ -1,4 +1,4 @@
-// HAIRGPU_STRAND_RIBBON_VISIBILITY_V17_SEPARATE_RENDER_AND_EDIT
+// HAIRGPU_STRAND_RIBBON_VISIBILITY_V19_WEIGHTED_OIT_ROOT_COVERAGE
 // HAIRGPU_STRAND_RIBBON_SHADER_ABI_1
 // Camera-facing instanced ribbon path.
 // Rendering tiers and edit categories use independent SRVs.
@@ -203,16 +203,20 @@ VSOutput VSMain(VSInput input)
 
     const float authoredWidth = SampleStrandWidth(strandIndex, u);
     const float cameraDistance = max(length(CameraPosition.xyz - center), 0.10f);
-    // Approximately two pixels at a 60-degree vertical FOV, independent of
-    // camera distance. This avoids point/dash rendering after auto framing.
-    const float distanceScaledHalfWidth = cameraDistance * 0.00125f;
-    const float authoredHalfWidth = authoredWidth * (isGuide ? 0.22f : 0.50f);
+    // Keep approximately one visible pixel at a 60-degree vertical FOV.
+    // The previous two-pixel floor on all 100,000 ribbons merged neighboring
+    // followers into opaque sheets, especially across the fringe and crown.
+    const float distanceScaledHalfWidth = cameraDistance * 0.00056f;
+    const float authoredHalfWidth = authoredWidth * (isGuide ? 0.18f : 0.30f);
     float halfWidth = max(authoredHalfWidth, distanceScaledHalfWidth);
-    halfWidth = min(halfWidth, cameraDistance * 0.0030f);
+    halfWidth = min(halfWidth, cameraDistance * 0.0019f);
+    const float strandWidthVariation =
+        lerp(0.78f, 1.04f, Hash01(strandIndex * 2246822519u + 3266489917u));
 
-    const float rootMask = 1.0f - smoothstep(0.0f, 0.10f, u);
-    const float tipTaper = lerp(1.0f, 0.34f, smoothstep(0.70f, 1.0f, u));
-    halfWidth *= lerp(1.12f, 1.0f, 1.0f - rootMask) * tipTaper;
+    const float rootMask = 1.0f - smoothstep(0.0f, 0.08f, u);
+    const float tipTaper = lerp(1.0f, 0.24f, smoothstep(0.68f, 1.0f, u));
+    halfWidth *= strandWidthVariation *
+        lerp(1.0f, 1.35f, rootMask) * tipTaper;
 
     const float sideSign = ((input.vertexId & 1u) == 0u) ? -1.0f : 1.0f;
     const float3 worldPosition = center + ribbonSide * (halfWidth * sideSign);
@@ -226,23 +230,81 @@ VSOutput VSMain(VSInput input)
     output.color = ComputeHairColor(strandIndex, widthN, editCategory);
     // Width is a material property, never a validity signal. Keep a stable
     // positive alpha even when authored tip width approaches zero.
-    const float tipAlpha = lerp(1.0f, 0.70f, smoothstep(0.82f, 1.0f, u));
-    output.alpha = saturate(max(RenderStrandAlpha, 0.20f) * tipAlpha);
+    const float rootAlphaBoost = lerp(1.0f, 1.55f, rootMask);
+    const float tipAlpha = lerp(1.0f, 0.35f, smoothstep(0.72f, 1.0f, u));
+    const float baseAlpha = isGuide ? 0.24f : 0.045f;
+    const float debugAlphaScale = (DebugColorMode == 0u) ? 1.0f : 2.0f;
+    output.alpha = saturate(
+        baseAlpha * rootAlphaBoost * tipAlpha * debugAlphaScale *
+        clamp(RenderStrandAlpha, 0.35f, 1.0f));
     return output;
 }
 
-float4 PSMain(VSOutput input) : SV_Target
+float3 ShadeHair(VSOutput input)
 {
     const float3 normal = SafeNormalize(input.worldNormal, float3(0.0f, 0.0f, 1.0f));
     const float3 tangent = SafeNormalize(input.worldTangent, float3(0.0f, 1.0f, 0.0f));
     const float3 light = SafeNormalize(-LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
     const float3 view = SafeNormalize(CameraPosition.xyz - input.worldPosition, float3(0.0f, 0.0f, 1.0f));
     const float3 halfVector = SafeNormalize(light + view, view);
-
     const float diffuseWrap = saturate(dot(normal, light) * 0.42f + 0.58f);
     const float tangentHalf = saturate(abs(dot(tangent, halfVector)));
     const float anisotropic = pow(saturate(1.0f - tangentHalf * tangentHalf), 18.0f) * 0.20f;
     const float rim = pow(1.0f - saturate(abs(dot(normal, view))), 2.0f) * 0.06f;
-    const float3 shaded = input.color * (0.34f + 0.66f * diffuseWrap) + (anisotropic + rim).xxx;
-    return float4(shaded, input.alpha);
+    return input.color * (0.34f + 0.66f * diffuseWrap) + (anisotropic + rim).xxx;
+}
+
+float4 PSMain(VSOutput input) : SV_Target
+{
+    return float4(ShadeHair(input), saturate(input.alpha));
+}
+
+struct HairOitOutput
+{
+    float4 accumulation : SV_Target0;
+    // Preserve alpha in the pixel-shader output even though the bound revealage
+    // texture stores only R16_FLOAT.  The independent blend state uses
+    // INV_SRC_ALPHA to accumulate product(1 - alpha).
+    float4 revealage : SV_Target1;
+};
+
+HairOitOutput PSOitMain(VSOutput input)
+{
+    HairOitOutput output;
+    const float3 shaded = ShadeHair(input);
+    const float alpha = saturate(input.alpha);
+    const float depth = saturate(input.position.z);
+    const float depthWeight = clamp(0.03f / (1.0e-5f + pow(depth, 4.0f)), 0.01f, 24.0f);
+    const float weight = max(alpha * depthWeight, 1.0e-3f);
+    output.accumulation = float4(shaded * alpha * weight, alpha * weight);
+    output.revealage = alpha.xxxx;
+    return output;
+}
+
+Texture2D<float4> HairOitAccumulation : register(t4);
+Texture2D<float> HairOitRevealage : register(t5);
+
+struct CompositeOutput
+{
+    float4 position : SV_Position;
+};
+
+CompositeOutput VSCompositeMain(uint vertexId : SV_VertexID)
+{
+    CompositeOutput output;
+    const float2 position = (vertexId == 0u)
+        ? float2(-1.0f, -1.0f)
+        : ((vertexId == 1u) ? float2(-1.0f, 3.0f) : float2(3.0f, -1.0f));
+    output.position = float4(position, 0.0f, 1.0f);
+    return output;
+}
+
+float4 PSCompositeMain(CompositeOutput input) : SV_Target
+{
+    const int2 pixel = int2(input.position.xy);
+    const float4 accumulation = HairOitAccumulation.Load(int3(pixel, 0));
+    const float revealage = saturate(HairOitRevealage.Load(int3(pixel, 0)));
+    const float alpha = 1.0f - revealage;
+    const float3 color = accumulation.rgb / max(accumulation.a, 1.0e-5f);
+    return float4(color, alpha);
 }

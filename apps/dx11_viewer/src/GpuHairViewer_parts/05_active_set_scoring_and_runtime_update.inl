@@ -128,7 +128,19 @@
         const float fovX = 2.0f * std::atan(std::tan(kFovY * 0.5f) * aspectRatio);
         const float limitingHalfFov = std::max(0.30f, std::min(kFovY, fovX) * 0.5f);
         const float desiredDistance =
-            (m_assetBoundsRadius / std::tan(limitingHalfFov)) * 1.08f;
+            (m_assetBoundsRadius / std::tan(limitingHalfFov)) * 0.98f;
+        const Vec3 projectedExtents = m_assetBoundsMax - m_assetBoundsMin;
+        const float halfWidth = std::max(projectedExtents.x * 0.5f, 0.01f);
+        const float halfHeight = std::max(projectedExtents.y * 0.5f, 0.01f);
+        constexpr float kTargetViewportOccupancy = 0.66f;
+        const float distanceForHeight =
+            halfHeight /
+            (std::tan(kFovY * 0.5f) * kTargetViewportOccupancy);
+        const float distanceForWidth =
+            halfWidth /
+            (std::tan(fovX * 0.5f) * kTargetViewportOccupancy);
+        const float projectedFitDistance =
+            std::max(distanceForHeight, distanceForWidth);
         const bool canonicalBenchmarkWig =
             m_asset.guideStrandCount == kFixedGuideCount &&
             m_asset.followerStrandCount ==
@@ -142,9 +154,9 @@
             // small number of simulated/follower points temporarily expand bounds.
             m_cameraTarget = Vec3(
                 m_assetBoundsCenter.x,
-                Clamp(m_assetBoundsCenter.y, 1.40f, 1.52f),
+                Clamp(m_assetBoundsCenter.y + 0.015f, 1.42f, 1.54f),
                 m_assetBoundsCenter.z);
-            m_cameraDistance = Clamp(desiredDistance, 0.92f, 1.12f);
+            m_cameraDistance = Clamp(projectedFitDistance, 0.56f, 0.74f);
         }
         else
         {
@@ -483,6 +495,30 @@
 
             if (ribbonRequested && ribbonReady)
             {
+                const bool useWeightedOit =
+                    m_hairOitAccumRtv &&
+                    m_hairOitRevealRtv &&
+                    m_hairOitAccumSrv &&
+                    m_hairOitRevealSrv &&
+                    m_hairOitBlendState &&
+                    m_ribbonOitPS &&
+                    m_hairOitCompositeVS &&
+                    m_hairOitCompositePS &&
+                    m_overlayDepthState;
+                if (useWeightedOit)
+                {
+                    const float clearAccum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                    const float clearReveal[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+                    m_context->ClearRenderTargetView(m_hairOitAccumRtv.Get(), clearAccum);
+                    m_context->ClearRenderTargetView(m_hairOitRevealRtv.Get(), clearReveal);
+                    ID3D11RenderTargetView* oitTargets[2] = {
+                        m_hairOitAccumRtv.Get(),
+                        m_hairOitRevealRtv.Get()
+                    };
+                    m_context->OMSetRenderTargets(2u, oitTargets, m_dsv.Get());
+                    m_context->OMSetBlendState(m_hairOitBlendState.Get(), blendFactor, 0xFFFFFFFFu);
+                }
+
                 m_context->OMSetDepthStencilState(m_hairDepthState.Get(), 0);
                 m_context->IASetInputLayout(nullptr);
                 m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
@@ -490,7 +526,10 @@
                 m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
                 m_context->VSSetShader(m_ribbonVS.Get(), nullptr, 0);
                 m_context->GSSetShader(nullptr, nullptr, 0);
-                m_context->PSSetShader(m_ribbonPS.Get(), nullptr, 0);
+                m_context->PSSetShader(
+                    useWeightedOit ? m_ribbonOitPS.Get() : m_ribbonPS.Get(),
+                    nullptr,
+                    0);
                 const UINT verticesPerStrand = m_asset.particlesPerStrand * 2u;
                 const UINT instanceCount = static_cast<UINT>(m_asset.strands.size());
                 m_context->DrawInstanced(verticesPerStrand, instanceCount, 0u, 0u);
@@ -498,6 +537,37 @@
                 m_lastCurrentHairVertexCount = static_cast<uint64_t>(verticesPerStrand) * instanceCount;
                 m_lastCurrentHairPrimitiveCount = static_cast<uint64_t>(m_asset.particlesPerStrand - 1u) * 2ull * instanceCount;
                 m_lastCurrentHairInstanceCount = instanceCount;
+
+                if (useWeightedOit)
+                {
+                    ID3D11ShaderResourceView* nullHairVsSrvs[4] = {};
+                    m_context->VSSetShaderResources(0, 4, nullHairVsSrvs);
+                    m_context->OMSetRenderTargets(1u, m_rtv.GetAddressOf(), nullptr);
+                    m_context->OMSetDepthStencilState(m_overlayDepthState.Get(), 0u);
+                    m_context->OMSetBlendState(m_blendState.Get(), blendFactor, 0xFFFFFFFFu);
+                    m_context->IASetInputLayout(nullptr);
+                    m_context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+                    m_context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0u);
+                    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    m_context->VSSetShader(m_hairOitCompositeVS.Get(), nullptr, 0u);
+                    m_context->GSSetShader(nullptr, nullptr, 0u);
+                    m_context->PSSetShader(m_hairOitCompositePS.Get(), nullptr, 0u);
+                    ID3D11ShaderResourceView* oitSrvs[2] = {
+                        m_hairOitAccumSrv.Get(),
+                        m_hairOitRevealSrv.Get()
+                    };
+                    m_context->PSSetShaderResources(4u, 2u, oitSrvs);
+                    m_context->Draw(3u, 0u);
+                    ID3D11ShaderResourceView* nullOitSrvs[2] = {};
+                    m_context->PSSetShaderResources(4u, 2u, nullOitSrvs);
+                    m_context->OMSetRenderTargets(1u, m_rtv.GetAddressOf(), m_dsv.Get());
+                    ++m_lastTotalDrawCalls;
+                }
+                else
+                {
+                    m_context->OMSetRenderTargets(1u, m_rtv.GetAddressOf(), m_dsv.Get());
+                    m_context->OMSetBlendState(m_blendState.Get(), blendFactor, 0xFFFFFFFFu);
+                }
                 m_context->OMSetDepthStencilState(m_depthState.Get(), 0);
             }
             else if (!ribbonRequested &&

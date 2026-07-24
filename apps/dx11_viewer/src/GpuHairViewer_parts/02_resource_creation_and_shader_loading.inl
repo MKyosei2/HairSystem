@@ -74,14 +74,14 @@
         std::ofstream runtimeProof(runtimeProofPath, std::ios::binary | std::ios::trunc);
         if (runtimeProof)
         {
-            runtimeProof << "buildId=HAIRGPU_BUILD_V9_20260724_FORCE_APPLIED\n";
+            runtimeProof << "buildId=HAIRGPU_BUILD_V11_20260724_STABLE_PRESENTATION\n";
 #if defined(_DEBUG)
             runtimeProof << "configuration=Debug\n";
 #else
             runtimeProof << "configuration=Release\n";
 #endif
             runtimeProof << "executablePath=" << runtimeExecutablePath.u8string() << "\n";
-            runtimeProof << "assetCacheSchema=v3_runtime_verified\n";
+            runtimeProof << "assetCacheSchema=v5_root_distribution_oit\n";
             runtimeProof << "assetSource=" << WideToUtf8(m_lastAssetSource) << "\n";
             runtimeProof << "workspace=Sim\ninteraction=View\nrender=StrandRibbon\n";
         }
@@ -110,6 +110,12 @@
                 GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES"),
                 1800u), 1u)
             : 0u;
+        // Normal interactive title statistics begin only after resources, the
+        // first presents, and driver lazy initialization have settled. Formal
+        // and local-debug evidence keep their existing explicit warm-up rules.
+        const uint32_t interactiveCadenceWarmupFrames =
+            (!IsExperimentModeEnabled() && !localDebugCaptureEnabled) ? 120u : 0u;
+        uint32_t interactiveCadenceWarmupRemaining = interactiveCadenceWarmupFrames;
         m_localDebugCaptureActive = localDebugCaptureEnabled;
         LARGE_INTEGER cadenceWindowStart = {};
         QueryPerformanceCounter(&cadenceWindowStart);
@@ -184,6 +190,61 @@
                 DispatchMessageW(&msg);
             }
 
+            // Coalesce WM_SIZE bursts and resize once between frames. ResizeBuffers
+            // may wait for the presentation queue; interactive window management is
+            // presentation work, not a simulation performance sample. Formal and
+            // local-debug captures reject a resolution change instead of hiding it.
+            if (m_resizePending)
+            {
+                const UINT requestedWidth = m_pendingResizeWidth;
+                const UINT requestedHeight = m_pendingResizeHeight;
+                m_resizePending = false;
+
+                const bool actualChange =
+                    requestedWidth > 0u &&
+                    requestedHeight > 0u &&
+                    (requestedWidth != m_width || requestedHeight != m_height);
+                if (actualChange)
+                {
+                    if (IsExperimentModeEnabled())
+                    {
+                        SetFatalExperimentFailure(1201u,
+                            L"Render resolution changed during formal measurement.");
+                        m_running = false;
+                        runExitCode = 92;
+                        continue;
+                    }
+                    if (localDebugCaptureEnabled)
+                    {
+                        m_running = false;
+                        runExitCode = 93;
+                        continue;
+                    }
+
+                    Resize(requestedWidth, requestedHeight);
+                    AutoFrameCameraToAsset(false);
+                    interactiveCadenceWarmupRemaining =
+                        std::max<uint32_t>(interactiveCadenceWarmupRemaining, 30u);
+                    m_accumulator = 0.0f;
+                    m_sessionWallSeconds = 0.0;
+                    m_sessionCompletedFrameCount = 0ull;
+                    m_sessionEffectiveFps = 0.0f;
+                    m_recentFrameIntervalsMilliseconds.fill(0.0f);
+                    m_recentFrameIntervalWriteIndex = 0u;
+                    m_recentFrameIntervalCount = 0u;
+                    m_recentEffectiveFps = 0.0f;
+                    m_recentOnePercentLowFps = 0.0f;
+                    m_recentFrameP95Milliseconds = 0.0f;
+                    m_recentFrameWorstMilliseconds = 0.0f;
+                    m_observedStallCount100Milliseconds = 0u;
+                    cadenceWindowRenderFrames = 0ull;
+                    cadenceWindowSimulationTicks = 0ull;
+                    QueryPerformanceCounter(&cadenceWindowStart);
+                    m_lastTick = cadenceWindowStart;
+                    continue;
+                }
+            }
+
             LARGE_INTEGER now = {};
             QueryPerformanceCounter(&now);
             const double rawFrameSeconds =
@@ -205,24 +266,42 @@
             // Session FPS is never reset by the 0.5-second presentation window.
             // A freeze therefore remains visible for the entire viewer session,
             // while rolling and instant values remain available as diagnostics.
-            m_sessionWallSeconds += static_cast<double>(wallFrameSeconds);
-            ++m_sessionCompletedFrameCount;
-            m_sessionEffectiveFps =
-                m_sessionWallSeconds > 1.0e-9
-                ? static_cast<float>(
-                    static_cast<double>(m_sessionCompletedFrameCount) /
-                    m_sessionWallSeconds)
-                : 0.0f;
-            m_recentFrameIntervalsMilliseconds[m_recentFrameIntervalWriteIndex] =
-                m_lastFrameIntervalMilliseconds;
-            m_recentFrameIntervalWriteIndex =
-                (m_recentFrameIntervalWriteIndex + 1u) % kRealtimeFrameHistoryCapacity;
-            m_recentFrameIntervalCount = std::min(
-                m_recentFrameIntervalCount + 1u,
-                kRealtimeFrameHistoryCapacity);
-            if (m_lastFrameIntervalMilliseconds >= 100.0f)
+            if (interactiveCadenceWarmupRemaining > 0u)
             {
-                ++m_observedStallCount100Milliseconds;
+                --interactiveCadenceWarmupRemaining;
+                m_sessionWallSeconds = 0.0;
+                m_sessionCompletedFrameCount = 0ull;
+                m_sessionEffectiveFps = 0.0f;
+                m_recentFrameIntervalsMilliseconds.fill(0.0f);
+                m_recentFrameIntervalWriteIndex = 0u;
+                m_recentFrameIntervalCount = 0u;
+                m_recentEffectiveFps = 0.0f;
+                m_recentOnePercentLowFps = 0.0f;
+                m_recentFrameP95Milliseconds = 0.0f;
+                m_recentFrameWorstMilliseconds = 0.0f;
+                m_observedStallCount100Milliseconds = 0u;
+            }
+            else
+            {
+                m_sessionWallSeconds += static_cast<double>(wallFrameSeconds);
+                ++m_sessionCompletedFrameCount;
+                m_sessionEffectiveFps =
+                    m_sessionWallSeconds > 1.0e-9
+                    ? static_cast<float>(
+                        static_cast<double>(m_sessionCompletedFrameCount) /
+                        m_sessionWallSeconds)
+                    : 0.0f;
+                m_recentFrameIntervalsMilliseconds[m_recentFrameIntervalWriteIndex] =
+                    m_lastFrameIntervalMilliseconds;
+                m_recentFrameIntervalWriteIndex =
+                    (m_recentFrameIntervalWriteIndex + 1u) % kRealtimeFrameHistoryCapacity;
+                m_recentFrameIntervalCount = std::min(
+                    m_recentFrameIntervalCount + 1u,
+                    kRealtimeFrameHistoryCapacity);
+                if (m_lastFrameIntervalMilliseconds >= 100.0f)
+                {
+                    ++m_observedStallCount100Milliseconds;
+                }
             }
             m_statsUpdateAccumulator += wallFrameSeconds;
 
@@ -1600,11 +1679,42 @@
             return false;
         }
 
+        D3D11_BLEND_DESC oitBlend = {};
+        oitBlend.IndependentBlendEnable = TRUE;
+        oitBlend.RenderTarget[0].BlendEnable = TRUE;
+        oitBlend.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        oitBlend.RenderTarget[1].BlendEnable = TRUE;
+        oitBlend.RenderTarget[1].SrcBlend = D3D11_BLEND_ZERO;
+        oitBlend.RenderTarget[1].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        oitBlend.RenderTarget[1].BlendOp = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[1].SrcBlendAlpha = D3D11_BLEND_ZERO;
+        oitBlend.RenderTarget[1].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        oitBlend.RenderTarget[1].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[1].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED;
+        if (FAILED(m_device->CreateBlendState(&oitBlend, &m_hairOitBlendState)))
+        {
+            return false;
+        }
+
         D3D11_DEPTH_STENCIL_DESC depthDesc = {};
         depthDesc.DepthEnable = TRUE;
         depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
         depthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
         if (FAILED(m_device->CreateDepthStencilState(&depthDesc, &m_depthState)))
+        {
+            return false;
+        }
+
+        D3D11_DEPTH_STENCIL_DESC overlayDepthDesc = depthDesc;
+        overlayDepthDesc.DepthEnable = FALSE;
+        overlayDepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(m_device->CreateDepthStencilState(&overlayDepthDesc, &m_overlayDepthState)))
         {
             return false;
         }

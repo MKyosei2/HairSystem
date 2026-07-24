@@ -23,11 +23,14 @@ on:
           - full
           - phase13-full
           - projection4070-to-1660
+
 permissions:
   contents: read
+
 concurrency:
   group: formal-gpu-regression-rtx4070ti-super
   cancel-in-progress: false
+
 jobs:
   formal-rtx4070ti-super:
     runs-on: [self-hosted, Windows, X64, HairSystem, RTX4070TiSUPER]
@@ -38,16 +41,19 @@ jobs:
       HAIRGPU_FREEZE_OPERATOR: GitHub_Actions_RTX4070TiSUPER
       HAIRGPU_ALLOW_REVIEW_BRANCH: "1"
       HAIRGPU_HARDWARE_PROFILE: measurement_rtx4070ti_super
+
     steps:
       - name: Checkout clean source state
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           clean: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Run pre-novelty phase
         if: startsWith(inputs.mode, 'prenovelty-') || inputs.mode == 'startup20'
         shell: cmd
@@ -56,6 +62,7 @@ jobs:
           docs\sample_assets\prenovelty_runtime_suite.json
           ${{ inputs.mode }}
           out\prenovelty_baseline
+
       - name: Run proposal/final phase or projection
         if: ${{ !(startsWith(inputs.mode, 'prenovelty-') || inputs.mode == 'startup20') }}
         shell: cmd
@@ -64,7 +71,15 @@ jobs:
           docs\sample_assets\final_runtime_suite_template.json
           ${{ inputs.mode }}
           out\novelty01_baseline
-      - name: Upload actual RTX evidence and separate GTX projection
+
+      - name: Verify pre-novelty complete package exists
+        if: always() && inputs.mode == 'prenovelty-complete'
+        shell: cmd
+        run: |
+          if not exist "out\prenovelty_baseline\complete_manifest.json" exit /b 1
+          if not exist "out\prenovelty_baseline\prenovelty_complete_evidence.zip" exit /b 1
+
+      - name: Upload actual RTX evidence and frozen workload
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -75,4 +90,4 @@ jobs:
           path: |
             out\prenovelty_baseline\**
             out\novelty01_baseline\**
-            benchmarks\novelty01\frozen_asset_bundle\frozen_asset_manifest.json
+            benchmarks\novelty01\frozen_asset_bundle\**

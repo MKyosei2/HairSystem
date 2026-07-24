@@ -1,24 +1,22 @@
-name: Build corrected pre-novelty source ZIP
+name: Validate pre-novelty test environment
 
 on:
+  push:
+    branches:
+      - prenovelty-ready
   pull_request:
     branches:
       - prenovelty-ready
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  patch-test-package:
+  validate-and-package:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    outputs:
-      patch_status: ${{ steps.patch.outputs.patch_status }}
-      patch_error: ${{ steps.patch.outputs.patch_error }}
-      syntax_status: ${{ steps.syntax.outputs.syntax_status }}
-      syntax_error: ${{ steps.syntax.outputs.syntax_error }}
-      test_status: ${{ steps.tests.outputs.test_status }}
-      test_error: ${{ steps.tests.outputs.test_error }}
+    timeout-minutes: 45
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -26,109 +24,93 @@ jobs:
           fetch-depth: 1
           show-progress: false
 
-      - name: Apply stability and test-environment fixes
-        id: patch
-        continue-on-error: true
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('tools/final_stage/apply_prenovelty_test_env_fixes.py')
-          text = path.read_text(encoding='utf-8')
-          old_subn = 'text, count = pattern.subn(replacement, text, count=1)'
-          new_subn = 'text, count = pattern.subn(lambda _match: replacement, text, count=1)'
-          if text.count(old_subn) != 2:
-              raise SystemExit('expected two pattern.subn replacement calls')
-          text = text.replace(old_subn, new_subn)
-          old_test = '''        source = (\n            ROOT\n            / "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"\n        ).read_text(encoding="utf-8")\n        self.assertIn("allowsZeroMeasuredEvents", source)\n        self.assertIn("ExperimentScenarioId::S01_Idle", source)\n'''
-          new_test = '''        parts_dir = ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts"\n        source = "\\n".join(\n            path.read_text(encoding="utf-8")\n            for path in sorted(parts_dir.glob("*.inl"))\n        )\n        self.assertIn("allowsZeroMeasuredEvents", source)\n        self.assertIn("ExperimentScenarioId::S01_Idle", source)\n'''
-          if text.count(old_test) != 1:
-              raise SystemExit('idle regression test block was not found exactly once')
-          path.write_text(text.replace(old_test, new_test, 1), encoding='utf-8')
-          PY
-          set +e
-          python tools/final_stage/apply_prenovelty_test_env_fixes.py > patch.log 2>&1
-          status=$?
-          error=$(tail -n 1 patch.log | tr -cd '[:alnum:]_./: -' | cut -c1-180)
-          echo "patch_status=$status" >> "$GITHUB_OUTPUT"
-          echo "patch_error=$error" >> "$GITHUB_OUTPUT"
-          cat patch.log
-          exit 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Python syntax checks
-        id: syntax
-        if: steps.patch.outputs.patch_status == '0'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          python -m py_compile tools/final_stage/hairgpu_final_run.py tools/final_stage/hairgpu_runtime_suite.py tools/final_stage/hairgpu_local_debug_report.py tools/final_stage/hairgpu_startup_self_test.py tools/final_stage/apply_prenovelty_test_env_fixes.py tests/final_stage/test_prenovelty_test_environment_contract.py > syntax.log 2>&1
-          status=$?
-          error=$(tail -n 1 syntax.log | tr -cd '[:alnum:]_./: -' | cut -c1-180)
-          echo "syntax_status=$status" >> "$GITHUB_OUTPUT"
-          echo "syntax_error=$error" >> "$GITHUB_OUTPUT"
-          cat syntax.log
-          exit 0
+        run: >-
+          python -m py_compile
+          tools/final_stage/freeze_novelty01_asset.py
+          tools/final_stage/hairgpu_final_run.py
+          tools/final_stage/hairgpu_runtime_suite.py
+          tools/final_stage/hairgpu_safe_runtime_suite.py
+          tools/final_stage/hairgpu_final_db.py
+          tools/final_stage/hairgpu_final_excel.py
+          tools/final_stage/hairgpu_local_debug_report.py
+          tools/final_stage/hairgpu_startup_self_test.py
+          tools/final_stage/hairgpu_prenovelty_complete.py
 
-      - name: Package patched diagnostics
-        if: steps.syntax.outputs.syntax_status == '0'
+      - name: Python self-tests
+        run: |
+          python tools/final_stage/hairgpu_final_run.py --self-test
+          python tools/final_stage/hairgpu_runtime_suite.py --self-test
+          python tools/final_stage/hairgpu_prenovelty_complete.py --self-test
+
+      - name: Final-stage unit tests
+        run: python -m unittest discover -s tests/final_stage -p 'test_*.py' -v
+
+      - name: Verify composite output isolation contract
+        shell: python
+        run: |
+          from pathlib import Path
+
+          batch = Path('tools/final_stage/Run_Final_Runtime_Suite.bat').read_text(
+              encoding='utf-8'
+          )
+          required = (
+              r'!COMPLETE_ROOT!\smoke',
+              r'!COMPLETE_ROOT!\startup20',
+              r'!COMPLETE_ROOT!\determinism',
+              r'!COMPLETE_ROOT!\soak30',
+              'hairgpu_prenovelty_complete.py',
+              'prenovelty_complete_evidence.zip',
+          )
+          missing = [value for value in required if value not in batch]
+          if missing:
+              raise SystemExit(f'missing composite output isolation contract: {missing}')
+
+          workflow = Path(
+              '.github/workflows/chatgpt-build-prenovelty-test-env-zip.yml'
+          ).read_text(encoding='utf-8')
+          forbidden = (
+              'apply_' + 'prenovelty_test_env_fixes.py >',
+              'Apply stability and test-' + 'environment fixes',
+              'continue-on-' + 'error: true',
+          )
+          present = [value for value in forbidden if value in workflow]
+          if present:
+              raise SystemExit(f'workflow mutates or masks source failures: {present}')
+
+      - name: Verify tests did not modify tracked source
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Create source snapshot ZIP
         shell: python
         run: |
           from pathlib import Path
           import zipfile
-          files = [
-              Path('docs/sample_assets/prenovelty_runtime_suite.json'),
-              Path('tools/final_stage/hairgpu_runtime_suite.py'),
-              Path('tools/final_stage/Run_Final_Runtime_Suite.bat'),
-              Path('tools/final_stage/apply_prenovelty_test_env_fixes.py'),
-              Path('tests/final_stage/test_prenovelty_test_environment_contract.py'),
-              Path('apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl'),
-          ]
-          with zipfile.ZipFile('patched_diagnostics.zip', 'w', zipfile.ZIP_DEFLATED) as z:
-              for path in files:
-                  z.write(path, path.as_posix())
 
-      - name: Upload patched diagnostics
-        if: steps.syntax.outputs.syntax_status == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: patched-diagnostics-${{ github.run_id }}
-          path: patched_diagnostics.zip
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-      - name: Focused regression tests
-        id: tests
-        if: steps.patch.outputs.patch_status == '0' && steps.syntax.outputs.syntax_status == '0'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v > tests.log 2>&1
-          status=$?
-          error=$(grep -E '^(FAIL|ERROR):' tests.log | head -n 1 | tr -cd '[:alnum:]_./: ()-,' | cut -c1-180)
-          if [ -z "$error" ]; then error=$(tail -n 1 tests.log | tr -cd '[:alnum:]_./: ()-,' | cut -c1-180); fi
-          echo "test_status=$status" >> "$GITHUB_OUTPUT"
-          echo "test_error=$error" >> "$GITHUB_OUTPUT"
-          cat tests.log
-          exit 0
-
-      - name: Verify immutable scenario inputs
-        if: steps.tests.outputs.test_status == '0'
-        run: git diff --exit-code -- benchmarks/novelty01/scenarios
-
-      - name: Create full corrected source ZIP
-        if: steps.tests.outputs.test_status == '0'
-        shell: python
-        run: |
-          from pathlib import Path
-          import zipfile
           root = Path.cwd()
-          output = root / 'HairSystem_prenovelty_test_env_fixed_full.zip'
-          excluded_parts = {'.git','.vs','bin','bin-int','build','out','__pycache__','.pytest_cache','.mypy_cache'}
-          excluded_prefixes = {'results/committed/local_debug','benchmarks/novelty01/frozen_asset_bundle'}
-          with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+          output = root / 'HairSystem_prenovelty_test_environment_source.zip'
+          excluded_parts = {
+              '.git', '.vs', 'bin', 'bin-int', 'build', 'out', '__pycache__',
+              '.pytest_cache', '.mypy_cache'
+          }
+          excluded_prefixes = {
+              'results/committed/local_debug',
+              'benchmarks/novelty01/frozen_asset_bundle',
+          }
+
+          with zipfile.ZipFile(
+              output,
+              'w',
+              zipfile.ZIP_DEFLATED,
+              compresslevel=9,
+          ) as archive:
               for path in sorted(root.rglob('*')):
                   if not path.is_file() or path == output:
                       continue
@@ -138,26 +120,16 @@ jobs:
                   text = relative.as_posix()
                   if any(text.startswith(prefix) for prefix in excluded_prefixes):
                       continue
-                  archive.write(path, f'HairSystem_prenovelty_test_env_fixed/{text}')
+                  archive.write(
+                      path,
+                      f'HairSystem_prenovelty_test_environment/{text}',
+                  )
 
-      - name: Upload corrected full source
-        if: steps.tests.outputs.test_status == '0'
+      - name: Upload validated source snapshot
         uses: actions/upload-artifact@v4
         with:
-          name: HairSystem-prenovelty-test-env-fixed-full-${{ github.sha }}
-          path: HairSystem_prenovelty_test_env_fixed_full.zip
+          name: HairSystem-prenovelty-test-environment-${{ github.sha }}
+          path: HairSystem_prenovelty_test_environment_source.zip
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
-
-      - name: Fail on generation error
-        if: steps.patch.outputs.patch_status != '0' || steps.syntax.outputs.syntax_status != '0' || steps.tests.outputs.test_status != '0'
-        run: exit 1
-
-  patch-diagnostic:
-    needs: patch-test-package
-    if: always()
-    name: p${{ needs.patch-test-package.outputs.patch_status }}-${{ needs.patch-test-package.outputs.patch_error }}-s${{ needs.patch-test-package.outputs.syntax_status }}-${{ needs.patch-test-package.outputs.syntax_error }}-t${{ needs.patch-test-package.outputs.test_status }}-${{ needs.patch-test-package.outputs.test_error }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo diagnostic

@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 if "%~1"=="" (
-  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> [prepare-asset^|prenovelty-smoke^|startup20^|prenovelty-complete^|prenovelty-soak30^|projection4070-to-1660^|phase13-full^|proposal-smoke^|comparison-smoke^|critical^|baseline^|full^|determinism^|soak30^|soak2h^|soak8h^|all] [output_dir]
+  echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> ^<mode^> [output_dir]
   exit /b 1
 )
 
@@ -10,50 +10,10 @@ set "ROOT=%~dp0..\.."
 for %%I in ("%ROOT%") do set "ROOT=%%~fI"
 set "CONFIG=%~f1"
 set "MODE=%~2"
+
 if "%MODE%"=="" (
   echo ERROR: mode is required.
   echo Usage: Run_Final_Runtime_Suite.bat ^<suite_config.json^> ^<mode^> [output_dir]
-  exit /b 2
-)
-if /I "%MODE%"=="phase13-full" (
-  call "%~f0" "%CONFIG%" prepare-asset "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" proposal-smoke "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" comparison-smoke "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" critical "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" determinism "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" soak30 "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" soak2h "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" soak8h "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" full "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" projection4070-to-1660 "%~f3"
-  exit /b !errorlevel!
-)
-if /I "%MODE%"=="prenovelty-complete" (
-  call "%~f0" "%CONFIG%" prepare-asset "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" prenovelty-smoke "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" startup20 "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" determinism "%~f3"
-  if errorlevel 1 exit /b !errorlevel!
-  call "%~f0" "%CONFIG%" prenovelty-soak30 "%~f3"
-  exit /b !errorlevel!
-)
-set "OUTPUT_ARG="
-if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
-
-if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="prenovelty-soak30" if /I not "%MODE%"=="projection4070-to-1660" if /I not "%MODE%"=="phase13-full" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="prenovelty-complete" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
-  echo ERROR: unsupported mode "%MODE%".
   exit /b 2
 )
 
@@ -62,12 +22,83 @@ if not exist "%CONFIG%" (
   exit /b 2
 )
 
+rem ---------------------------------------------------------------------------
+rem Composite modes.  Every phase receives its own directory so suite-level
+rem summaries, SQLite files and ZIPs cannot overwrite one another.
+rem ---------------------------------------------------------------------------
+if /I "%MODE%"=="prenovelty-complete" (
+  set "COMPLETE_ROOT=%~f3"
+  if not defined COMPLETE_ROOT set "COMPLETE_ROOT=%ROOT%\out\prenovelty_complete"
+  if not exist "!COMPLETE_ROOT!" mkdir "!COMPLETE_ROOT!"
+
+  call "%~f0" "%CONFIG%" prepare-asset
+  if errorlevel 1 exit /b !errorlevel!
+
+  call "%~f0" "%CONFIG%" prenovelty-smoke "!COMPLETE_ROOT!\smoke"
+  if errorlevel 1 exit /b !errorlevel!
+
+  call "%~f0" "%CONFIG%" startup20 "!COMPLETE_ROOT!\startup20"
+  if errorlevel 1 exit /b !errorlevel!
+
+  call "%~f0" "%CONFIG%" determinism "!COMPLETE_ROOT!\determinism"
+  if errorlevel 1 exit /b !errorlevel!
+
+  call "%~f0" "%CONFIG%" prenovelty-soak30 "!COMPLETE_ROOT!\soak30"
+  if errorlevel 1 exit /b !errorlevel!
+
+  python "%~dp0hairgpu_prenovelty_complete.py" ^
+    --root "!COMPLETE_ROOT!" ^
+    --config "%CONFIG%" ^
+    --repo-root "%ROOT%"
+  if errorlevel 1 exit /b !errorlevel!
+
+  echo Pre-novelty complete evidence:
+  echo   "!COMPLETE_ROOT!\complete_manifest.json"
+  echo   "!COMPLETE_ROOT!\prenovelty_complete_evidence.zip"
+  echo   "!COMPLETE_ROOT!\prenovelty_complete_evidence.zip.sha256"
+  exit /b 0
+)
+
+if /I "%MODE%"=="phase13-full" (
+  set "PHASE13_ROOT=%~f3"
+  if not defined PHASE13_ROOT set "PHASE13_ROOT=%ROOT%\out\phase13_full"
+  if not exist "!PHASE13_ROOT!" mkdir "!PHASE13_ROOT!"
+
+  call "%~f0" "%CONFIG%" prepare-asset
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" proposal-smoke "!PHASE13_ROOT!\proposal_smoke"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" comparison-smoke "!PHASE13_ROOT!\comparison_smoke"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" critical "!PHASE13_ROOT!\critical"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" determinism "!PHASE13_ROOT!\determinism"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" soak30 "!PHASE13_ROOT!\soak30"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" soak2h "!PHASE13_ROOT!\soak2h"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" soak8h "!PHASE13_ROOT!\soak8h"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" full "!PHASE13_ROOT!\full"
+  if errorlevel 1 exit /b !errorlevel!
+  call "%~f0" "%CONFIG%" projection4070-to-1660 "!PHASE13_ROOT!\full"
+  exit /b !errorlevel!
+)
+
+set "OUTPUT_ARG="
+if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
+
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="prenovelty-soak30" if /I not "%MODE%"=="projection4070-to-1660" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
+  echo ERROR: unsupported mode "%MODE%".
+  exit /b 2
+)
+
 where python >nul 2>nul
 if errorlevel 1 (
   echo ERROR: python.exe was not found in PATH.
   exit /b 3
 )
-for /f "delims=" %%V in ('python -c "import sys; print(sys.executable); print('.'.join(map(str,sys.version_info[:3])))"') do echo Python: %%V
 python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)"
 if errorlevel 1 (
   echo ERROR: Python 3.10 or later is required.
@@ -109,7 +140,6 @@ if /I "%MODE%"=="proposal-smoke" set "FILTER_ARGS=--only-method P --only-scenari
 if /I "%MODE%"=="comparison-smoke" set "FILTER_ARGS=--only-method B0 --only-method P --only-scenario S01_Idle --only-seed 1103"
 if /I "%MODE%"=="critical" set "FILTER_ARGS=--only-method B0 --only-method B8 --only-method P --only-scenario S01_Idle --only-scenario S07_ColliderApproach --only-scenario S08_StaticDynamicBoundaryContact --only-scenario S12_FalseStaticTrap --only-scenario S13_RepairStorm --only-scenario S16_StateThrashing --only-scenario S17_CloseCamera100k --only-seed 1103"
 if /I "%MODE%"=="baseline" set "FILTER_ARGS=--only-method B0"
-if /I "%MODE%"=="full" set "FILTER_ARGS="
 if /I "%MODE%"=="all" set "RUN_KIND_ARGS=--run-kind all"
 if /I "%MODE%"=="determinism" set "RUN_KIND_ARGS=--run-kind determinism"
 if /I "%MODE%"=="soak30" (
@@ -142,7 +172,6 @@ if /I not "%MODE%"=="prepare-asset" (
   )
 )
 
-
 echo [1/8] Rebuilding HairSystem Release x64 without Step0...
 "%MSBUILD%" "%ROOT%\HairSystem.sln" /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true
 if errorlevel 1 exit /b %errorlevel%
@@ -155,33 +184,29 @@ if not exist "%VIEWER%" (
 if /I "%MODE%"=="startup20" goto :startup20
 if /I "%MODE%"=="projection4070-to-1660" goto :projection4070_to_1660
 
-
-
 echo [2/8] Running native ABI, canonical asset, and workload self-test...
 "%VIEWER%" --native-self-test
 if errorlevel 1 exit /b %errorlevel%
-
 
 echo [3/8] Running HLSL load/compile self-test...
 "%VIEWER%" --shader-self-test
 if errorlevel 1 exit /b %errorlevel%
 
-
 echo [4/8] Checking Python syntax...
-python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py"
+python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py" "%~dp0hairgpu_prenovelty_complete.py"
 if errorlevel 1 exit /b %errorlevel%
 
-
-echo [5/8] Running lock, telemetry-contract, and suite-selection self-tests...
+echo [5/8] Running lock, telemetry-contract, suite-selection, and aggregate self-tests...
 python "%~dp0hairgpu_final_run.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python "%~dp0hairgpu_runtime_suite.py" --self-test
+if errorlevel 1 exit /b %errorlevel%
+python "%~dp0hairgpu_prenovelty_complete.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
 if errorlevel 1 exit /b %errorlevel%
 
 if /I "%MODE%"=="prepare-asset" goto :prepare_asset
-
 
 echo [6/8] Confirming active power scheme...
 powercfg /GETACTIVESCHEME
@@ -190,11 +215,9 @@ if errorlevel 1 (
   exit /b 8
 )
 
-
 echo [7/8] Running strict dry-run preflight (%MODE%)...
 python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --dry-run --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
 if errorlevel 1 exit /b %errorlevel%
-
 
 echo [8/8] Running Release x64 suite (%MODE%)...
 python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-policy continue --viewer-exe "%VIEWER%" %RUN_KIND_ARGS% %FILTER_ARGS% %OUTPUT_ARG%
@@ -218,7 +241,6 @@ python "%~dp0freeze_novelty01_asset.py" ^
   --force
 if errorlevel 1 exit /b %errorlevel%
 
-
 echo [7/8] Verifying portable bundle hashes and Viewer round trip...
 python "%~dp0freeze_novelty01_asset.py" ^
   --bundle-dir "%FROZEN_BUNDLE%" ^
@@ -226,11 +248,9 @@ python "%~dp0freeze_novelty01_asset.py" ^
   --verify-only
 if errorlevel 1 exit /b %errorlevel%
 
-
 echo [8/8] Frozen Asset preparation completed.
 echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
 exit /b 0
-
 
 :startup20
 set "STARTUP_REPORT=%ROOT%\out\startup20\startup20_summary.json"
@@ -245,7 +265,6 @@ python "%~dp0hairgpu_startup_self_test.py" ^
   --shutdown-timeout 30 ^
   --report "%STARTUP_REPORT%"
 exit /b %errorlevel%
-
 
 :projection4070_to_1660
 set "PROJECTION_OUTPUT=%~f3"
