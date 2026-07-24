@@ -1,0 +1,120 @@
+name: Package presentation V12 visual-only fix
+
+on:
+  push:
+    branches:
+      - chatgpt-presentation-v12-package
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply visual-only presentation fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+          import hashlib
+
+          root = Path.cwd()
+          camera = root / 'apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl'
+          shader = root / 'apps/dx11_viewer/shaders/HairStrandInstanced.hlsl'
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}: {old!r}')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='')
+
+          replace_once(camera,
+              'constexpr float kTargetViewportOccupancy = 0.66f;',
+              'constexpr float kTargetViewportOccupancy = 0.80f;')
+          replace_once(camera,
+              'Clamp(m_assetBoundsCenter.y + 0.015f, 1.42f, 1.54f),',
+              'Clamp(m_assetBoundsCenter.y + 0.030f, 1.43f, 1.55f),')
+          replace_once(camera,
+              'm_cameraDistance = Clamp(projectedFitDistance, 0.56f, 0.74f);',
+              'm_cameraDistance = Clamp(projectedFitDistance, 0.48f, 0.62f);')
+
+          replace_once(shader,
+              '// HAIRGPU_STRAND_RIBBON_VISIBILITY_V19_WEIGHTED_OIT_ROOT_COVERAGE',
+              '// HAIRGPU_STRAND_RIBBON_VISIBILITY_V20_PRESENTATION_FINAL')
+          replace_once(shader,
+              'const float variation = lerp(0.88f, 1.08f, Hash01(strandIndex + 1u));',
+              'const float variation = lerp(0.80f, 1.12f, Hash01(strandIndex + 1u));')
+          replace_once(shader,
+              'const float tipTaper = lerp(1.0f, 0.24f, smoothstep(0.68f, 1.0f, u));',
+              'const float tipTaper = lerp(1.0f, 0.42f, smoothstep(0.70f, 1.0f, u));')
+          replace_once(shader,
+              'lerp(1.0f, 1.35f, rootMask) * tipTaper;',
+              'lerp(1.0f, 1.12f, rootMask) * tipTaper;')
+          replace_once(shader,
+              'const float rootAlphaBoost = lerp(1.0f, 1.55f, rootMask);',
+              'const float rootAlphaBoost = lerp(1.0f, 1.18f, rootMask);')
+          replace_once(shader,
+              'const float tipAlpha = lerp(1.0f, 0.35f, smoothstep(0.72f, 1.0f, u));',
+              'const float tipAlpha = lerp(1.0f, 0.58f, smoothstep(0.74f, 1.0f, u));')
+          replace_once(shader,
+              'const float baseAlpha = isGuide ? 0.24f : 0.045f;',
+              'const float baseAlpha = isGuide ? 0.20f : 0.036f;')
+          replace_once(shader,
+              'const float anisotropic = pow(saturate(1.0f - tangentHalf * tangentHalf), 18.0f) * 0.20f;',
+              'const float anisotropic = pow(saturate(1.0f - tangentHalf * tangentHalf), 28.0f) * 0.12f;')
+          replace_once(shader,
+              'const float rim = pow(1.0f - saturate(abs(dot(normal, view))), 2.0f) * 0.06f;',
+              'const float rim = pow(1.0f - saturate(abs(dot(normal, view))), 2.4f) * 0.04f;')
+          replace_once(shader,
+              'const float alpha = saturate(input.alpha);',
+              'const float alpha = saturate(input.alpha * 0.86f);')
+          replace_once(shader,
+              'const float depthWeight = clamp(0.03f / (1.0e-5f + pow(depth, 4.0f)), 0.01f, 24.0f);',
+              'const float depthWeight = clamp(0.018f / (1.0e-5f + pow(depth, 4.0f)), 0.008f, 8.0f);')
+          replace_once(shader,
+              'const float alpha = 1.0f - revealage;',
+              'const float alpha = saturate((1.0f - revealage) * 0.90f);')
+
+          camera_text = camera.read_text(encoding='utf-8')
+          shader_text = shader.read_text(encoding='utf-8')
+          required = [
+              'kTargetViewportOccupancy = 0.80f',
+              'Clamp(projectedFitDistance, 0.48f, 0.62f)',
+              'V20_PRESENTATION_FINAL',
+              'tipTaper = lerp(1.0f, 0.42f',
+              'tipAlpha = lerp(1.0f, 0.58f',
+              'input.alpha * 0.86f',
+              '0.008f, 8.0f',
+          ]
+          joined = camera_text + '\n' + shader_text
+          missing = [token for token in required if token not in joined]
+          if missing:
+              raise SystemExit(f'missing required presentation tokens: {missing}')
+
+          files = [camera, shader]
+          output = root / 'HairSystem_V12_presentation_final_fix_only.zip'
+          with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for path in files:
+                  archive.write(path, path.relative_to(root).as_posix())
+
+          digest = hashlib.sha256(output.read_bytes()).hexdigest()
+          (root / 'HairSystem_V12_presentation_final_fix_only.zip.sha256').write_text(
+              digest + '  ' + output.name + '\n', encoding='utf-8')
+          print(digest)
+
+      - name: Upload presentation fix
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-V12-presentation-final-fix-only
+          path: |
+            HairSystem_V12_presentation_final_fix_only.zip
+            HairSystem_V12_presentation_final_fix_only.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
