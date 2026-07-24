@@ -49,6 +49,14 @@ jobs:
           fetch-depth: 0
           clean: true
 
+      - name: Attach selected branch for formal identity
+        shell: cmd
+        run: |
+          if "%GITHUB_REF_NAME%"=="" exit /b 1
+          git checkout -B "%GITHUB_REF_NAME%" "%GITHUB_SHA%"
+          git branch --show-current
+          git status --porcelain --untracked-files=normal
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
