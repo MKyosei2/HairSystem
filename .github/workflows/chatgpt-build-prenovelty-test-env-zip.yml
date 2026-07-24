@@ -53,7 +53,19 @@ jobs:
           python tools/final_stage/hairgpu_frozen_bundle_lock.py --self-test
 
       - name: Final-stage unit tests
-        run: python -m unittest discover -s tests/final_stage -p 'test_*.py' -v
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests/final_stage -p 'test_*.py' -v 2>&1 | tee final-stage-unit-tests.log
+
+      - name: Upload unit-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prenovelty-unit-test-log-${{ github.sha }}
+          path: final-stage-unit-tests.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify composite output isolation contract
         shell: python
