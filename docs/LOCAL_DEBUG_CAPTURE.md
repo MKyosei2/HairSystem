@@ -121,7 +121,9 @@ results/committed/local_debug/
 
 It uses a path-limited commit, so unrelated modified source files remain untouched. Generated local-debug data is explicitly re-included by `.gitignore` rules.
 
-Automatic push requires an authenticated `origin`. When push fails, the local commit and files remain available and the run directory contains an error/status file.
+Automatic push requires an authenticated `origin`. When push fails, the local commit and files remain available and `postprocess_status.json` records `pushError`; graph and report generation remain successful. If `git.exe` is unavailable in the Visual Studio environment, report generation still completes and automatic commit/push is skipped. A failed postprocess run is never committed automatically.
+
+`files.sha256` is regenerated after `postprocess_status.json` is written, so the success/failure status is covered by the run-directory integrity list.
 
 ## Disabling or changing capture
 

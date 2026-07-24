@@ -11,6 +11,7 @@ TOOLS = ROOT / "tools" / "final_stage"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import hairgpu_final_run as final_run
 import hairgpu_runtime_suite as suite
 
 
@@ -27,6 +28,21 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
         self.assertEqual(contract["mode"], "detect_current")
         self.assertTrue(contract["require_attached_head"])
         self.assertTrue(contract["record_commit"])
+
+    def test_frozen_asset_source_allows_prenovelty_and_novelty_branches(self) -> None:
+        payload = json.loads(
+            (ROOT / "docs/sample_assets/prenovelty_runtime_suite.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        allowed = payload["source"]["allowed_asset_source_branches"]
+        self.assertEqual(allowed, ["prenovelty-ready", "Novelty"])
+        runs = suite.expand_run_matrix(payload, ROOT / "docs/sample_assets", ROOT)
+        self.assertTrue(runs)
+        self.assertEqual(
+            runs[0]["allowed_asset_source_branches"],
+            ["prenovelty-ready", "Novelty"],
+        )
 
     def test_expand_run_matrix_does_not_modify_timeline_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -75,6 +91,49 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
             self.assertTrue(runs)
             self.assertEqual(before, timeline.read_bytes())
 
+
+    def test_prenovelty_smoke_expands_exactly_twelve_formal_runs(self) -> None:
+        config_path = ROOT / "docs/sample_assets/prenovelty_runtime_suite.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        prepared = suite.prepare_suite_config(
+            config,
+            only_methods=["B0", "B6", "B8"],
+            only_scenarios=[
+                "S01_Idle",
+                "S03_Walk",
+                "S09_StrongWind",
+                "S17_CloseCamera100k",
+            ],
+            only_seeds=[1103],
+        )
+        runs = suite.expand_run_matrix(prepared, config_path.parent, ROOT)
+        self.assertEqual(len(runs), 12)
+        self.assertTrue(all(run["special_kind"] == "formal" for run in runs))
+        self.assertEqual(
+            {(run["method"], run["scenario"], int(run["seed"])) for run in runs},
+            {
+                (method, scenario, 1103)
+                for method in ("B0", "B6", "B8")
+                for scenario in (
+                    "S01_Idle",
+                    "S03_Walk",
+                    "S09_StrongWind",
+                    "S17_CloseCamera100k",
+                )
+            },
+        )
+
+    def test_formal_matrix_never_materializes_special_runs(self) -> None:
+        config_path = ROOT / "docs/sample_assets/prenovelty_runtime_suite.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        formal = suite.expand_run_matrix(config, config_path.parent, ROOT)
+        all_runs = suite.expand_all_runs(config, config_path.parent, ROOT)
+        self.assertTrue(formal)
+        self.assertTrue(all(run["special_kind"] == "formal" for run in formal))
+        self.assertGreater(len(all_runs), len(formal))
+        self.assertTrue(any(run["special_kind"] == "determinism" for run in all_runs))
+        self.assertTrue(any(run["special_kind"] == "long_run" for run in all_runs))
+
     def test_idle_zero_event_guard_is_present(self) -> None:
         parts_dir = ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts"
         source = "\n".join(
@@ -83,6 +142,50 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
         )
         self.assertIn("allowsZeroMeasuredEvents", source)
         self.assertIn("ExperimentScenarioId::S01_Idle", source)
+
+    def test_formal_launcher_supplies_case_and_exact_output_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            viewer = root / "HairSystem.exe"
+            viewer.write_bytes(b"viewer")
+            timeline = root / "timeline.json"
+            timeline.write_text("{}", encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            output = root / "out"
+            paths = final_run.output_paths(output, "formal_case")
+            case = final_run.normalize_case({
+                "run_name": "formal_case",
+                "case_id": "formal_case",
+                "method": "B0",
+                "variant": "B0",
+                "scenario": "S01_Idle",
+                "scenario_timeline": str(timeline),
+                "asset_manifest": str(manifest),
+            })
+            environment = final_run._build_environment(
+                case, paths, root, viewer, {}
+            )
+            self.assertEqual(environment["HAIRGPU_CASE_JSON"], str(paths["case"]))
+            self.assertEqual(environment["HAIRGPU_AUTO_TELEMETRY"], "1")
+            self.assertEqual(environment["HAIRGPU_TELEMETRY_CSV"], str(paths["frames"]))
+            self.assertEqual(environment["HAIRGPU_TELEMETRY_JSONL"], str(paths["jsonl"]))
+            self.assertEqual(environment["HAIRGPU_SETTINGS_JSON"], str(paths["settings"]))
+            self.assertEqual(environment["HAIRGPU_SUMMARY_JSON"], str(paths["summary"]))
+
+    def test_viewer_honors_explicit_formal_output_paths(self) -> None:
+        source = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"
+        ).read_text(encoding="utf-8")
+        for name in (
+            "HAIRGPU_TELEMETRY_CSV",
+            "HAIRGPU_TELEMETRY_JSONL",
+            "HAIRGPU_SETTINGS_JSON",
+            "HAIRGPU_SUMMARY_JSON",
+        ):
+            self.assertIn(name, source)
+        self.assertIn("explicitPath", source)
 
     def test_startup20_uses_real_viewer_lifecycle_test(self) -> None:
         batch = (ROOT / "tools/final_stage/Run_Final_Runtime_Suite.bat").read_text(

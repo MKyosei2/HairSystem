@@ -755,6 +755,18 @@ return true;
         m_renderFps = 0.0f;
         m_simulationHz = 0.0f;
         m_renderCadenceWindowValid = false;
+        m_recentFrameIntervalsMilliseconds.fill(0.0f);
+        m_recentFrameIntervalCount = 0u;
+        m_recentFrameIntervalWriteIndex = 0u;
+        m_recentFrameAverageMilliseconds = 0.0f;
+        // Session truth is reset only when Run() starts. A user-triggered
+        // simulation reset must not erase a freeze that already happened.
+        m_recentEffectiveFps = 0.0f;
+        m_recentOnePercentLowFps = 0.0f;
+        m_recentFrameP95Milliseconds = 0.0f;
+        m_recentFrameWorstMilliseconds = 0.0f;
+        m_recentFrameStallCount100Milliseconds = 0u;
+        m_observedStallCount100Milliseconds = 0ull;
         // Reset the four 204.8 MiB state buffers entirely on the GPU. The immutable rest
         // buffer already contains the exact initial pose, so CPU re-upload is redundant.
         m_context->CopyResource(m_positions[0].buffer.Get(), m_restPositions.buffer.Get());

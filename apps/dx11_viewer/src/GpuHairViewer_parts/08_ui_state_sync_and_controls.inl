@@ -17,9 +17,7 @@
 void GpuHairViewer::ApplyPreset(int presetIndex)
     {
         m_renderMode = RenderMode::StrandRibbon;
-        // The mannequin scalp is formal-evidence geometry, not an interactive
-        // density mask. Re-enabling it here made preview tuning misleading.
-        m_showScalpMesh = IsExperimentModeEnabled();
+        m_showScalpMesh = true;
         m_showGuideSkeleton = false;
         m_showFollowerSkeleton = false;
         m_showRootMarkers = false;
@@ -34,7 +32,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             m_builderGuideCount = kFixedGuideCount;
             m_builderFollowersPerGuide = kFixedFollowersPerGuide;
             m_builderParticlesPerStrand = kFixedParticlesPerStrand;
-            m_widthScale = 1.00f;
+            m_widthScale = 0.82f;
             m_simConfig.gravity = 9.81f;
             m_simConfig.globalDamping = 0.065f;
             m_simConfig.windStrength = 0.0f;
@@ -129,10 +127,15 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             m_groomTool = GroomTool::Select;
             m_debugColorMode = DebugColorMode::Natural;
             m_maskOverlayMode = MaskOverlayMode::None;
+            m_selectedStrandIndex = -1;
+            m_gizmoDragging = false;
+            m_brushStrokeActive = false;
+            m_cpuReadbackMode = CpuReadbackMode::Off;
+            m_gpuDebugLinesDirty = true;
             m_showInspectorPane = false;
             m_showBottomTray = false;
             m_fastGroomViewport = false;
-            m_showScalpMesh = false;
+            m_showScalpMesh = true;
             m_showGuideSkeleton = false;
             m_showFollowerSkeleton = false;
             m_showRootMarkers = false;
@@ -212,9 +215,67 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
 
     void GpuHairViewer::UpdateStatsLabel()
     {
-        const float avgFrameMs = !m_performanceSamples.empty()
+        std::vector<float> recentFrameIntervals;
+        recentFrameIntervals.reserve(m_recentFrameIntervalCount);
+        for (size_t index = 0u; index < m_recentFrameIntervalCount; ++index)
+        {
+            const float interval = m_recentFrameIntervalsMilliseconds[index];
+            if (std::isfinite(interval) && interval > 0.0f)
+            {
+                recentFrameIntervals.push_back(interval);
+            }
+        }
+        if (!recentFrameIntervals.empty())
+        {
+            const float recentIntervalSum =
+                std::accumulate(recentFrameIntervals.begin(), recentFrameIntervals.end(), 0.0f);
+            m_recentFrameAverageMilliseconds =
+                recentIntervalSum / static_cast<float>(recentFrameIntervals.size());
+            // Effective FPS is derived from every completed frame interval in the
+            // recent history. Unlike the short 0.5 s cadence window, a multi-second
+            // freeze remains visible until the full rolling history has recovered.
+            m_recentEffectiveFps =
+                recentIntervalSum > 1.0e-6f
+                ? (1000.0f * static_cast<float>(recentFrameIntervals.size()) / recentIntervalSum)
+                : 0.0f;
+            std::sort(recentFrameIntervals.begin(), recentFrameIntervals.end());
+            const size_t slowFrameCount = std::max<size_t>(
+                1u,
+                static_cast<size_t>(std::ceil(
+                    static_cast<double>(recentFrameIntervals.size()) * 0.01)));
+            const float slowFrameSum = std::accumulate(
+                recentFrameIntervals.end() - static_cast<std::ptrdiff_t>(slowFrameCount),
+                recentFrameIntervals.end(),
+                0.0f);
+            const float slowFrameAverage =
+                slowFrameSum / static_cast<float>(slowFrameCount);
+            m_recentOnePercentLowFps =
+                slowFrameAverage > 1.0e-6f ? (1000.0f / slowFrameAverage) : 0.0f;
+            const size_t p95Index = std::min(
+                recentFrameIntervals.size() - 1u,
+                static_cast<size_t>(std::ceil(
+                    static_cast<double>(recentFrameIntervals.size()) * 0.95)) - 1u);
+            m_recentFrameP95Milliseconds = recentFrameIntervals[p95Index];
+            m_recentFrameWorstMilliseconds = recentFrameIntervals.back();
+            m_recentFrameStallCount100Milliseconds = static_cast<uint32_t>(
+                std::count_if(
+                    recentFrameIntervals.begin(),
+                    recentFrameIntervals.end(),
+                    [](float interval) { return interval >= 100.0f; }));
+        }
+        else
+        {
+            m_recentFrameAverageMilliseconds = 0.0f;
+            m_recentEffectiveFps = 0.0f;
+            m_recentOnePercentLowFps = 0.0f;
+            m_recentFrameP95Milliseconds = 0.0f;
+            m_recentFrameWorstMilliseconds = 0.0f;
+            m_recentFrameStallCount100Milliseconds = 0u;
+        }
+        const float captureAverageFrameMilliseconds = !m_performanceSamples.empty()
             ? std::accumulate(m_performanceSamples.begin(), m_performanceSamples.end(), 0.0f,
-                [](float acc, const PerformanceSample& s) { return acc + s.frameMilliseconds; }) / static_cast<float>(m_performanceSamples.size())
+                [](float acc, const PerformanceSample& sample) { return acc + sample.frameMilliseconds; }) /
+                static_cast<float>(m_performanceSamples.size())
             : 0.0f;
         const float avgSimMs = !m_performanceSamples.empty()
             ? std::accumulate(m_performanceSamples.begin(), m_performanceSamples.end(), 0.0f,
@@ -226,16 +287,27 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
         const uint64_t followerParticles = totalParticles > guideParticles ? (totalParticles - guideParticles) : 0ull;
 
         std::wstringstream ss;
-        ss << L"Runtime\n"
+        ss << L"Runtime [HAIRGPU V9 FORCE-APPLIED]\n"
            << L"Preset: " << m_activePresetName << L"\n"
-           << L"Render FPS (0.5 s QPC window): " << std::fixed << std::setprecision(1)
+           << L"Session FPS (all completed frames): " << std::fixed << std::setprecision(1)
+           << m_sessionEffectiveFps << L"\n"
+           << L"Rolling FPS (last 600 frames): "
+           << m_recentEffectiveFps
+           << L"  1% low: " << m_recentOnePercentLowFps << L"\n"
+           << L"Instant FPS (0.5 s window): "
            << (m_renderCadenceWindowValid ? m_renderFps : 0.0f)
            << L"  Simulation Hz: "
            << (m_renderCadenceWindowValid ? m_simulationHz : 0.0f) << L"\n"
-           << L"Frame interval: " << std::setprecision(2)
-           << m_lastFrameIntervalMilliseconds << L" ms"
-           << L"  Evidence: " << GetPerformanceEvidenceClassDisplayName() << L"\n"
-           << L"CPU Work: " << m_lastCpuFrameWorkMilliseconds << L" ms"
+           << L"Frame ms recent avg/p95/worst: " << std::setprecision(2)
+           << m_recentFrameAverageMilliseconds << L" / "
+           << m_recentFrameP95Milliseconds << L" / "
+           << m_recentFrameWorstMilliseconds << L"\n"
+           << L"Stalls >=100 ms recent/total: "
+           << m_recentFrameStallCount100Milliseconds << L" / "
+           << m_observedStallCount100Milliseconds
+           << L"  Last: " << m_lastFrameIntervalMilliseconds << L" ms\n"
+           << L"Evidence: " << GetPerformanceEvidenceClassDisplayName() << L"\n"
+           << L"CPU submit + Present: " << m_lastCpuFrameWorkMilliseconds << L" ms"
            << L"  PresentSync: " << m_lastObservedPresentSyncInterval << L"\n"
            << L"GPU Frame (delayed): " << m_lastGpuFrameMilliseconds << L" ms"
            << L"  GPU Throughput: " << std::setprecision(1)
@@ -248,7 +320,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
            << L"  GPU Sim: " << m_lastGpuSimulationMilliseconds << L" ms\n"
            << L"GPU Hair: " << m_lastGpuHairDrawMilliseconds << L" ms"
            << L"  GPU Debug: " << m_lastGpuDebugDrawMilliseconds << L" ms\n"
-           << L"Avg Frame: " << avgFrameMs << L" ms"
+           << L"Capture Avg Frame: " << captureAverageFrameMilliseconds << L" ms"
            << L"  Draws: " << m_lastTotalDrawCalls << L"\n"
            << L"Mode: " << (m_renderMode == RenderMode::ParticlePointSprite ? L"Particle Point Sprite" : (m_renderMode == RenderMode::ParticleBillboard ? L"Particle Billboard" : L"Strand Ribbon"))
            << L"  Quads: " << totalParticles
@@ -310,6 +382,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
         {
             return false;
         }
+        out << "settingsFormatVersion=2\n";
         out << "preset=" << WideToUtf8(m_activePresetName) << "\n";
         out << "guides=" << m_builderGuideCount << "\n";
         out << "followersPerGuide=" << m_builderFollowersPerGuide << "\n";
@@ -452,10 +525,46 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
         m_showFollowerSkeleton = getBool("showFollowerSkeleton", m_showFollowerSkeleton);
         m_showRootMarkers = getBool("showRootMarkers", m_showRootMarkers);
         m_showFollowLinks = getBool("showFollowLinks", m_showFollowLinks);
-        { const int renderModeValue = static_cast<int>(getUInt("renderMode", static_cast<unsigned>(m_renderMode == RenderMode::ParticlePointSprite ? 0 : (m_renderMode == RenderMode::ParticleBillboard ? 1 : 2))));
-          m_renderMode = (renderModeValue <= 0) ? RenderMode::ParticlePointSprite : ((renderModeValue == 1) ? RenderMode::ParticleBillboard : RenderMode::StrandRibbon); }
+        {
+            const int renderModeValue = static_cast<int>(getUInt(
+                "renderMode",
+                static_cast<unsigned>(m_renderMode == RenderMode::ParticlePointSprite
+                    ? 0
+                    : (m_renderMode == RenderMode::ParticleBillboard ? 1 : 2))));
+            const bool allowPersistedParticleDebug = EnvironmentValueIsTrue(
+                GetEnvironmentVariableString(L"HAIRGPU_ALLOW_PARTICLE_DEBUG_RENDERING"));
+            if (IsExperimentModeEnabled() || !allowPersistedParticleDebug || renderModeValue < 0 || renderModeValue > 2)
+            {
+                // Old settings commonly persisted Point/Billboard mode and made the next
+                // startup look like a sparse gold point cloud. Stable/runtime evidence
+                // always starts in the production ribbon path.
+                m_renderMode = RenderMode::StrandRibbon;
+            }
+            else if (renderModeValue == 0)
+            {
+                m_renderMode = RenderMode::ParticlePointSprite;
+            }
+            else if (renderModeValue == 1)
+            {
+                m_renderMode = RenderMode::ParticleBillboard;
+            }
+            else
+            {
+                m_renderMode = RenderMode::StrandRibbon;
+            }
+        }
         m_interactionMode = static_cast<InteractionMode>(std::min<uint32_t>(getUInt("interactionMode", static_cast<uint32_t>(m_interactionMode)), 1u));
-        m_debugColorMode = static_cast<DebugColorMode>(std::min<uint32_t>(getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)), 3u));
+        const uint32_t settingsFormatVersion = getUInt("settingsFormatVersion", 1u);
+        const uint32_t persistedDebugColorMode = std::min<uint32_t>(
+            getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)),
+            3u);
+        // Version 1 could silently force Editability when entering Groom mode.
+        // Migrate that stale automatic value back to Natural while preserving an
+        // explicit selection written by the corrected version 2 format.
+        m_debugColorMode =
+            (settingsFormatVersion < 2u && persistedDebugColorMode == static_cast<uint32_t>(DebugColorMode::Editability))
+            ? DebugColorMode::Natural
+            : static_cast<DebugColorMode>(persistedDebugColorMode);
         if (auto it = values.find("editStackPath"); it != values.end()) m_editStackPath = Utf8ToWide(it->second);
         if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath = Utf8ToWide(it->second);
         if (auto it = values.find("regionMaskPath"); it != values.end()) m_regionMaskPath = Utf8ToWide(it->second);

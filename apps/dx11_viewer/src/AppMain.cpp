@@ -31,6 +31,10 @@ namespace
     constexpr uint32_t kGroupsPerGuide = kParticlesPerStrand - 1u;
     constexpr float kReferenceLengthMeters = 0.50f;
     constexpr char kTopologyMagic[8] = { 'H', 'G', 'P', 'U', 'T', 'O', 'P', '1' };
+    // Embedded deployment marker. FORCE_APPLY_V9 verifies this exact ASCII
+    // string in the built executable before launching it.
+    [[maybe_unused]] constexpr char kHairGpuBuildMarker[] =
+        "HAIRGPU_BUILD_V9_20260724_FORCE_APPLIED";
 
     static_assert(kGuideCount * (kFollowersPerGuide + 1u) == kDisplayStrandCount,
                   "The canonical frozen source must contain exactly 100,000 strands.");

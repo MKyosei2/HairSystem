@@ -19,6 +19,7 @@ import platform
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,7 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.6-frozen-asset-source"
+VALIDATION_VERSION = "01-safe-v3.7-visual-resource-stability"
 FROZEN_ASSET_RUNTIME_VERSION = 5
 
 _FROZEN_ASSET_VIEWER_VALIDATION_CACHE: set[tuple[str, str]] = set()
@@ -403,6 +404,8 @@ def output_paths(output_dir: Path, run_name: str) -> dict[str, Path]:
         "stdout": base / f"{run_name}_stdout.log",
         "stderr": base / f"{run_name}_stderr.log",
         "case": base / f"{run_name}_case.json",
+        "visual": base / f"{run_name}_visual.bmp",
+        "visual_metrics": base / f"{run_name}_visual_metrics.json",
         "running": base / f"{run_name}_RUNNING.json",
         "incomplete": base / f"{run_name}_INCOMPLETE.json",
         "complete": base / f"{run_name}_COMPLETE.json",
@@ -442,6 +445,12 @@ def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
     result.setdefault("maximum_dxgi_local_usage_mib", 6144.0)
     result.setdefault("timeout_seconds", 900)
     result.setdefault("hardware_sample_interval_seconds", 1.0)
+    result.setdefault("strict_visual_validation", True)
+    result.setdefault("minimum_visual_non_background_ratio", 0.005)
+    result.setdefault("maximum_visual_non_background_ratio", 0.92)
+    result.setdefault("minimum_visual_bounding_box_ratio", 0.01)
+    result.setdefault("maximum_visual_bounding_box_ratio", 0.98)
+    result.setdefault("minimum_visual_luminance_stddev", 2.0)
     result.setdefault("required_telemetry_fields", sorted(REQUIRED_FRAME_COLUMNS))
     result.setdefault("required_availability", [])
     flags = dict(METHOD_PRESETS.get(method, {}))
@@ -564,7 +573,11 @@ def _resolve_bundle_member(manifest_path: Path, value: Any) -> tuple[Path | None
     return resolved, None
 
 
-def validate_asset_manifest(path: Path, repo_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def validate_asset_manifest(
+    path: Path,
+    repo_root: Path,
+    allowed_source_branches: Iterable[str] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest = read_json(path); problems: list[dict[str, Any]] = []
     if str(manifest.get("manifestVersion", "")) != "novelty01-100k-v1.6":
         problems.append(issue("E_ASSET_MANIFEST_VERSION", "Frozen asset manifest version is incompatible.", observed=manifest.get("manifestVersion")))
@@ -620,8 +633,21 @@ def validate_asset_manifest(path: Path, repo_root: Path) -> tuple[dict[str, Any]
     commit = str(manifest.get("assetSourceCommitSha", manifest.get("sourceCommitSha", "")))
     if not COMMIT_RE.fullmatch(commit):
         problems.append(issue("E_ASSET_SOURCE_COMMIT_FORMAT", "Asset source commit is invalid.", observed=commit))
-    if manifest.get("sourceBranch") != "Novelty":
-        problems.append(issue("E_ASSET_SOURCE_BRANCH", "Frozen asset must come from Novelty.", observed=manifest.get("sourceBranch")))
+    source_branch = str(manifest.get("sourceBranch", "")).strip()
+    allowed = {str(item).strip() for item in (allowed_source_branches or []) if str(item).strip()}
+    if not source_branch:
+        problems.append(issue(
+            "E_ASSET_SOURCE_BRANCH",
+            "Frozen asset source branch is missing.",
+            observed=manifest.get("sourceBranch"),
+        ))
+    elif allowed and source_branch not in allowed:
+        problems.append(issue(
+            "E_ASSET_SOURCE_BRANCH",
+            "Frozen asset source branch is outside the configured baseline contract.",
+            expected=sorted(allowed),
+            observed=source_branch,
+        ))
     minimum_runtime = _to_int(manifest.get("minimumCompatibleRuntimeVersion", 1), 1)
     if minimum_runtime < 1 or minimum_runtime > FROZEN_ASSET_RUNTIME_VERSION:
         problems.append(issue(
@@ -715,13 +741,20 @@ def _process_alive(pid: int) -> bool:
         return False
     if sys.platform == "win32":
         SYNCHRONIZE = 0x00100000; WAIT_TIMEOUT = 0x00000102
-        handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
         if not handle:
             return False
         try:
-            return ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+            return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
         finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0); return True
     except (ProcessLookupError, PermissionError):
@@ -814,26 +847,110 @@ class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
     ]
 
 
+class THREADENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ThreadID", ctypes.c_ulong),
+        ("th32OwnerProcessID", ctypes.c_ulong),
+        ("tpBasePri", ctypes.c_long),
+        ("tpDeltaPri", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+    ]
+
+
+def _windows_thread_count(pid: int) -> int | None:
+    if sys.platform != "win32":
+        return None
+    TH32CS_SNAPTHREAD = 0x00000004
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.argtypes = [ctypes.c_ulong, ctypes.c_ulong]
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    kernel32.Thread32First.argtypes = [ctypes.c_void_p, ctypes.POINTER(THREADENTRY32)]
+    kernel32.Thread32First.restype = ctypes.c_int
+    kernel32.Thread32Next.argtypes = [ctypes.c_void_p, ctypes.POINTER(THREADENTRY32)]
+    kernel32.Thread32Next.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+    if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+        return None
+    try:
+        entry = THREADENTRY32()
+        entry.dwSize = ctypes.sizeof(entry)
+        count = 0
+        ok = kernel32.Thread32First(snapshot, ctypes.byref(entry))
+        while ok:
+            if int(entry.th32OwnerProcessID) == int(pid):
+                count += 1
+            entry.dwSize = ctypes.sizeof(entry)
+            ok = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+        return count
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
 def _windows_process_memory(pid: int) -> dict[str, float]:
     if sys.platform != "win32":
         return {}
-    PROCESS_QUERY_INFORMATION = 0x0400; PROCESS_VM_READ = 0x0010
-    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    PROCESS_QUERY_INFORMATION = 0x0400
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    PROCESS_VM_READ = 0x0010
+    kernel32 = ctypes.windll.kernel32
+    psapi = ctypes.windll.psapi
+    user32 = ctypes.windll.user32
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetProcessHandleCount.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.GetProcessHandleCount.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong]
+    psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+    user32.GetGuiResources.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    user32.GetGuiResources.restype = ctypes.c_ulong
+    handle = kernel32.OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+        False,
+        pid,
+    )
     if not handle:
         return {}
     try:
-        counters = PROCESS_MEMORY_COUNTERS_EX(); counters.cb = ctypes.sizeof(counters)
-        if not ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(
+            handle,
+            ctypes.byref(counters),
+            counters.cb,
+        ):
             return {}
         scale = 1024.0 * 1024.0
-        return {
+        result: dict[str, float] = {
             "workingSetMiB": counters.WorkingSetSize / scale,
             "peakWorkingSetMiB": counters.PeakWorkingSetSize / scale,
             "privateBytesMiB": counters.PrivateUsage / scale,
             "commitMiB": counters.PagefileUsage / scale,
         }
+        handle_count = ctypes.c_ulong(0)
+        if kernel32.GetProcessHandleCount(handle, ctypes.byref(handle_count)):
+            result["handleCount"] = float(handle_count.value)
+        try:
+            gdi = user32.GetGuiResources(handle, 0)
+            user = user32.GetGuiResources(handle, 1)
+            if gdi >= 0:
+                result["gdiObjectCount"] = float(gdi)
+            if user >= 0:
+                result["userObjectCount"] = float(user)
+        except (AttributeError, OSError):
+            pass
+        threads = _windows_thread_count(pid)
+        if threads is not None:
+            result["threadCount"] = float(threads)
+        return result
     finally:
-        ctypes.windll.kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(handle)
 
 
 def _proc_status_memory(pid: int) -> dict[str, float]:
@@ -855,6 +972,15 @@ def _proc_status_memory(pid: int) -> dict[str, float]:
         if key == "VmRSS": values["workingSetMiB"] = mib
         elif key == "VmHWM": values["peakWorkingSetMiB"] = mib
         elif key == "VmSize": values["privateBytesMiB"] = mib
+        elif key == "Threads":
+            try:
+                values["threadCount"] = float(parts[0])
+            except ValueError:
+                pass
+    try:
+        values["handleCount"] = float(sum(1 for _ in Path(f"/proc/{pid}/fd").iterdir()))
+    except OSError:
+        pass
     return values
 
 
@@ -948,9 +1074,16 @@ class ProcessSampler:
         private = values("privateBytesMiB"); working = values("workingSetMiB")
         local = values("dxgiLocalUsageMiB"); nonlocal_values = values("dxgiNonLocalUsageMiB")
         temperatures = values("gpuTemperatureC"); clocks = values("gpuGraphicsClockMHz")
+        handles = values("handleCount"); gdi_objects = values("gdiObjectCount")
+        user_objects = values("userObjectCount"); threads = values("threadCount")
         private_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["privateBytesMiB"])) for row in self.samples if _to_float(row.get("privateBytesMiB")) is not None]
         local_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["dxgiLocalUsageMiB"])) for row in self.samples if _to_float(row.get("dxgiLocalUsageMiB")) is not None]
+        handle_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["handleCount"])) for row in self.samples if _to_float(row.get("handleCount")) is not None]
+        gdi_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["gdiObjectCount"])) for row in self.samples if _to_float(row.get("gdiObjectCount")) is not None]
+        user_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["userObjectCount"])) for row in self.samples if _to_float(row.get("userObjectCount")) is not None]
+        thread_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["threadCount"])) for row in self.samples if _to_float(row.get("threadCount")) is not None]
         expected_samples = max(1, int((expected_duration_seconds or 0.0) / self.interval_seconds)) if expected_duration_seconds else len(self.samples)
+        resource_series = handle_series or thread_series
         return {
             "pid": self.pid,
             "sampleCount": len(self.samples),
@@ -968,6 +1101,15 @@ class ProcessSampler:
             "gpuTemperatureSpreadC": (max(temperatures) - min(temperatures)) if temperatures else None,
             "gpuClockDropRatio": ((max(clocks) - min(clocks)) / max(clocks)) if clocks and max(clocks) > 0.0 else None,
             "gpuHealthSampleCount": min(len(temperatures), len(clocks)),
+            "resourceSampleCoverage": min(1.0, len(resource_series) / max(1, expected_samples)),
+            "peakHandleCount": max(handles) if handles else None,
+            "handleCountSlopePerMin": linear_slope_per_minute(handle_series),
+            "peakGdiObjectCount": max(gdi_objects) if gdi_objects else None,
+            "gdiObjectCountSlopePerMin": linear_slope_per_minute(gdi_series),
+            "peakUserObjectCount": max(user_objects) if user_objects else None,
+            "userObjectCountSlopePerMin": linear_slope_per_minute(user_series),
+            "peakThreadCount": max(threads) if threads else None,
+            "threadCountSlopePerMin": linear_slope_per_minute(thread_series),
         }
 
 
@@ -1029,6 +1171,7 @@ def _build_environment(case: Mapping[str, Any], paths: Mapping[str, Path], repo_
     shader_hash = sha256_tree([shader_root], base_path=repo_root) if shader_root and shader_root.exists() else ""
     values = {
         "HAIRGPU_EXPERIMENT_MODE": 1,
+        "HAIRGPU_CASE_JSON": str(paths["case"]),
         "HAIRGPU_CASE_ID": case["case_id"],
         "HAIRGPU_EXPERIMENT_CASE_ID": case["case_id"],
         "HAIRGPU_RUN_NAME": case["run_name"],
@@ -1056,10 +1199,14 @@ def _build_environment(case: Mapping[str, Any], paths: Mapping[str, Path], repo_
         "HAIRGPU_STRICT_VALIDATION": 1,
         "HAIRGPU_REAL_MEASUREMENT": 1,
         "HAIRGPU_OUTPUT_DIR": str(paths["frames"].parent),
+        "HAIRGPU_AUTO_TELEMETRY": 1,
+        "HAIRGPU_TELEMETRY_DIR": str(paths["frames"].parent),
+        "HAIRGPU_TELEMETRY_RUN_NAME": case["run_name"],
         "HAIRGPU_TELEMETRY_CSV": str(paths["frames"]),
         "HAIRGPU_TELEMETRY_JSONL": str(paths["jsonl"]),
         "HAIRGPU_SETTINGS_JSON": str(paths["settings"]),
         "HAIRGPU_SUMMARY_JSON": str(paths["summary"]),
+        "HAIRGPU_VISUAL_CAPTURE_BMP": str(paths["visual"]),
         "HAIRGPU_SCENARIO_TIMELINE": case.get("scenario_timeline", ""),
         "HAIRGPU_ASSET_MANIFEST": case.get("asset_manifest", ""),
         "HAIRGPU_SETTINGS_HASH": case.get("settings_hash", ""),
@@ -1511,6 +1658,214 @@ def _validate_hardware_contract(
 
 
 
+def analyze_visual_bmp(path: Path, maximum_axis_samples: int = 256) -> dict[str, Any]:
+    """Analyze a 24/32-bit uncompressed BMP without third-party dependencies.
+
+    The final back buffer is captured after measured frames.  Sampling is bounded
+    to at most ``maximum_axis_samples`` per axis so a full suite does not spend
+    more time on image validation than on result aggregation.
+    """
+    raw = Path(path).read_bytes()
+    if len(raw) < 54 or raw[:2] != b"BM":
+        raise ValueError("visual capture is not a BMP file")
+    pixel_offset = struct.unpack_from("<I", raw, 10)[0]
+    dib_size = struct.unpack_from("<I", raw, 14)[0]
+    if dib_size < 40:
+        raise ValueError("unsupported BMP DIB header")
+    width = struct.unpack_from("<i", raw, 18)[0]
+    signed_height = struct.unpack_from("<i", raw, 22)[0]
+    planes = struct.unpack_from("<H", raw, 26)[0]
+    bits_per_pixel = struct.unpack_from("<H", raw, 28)[0]
+    compression = struct.unpack_from("<I", raw, 30)[0]
+    if width <= 0 or signed_height == 0 or planes != 1:
+        raise ValueError("invalid BMP geometry")
+    if bits_per_pixel not in {24, 32} or compression != 0:
+        raise ValueError("only uncompressed 24/32-bit BMP captures are supported")
+    height = abs(signed_height)
+    top_down = signed_height < 0
+    bytes_per_pixel = bits_per_pixel // 8
+    row_stride = ((width * bits_per_pixel + 31) // 32) * 4
+    required = pixel_offset + row_stride * height
+    if required > len(raw):
+        raise ValueError("BMP pixel payload is truncated")
+
+    step_x = max(1, width // max(1, maximum_axis_samples))
+    step_y = max(1, height // max(1, maximum_axis_samples))
+
+    def pixel(x: int, y: int) -> tuple[int, int, int, int]:
+        storage_y = y if top_down else (height - 1 - y)
+        offset = pixel_offset + storage_y * row_stride + x * bytes_per_pixel
+        b, g, r = raw[offset], raw[offset + 1], raw[offset + 2]
+        a = raw[offset + 3] if bytes_per_pixel == 4 else 255
+        return r, g, b, a
+
+    corner_extent_x = max(1, width // 16)
+    corner_extent_y = max(1, height // 16)
+    corner_values: list[tuple[int, int, int]] = []
+    corner_origins = (
+        (0, 0),
+        (max(0, width - corner_extent_x), 0),
+        (0, max(0, height - corner_extent_y)),
+        (max(0, width - corner_extent_x), max(0, height - corner_extent_y)),
+    )
+    for origin_x, origin_y in corner_origins:
+        for y in range(origin_y, min(height, origin_y + corner_extent_y), step_y):
+            for x in range(origin_x, min(width, origin_x + corner_extent_x), step_x):
+                r, g, b, _ = pixel(x, y)
+                corner_values.append((r, g, b))
+    if not corner_values:
+        raise ValueError("BMP has no background samples")
+    background = tuple(
+        sorted(value[channel] for value in corner_values)[len(corner_values) // 2]
+        for channel in range(3)
+    )
+
+    sample_count = 0
+    foreground_count = 0
+    min_x, min_y = width, height
+    max_x, max_y = -1, -1
+    luminance_sum = 0.0
+    luminance_squared_sum = 0.0
+    foreground_threshold = 18
+    for y in range(0, height, step_y):
+        for x in range(0, width, step_x):
+            r, g, b, a = pixel(x, y)
+            luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            luminance_sum += luminance
+            luminance_squared_sum += luminance * luminance
+            sample_count += 1
+            difference = max(
+                abs(r - background[0]),
+                abs(g - background[1]),
+                abs(b - background[2]),
+            )
+            if a > 8 and difference >= foreground_threshold:
+                foreground_count += 1
+                min_x = min(min_x, x); max_x = max(max_x, x)
+                min_y = min(min_y, y); max_y = max(max_y, y)
+    mean_luminance = luminance_sum / max(sample_count, 1)
+    variance = max(
+        0.0,
+        luminance_squared_sum / max(sample_count, 1) - mean_luminance * mean_luminance,
+    )
+    non_background_ratio = foreground_count / max(sample_count, 1)
+    if foreground_count:
+        bounding_box_ratio = (
+            ((max_x - min_x + step_x) / width) *
+            ((max_y - min_y + step_y) / height)
+        )
+        bounding_box = {
+            "minX": min_x / width,
+            "minY": min_y / height,
+            "maxX": min(1.0, (max_x + step_x) / width),
+            "maxY": min(1.0, (max_y + step_y) / height),
+        }
+    else:
+        bounding_box_ratio = 0.0
+        bounding_box = None
+
+    hash_bits: list[int] = []
+    hash_luminance: list[float] = []
+    hash_axis = 16
+    for cell_y in range(hash_axis):
+        y = min(height - 1, int((cell_y + 0.5) * height / hash_axis))
+        for cell_x in range(hash_axis):
+            x = min(width - 1, int((cell_x + 0.5) * width / hash_axis))
+            r, g, b, _ = pixel(x, y)
+            hash_luminance.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    hash_mean = sum(hash_luminance) / len(hash_luminance)
+    hash_bits = [1 if value >= hash_mean else 0 for value in hash_luminance]
+    hash_value = 0
+    for bit in hash_bits:
+        hash_value = (hash_value << 1) | bit
+
+    return {
+        "schemaVersion": "hairgpu-visual-metrics-v1",
+        "width": width,
+        "height": height,
+        "bitsPerPixel": bits_per_pixel,
+        "sampleCount": sample_count,
+        "backgroundRgb": list(background),
+        "nonBackgroundRatio": non_background_ratio,
+        "foregroundBoundingBoxRatio": min(1.0, bounding_box_ratio),
+        "foregroundBoundingBox": bounding_box,
+        "meanLuminance": mean_luminance,
+        "luminanceStdDev": math.sqrt(variance),
+        "averageHash256": f"{hash_value:064x}",
+        "sha256": sha256_file(path),
+    }
+
+
+def _validate_visual_capture(
+    case: Mapping[str, Any],
+    paths: Mapping[str, Path],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not bool(case.get("strict_visual_validation", True)):
+        return {}, []
+    visual_path = paths.get("visual")
+    if visual_path is None or not visual_path.is_file():
+        return {}, [issue(
+            "E_VISUAL_CAPTURE_MISSING",
+            "The end-of-run back-buffer visual capture is missing.",
+            observed=str(visual_path),
+        )]
+    try:
+        metrics = analyze_visual_bmp(visual_path)
+    except (OSError, ValueError, struct.error) as exc:
+        return {}, [issue(
+            "E_VISUAL_CAPTURE_INVALID",
+            "The end-of-run visual capture could not be analyzed.",
+            observed=str(exc),
+        )]
+    write_json(paths["visual_metrics"], metrics)
+    checks = (
+        (
+            "nonBackgroundRatio",
+            ">=",
+            float(case.get("minimum_visual_non_background_ratio", 0.005)),
+            "E_VISUAL_EMPTY",
+        ),
+        (
+            "nonBackgroundRatio",
+            "<=",
+            float(case.get("maximum_visual_non_background_ratio", 0.92)),
+            "E_VISUAL_FULL_SCREEN",
+        ),
+        (
+            "foregroundBoundingBoxRatio",
+            ">=",
+            float(case.get("minimum_visual_bounding_box_ratio", 0.01)),
+            "E_VISUAL_BOUNDS_TOO_SMALL",
+        ),
+        (
+            "foregroundBoundingBoxRatio",
+            "<=",
+            float(case.get("maximum_visual_bounding_box_ratio", 0.98)),
+            "E_VISUAL_BOUNDS_TOO_LARGE",
+        ),
+        (
+            "luminanceStdDev",
+            ">=",
+            float(case.get("minimum_visual_luminance_stddev", 2.0)),
+            "E_VISUAL_LOW_VARIANCE",
+        ),
+    )
+    problems: list[dict[str, Any]] = []
+    for field, operator, threshold, code in checks:
+        observed = _to_float(metrics.get(field))
+        passed = observed is not None and (
+            observed >= threshold if operator == ">=" else observed <= threshold
+        )
+        if not passed:
+            problems.append(issue(
+                code,
+                f"Visual metric failed: {field} {operator} {threshold}",
+                expected=threshold,
+                observed=observed,
+            ))
+    return metrics, problems
+
+
 def _summary_visual_validation_passed(summary: Mapping[str, Any]) -> bool:
     value = summary.get("visualValidationPassed")
     if value is None:
@@ -1548,6 +1903,8 @@ def validate_outputs(case: Mapping[str, Any], paths: Mapping[str, Path],
         settings_payload = {}
         summary_payload = {}
     problems.extend(_validate_settings_contract(case, settings_payload, summary_payload))
+    visual_metrics, visual_problems = _validate_visual_capture(case, paths)
+    problems.extend(visual_problems)
     if not _summary_visual_validation_passed(summary_payload):
         problems.append(issue(
   "E_VISUAL_VALIDATION",
@@ -1662,17 +2019,18 @@ def validate_outputs(case: Mapping[str, Any], paths: Mapping[str, Path],
         "issues": all_issues,
         "aggregate": aggregate,
         "processMemory": dict(process_summary),
+        "visualMetrics": visual_metrics,
     }
 
 
 def _artifact_manifest(paths: Mapping[str, Path], case: Mapping[str, Any], fingerprint: str) -> dict[str, Any]:
     artifacts: list[dict[str, Any]] = []
-    for key in ("frames", "jsonl", "settings", "summary", "environment", "process_samples", "validation", "stdout", "stderr", "case"):
+    for key in ("frames", "jsonl", "settings", "summary", "environment", "process_samples", "validation", "stdout", "stderr", "case", "visual", "visual_metrics"):
         path = paths[key]
         if path.is_file():
             artifacts.append({"kind": key, "path": path.name, "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)})
     payload = {
-        "manifestVersion": "hairgpu-artifacts-v3.6",
+        "manifestVersion": "hairgpu-artifacts-v3.7",
         "runName": case["run_name"], "executionFingerprint": fingerprint,
         "createdUtc": utc_now(), "artifacts": artifacts,
     }
@@ -1699,7 +2057,11 @@ def execute_case(case: Mapping[str, Any], viewer_exe: Path, output_dir: Path,
     if asset_manifest_path is None or not asset_manifest_path.is_file():
         problems.append(issue("E_ASSET_MANIFEST_MISSING", "Frozen asset manifest is missing.", observed=str(asset_manifest_path)))
     else:
-        asset_manifest, asset_problems = validate_asset_manifest(asset_manifest_path, repo_root)
+        asset_manifest, asset_problems = validate_asset_manifest(
+            asset_manifest_path,
+            repo_root,
+            normalized.get("allowed_asset_source_branches", []),
+        )
         problems.extend(asset_problems)
         if not asset_problems:
             # Dry-run also validates binary compatibility, but the cache ensures

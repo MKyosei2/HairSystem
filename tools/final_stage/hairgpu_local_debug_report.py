@@ -12,6 +12,8 @@ import csv
 import hashlib
 import json
 import math
+import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -20,24 +22,91 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 EVIDENCE_CLASS = "diagnostic_debugger"
-SCHEMA_VERSION = "hairgpu-local-debug-evidence-v2"
+SCHEMA_VERSION = "hairgpu-local-debug-evidence-v3"
 
 
-def _run(command: Sequence[str], cwd: Path, *, check: bool = False) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(command),
-        cwd=str(cwd),
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=check,
-    )
+def _run(
+    command: Sequence[str],
+    cwd: Path,
+    *,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run a helper without allowing a missing executable to destroy the report.
+
+    Visual Studio inherits a different PATH from an interactive terminal on many
+    Windows installations.  Diagnostic CSV/graphs remain valid even when Git is
+    unavailable, so missing delivery tools are represented as return code 127.
+    """
+    argv = [str(item) for item in command]
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        completed = subprocess.CompletedProcess(
+            argv,
+            127,
+            stdout=f"executable not found: {argv[0]} ({exc})",
+        )
+    except OSError as exc:
+        completed = subprocess.CompletedProcess(
+            argv,
+            126,
+            stdout=f"failed to launch {argv[0]}: {exc}",
+        )
+    if check and completed.returncode != 0:
+        raise subprocess.CalledProcessError(
+            completed.returncode,
+            completed.args,
+            output=completed.stdout,
+        )
+    return completed
+
+
+def _find_git_executable() -> str | None:
+    resolved = shutil.which("git")
+    if resolved:
+        return resolved
+    candidates: list[Path] = []
+    for key in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(key)
+        if root:
+            candidates.extend((
+                Path(root) / "Git" / "cmd" / "git.exe",
+                Path(root) / "Git" / "bin" / "git.exe",
+            ))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / "Programs" / "Git" / "cmd" / "git.exe")
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 def _git(repo_root: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
-    return _run(["git", *args], repo_root, check=check)
+    executable = _find_git_executable()
+    if executable is None:
+        completed = subprocess.CompletedProcess(
+            ["git", *args],
+            127,
+            stdout="Git executable was not found; report generation continues without commit/push.",
+        )
+        if check:
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                completed.args,
+                output=completed.stdout,
+            )
+        return completed
+    return _run([executable, *args], repo_root, check=check)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -380,16 +449,34 @@ def _sha256(path: Path) -> str:
 
 
 def _git_metadata(repo_root: Path) -> dict[str, Any]:
-    branch = _git(repo_root, "branch", "--show-current").stdout.strip()
-    commit = _git(repo_root, "rev-parse", "HEAD").stdout.strip()
-    remote = _git(repo_root, "remote", "get-url", "origin").stdout.strip()
-    status_lines = [line for line in _git(repo_root, "status", "--short").stdout.splitlines() if line.strip()]
+    executable = _find_git_executable()
+    if executable is None:
+        return {
+            "gitAvailable": False,
+            "gitExecutable": "",
+            "branch": "",
+            "commitBeforeDataCommit": "",
+            "origin": "",
+            "workingTreeDirty": None,
+            "workingTreeChangeCount": None,
+            "deliveryWarning": "Git was unavailable; diagnostic artifacts were still generated.",
+        }
+    branch_result = _git(repo_root, "branch", "--show-current")
+    commit_result = _git(repo_root, "rev-parse", "HEAD")
+    remote_result = _git(repo_root, "remote", "get-url", "origin")
+    status_result = _git(repo_root, "status", "--short")
+    status_lines = [
+        line for line in status_result.stdout.splitlines()
+        if line.strip()
+    ] if status_result.returncode == 0 else []
     return {
-        "branch": branch,
-        "commitBeforeDataCommit": commit,
-        "origin": remote,
-        "workingTreeDirty": bool(status_lines),
-        "workingTreeChangeCount": len(status_lines),
+        "gitAvailable": True,
+        "gitExecutable": executable,
+        "branch": branch_result.stdout.strip() if branch_result.returncode == 0 else "",
+        "commitBeforeDataCommit": commit_result.stdout.strip() if commit_result.returncode == 0 else "",
+        "origin": remote_result.stdout.strip() if remote_result.returncode == 0 else "",
+        "workingTreeDirty": bool(status_lines) if status_result.returncode == 0 else None,
+        "workingTreeChangeCount": len(status_lines) if status_result.returncode == 0 else None,
     }
 
 
@@ -403,6 +490,15 @@ def _auto_commit(repo_root: Path, run_dir: Path, run_name: str, push: bool) -> d
         ) from exc
     if not relative.startswith(allowed_prefix):
         raise RuntimeError(f"Refusing to commit outside {allowed_prefix}: {relative}")
+
+    if _find_git_executable() is None:
+        return {
+            "committed": False,
+            "pushed": False,
+            "pushRequested": push,
+            "state": "skipped",
+            "reason": "git_unavailable",
+        }
 
     add = _git(repo_root, "add", "-f", "--", relative)
     if add.returncode != 0:
@@ -433,12 +529,13 @@ def _auto_commit(repo_root: Path, run_dir: Path, run_name: str, push: bool) -> d
     }
     if push:
         if not branch:
-            raise RuntimeError("Automatic push is disabled on detached HEAD.")
+            result["pushError"] = "Automatic push is disabled on detached HEAD."
+            return result
         pushed = _git(repo_root, "push", "origin", f"HEAD:refs/heads/{branch}")
         result["pushOutput"] = pushed.stdout.strip()
         result["pushed"] = pushed.returncode == 0
         if pushed.returncode != 0:
-            raise RuntimeError(pushed.stdout.strip() or "git push failed")
+            result["pushError"] = pushed.stdout.strip() or "git push failed"
     return result
 
 
@@ -632,7 +729,8 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
 - Viewer exit code: {inputs.viewer_exit_code}
 - Branch: `{git_info.get('branch', '')}`
 - Source commit before data commit: `{git_info.get('commitBeforeDataCommit', '')}`
-- Working tree dirty at report time: `{git_info.get('workingTreeDirty', False)}`
+- Git available: `{git_info.get('gitAvailable', False)}`
+- Working tree dirty at report time: `{git_info.get('workingTreeDirty')}`
 
 ## Performance
 
@@ -681,16 +779,27 @@ The proposed Novelty 01 unit is a point-line-point segment group. Static groups 
     (run_dir / "report.md").write_text(report, encoding="utf-8")
     _write_json(run_dir / "run_manifest.json", summary)
 
-    files = sorted(
-        path
-        for path in run_dir.iterdir()
-        if path.is_file() and path.name != "files.sha256"
-    )
-    with (run_dir / "files.sha256").open("w", encoding="utf-8", newline="\n") as handle:
-        for path in files:
-            handle.write(f"{_sha256(path)}  {path.name}\n")
+    _write_sha256_manifest(run_dir)
 
     return summary
+
+
+def _write_sha256_manifest(run_dir: Path) -> None:
+    """Hash every completed diagnostic artifact except the hash list itself."""
+    files = sorted(
+        path
+        for path in Path(run_dir).iterdir()
+        if path.is_file() and path.name != "files.sha256"
+    )
+    temporary = Path(run_dir) / "files.sha256.tmp"
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        for path in files:
+            if path == temporary:
+                continue
+            handle.write(f"{_sha256(path)}  {path.name}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(Path(run_dir) / "files.sha256")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -716,18 +825,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         build_report(inputs)
-        # Write the status before committing so the committed run directory is
-        # self-contained. The resulting commit SHA can be queried from Git history.
-        commit_result: dict[str, Any] = {
+        git_available = _find_git_executable() is not None
+        delivery: dict[str, Any] = {
             "requested": inputs.auto_commit,
             "pushRequested": inputs.push,
-            "state": "pending" if inputs.auto_commit else "not_requested",
+            "gitAvailable": git_available,
+            "state": (
+                "ready"
+                if inputs.auto_commit and git_available
+                else "skipped_git_unavailable"
+                if inputs.auto_commit
+                else "not_requested"
+            ),
+            "note": (
+                "The final commit SHA is intentionally obtained from Git history; "
+                "embedding a commit SHA inside the committed file would be self-referential."
+            ),
         }
+        # Only a successful, fully generated run directory reaches this point.  The
+        # status file is written before commit so failed post-processing can never be
+        # staged or pushed automatically.
         _write_json(inputs.run_dir / "postprocess_status.json", {
             "schemaVersion": SCHEMA_VERSION,
             "success": True,
-            "commit": commit_result,
+            "delivery": delivery,
         })
+        # The status is part of the committed evidence directory, so refresh the
+        # integrity list after writing it and before any automatic commit.
+        _write_sha256_manifest(inputs.run_dir)
         if inputs.auto_commit:
             result = _auto_commit(
                 inputs.repo_root,

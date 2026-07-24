@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,6 +119,62 @@ class LocalDebugReportTests(unittest.TestCase):
             self.assertGreater(manifest["frameMilliseconds"]["p95"], 0.0)
             self.assertGreaterEqual(manifest["perSecondSampleCount"], 1)
             self.assertGreater(manifest["perSecondRenderFps"]["mean"], 0.0)
+
+
+    def test_report_survives_missing_git(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "results" / "committed" / "local_debug" / "sample"
+            run_dir.mkdir(parents=True)
+            self._write_frames(run_dir, "local_debug")
+            with mock.patch.object(reporter, "_find_git_executable", return_value=None):
+                summary = reporter.build_report(reporter.ReportInputs(
+                    repo_root=root,
+                    run_dir=run_dir,
+                    run_name="local_debug",
+                    viewer_exit_code=0,
+                    auto_commit=False,
+                    push=False,
+                ))
+            self.assertFalse(summary["git"]["gitAvailable"])
+            self.assertTrue((run_dir / "report.md").is_file())
+            self.assertTrue((run_dir / "run_manifest.json").is_file())
+
+    def test_main_hashes_success_status_before_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "results" / "committed" / "local_debug" / "sample"
+            run_dir.mkdir(parents=True)
+            self._write_frames(run_dir, "local_debug")
+            with mock.patch.object(reporter, "_find_git_executable", return_value=None):
+                exit_code = reporter.main([
+                    "--repo-root", str(root),
+                    "--run-dir", str(run_dir),
+                    "--run-name", "local_debug",
+                ])
+            self.assertEqual(exit_code, 0)
+            status = json.loads((run_dir / "postprocess_status.json").read_text(encoding="utf-8"))
+            self.assertTrue(status["success"])
+            hashes = (run_dir / "files.sha256").read_text(encoding="utf-8")
+            self.assertIn("postprocess_status.json", hashes)
+            self.assertNotIn("files.sha256.tmp", hashes)
+
+    def test_auto_commit_skips_when_git_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            run_dir = repo / "results" / "committed" / "local_debug" / "sample"
+            run_dir.mkdir(parents=True)
+            with mock.patch.object(reporter, "_find_git_executable", return_value=None):
+                result = reporter._auto_commit(repo, run_dir, "sample", True)
+            self.assertFalse(result["committed"])
+            self.assertEqual(result["reason"], "git_unavailable")
+
+    def test_failed_capture_directory_is_ignored_by_default(self) -> None:
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("results/committed/local_debug/", gitignore)
+        self.assertNotIn("!results/committed/local_debug/**", gitignore)
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertIn('"add", "-f"', source)
 
     def test_auto_commit_refuses_unapproved_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

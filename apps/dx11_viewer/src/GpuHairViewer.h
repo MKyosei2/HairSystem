@@ -8,6 +8,7 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <dxgi.h>
+#include <dxgi1_2.h>
 #include <wrl/client.h>
 
 #include <array>
@@ -40,6 +41,7 @@ namespace hairgpu::viewer
         int ExportCanonicalFrozenAssetSource(const std::filesystem::path& outputDirectory);
         int ValidateCanonicalFrozenAssetSource(const std::filesystem::path& sourceDirectory);
         bool ExportLocalDebugCapture(const std::filesystem::path& outputDirectory, const std::wstring& runName) const;
+        bool CaptureBackBufferBmp(const std::filesystem::path& outputPath);
 
     private:
         static constexpr uint32_t kFixedGuideCount = 4000u;
@@ -1383,12 +1385,15 @@ namespace hairgpu::viewer
         UINT m_presentSyncInterval = 1u;
         UINT m_lastObservedPresentSyncInterval = 1u;
         HRESULT m_lastPresentResult = S_OK;
+        std::filesystem::path m_pendingVisualCapturePath;
+        bool m_visualCapturePending = false;
+        bool m_visualCaptureSucceeded = false;
         bool m_running = true;
         bool m_paused = false;
         bool m_dragging = false;
         POINT m_mouseDownPoint = {};
         bool m_syncingControls = false;
-        bool m_enableSelfCollision = false;
+        bool m_enableSelfCollision = true;
         bool m_enableScalpMotion = false;
         bool m_showColliderDebug = false;
         bool m_showScalpWireframe = false;
@@ -1456,10 +1461,10 @@ namespace hairgpu::viewer
         hairgpu::Vec3 m_assetBoundsMax = { 0.5f, 2.0f, 0.5f };
         hairgpu::Vec3 m_assetBoundsCenter = { 0.0f, 1.5f, 0.0f };
         float m_assetBoundsRadius = 0.75f;
-        float m_widthScale = 0.82f;
-        float m_selfCollisionRadius = 0.0045f;
-        float m_selfCollisionStiffness = 0.08f;
-        bool m_enableGridSelfCollision = false;
+        float m_widthScale = 0.56f;
+        float m_selfCollisionRadius = 0.012f;
+        float m_selfCollisionStiffness = 0.35f;
+        bool m_enableGridSelfCollision = true;
         uint32_t m_selfCollisionBroadphaseMode = 1u; // Spatial hash runtime default.
         bool m_enableRuntimeAngularBend = true;
         float m_runtimeAngularBendRadians = 0.18f;
@@ -1470,7 +1475,7 @@ namespace hairgpu::viewer
         uint32_t m_builderGuideCount = kFixedGuideCount;
         uint32_t m_builderFollowersPerGuide = kFixedFollowersPerGuide;
         uint32_t m_builderParticlesPerStrand = kFixedParticlesPerStrand;
-        std::wstring m_activePresetName = L"Stable Benchmark Wig";
+        std::wstring m_activePresetName = L"Rapunzel Preview";
         std::wstring m_lastAssetSource = L"Sample Hybrid";
         std::wstring m_lastImportStatus = L"Sample asset active";
         enum class MaskSourceMode : uint32_t
@@ -1528,6 +1533,20 @@ namespace hairgpu::viewer
         float m_gpuThroughputFps = 0.0f;
         float m_lastFrameSeconds = 0.0f;
         float m_lastFrameIntervalMilliseconds = 0.0f;
+        static constexpr size_t kRealtimeFrameHistoryCapacity = 600u;
+        std::array<float, kRealtimeFrameHistoryCapacity> m_recentFrameIntervalsMilliseconds = {};
+        size_t m_recentFrameIntervalCount = 0u;
+        size_t m_recentFrameIntervalWriteIndex = 0u;
+        float m_recentFrameAverageMilliseconds = 0.0f;
+        float m_sessionEffectiveFps = 0.0f;
+        double m_sessionWallSeconds = 0.0;
+        uint64_t m_sessionCompletedFrameCount = 0ull;
+        float m_recentEffectiveFps = 0.0f;
+        float m_recentOnePercentLowFps = 0.0f;
+        float m_recentFrameP95Milliseconds = 0.0f;
+        float m_recentFrameWorstMilliseconds = 0.0f;
+        uint32_t m_recentFrameStallCount100Milliseconds = 0u;
+        uint64_t m_observedStallCount100Milliseconds = 0ull;
         float m_lastCpuFrameWorkMilliseconds = 0.0f;
         float m_lastSimulationStepMilliseconds = 0.0f;
         float m_droppedSimulationMilliseconds = 0.0f;
@@ -1657,6 +1676,11 @@ namespace hairgpu::viewer
         StructuredBuffer m_pointWidths;
         StructuredBuffer m_followBuffer;
         StructuredBuffer m_renderStrandTiersBuffer;
+        // Rendering LOD/simulation tier and edit-visualization category are
+        // intentionally separate. Reusing one buffer for both caused category
+        // values 3/4 to be interpreted as hidden LOD tiers, producing large
+        // missing bands in the wig.
+        StructuredBuffer m_editVisualizationCategoryBuffer;
         StructuredBuffer m_guideTierAssignmentsBuffer;
         StructuredBuffer m_followerTierAssignmentsBuffer;
         StructuredBuffer m_compactedFollowerIndicesBuffer;
@@ -1725,8 +1749,8 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_renderConstants;
         Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
         Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendState;
-        Microsoft::WRL::ComPtr<ID3D11BlendState> m_depthOnlyBlendState;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthState;
+        // Transparent hair ribbons test depth but do not write it.
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_hairDepthState;
         size_t m_hairMeshVertexCapacity = 0;
         size_t m_debugLineEntryCapacity = 0;

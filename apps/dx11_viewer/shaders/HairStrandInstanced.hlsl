@@ -1,10 +1,8 @@
-// HAIRGPU_STRAND_RIBBON_VISIBILITY_V15_DEPTH_OCCLUDED
+// HAIRGPU_STRAND_RIBBON_VISIBILITY_V17_SEPARATE_RENDER_AND_EDIT
 // HAIRGPU_STRAND_RIBBON_SHADER_ABI_1
-// Guaranteed-visible, thin camera-facing ribbon path.
-// - never treats authored width/alpha as strand validity
-// - keeps hidden LOD instances off-screen instead of alpha-clipping
-// - derives a distance-scaled minimum width so ribbons remain visible on high-DPI/high-resolution displays
-// - keeps the legacy 100k instanced draw contract unchanged
+// Camera-facing instanced ribbon path.
+// Rendering tiers and edit categories use independent SRVs.
+// Authored width and simulation tier never decide strand validity.
 
 cbuffer RenderConstants : register(b0)
 {
@@ -27,7 +25,8 @@ cbuffer RenderConstants : register(b0)
 
 StructuredBuffer<float4> Positions : register(t0);
 StructuredBuffer<float> Widths : register(t1);
-StructuredBuffer<uint> StrandTiers : register(t2);
+StructuredBuffer<uint> RenderTiers : register(t2);
+StructuredBuffer<uint> EditCategories : register(t3);
 
 struct VSInput
 {
@@ -48,7 +47,9 @@ struct VSOutput
 float3 SafeNormalize(float3 value, float3 fallback)
 {
     const float lengthSquared = dot(value, value);
-    return (lengthSquared > 1.0e-10f) ? value * rsqrt(lengthSquared) : fallback;
+    return (lengthSquared > 1.0e-10f)
+        ? value * rsqrt(lengthSquared)
+        : fallback;
 }
 
 float Hash01(uint value)
@@ -63,15 +64,15 @@ float Hash01(uint value)
 
 bool IsPlausiblePosition(float3 value)
 {
-    return all(value == value) && all(abs(value) < 100000.0f);
+    return all(value == value) && all(abs(value) < 1000.0f);
 }
 
-float3 ComputeHairColor(uint strandIndex, float widthN)
+float3 ComputeHairColor(uint strandIndex, float widthN, uint editCategory)
 {
-    const float variation = lerp(0.84f, 1.12f, Hash01(strandIndex + 1u));
-    const float3 rootColor = float3(0.88f, 0.68f, 0.20f);
-    const float3 tipColor = float3(0.44f, 0.25f, 0.055f);
-    float3 naturalColor = lerp(tipColor, rootColor, 0.28f + 0.72f * widthN) * variation;
+    const float variation = lerp(0.88f, 1.08f, Hash01(strandIndex + 1u));
+    const float3 rootColor = float3(0.32f, 0.20f, 0.085f);
+    const float3 tipColor = float3(0.075f, 0.045f, 0.020f);
+    const float3 naturalColor = lerp(tipColor, rootColor, 0.30f + 0.70f * widthN) * variation;
 
     if (DebugColorMode == 1u)
     {
@@ -85,7 +86,11 @@ float3 ComputeHairColor(uint strandIndex, float widthN)
     }
     if (DebugColorMode == 3u)
     {
-        return float3(0.95f, 0.72f, 0.20f);
+        if (editCategory == 0u) return float3(0.12f, 0.95f, 0.48f);
+        if (editCategory == 2u) return float3(1.00f, 0.18f, 0.86f);
+        if (editCategory == 3u) return float3(1.00f, 0.72f, 0.20f);
+        if (editCategory == 4u) return float3(1.00f, 0.92f, 0.18f);
+        return float3(0.38f, 0.42f, 0.48f);
     }
     return naturalColor;
 }
@@ -111,25 +116,12 @@ float3 SampleStrandPosition(uint strandIndex, float u)
     float3 point1 = LoadPosition(strandIndex, local1);
     const bool valid0 = IsPlausiblePosition(point0);
     const bool valid1 = IsPlausiblePosition(point1);
-
-    // Never connect a valid hair point to world origin. That fallback created
-    // the long radial spikes visible around the crown. Collapse an invalid pair
-    // onto the nearest valid sample from the same strand instead.
-    if (!valid0 && valid1)
-    {
-        point0 = point1;
-    }
-    else if (valid0 && !valid1)
-    {
-        point1 = point0;
-    }
+    if (!valid0 && valid1) point0 = point1;
+    else if (valid0 && !valid1) point1 = point0;
     else if (!valid0 && !valid1)
     {
         float3 root = LoadPosition(strandIndex, 0u);
-        if (!IsPlausiblePosition(root))
-        {
-            root = float3(0.0f, 1.60f, 0.0f);
-        }
+        if (!IsPlausiblePosition(root)) root = float3(0.0f, 1.60f, 0.0f);
         point0 = root;
         point1 = root;
     }
@@ -149,14 +141,8 @@ float SampleStrandWidth(uint strandIndex, float u)
 
     float width0 = Widths[strandBase + local0];
     float width1 = Widths[strandBase + local1];
-    if (!(width0 == width0) || abs(width0) > 0.05f)
-    {
-        width0 = 0.0f;
-    }
-    if (!(width1 == width1) || abs(width1) > 0.05f)
-    {
-        width1 = width0;
-    }
+    if (!(width0 == width0) || width0 < 0.0f || width0 > 0.05f) width0 = 0.0f;
+    if (!(width1 == width1) || width1 < 0.0f || width1 > 0.05f) width1 = width0;
     return max(lerp(width0, width1, interpolation), 0.0f) * max(WidthScale, 0.05f);
 }
 
@@ -177,24 +163,18 @@ VSOutput VSMain(VSInput input)
     bool visible = true;
     if (!isGuide)
     {
-        const uint followerLocal = strandIndex - GuideStrandCount;
+        // Decimate only when CPU explicitly requests a transient interaction
+        // stride. Simulation tier and edit category never hide a strand.
         const uint followerStride = max(RenderFollowerStride, 1u);
-        const uint tier = StrandTiers[strandIndex];
-        // Use a stable per-strand stochastic subset instead of taking the
-        // same follower slot around every guide. Modulo selection exposed the
-        // same angular gaps at every root cluster and looked like bald patches.
-        const float keepProbability = 1.0f / float(followerStride);
-        const float visibilitySample = Hash01(
-            strandIndex * 747796405u + 2891336453u);
-        visible =
-            tier < RenderGuideOnlyAboveTier &&
-            visibilitySample < keepProbability;
+        if (followerStride > 1u)
+        {
+            const float keepProbability = 1.0f / float(followerStride);
+            visible = Hash01(strandIndex * 747796405u + 2891336453u) < keepProbability;
+        }
     }
 
     if (!visible)
     {
-        // Keep rejected LOD instances outside clip space. This avoids the prior
-        // alpha-clip/depth-write regression while preserving the single draw call.
         output.position = float4(0.0f, 0.0f, 2.0f, 1.0f);
         output.worldNormal = float3(0.0f, 0.0f, 1.0f);
         output.worldTangent = float3(0.0f, 1.0f, 0.0f);
@@ -210,60 +190,44 @@ VSOutput VSMain(VSInput input)
     const float3 tangent = SafeNormalize(nextPoint - previousPoint, float3(0.0f, -1.0f, 0.0f));
     const float3 viewDirection = SafeNormalize(CameraPosition.xyz - center, float3(0.0f, 0.0f, 1.0f));
 
-    float3 ribbonSide = cross(tangent, viewDirection);
+    float3 ribbonSide = cross(viewDirection, tangent);
     if (dot(ribbonSide, ribbonSide) <= 1.0e-10f)
     {
         const float3 fallbackAxis = (abs(tangent.y) < 0.90f)
             ? float3(0.0f, 1.0f, 0.0f)
             : float3(1.0f, 0.0f, 0.0f);
-        ribbonSide = cross(tangent, fallbackAxis);
+        ribbonSide = cross(fallbackAxis, tangent);
     }
     ribbonSide = SafeNormalize(ribbonSide, float3(1.0f, 0.0f, 0.0f));
-    const float3 ribbonNormal = SafeNormalize(cross(ribbonSide, tangent), viewDirection);
+    const float3 ribbonNormal = SafeNormalize(cross(tangent, ribbonSide), viewDirection);
 
     const float authoredWidth = SampleStrandWidth(strandIndex, u);
     const float cameraDistance = max(length(CameraPosition.xyz - center), 0.10f);
+    // Approximately two pixels at a 60-degree vertical FOV, independent of
+    // camera distance. This avoids point/dash rendering after auto framing.
+    const float distanceScaledHalfWidth = cameraDistance * 0.00125f;
+    const float authoredHalfWidth = authoredWidth * (isGuide ? 0.22f : 0.50f);
+    float halfWidth = max(authoredHalfWidth, distanceScaledHalfWidth);
+    halfWidth = min(halfWidth, cameraDistance * 0.0030f);
 
-    // Keep a sub-pixel coverage floor without inflating every strand to a
-    // one-pixel ribbon. The old floor made 50k crown followers merge into a cap.
-    const float screenStableFloor = cameraDistance * (isGuide ? 0.00022f : 0.00040f);
-    const float authoredScale = isGuide ? 0.34f : 1.02f;
-    float width = max(authoredWidth * authoredScale, screenStableFloor);
-    width = clamp(
-        width,
-        isGuide ? 0.00008f : 0.00020f,
-        isGuide ? 0.00060f : 0.00138f);
-
-    const float strandVariation = lerp(0.92f, 1.10f, Hash01(strandIndex + 17u));
-    const float rootOpening = lerp(0.94f, 1.0f, smoothstep(0.0f, 0.10f, u));
-    const float rootToTipTaper = lerp(1.0f, 0.24f, smoothstep(0.58f, 1.0f, u));
-    width *= strandVariation * rootOpening * rootToTipTaper;
-    if (!isGuide && StrandTiers[strandIndex] == 1u)
-    {
-        width *= max(RenderReducedWidthBoost, 0.84f);
-    }
+    const float rootMask = 1.0f - smoothstep(0.0f, 0.10f, u);
+    const float tipTaper = lerp(1.0f, 0.34f, smoothstep(0.70f, 1.0f, u));
+    halfWidth *= lerp(1.12f, 1.0f, 1.0f - rootMask) * tipTaper;
 
     const float sideSign = ((input.vertexId & 1u) == 0u) ? -1.0f : 1.0f;
-    const float3 worldPosition = center + ribbonSide * (0.5f * width * sideSign);
-    const float widthN = saturate(width / 0.0014f);
-
-    const float rootAlpha = lerp(0.90f, 1.0f, smoothstep(0.0f, 0.08f, u));
-    const float tipAlpha = lerp(1.0f, 0.44f, smoothstep(0.74f, 1.0f, u));
-    const float materialAlpha = max(RenderStrandAlpha, 0.02f);
-    const float alphaScale = isGuide ? 0.06f : 0.88f;
+    const float3 worldPosition = center + ribbonSide * (halfWidth * sideSign);
+    const float widthN = saturate(authoredWidth / 0.008f);
+    const uint editCategory = EditCategories[strandIndex];
 
     output.position = mul(float4(worldPosition, 1.0f), ViewProjection);
     output.worldNormal = ribbonNormal;
     output.worldTangent = tangent;
     output.worldPosition = worldPosition;
-    output.color = ComputeHairColor(strandIndex, widthN);
-    const float baseAlpha = saturate(materialAlpha * alphaScale * rootAlpha * tipAlpha);
-    // A stochastic 1/N follower subset must preserve the optical coverage of
-    // the full set. Without this compensation, editing/LOD preview looked bald.
-    const float followerCoverageAlpha = 1.0f - pow(
-        saturate(1.0f - baseAlpha),
-        float(max(RenderFollowerStride, 1u)));
-    output.alpha = isGuide ? baseAlpha : saturate(followerCoverageAlpha);
+    output.color = ComputeHairColor(strandIndex, widthN, editCategory);
+    // Width is a material property, never a validity signal. Keep a stable
+    // positive alpha even when authored tip width approaches zero.
+    const float tipAlpha = lerp(1.0f, 0.70f, smoothstep(0.82f, 1.0f, u));
+    output.alpha = saturate(max(RenderStrandAlpha, 0.20f) * tipAlpha);
     return output;
 }
 
@@ -277,13 +241,8 @@ float4 PSMain(VSOutput input) : SV_Target
 
     const float diffuseWrap = saturate(dot(normal, light) * 0.42f + 0.58f);
     const float tangentHalf = saturate(abs(dot(tangent, halfVector)));
-    const float anisotropic = pow(saturate(1.0f - tangentHalf * tangentHalf), 18.0f) * 0.26f;
-    const float rim = pow(1.0f - saturate(abs(dot(normal, view))), 2.0f) * 0.08f;
-    const float3 shaded =
-        input.color * (0.24f + 0.76f * diffuseWrap) +
-        (anisotropic + rim).xxx;
-
-    // No clip/discard here. Width and alpha are material properties, not
-    // validity signals; rejecting by either caused the complete disappearance.
+    const float anisotropic = pow(saturate(1.0f - tangentHalf * tangentHalf), 18.0f) * 0.20f;
+    const float rim = pow(1.0f - saturate(abs(dot(normal, view))), 2.0f) * 0.06f;
+    const float3 shaded = input.color * (0.34f + 0.66f * diffuseWrap) + (anisotropic + rim).xxx;
     return float4(shaded, input.alpha);
 }

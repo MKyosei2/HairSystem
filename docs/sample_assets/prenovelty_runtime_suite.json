@@ -29,7 +29,11 @@
       "record_branch": true,
       "record_commit": true,
       "allow_any_named_branch": true
-    }
+    },
+    "allowed_asset_source_branches": [
+      "prenovelty-ready",
+      "Novelty"
+    ]
   },
   "preflight": {
     "strict": true,
@@ -483,7 +487,16 @@
     "max_dxgi_local_usage_slope_mib_per_min": 1.0,
     "minimum_process_memory_sample_coverage": 0.95,
     "max_p99_degradation_ratio": 1.1,
-    "max_query_unresolved_slope": 0.0
+    "max_query_unresolved_slope": 0.0,
+    "minimum_resource_sample_coverage": 0.95,
+    "max_peak_handle_count": 4096,
+    "max_handle_count_slope_per_min": 1.0,
+    "max_peak_gdi_object_count": 2048,
+    "max_gdi_object_count_slope_per_min": 0.25,
+    "max_peak_user_object_count": 2048,
+    "max_user_object_count_slope_per_min": 0.25,
+    "max_peak_thread_count": 256,
+    "max_thread_count_slope_per_min": 0.1
   },
   "method_settings_source": "tools/final_stage/hairgpu_final_run.py::METHOD_PRESETS",
   "quality_gates": {
@@ -513,5 +526,14 @@
     "target_profile": "low_gtx1660_reference",
     "output_status": "theoretical_projection_only",
     "formal_evidence": false
+  },
+  "visual_regression": {
+    "enabled": true,
+    "baseline_method": "B0",
+    "require_baseline_for_multi_method": true,
+    "maximum_hash_distance_ratio": 0.55,
+    "maximum_foreground_ratio_relative_error": 0.75,
+    "maximum_bounding_box_ratio_relative_error": 0.6,
+    "evidence_note": "End-of-run back-buffer capture is performed after measured frames and is used only for catastrophic visual-regression detection."
   }
 }

@@ -241,13 +241,24 @@ return true;
                 0.0f,
                 1.0f);
 
+        const float faceU =
+            hairgpu::Clamp(1.0f - frontDu / 0.18f, 0.0f, 1.0f);
+        const float faceTop =
+            hairgpu::Clamp((v - 0.17f) / 0.13f, 0.0f, 1.0f);
+        const float faceBottom =
+            hairgpu::Clamp((0.88f - v) / 0.16f, 0.0f, 1.0f);
+        const float mannequinFace = faceU * faceTop * faceBottom;
+
         const float rawCoverage =
             0.76f +
             0.30f * crown +
             0.16f * frontHairline -
             0.035f * partLine;
+        // Keep the crown as a dark hair-cap underlayer, but render the front/lower
+        // head as a visible mannequin. A uniformly dark full head looked like a
+        // giant hole whenever the camera orbited above or around the face opening.
         const float coverage = hairgpu::Clamp(
-            rawCoverage * m_scalpCoverageStrength,
+            rawCoverage * m_scalpCoverageStrength * (1.0f - 0.94f * mannequinFace),
             0.0f,
             1.0f);
 
@@ -260,13 +271,13 @@ return true;
             0.0f,
             1.0f);
 
-        const float scalpR = 0.30f * (1.0f - darkness) + 0.12f * darkness;
-        const float scalpG = 0.20f * (1.0f - darkness) + 0.075f * darkness;
-        const float scalpB = 0.13f * (1.0f - darkness) + 0.045f * darkness;
+        const float scalpR = 0.56f * (1.0f - darkness) + 0.34f * darkness;
+        const float scalpG = 0.40f * (1.0f - darkness) + 0.24f * darkness;
+        const float scalpB = 0.30f * (1.0f - darkness) + 0.17f * darkness;
 
-        const float hairR = 0.20f * (1.0f - hairBlend) + 0.15f * hairBlend;
-        const float hairG = 0.13f * (1.0f - hairBlend) + 0.095f * hairBlend;
-        const float hairB = 0.070f * (1.0f - hairBlend) + 0.050f * hairBlend;
+        const float hairR = 0.24f * (1.0f - hairBlend) + 0.17f * hairBlend;
+        const float hairG = 0.16f * (1.0f - hairBlend) + 0.105f * hairBlend;
+        const float hairB = 0.090f * (1.0f - hairBlend) + 0.055f * hairBlend;
 
         const float partLight = hairgpu::Clamp(
             0.02f + 0.08f * partLine,

@@ -70,7 +70,7 @@ jobs:
         with:
           name: rtx4070ti-super-${{ inputs.mode }}-${{ github.run_id }}
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90
           compression-level: 6
           path: |
             out\prenovelty_baseline\**

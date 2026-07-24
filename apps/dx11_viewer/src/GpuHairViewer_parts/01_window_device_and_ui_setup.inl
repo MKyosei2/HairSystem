@@ -650,37 +650,6 @@
         ApplyExperimentConfigBeforeAssetCreation();
         EnforceFixedWorkload();
 
-        // Interactive startup must begin from the same conservative baseline as
-        // preset 0. Previously only the title said "Rapunzel Preview" while the
-        // default members still enabled self collision, loose constraints and
-        // freeze/support terms. That mismatch made a normal F5 launch much less
-        // stable than selecting "Stable Benchmark Wig" manually.
-        if (!m_experimentCase.enabled)
-        {
-            m_activePresetName = L"Stable Benchmark Wig";
-            m_widthScale = 1.00f;
-            m_simConfig.gravity = 9.81f;
-            m_simConfig.globalDamping = 0.065f;
-            m_simConfig.windStrength = 0.0f;
-            m_simConfig.followStiffness = 0.995f;
-            m_simConfig.stretchCompliance = 5.0e-8f;
-            m_simConfig.bendCompliance = 7.5e-6f;
-            m_simConfig.looseConstraintStiffness = 0.0f;
-            m_simConfig.supportCollisionRadius = 0.0f;
-            m_simConfig.supportCollisionStiffness = 0.0f;
-            m_simConfig.freezeBlend = 0.0f;
-            m_selfCollisionRadius = 0.0045f;
-            m_selfCollisionStiffness = 0.08f;
-            m_simConfig.selfCollisionCellSize = 0.040f;
-            m_enableSelfCollision = false;
-            m_enableGridSelfCollision = false;
-            m_enableActiveSetRuntime = false;
-            m_enableScalpMotion = false;
-            m_debugColorMode = DebugColorMode::Natural;
-            m_renderMode = RenderMode::StrandRibbon;
-            m_showScalpMesh = false;
-        }
-
         const float initialSegmentLength = SegmentLengthForParticleCount(m_builderParticlesPerStrand);
 
         // HAIRGPU_FORMAL_ASSET_BINDING_V1: a formal run may never fall back to a generated/cache asset.
@@ -734,10 +703,21 @@
                 formalAsset.pointWidths.size() == expectedFormalPoints &&
                 formalAsset.rootBindings.size() == expectedFormalStrands &&
                 formalAsset.followData.size() == expectedFormalStrands;
-            if (!formalShapeValid)
+            const hairgpu::HairAssetValidationReport formalTopologyReport =
+                hairgpu::ValidateHairAsset(formalAsset);
+            const bool formalTopologyValid =
+                formalTopologyReport.valid &&
+                formalTopologyReport.invalidGuidePrefixCount == 0u &&
+                formalTopologyReport.invalidFollowerSuffixCount == 0u;
+            if (!formalShapeValid || !formalTopologyValid)
             {
+                const std::string topologyDiagnostic =
+                    hairgpu::BuildHairAssetValidationSummary(
+                        formalTopologyReport,
+                        true);
                 ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
-                    L"The frozen asset does not satisfy 4000 guides / 24 followers / 128 points / 100000 displayed strands.");
+                    L"The frozen asset does not satisfy the canonical workload or the contiguous guide-prefix/follower-suffix contract.\r\n\r\n" +
+                    Utf8ToWide(topologyDiagnostic));
                 return false;
             }
 
@@ -758,12 +738,31 @@
             GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
             const std::filesystem::path assetCacheDirectory =
                 std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
-            // v9 enforces the runtime layout contract: all guides are stored
-            // contiguously before all followers. It intentionally invalidates
-            // v5-v8 caches whose interleaved order made FollowCS read followers
-            // as guides and most real guides as followers.
+            // V9 never reuses pre-V9 interactive assets. Earlier cache files can
+            // satisfy count/topology checks while still carrying the old visual/root
+            // layout, which made source changes appear to have no effect.
+            std::error_code legacyCacheError;
+            if (std::filesystem::is_directory(assetCacheDirectory, legacyCacheError) &&
+                !legacyCacheError)
+            {
+                for (const std::filesystem::directory_entry& entry :
+                     std::filesystem::directory_iterator(assetCacheDirectory, legacyCacheError))
+                {
+                    if (legacyCacheError)
+                    {
+                        break;
+                    }
+                    const std::wstring name = entry.path().filename().wstring();
+                    if (name.rfind(L"sample_hybrid_cache_v1", 0u) == 0u ||
+                        name.rfind(L"sample_hybrid_cache_v2", 0u) == 0u)
+                    {
+                        std::error_code removeError;
+                        std::filesystem::remove(entry.path(), removeError);
+                    }
+                }
+            }
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v15_depth_occluded_single_volume_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v3_runtime_verified_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -781,10 +780,8 @@
             if (std::filesystem::exists(assetCachePath, assetCacheEc) && !assetCacheEc &&
                 hairgpu::LoadHairAssetFromHairBinary(assetCachePath, cachedAsset, assetCacheError))
             {
-                const hairgpu::HairAssetValidationReport structuralReport =
+                const hairgpu::HairAssetValidationReport cachedTopologyReport =
                     hairgpu::ValidateHairAsset(cachedAsset);
-                const hairgpu::BenchmarkWigValidationReport shapeReport =
-                    hairgpu::ValidateBenchmarkWigShape(cachedAsset);
                 loadedCachedAsset =
                     cachedAsset.guideStrandCount == m_builderGuideCount &&
                     cachedAsset.followerStrandCount == m_builderGuideCount * m_builderFollowersPerGuide &&
@@ -794,8 +791,9 @@
                     cachedAsset.pointWidths.size() == expectedCachedPoints &&
                     cachedAsset.rootBindings.size() == expectedCachedStrands &&
                     cachedAsset.followData.size() == expectedCachedStrands &&
-                    structuralReport.valid &&
-                    shapeReport.valid;
+                    cachedTopologyReport.valid &&
+                    cachedTopologyReport.invalidGuidePrefixCount == 0u &&
+                    cachedTopologyReport.invalidFollowerSuffixCount == 0u;
             }
 
             if (loadedCachedAsset)
@@ -811,6 +809,21 @@
                     m_builderFollowersPerGuide,
                     m_builderParticlesPerStrand,
                     initialSegmentLength);
+                const hairgpu::HairAssetValidationReport generatedTopologyReport =
+                    hairgpu::ValidateHairAsset(m_asset);
+                if (!generatedTopologyReport.valid ||
+                    generatedTopologyReport.invalidGuidePrefixCount > 0u ||
+                    generatedTopologyReport.invalidFollowerSuffixCount > 0u)
+                {
+                    const std::string topologyDiagnostic =
+                        hairgpu::BuildHairAssetValidationSummary(
+                            generatedTopologyReport,
+                            true);
+                    ShowStartupDialog(nullptr, L"Hair GPU Viewer Asset Topology Failure",
+                        L"The procedural asset violates the contiguous guide-prefix/follower-suffix runtime contract.\r\n\r\n" +
+                        Utf8ToWide(topologyDiagnostic));
+                    return false;
+                }
                 // Avoid double wig styling in viewer; sample/import paths already shape the asset.
                 EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
                 m_lastAssetSource = L"Sample Hybrid (cache rebuilt)";
@@ -832,8 +845,20 @@
         m_activeSetBudget.promoteScoreThreshold = 0.52f;
         m_simConfig.solverIterations = kFixedSolverIterations;
         m_simConfig.fixedTimeStep = kFixedTimeStepSeconds;
+        m_simConfig.gravity = 18.5f;
+        m_simConfig.globalDamping = 0.100f;
         m_simConfig.segmentLength = initialSegmentLength;
+        m_simConfig.bendStiffness = 0.14f;
+        m_simConfig.followStiffness = 0.985f;
+        m_simConfig.windStrength = 0.03f;
+        m_simConfig.windDirection = { 0.90f, 0.0f, 0.25f };
         m_simConfig.floorY = -1.05f;
+        m_simConfig.selfCollisionRadius = 0.0042f;
+        m_simConfig.selfCollisionStiffness = 0.18f;
+        m_simConfig.stretchCompliance = 2.0e-7f;
+        m_simConfig.bendCompliance = 1.5e-5f;
+        m_simConfig.rootStiffness = 0.28f;
+        m_simConfig.velocityShockPropagation = 0.72f;
         m_simConfig.selfCollisionGridDimX = 18;
         m_simConfig.selfCollisionGridDimY = 18;
         m_simConfig.selfCollisionGridDimZ = 18;
@@ -842,18 +867,30 @@
         m_simConfig.selfCollisionCellSize = 0.040f;
         m_selfCollisionRadius = m_simConfig.selfCollisionRadius;
         m_selfCollisionStiffness = m_simConfig.selfCollisionStiffness;
-
-        // Do not overwrite the profile selected before asset creation. The old
-        // unconditional block silently replaced the stable 9.81 m/s^2 profile
-        // with a much harsher setup and switched rendering back to millions of
-        // particle billboards. That produced the apparent solid wall and made
-        // the preview differ from the configured experiment case.
+        m_enableRuntimeAngularBend = true;
+        m_runtimeAngularBendRadians = 0.16f;
+        m_runtimeAngularBendCompliance = 5.0e-6f;
+        m_runtimeAngularBendStiffness = 0.36f;
+        m_runtimeAngularBendDamping = 0.08f;
+        // Stable preview must start in the production ribbon path. Particle modes are
+        // diagnostics only; starting in Billboard mode produces the dotted/helmet-like
+        // appearance when the scalp is hidden by the benchmark preset.
+        m_widthScale = 0.82f;
         m_renderMode = RenderMode::StrandRibbon;
-        // Interactive preview must not be covered by the opaque mannequin scalp.
-        // The earlier initialization correctly disabled it, but this later
-        // unconditional assignment re-enabled it and made density changes appear
-        // to have no effect. Formal experiment rendering retains the scalp.
-        m_showScalpMesh = m_experimentCase.enabled;
+        // Stable startup is a reviewable simulation view, never an implicit edit
+        // session inherited from the inline Edit Stack.
+        m_activePresetName = L"Stable Benchmark Wig";
+        m_workspaceMode = WorkspaceMode::Sim;
+        m_interactionMode = InteractionMode::View;
+        m_groomTool = GroomTool::Select;
+        m_debugColorMode = DebugColorMode::Natural;
+        m_maskOverlayMode = MaskOverlayMode::None;
+        m_selectedStrandIndex = -1;
+        m_cpuReadbackMode = CpuReadbackMode::Off;
+        m_showScalpMesh = true;
+        m_scalpCoverageStrength = 0.92f;
+        m_scalpTintDarkness = 0.48f;
+        m_scalpHairBlend = 0.62f;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
         m_showGuideSkeleton = false;
@@ -862,16 +899,9 @@
         m_showFollowLinks = false;
         m_showFloorGuide = false;
         m_showColliderDebug = false;
-        if (!m_experimentCase.enabled)
-        {
-            // Preserve the Stable Benchmark Wig coverage chosen before asset
-            // creation. The old 0.68 override made the full-density preview
-            // visibly sparse even after follower layout was corrected.
-            m_widthScale = 0.96f;
-            m_enableSelfCollision = false;
-            m_enableGridSelfCollision = false;
-            m_selfCollisionBroadphaseMode = 1u; // Spatial hash; bitonic mode is comparison-only.
-        }
+        m_enableSelfCollision = false;
+        m_enableGridSelfCollision = false;
+        m_selfCollisionBroadphaseMode = 1u; // Spatial hash; bitonic mode is comparison-only.
 
         if (m_experimentCase.enabled)
         {

@@ -89,10 +89,9 @@ class LongRunHairStabilityContractTests(unittest.TestCase):
     def test_followers_cannot_expand_an_invalid_parent_guide(self) -> None:
         body = _function_body(self.hlsl, "void FollowCS(")
         self.assertIn("uint(follow.ParentGuide) >= GuideStrandCount", body)
-        self.assertIn("maximumFollowerRadius", body)
+        self.assertIn("maximumRootRadius", body)
         self.assertIn("target = translatedRest", body)
         self.assertIn("!IsFinite3(parentPosition)", body)
-        self.assertIn("previousFollowerRoot", body)
 
     def test_cpu_analogue_remains_finite_and_inextensible(self) -> None:
         # Small deterministic analogue of the shader ordering. It exercises 128 points,

@@ -42,8 +42,8 @@
     <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerWorkingDirectory>$(SolutionDir)</LocalDebuggerWorkingDirectory>
-    <LocalDebuggerCommandArguments>--local-capture --local-capture-warmup 120 --local-capture-frames 1800 --local-capture-autocommit --local-capture-push</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerCommandArguments></LocalDebuggerCommandArguments>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -217,18 +217,6 @@ exit /b 0</Command>
     <None Include="apps\hairgpu_cli\src\main.cpp" />
     <None Include="docs\PROJECT_ONE_PROJECT_NOTES.md" />
   </ItemGroup>
-  <ItemGroup>
-    <HairGpuShader Include="apps\dx11_viewer\shaders\*.hlsl" />
-    <UpToDateCheckInput Include="@(HairGpuShader)" />
-    <UpToDateCheckOutput Include="$(OutDir)HairStrandInstanced.hlsl" />
-    <UpToDateCheckOutput Include="$(OutDir)shaders\HairStrandInstanced.hlsl" />
-  </ItemGroup>
-  <Target Name="CopyHairGpuShaders" AfterTargets="Build">
-    <MakeDir Directories="$(OutDir)" />
-    <MakeDir Directories="$(OutDir)shaders" />
-    <Copy SourceFiles="@(HairGpuShader)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" />
-    <Copy SourceFiles="@(HairGpuShader)" DestinationFolder="$(OutDir)shaders" SkipUnchangedFiles="false" />
-  </Target>
   <Target Name="HairGpuFormalSelfTests" AfterTargets="Build" Condition="'$(HairGpuFormalSelfTest)' == 'true'">
     <Exec Command="&quot;$(TargetPath)&quot; --native-self-test" />
     <Exec Command="&quot;$(TargetPath)&quot; --shader-self-test" />

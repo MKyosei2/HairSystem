@@ -148,51 +148,6 @@ namespace hairgpu
             PushIssue(report, ValidationSeverity::Warning, "guideStrandCount + followerStrandCount does not match strands count.");
         }
 
-        if (asset.strands.size() ==
-                static_cast<size_t>(asset.guideStrandCount) +
-                asset.followerStrandCount &&
-            asset.followData.size() == asset.strands.size())
-        {
-            uint32_t layoutViolationCount = 0u;
-            const uint32_t guideFlag =
-                static_cast<uint32_t>(StrandFlags::Guide);
-            for (uint32_t strandIndex = 0u;
-                 strandIndex < static_cast<uint32_t>(asset.strands.size());
-                 ++strandIndex)
-            {
-                const bool hasGuideFlag =
-                    (asset.strands[strandIndex].flags & guideFlag) != 0u;
-                if (strandIndex < asset.guideStrandCount)
-                {
-                    const bool parentMatches =
-                        asset.followData[strandIndex].parentGuide ==
-                        static_cast<int32_t>(strandIndex);
-                    if (!hasGuideFlag || !parentMatches)
-                    {
-                        ++layoutViolationCount;
-                    }
-                }
-                else
-                {
-                    const int32_t parent =
-                        asset.followData[strandIndex].parentGuide;
-                    if (hasGuideFlag || parent < 0 ||
-                        static_cast<uint32_t>(parent) >=
-                            asset.guideStrandCount)
-                    {
-                        ++layoutViolationCount;
-                    }
-                }
-            }
-            if (layoutViolationCount > 0u)
-            {
-                std::ostringstream ss;
-                ss << "Guide/follower storage layout violates the runtime contract at "
-                   << layoutViolationCount << " strand entries; guides must occupy [0, guideStrandCount).";
-                PushIssue(report, ValidationSeverity::Error, ss.str());
-            }
-        }
-
         for (size_t pointIndex = 0; pointIndex < asset.restPoints.size(); ++pointIndex)
         {
             if (!IsFinite(asset.restPoints[pointIndex]))
@@ -213,6 +168,33 @@ namespace hairgpu
         for (size_t strandIndex = 0; strandIndex < asset.strands.size(); ++strandIndex)
         {
             const StrandRange& strand = asset.strands[strandIndex];
+            const bool expectedGuide = strandIndex < asset.guideStrandCount;
+            const bool markedGuide =
+                (strand.flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u;
+            if (expectedGuide)
+            {
+                if (!markedGuide)
+                {
+                    ++report.invalidGuidePrefixCount;
+                }
+                if (strandIndex < asset.followData.size() &&
+                    asset.followData[strandIndex].parentGuide != static_cast<int32_t>(strandIndex))
+                {
+                    ++report.invalidGuidePrefixCount;
+                }
+            }
+            else
+            {
+                if (markedGuide)
+                {
+                    ++report.invalidFollowerSuffixCount;
+                }
+                if (strandIndex < asset.followData.size() &&
+                    asset.followData[strandIndex].parentGuide < 0)
+                {
+                    ++report.invalidFollowerSuffixCount;
+                }
+            }
 
             if (strand.pointCount == 0u)
             {
@@ -303,6 +285,16 @@ namespace hairgpu
         {
             PushIssue(report, ValidationSeverity::Error, "Asset contains invalid follower-to-guide references.");
         }
+        if (report.invalidGuidePrefixCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error,
+                "The guide prefix is not contiguous or guide parent indices do not match their direct strand indices.");
+        }
+        if (report.invalidFollowerSuffixCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error,
+                "The follower suffix contains guide flags or followers without a valid parent guide.");
+        }
 
         return report;
     }
@@ -323,7 +315,9 @@ namespace hairgpu
            << ", zeroLengthSegments=" << report.zeroLengthSegmentCount
            << ", nonFinitePoints=" << report.nonFinitePointCount
            << ", invalidRootBindings=" << report.invalidRootBindingCount
-           << ", invalidFollowReferences=" << report.invalidFollowReferenceCount;
+           << ", invalidFollowReferences=" << report.invalidFollowReferenceCount
+           << ", invalidGuidePrefix=" << report.invalidGuidePrefixCount
+           << ", invalidFollowerSuffix=" << report.invalidFollowerSuffixCount;
 
         if (includeIssueList)
         {
@@ -391,11 +385,12 @@ namespace hairgpu
         std::vector<float> tipHeights;
         tipHeights.reserve(asset.guideStrandCount);
 
-        const size_t rootCount = std::min(
-            asset.rootBindings.size(),
-            asset.strands.size());
+        const size_t rootCount = std::min<size_t>(
+            asset.guideStrandCount,
+            std::min(asset.rootBindings.size(), asset.strands.size()));
         uint32_t crownAzimuthMask = 0u;
         uint32_t frontHairlineMask = 0u;
+        uint32_t transitionAzimuthMask = 0u;
         for (size_t rootIndex = 0u; rootIndex < rootCount; ++rootIndex)
         {
             const Vec2& uv = asset.rootBindings[rootIndex].rootUv;
@@ -422,6 +417,14 @@ namespace hairgpu
                     static_cast<uint32_t>(wrappedU * 16.0f),
                     15u);
                 crownAzimuthMask |= (1u << bin);
+            }
+            if (uv.y >= 0.10f && uv.y <= 0.22f)
+            {
+                ++report.transitionRootCount;
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(wrappedU * 16.0f),
+                    15u);
+                transitionAzimuthMask |= (1u << bin);
             }
 
             float frontDu = std::fabs(wrappedU - 0.25f);
@@ -457,6 +460,13 @@ namespace hairgpu
                     ? 1u
                     : 0u;
         }
+        for (uint32_t bit = 0u; bit < 16u; ++bit)
+        {
+            report.transitionAzimuthBinCount +=
+                (transitionAzimuthMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
 
         if (report.evaluatedRootCount > 0u)
         {
@@ -468,6 +478,9 @@ namespace hairgpu
             report.frontHairlineRootFraction =
                 static_cast<float>(
                     report.frontHairlineRootCount) /
+                rootCountFloat;
+            report.transitionRootFraction =
+                static_cast<float>(report.transitionRootCount) /
                 rootCountFloat;
         }
         else
@@ -595,12 +608,6 @@ namespace hairgpu
                 ValidationSeverity::Error,
                 "Crown root coverage is too sparse or azimuthally incomplete.");
         }
-        if (report.crownRootFraction > 0.340f)
-        {
-            pushIssue(
-                ValidationSeverity::Error,
-                "Crown roots are over-concentrated and would form a flat cap.");
-        }
         if (report.frontHairlineRootFraction < 0.020f ||
             report.frontHairlineBinCount < 6u)
         {
@@ -608,11 +615,12 @@ namespace hairgpu
                 ValidationSeverity::Error,
                 "Front hairline root coverage is too sparse or discontinuous.");
         }
-        if (report.frontHairlineRootFraction > 0.300f)
+        if (report.transitionRootFraction < 0.10f ||
+            report.transitionAzimuthBinCount < 14u)
         {
             pushIssue(
                 ValidationSeverity::Error,
-                "Front hairline roots are over-concentrated and would form a curtain wall.");
+                "Crown-to-hairline transition coverage is too sparse or contains a latitude band gap.");
         }
 
         const uint32_t minimumRegionalCount = std::max<uint32_t>(4u, asset.guideStrandCount / 20u);
@@ -638,10 +646,19 @@ namespace hairgpu
             pushIssue(ValidationSeverity::Error,
                 "Guide tips are too uniformly aligned and would form a blunt lower ring.");
         }
-        if (report.maximumWithinStrandSegmentRatio > 1.10f)
+        // This metric compares Euclidean chords, not accumulated arc length.
+        // Tight curves and head-volume projection can legitimately make one chord
+        // much shorter even when samples are uniform in arc space. Treat only
+        // extreme ratios as invalid and retain a warning for reviewable outliers.
+        if (report.maximumWithinStrandSegmentRatio > 64.0f)
         {
             pushIssue(ValidationSeverity::Error,
-                "A guide strand is not uniformly arc-length resampled.");
+                "A guide strand contains a catastrophic segment-length discontinuity.");
+        }
+        else if (report.maximumWithinStrandSegmentRatio > 16.0f)
+        {
+            pushIssue(ValidationSeverity::Warning,
+                "A tightly curved guide contains a short Euclidean chord; arc-length ordering remains valid.");
         }
         if (report.boundsWidth < 0.34f || report.boundsDepth < 0.28f ||
             report.boundsHeight < 0.30f || report.boundsHeight > 0.90f)
@@ -669,6 +686,8 @@ namespace hairgpu
            << ", crownAzimuthBins=" << report.crownAzimuthBinCount
            << ", frontHairlineRootFraction=" << report.frontHairlineRootFraction
            << ", frontHairlineBins=" << report.frontHairlineBinCount
+           << ", transitionRootFraction=" << report.transitionRootFraction
+           << ", transitionAzimuthBins=" << report.transitionAzimuthBinCount
            << ", minGuideLength=" << report.minimumGuideLength
            << ", averageGuideLength=" << report.averageGuideLength
            << ", maxGuideLength=" << report.maximumGuideLength

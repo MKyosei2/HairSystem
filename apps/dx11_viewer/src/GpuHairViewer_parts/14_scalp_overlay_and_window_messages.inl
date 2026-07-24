@@ -15,11 +15,8 @@
             }
         }
 
-        const bool showSelectedStrandOverlay =
-            !IsExperimentModeEnabled() &&
-            m_workspaceMode == WorkspaceMode::Groom &&
-            m_interactionMode == InteractionMode::Edit;
-        if (showSelectedStrandOverlay &&
+        if (m_workspaceMode == WorkspaceMode::Groom &&
+            m_interactionMode == InteractionMode::Edit &&
             m_selectedStrandIndex >= 0 &&
             static_cast<size_t>(m_selectedStrandIndex) < m_asset.strands.size())
         {
@@ -68,7 +65,9 @@
             }
         }
 
-        if (!m_lockedStrands.empty())
+        if (m_workspaceMode == WorkspaceMode::Groom &&
+            m_interactionMode == InteractionMode::Edit &&
+            !m_lockedStrands.empty())
         {
             const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount, static_cast<uint32_t>(m_asset.strands.size()));
             for (uint32_t strandIndex = 0u; strandIndex < std::min<uint32_t>(guideCount, static_cast<uint32_t>(m_lockedStrands.size())); ++strandIndex)
@@ -268,13 +267,23 @@
             {
                 m_mouseDownPoint = p;
                 m_lastMouse = p;
-                const bool orbitOverride = (GetKeyState(VK_MENU) & 0x8000) != 0;
+                const bool editInteraction =
+                    m_workspaceMode == WorkspaceMode::Groom &&
+                    m_interactionMode == InteractionMode::Edit;
+                const bool orbitOverride =
+                    !editInteraction ||
+                    (GetKeyState(VK_MENU) & 0x8000) != 0;
                 if (!orbitOverride && IsBrushDrivenTool() && BeginViewportBrushStroke(p))
                 {
                     // brush stroke owns the drag until mouse-up or escape.
                 }
-                else if (!BeginStrandGizmoDrag(p))
+                else if (!orbitOverride && BeginStrandGizmoDrag(p))
                 {
+                    // gizmo owns the drag.
+                }
+                else
+                {
+                    // Sim/View always orbits. It never starts a strand edit.
                     m_dragging = true;
                 }
                 SetCapture(m_hwnd);
@@ -293,10 +302,19 @@
             EndViewportBrushStroke(false);
             m_dragging = false;
             ReleaseCapture();
-            if (wasClick && !wasGizmoDrag && !wasBrushStroke)
+            if (wasClick && !wasGizmoDrag && !wasBrushStroke &&
+                m_workspaceMode == WorkspaceMode::Groom &&
+                m_interactionMode == InteractionMode::Edit)
             {
                 PickStrandAtPoint(p);
+                m_gpuDebugLinesDirty = true;
                 UpdateWindowTitle();
+            }
+            else if (m_workspaceMode != WorkspaceMode::Groom ||
+                     m_interactionMode != InteractionMode::Edit)
+            {
+                m_selectedStrandIndex = -1;
+                m_gpuDebugLinesDirty = true;
             }
             return 0;
         }

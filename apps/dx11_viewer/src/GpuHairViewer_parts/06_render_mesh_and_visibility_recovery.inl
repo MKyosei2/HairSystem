@@ -4,14 +4,33 @@
 
         // GPU debug overlays are excluded from formal measurement.
         // They are auxiliary UI diagnostics and must not affect formal timing.
+const bool explicitDebugOverlayRequested =
+    (m_workspaceMode == WorkspaceMode::Groom &&
+     m_interactionMode == InteractionMode::Edit) ||
+    m_showFloorGuide ||
+    m_showGridBounds ||
+    m_showScalpWireframe ||
+    m_showGuideSkeleton ||
+    m_showFollowerSkeleton ||
+    m_showRootMarkers ||
+    m_showFollowLinks ||
+    m_showColliderDebug;
 const bool allowGpuDebugLines =
-!IsExperimentModeEnabled() &&
-m_context &&
-m_currentBufferIndex < 2u &&
+    !IsExperimentModeEnabled() &&
+    explicitDebugOverlayRequested &&
+    m_context &&
+    m_currentBufferIndex < 2u &&
     m_debugLineTemplateVertexBuffer &&
     m_debugInputLayout &&
     m_debugLineVS &&
     m_debugLinePS;
+
+if (!allowGpuDebugLines && !m_gpuDebugLineEntries.empty())
+{
+    m_gpuDebugLineEntries.clear();
+    m_debugLineStats = {};
+    m_gpuDebugLinesDirty = true;
+}
 
 if (allowGpuDebugLines && m_gpuDebugLinesDirty)
 {
@@ -162,6 +181,15 @@ if (gpuTimingFrame && gpuTimingFrame->issued)
     m_context->End(gpuTimingFrame->disjoint.Get());
 }
 
+// A flip-discard swap chain does not guarantee that the presented back buffer
+// remains readable. Capture the dedicated post-measurement render before Present.
+if (m_visualCapturePending)
+{
+    m_visualCaptureSucceeded =
+        CaptureBackBufferBmp(m_pendingVisualCapturePath);
+    m_visualCapturePending = false;
+}
+
 m_lastTotalDrawCalls += m_lastCurrentHairDrawCalls;
 UpdateRenderStatistics();
 
@@ -218,14 +246,21 @@ if (FAILED(m_lastPresentResult))
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer | visualFix=V15 depthOccluder=on"
-            << L"  |  renderFPS=" << std::fixed << std::setprecision(1)
+        ss << L"[HAIRGPU V9 FORCE-APPLIED] Hair GPU Viewer"
+            << L"  |  sessionFPS=" << std::fixed << std::setprecision(1)
+            << m_sessionEffectiveFps
+            << L"  rollingFPS=" << m_recentEffectiveFps
+            << L"  onePctLow=" << m_recentOnePercentLowFps
+            << L"  instantFPS="
             << (m_renderCadenceWindowValid ? m_renderFps : 0.0f)
             << L"  simHz=" << std::setprecision(1)
             << (m_renderCadenceWindowValid ? m_simulationHz : 0.0f)
-            << L"  frameMs=" << std::setprecision(2)
-            << m_lastFrameIntervalMilliseconds
-            << L"  cpuWorkMs=" << m_lastCpuFrameWorkMilliseconds
+            << L"  frameMs(last/p95/worst)=" << std::setprecision(2)
+            << m_lastFrameIntervalMilliseconds << L"/"
+            << m_recentFrameP95Milliseconds << L"/"
+            << m_recentFrameWorstMilliseconds
+            << L"  stalls100ms=" << m_observedStallCount100Milliseconds
+            << L"  cpuPresentMs=" << m_lastCpuFrameWorkMilliseconds
             << L"  gpuFrameMs=" << m_lastGpuFrameMilliseconds
             << L"  gpuThroughputFPS=" << std::setprecision(1)
             << m_gpuThroughputFps
@@ -246,10 +281,179 @@ if (FAILED(m_lastPresentResult))
                     : L"ribbon"))
             << L"  mode="
             << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
-            << L"  scalp=" << (m_showScalpMesh ? L"on" : L"off")
-            << L"  visualFix=V15  previewFollowers=100%  depthOccluder=on"
             << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
+    }
+
+    bool GpuHairViewer::CaptureBackBufferBmp(
+        const std::filesystem::path& outputPath)
+    {
+        if (!m_swapChain || !m_device || !m_context || outputPath.empty())
+        {
+            return false;
+        }
+
+        ComPtr<ID3D11Texture2D> backBuffer;
+        if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))) || !backBuffer)
+        {
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC sourceDesc = {};
+        backBuffer->GetDesc(&sourceDesc);
+        if (sourceDesc.Width == 0u || sourceDesc.Height == 0u)
+        {
+            return false;
+        }
+        const bool rgba =
+            sourceDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+            sourceDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        const bool bgra =
+            sourceDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+            sourceDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        if (!rgba && !bgra)
+        {
+            return false;
+        }
+
+        ComPtr<ID3D11Texture2D> resolved;
+        ID3D11Texture2D* copySource = backBuffer.Get();
+        if (sourceDesc.SampleDesc.Count > 1u)
+        {
+            D3D11_TEXTURE2D_DESC resolveDesc = sourceDesc;
+            resolveDesc.SampleDesc.Count = 1u;
+            resolveDesc.SampleDesc.Quality = 0u;
+            resolveDesc.Usage = D3D11_USAGE_DEFAULT;
+            resolveDesc.BindFlags = 0u;
+            resolveDesc.CPUAccessFlags = 0u;
+            resolveDesc.MiscFlags = 0u;
+            if (FAILED(m_device->CreateTexture2D(&resolveDesc, nullptr, &resolved)) || !resolved)
+            {
+                return false;
+            }
+            m_context->ResolveSubresource(
+                resolved.Get(),
+                0u,
+                backBuffer.Get(),
+                0u,
+                sourceDesc.Format);
+            copySource = resolved.Get();
+            sourceDesc = resolveDesc;
+        }
+
+        D3D11_TEXTURE2D_DESC stagingDesc = sourceDesc;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags = 0u;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags = 0u;
+        stagingDesc.SampleDesc.Count = 1u;
+        stagingDesc.SampleDesc.Quality = 0u;
+        ComPtr<ID3D11Texture2D> staging;
+        if (FAILED(m_device->CreateTexture2D(&stagingDesc, nullptr, &staging)) || !staging)
+        {
+            return false;
+        }
+        m_context->CopyResource(staging.Get(), copySource);
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (FAILED(m_context->Map(staging.Get(), 0u, D3D11_MAP_READ, 0u, &mapped)))
+        {
+            return false;
+        }
+
+        const uint32_t width = stagingDesc.Width;
+        const uint32_t height = stagingDesc.Height;
+        const uint64_t pixelBytes64 =
+            static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4ull;
+        if (pixelBytes64 > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            m_context->Unmap(staging.Get(), 0u);
+            return false;
+        }
+        std::vector<uint8_t> pixels(static_cast<size_t>(pixelBytes64));
+        for (uint32_t outputRow = 0u; outputRow < height; ++outputRow)
+        {
+            const uint32_t sourceRow = height - 1u - outputRow;
+            const uint8_t* source =
+                static_cast<const uint8_t*>(mapped.pData) +
+                static_cast<size_t>(sourceRow) * mapped.RowPitch;
+            uint8_t* destination =
+                pixels.data() +
+                static_cast<size_t>(outputRow) * static_cast<size_t>(width) * 4u;
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const uint8_t* inputPixel = source + static_cast<size_t>(x) * 4u;
+                uint8_t* outputPixel = destination + static_cast<size_t>(x) * 4u;
+                if (rgba)
+                {
+                    outputPixel[0] = inputPixel[2];
+                    outputPixel[1] = inputPixel[1];
+                    outputPixel[2] = inputPixel[0];
+                    outputPixel[3] = inputPixel[3];
+                }
+                else
+                {
+                    outputPixel[0] = inputPixel[0];
+                    outputPixel[1] = inputPixel[1];
+                    outputPixel[2] = inputPixel[2];
+                    outputPixel[3] = inputPixel[3];
+                }
+            }
+        }
+        m_context->Unmap(staging.Get(), 0u);
+
+        BITMAPFILEHEADER fileHeader = {};
+        BITMAPINFOHEADER infoHeader = {};
+        const uint32_t pixelBytes = static_cast<uint32_t>(pixelBytes64);
+        fileHeader.bfType = 0x4D42u;
+        fileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        fileHeader.bfSize = fileHeader.bfOffBits + pixelBytes;
+        infoHeader.biSize = sizeof(BITMAPINFOHEADER);
+        infoHeader.biWidth = static_cast<LONG>(width);
+        infoHeader.biHeight = static_cast<LONG>(height);
+        infoHeader.biPlanes = 1u;
+        infoHeader.biBitCount = 32u;
+        infoHeader.biCompression = BI_RGB;
+        infoHeader.biSizeImage = pixelBytes;
+
+        std::error_code error;
+        std::filesystem::create_directories(outputPath.parent_path(), error);
+        if (error)
+        {
+            return false;
+        }
+        const std::filesystem::path temporary = outputPath.wstring() + L".tmp";
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output)
+        {
+            return false;
+        }
+        output.write(
+            reinterpret_cast<const char*>(&fileHeader),
+            sizeof(fileHeader));
+        output.write(
+            reinterpret_cast<const char*>(&infoHeader),
+            sizeof(infoHeader));
+        output.write(
+            reinterpret_cast<const char*>(pixels.data()),
+            static_cast<std::streamsize>(pixels.size()));
+        output.flush();
+        if (!output.good())
+        {
+            output.close();
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        output.close();
+        std::filesystem::remove(outputPath, error);
+        error.clear();
+        std::filesystem::rename(temporary, outputPath, error);
+        if (error)
+        {
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        return true;
     }
 
     void GpuHairViewer::Shutdown()
