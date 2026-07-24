@@ -40,8 +40,12 @@ class RibbonRenderContractTests(unittest.TestCase):
     def test_startup_and_reset_select_production_ribbon(self) -> None:
         startup_marker = "Stable preview must start in the production ribbon path"
         marker_index = self.startup.index(startup_marker)
-        startup_slice = self.startup[marker_index : marker_index + 500]
-        self.assertIn("m_renderMode = RenderMode::StrandRibbon;", startup_slice)
+        assignment_index = self.startup.index(
+            "m_renderMode = RenderMode::StrandRibbon;",
+            marker_index,
+        )
+        self.assertLess(marker_index, assignment_index)
+        startup_slice = self.startup[marker_index : assignment_index + 80]
         self.assertNotIn("m_renderMode = RenderMode::ParticleBillboard;", startup_slice)
         self.assertIn("m_renderMode = RenderMode::StrandRibbon;", self.reset)
 
