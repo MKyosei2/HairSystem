@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "hairgpu-local-debug-run-state-v1",
+  "status": "INTERRUPTED",
+  "exitMode": "visual_studio_stop_debugging_before_first_sample",
+  "processId": 27168,
+  "formalEvidence": false,
+  "partialDataRecovered": false,
+  "capturedFrameCount": 0
+}

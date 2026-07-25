@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "hairgpu-local-debug-evidence-v4",
+  "success": false,
+  "recoveredPartial": false,
+  "error": "No post-warmup frame was captured before Visual Studio stopped the Viewer.",
+  "watchedProcessId": 27168
+}
