@@ -49,10 +49,22 @@ jobs:
           fetch-depth: 0
           clean: true
 
+      - name: Attach selected branch for formal identity
+        shell: cmd
+        run: |
+          if "%GITHUB_REF_NAME%"=="" exit /b 1
+          git checkout -B "%GITHUB_REF_NAME%" "%GITHUB_SHA%"
+          git branch --show-current
+          git status --porcelain --untracked-files=normal
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install fixed analysis dependency
+        shell: cmd
+        run: python -m pip install --disable-pip-version-check openpyxl==3.1.5
 
       - name: Run pre-novelty phase
         if: startsWith(inputs.mode, 'prenovelty-') || inputs.mode == 'startup20'
@@ -78,6 +90,12 @@ jobs:
         run: |
           if not exist "out\prenovelty_baseline\complete_manifest.json" exit /b 1
           if not exist "out\prenovelty_baseline\prenovelty_complete_evidence.zip" exit /b 1
+          if not exist "out\prenovelty_baseline\prenovelty_complete_evidence.zip.sha256" exit /b 1
+          if not exist "out\prenovelty_baseline\frozen_asset_bundle_snapshot.zip" exit /b 1
+          if not exist "out\prenovelty_baseline\analysis\validated_evidence.sqlite" exit /b 1
+          if not exist "out\prenovelty_baseline\analysis\formal_results.xlsx" exit /b 1
+          if not exist "out\prenovelty_baseline\analysis\graphs\method_average_fps.svg" exit /b 1
+          python -c "import json,pathlib; p=json.loads(pathlib.Path(r'out\prenovelty_baseline\complete_manifest.json').read_text(encoding='utf-8-sig')); raise SystemExit(0 if p.get('status') == 'COMPLETE' and p.get('passed') is True else 1)"
 
       - name: Upload actual RTX evidence and frozen workload
         if: always()

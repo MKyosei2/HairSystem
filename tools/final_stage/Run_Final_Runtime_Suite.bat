@@ -23,10 +23,24 @@ if not exist "%CONFIG%" (
 )
 
 rem ---------------------------------------------------------------------------
-rem Composite modes.  Every phase receives its own directory so suite-level
-rem summaries, SQLite files and ZIPs cannot overwrite one another.
+rem Composite modes. Every phase receives its own directory. The complete mode
+rem accepts only after smoke, startup20, all-18-scenario coverage, determinism,
+rem soak30, detailed DB import, Excel export, graph generation, and immutable
+rem evidence packaging all pass.
 rem ---------------------------------------------------------------------------
 if /I "%MODE%"=="prenovelty-complete" (
+  where python >nul 2>nul
+  if errorlevel 1 (
+    echo ERROR: python.exe was not found in PATH.
+    exit /b 3
+  )
+  python -c "import openpyxl" >nul 2>nul
+  if errorlevel 1 (
+    echo ERROR: openpyxl is required for thesis Excel export.
+    echo Install it before the formal run: python -m pip install openpyxl==3.1.5
+    exit /b 13
+  )
+
   set "COMPLETE_ROOT=%~f3"
   if not defined COMPLETE_ROOT set "COMPLETE_ROOT=%ROOT%\out\prenovelty_complete"
   if not exist "!COMPLETE_ROOT!" mkdir "!COMPLETE_ROOT!"
@@ -40,22 +54,30 @@ if /I "%MODE%"=="prenovelty-complete" (
   call "%~f0" "%CONFIG%" startup20 "!COMPLETE_ROOT!\startup20"
   if errorlevel 1 exit /b !errorlevel!
 
+  call "%~f0" "%CONFIG%" prenovelty-coverage18 "!COMPLETE_ROOT!\coverage18"
+  if errorlevel 1 exit /b !errorlevel!
+
   call "%~f0" "%CONFIG%" determinism "!COMPLETE_ROOT!\determinism"
   if errorlevel 1 exit /b !errorlevel!
 
   call "%~f0" "%CONFIG%" prenovelty-soak30 "!COMPLETE_ROOT!\soak30"
   if errorlevel 1 exit /b !errorlevel!
 
-  python "%~dp0hairgpu_prenovelty_complete.py" ^
+  python "%~dp0hairgpu_prenovelty_complete_v2.py" ^
     --root "!COMPLETE_ROOT!" ^
     --config "%CONFIG%" ^
-    --repo-root "%ROOT%"
+    --repo-root "%ROOT%" ^
+    --coverage-seed 1103
   if errorlevel 1 exit /b !errorlevel!
 
   echo Pre-novelty complete evidence:
   echo   "!COMPLETE_ROOT!\complete_manifest.json"
   echo   "!COMPLETE_ROOT!\prenovelty_complete_evidence.zip"
   echo   "!COMPLETE_ROOT!\prenovelty_complete_evidence.zip.sha256"
+  echo   "!COMPLETE_ROOT!\frozen_asset_bundle_snapshot.zip"
+  echo   "!COMPLETE_ROOT!\analysis\validated_evidence.sqlite"
+  echo   "!COMPLETE_ROOT!\analysis\formal_results.xlsx"
+  echo   "!COMPLETE_ROOT!\analysis\graphs"
   exit /b 0
 )
 
@@ -89,7 +111,7 @@ if /I "%MODE%"=="phase13-full" (
 set "OUTPUT_ARG="
 if not "%~3"=="" set "OUTPUT_ARG=--output "%~f3""
 
-if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="prenovelty-soak30" if /I not "%MODE%"=="projection4070-to-1660" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="refreeze-asset" if /I not "%MODE%"=="prenovelty-soak30" if /I not "%MODE%"=="projection4070-to-1660" if /I not "%MODE%"=="prenovelty-smoke" if /I not "%MODE%"=="prenovelty-coverage18" if /I not "%MODE%"=="startup20" if /I not "%MODE%"=="proposal-smoke" if /I not "%MODE%"=="comparison-smoke" if /I not "%MODE%"=="critical" if /I not "%MODE%"=="baseline" if /I not "%MODE%"=="full" if /I not "%MODE%"=="determinism" if /I not "%MODE%"=="soak30" if /I not "%MODE%"=="soak2h" if /I not "%MODE%"=="soak8h" if /I not "%MODE%"=="all" (
   echo ERROR: unsupported mode "%MODE%".
   exit /b 2
 )
@@ -132,6 +154,7 @@ for %%F in (PENDING_STEP0_REAL.ini STEP0_FORCE_RUN.ini STEP0_REAL_MEASUREMENT_PE
 set "FILTER_ARGS="
 set "RUN_KIND_ARGS=--run-kind formal"
 if /I "%MODE%"=="prenovelty-smoke" set "FILTER_ARGS=--only-method B0 --only-method B6 --only-method B8 --only-scenario S01_Idle --only-scenario S03_Walk --only-scenario S09_StrongWind --only-scenario S17_CloseCamera100k --only-seed 1103"
+if /I "%MODE%"=="prenovelty-coverage18" set "FILTER_ARGS=--only-seed 1103"
 if /I "%MODE%"=="prenovelty-soak30" (
   set "RUN_KIND_ARGS=--run-kind long-run"
   set "FILTER_ARGS=--only-run-name L30_B0_Walk --only-run-name L30_B6_Walk --only-run-name L30_B8_Walk --only-run-name L30_B8_StrongWind"
@@ -160,8 +183,8 @@ if not defined HAIRGPU_FROZEN_ASSET_MANIFEST (
   for /f "usebackq delims=" %%M in (`python -c "import json,pathlib; c=pathlib.Path(r'%CONFIG%').resolve(); j=json.loads(c.read_text(encoding='utf-8-sig')); p=pathlib.Path(j['source']['asset_manifest']); print((p if p.is_absolute() else c.parent/p).resolve())"`) do set "HAIRGPU_FROZEN_ASSET_MANIFEST=%%M"
 )
 
-rem prepare-asset intentionally does not require an existing manifest.
-if /I not "%MODE%"=="prepare-asset" (
+rem Asset creation/refreeze intentionally does not require an existing manifest.
+if /I not "%MODE%"=="prepare-asset" if /I not "%MODE%"=="refreeze-asset" (
   if not exist "%HAIRGPU_FROZEN_ASSET_MANIFEST%" (
     echo ERROR: Frozen Asset Manifest was not found:
     echo   "%HAIRGPU_FROZEN_ASSET_MANIFEST%"
@@ -193,7 +216,7 @@ echo [3/8] Running HLSL load/compile self-test...
 if errorlevel 1 exit /b %errorlevel%
 
 echo [4/8] Checking Python syntax...
-python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py" "%~dp0hairgpu_prenovelty_complete.py"
+python -m py_compile "%~dp0freeze_novelty01_asset.py" "%~dp0hairgpu_final_run.py" "%~dp0hairgpu_runtime_suite.py" "%~dp0hairgpu_safe_runtime_suite.py" "%~dp0hairgpu_final_db.py" "%~dp0hairgpu_final_excel.py" "%~dp0hairgpu_prenovelty_complete.py" "%~dp0hairgpu_prenovelty_complete_v2.py" "%~dp0hairgpu_frozen_bundle_lock.py"
 if errorlevel 1 exit /b %errorlevel%
 
 echo [5/8] Running lock, telemetry-contract, suite-selection, and aggregate self-tests...
@@ -203,10 +226,15 @@ python "%~dp0hairgpu_runtime_suite.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
 python "%~dp0hairgpu_prenovelty_complete.py" --self-test
 if errorlevel 1 exit /b %errorlevel%
+python "%~dp0hairgpu_prenovelty_complete_v2.py" --self-test
+if errorlevel 1 exit /b %errorlevel%
+python "%~dp0hairgpu_frozen_bundle_lock.py" --self-test
+if errorlevel 1 exit /b %errorlevel%
 python -m unittest discover -s "%ROOT%\tests\final_stage" -p "test_*.py"
 if errorlevel 1 exit /b %errorlevel%
 
 if /I "%MODE%"=="prepare-asset" goto :prepare_asset
+if /I "%MODE%"=="refreeze-asset" goto :refreeze_asset
 
 echo [6/8] Confirming active power scheme...
 powercfg /GETACTIVESCHEME
@@ -224,33 +252,36 @@ python "%~dp0hairgpu_runtime_suite.py" --config "%CONFIG%" --resume --fail-polic
 exit /b %errorlevel%
 
 :prepare_asset
+echo [6/8] Ensuring one immutable canonical 100k Frozen Asset bundle...
+python "%~dp0hairgpu_frozen_bundle_lock.py" ^
+  --ensure ^
+  --bundle-dir "%FROZEN_BUNDLE%" ^
+  --config "%CONFIG%" ^
+  --viewer "%VIEWER%" ^
+  --freeze-tool "%~dp0freeze_novelty01_asset.py" ^
+  --operator "%HAIRGPU_FREEZE_OPERATOR%" ^
+  --repo-root "%ROOT%"
+if errorlevel 1 exit /b %errorlevel%
+echo [8/8] Frozen Asset bundle verified without implicit regeneration.
+echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
+echo Lock: "%FROZEN_BUNDLE%\frozen_bundle_lock.json"
+exit /b 0
+
+:refreeze_asset
 if not defined HAIRGPU_FREEZE_OPERATOR (
-  echo ERROR: HAIRGPU_FREEZE_OPERATOR is required for prepare-asset.
-  echo Example: set HAIRGPU_FREEZE_OPERATOR=Your_Name
+  echo ERROR: HAIRGPU_FREEZE_OPERATOR is required for explicit refreeze.
   exit /b 10
 )
-
-echo [6/8] Exporting canonical 100k Hair Asset and topology from the Release viewer...
-python "%~dp0freeze_novelty01_asset.py" ^
-  --template-manifest "%CONFIG%" ^
+echo [6/8] Explicitly regenerating and re-locking the canonical 100k bundle...
+python "%~dp0hairgpu_frozen_bundle_lock.py" ^
+  --refreeze ^
   --bundle-dir "%FROZEN_BUNDLE%" ^
-  --viewer-exe "%VIEWER%" ^
-  --generate-source ^
+  --config "%CONFIG%" ^
+  --viewer "%VIEWER%" ^
+  --freeze-tool "%~dp0freeze_novelty01_asset.py" ^
   --operator "%HAIRGPU_FREEZE_OPERATOR%" ^
-  --repo-root "%ROOT%" ^
-  --force
-if errorlevel 1 exit /b %errorlevel%
-
-echo [7/8] Verifying portable bundle hashes and Viewer round trip...
-python "%~dp0freeze_novelty01_asset.py" ^
-  --bundle-dir "%FROZEN_BUNDLE%" ^
-  --viewer-exe "%VIEWER%" ^
-  --verify-only
-if errorlevel 1 exit /b %errorlevel%
-
-echo [8/8] Frozen Asset preparation completed.
-echo Manifest: "%FROZEN_BUNDLE%\frozen_asset_manifest.json"
-exit /b 0
+  --repo-root "%ROOT%"
+exit /b %errorlevel%
 
 :startup20
 set "STARTUP_REPORT=%ROOT%\out\startup20\startup20_summary.json"

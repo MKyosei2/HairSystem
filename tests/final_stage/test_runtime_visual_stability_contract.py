@@ -4,201 +4,207 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+PARTS = ROOT / "apps" / "dx11_viewer" / "src" / "GpuHairViewer_parts"
+SHADERS = ROOT / "apps" / "dx11_viewer" / "shaders"
 
 
 class RuntimeVisualStabilityContractTests(unittest.TestCase):
-    def test_interactive_startup_uses_stable_profile(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl").read_text(encoding="utf-8")
-        self.assertIn('m_activePresetName = L"Stable Benchmark Wig"', source)
-        self.assertIn('m_enableSelfCollision = false', source)
-        self.assertIn('m_enableActiveSetRuntime = false', source)
-        self.assertIn('m_renderMode = RenderMode::StrandRibbon', source)
-        self.assertNotIn('m_renderMode = RenderMode::ParticleBillboard;', source)
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(
+            encoding="utf-8"
+        )
+        cls.startup = (PARTS / "01_window_device_and_ui_setup.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.run_loop = (PARTS / "02_resource_creation_and_shader_loading.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.sync = (PARTS / "04_constant_buffers_and_active_set_sync.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.draw = (PARTS / "05_active_set_scoring_and_runtime_update.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.title = (PARTS / "06_render_mesh_and_visibility_recovery.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.quick_edit = (PARTS / "09_settings_load_save_and_export.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.overlay = (PARTS / "14_scalp_overlay_and_window_messages.inl").read_text(
+            encoding="utf-8"
+        )
+        cls.sim_shader = (SHADERS / "HairSim.hlsl").read_text(encoding="utf-8")
+        cls.strand_shader = (SHADERS / "HairStrandInstanced.hlsl").read_text(
+            encoding="utf-8"
+        )
+        cls.sample = (ROOT / "src/hairgpu_core/SampleAsset.cpp").read_text(
+            encoding="utf-8"
+        )
+        cls.validation = (ROOT / "src/hairgpu_core/Validation.cpp").read_text(
+            encoding="utf-8"
+        )
 
-    def test_asset_cache_is_versioned_and_semantically_validated(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl").read_text(encoding="utf-8")
-        self.assertIn("sample_hybrid_cache_v15_depth_occluded_single_volume", source)
-        self.assertIn("ValidateHairAsset(cachedAsset)", source)
-        self.assertIn("ValidateBenchmarkWigShape(cachedAsset)", source)
+    def test_interactive_startup_uses_current_stable_profile(self) -> None:
+        for token in (
+            'm_activePresetName = L"Stable Benchmark Wig"',
+            "m_renderMode = RenderMode::StrandRibbon",
+            "m_workspaceMode = WorkspaceMode::Sim",
+            "m_interactionMode = InteractionMode::View",
+            "m_selectedStrandIndex = -1",
+            "m_cpuReadbackMode = CpuReadbackMode::Off",
+            "m_enableSelfCollision = false",
+            "m_enableGridSelfCollision = false",
+            "m_showScalpMesh = true",
+        ):
+            self.assertIn(token, self.startup)
+        self.assertNotIn("m_renderMode = RenderMode::ParticleBillboard;", self.startup)
 
-    def test_interactive_loop_is_paced_and_breaks_stale_velocity(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl").read_text(encoding="utf-8")
-        self.assertIn("MsgWaitForMultipleObjectsEx", source)
-        self.assertIn("SetMaximumFrameLatency(1u)", source)
-        self.assertIn("kTemporalDiscontinuitySeconds", source)
-        self.assertIn("m_previousPositions[m_currentBufferIndex].buffer.Get()", source)
+    def test_asset_cache_is_current_and_semantically_validated(self) -> None:
+        self.assertIn("sample_hybrid_cache_v5_root_oit_g", self.startup)
+        self.assertIn("ValidateHairAsset(cachedAsset)", self.startup)
+        self.assertIn("cachedTopologyReport.valid", self.startup)
+        self.assertIn("invalidGuidePrefixCount == 0u", self.startup)
+        self.assertIn("invalidFollowerSuffixCount == 0u", self.startup)
+        for legacy in ("sample_hybrid_cache_v1", "sample_hybrid_cache_v2", "sample_hybrid_cache_v3"):
+            self.assertIn(legacy, self.startup)
+        self.assertIn("std::filesystem::remove(entry.path()", self.startup)
 
-    def test_follow_reconstruction_has_no_tangent_half_turn_dependency(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/shaders/HairSim.hlsl").read_text(encoding="utf-8")
-        follow = source[source.index("void FollowCS"):]
+    def test_interactive_loop_preserves_real_frame_truth(self) -> None:
+        self.assertIn("SetMaximumFrameLatency(1u)", self.run_loop)
+        self.assertIn("interactiveCadenceWarmupFrames", self.run_loop)
+        self.assertIn("m_lastTick = cadenceWindowStart", self.run_loop)
+        self.assertIn(
+            "m_sessionWallSeconds += static_cast<double>(wallFrameSeconds);",
+            self.run_loop,
+        )
+        self.assertIn("const double rawFrameSeconds", self.run_loop)
+        self.assertIn("const float wallFrameSeconds", self.run_loop)
+        self.assertNotIn("dt > 1.0f", self.run_loop)
+
+    def test_follow_reconstruction_is_finite_and_bounded(self) -> None:
+        follow = self.sim_shader[self.sim_shader.index("void FollowCS"):]
         self.assertNotIn("RotateVectorFromTo", follow)
-        self.assertIn("guideCurrentLocal - guideRestLocal", follow)
-        self.assertIn("previousFollowerRoot", follow)
-        self.assertIn("maximumFollowerRadius", follow)
+        for token in (
+            "guideCurrentLocal - guideRestLocal",
+            "previousFollowerRoot",
+            "maximumFollowerRadius",
+            "secondaryVelocity",
+            "maximumSecondaryLag",
+            "targetResponse",
+            "ResolveFollowerExternalCollisions",
+            "authoredRadial",
+            "OutputPreviousPositions[strandPointIndex] = float4(currentPosition",
+        ):
+            self.assertIn(token, follow)
+        self.assertIn("length(target - followerRoot) > maximumFollowerRadius", follow)
+        self.assertIn("target = translatedRest", follow)
 
-    def test_followers_use_bounded_secondary_motion(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/shaders/HairSim.hlsl").read_text(encoding="utf-8")
-        follow = source[source.index("void FollowCS"):]
-        self.assertIn("secondaryVelocity", follow)
-        self.assertIn("maximumSecondaryLag", follow)
-        self.assertIn("targetResponse", follow)
-        self.assertIn("OutputPreviousPositions[strandPointIndex] = float4(currentPosition", follow)
-        self.assertIn("ResolveFollowerExternalCollisions", follow)
-        self.assertIn("requiredClearance", source)
-        self.assertIn("authoredRadial", follow)
-        self.assertIn("single analytic follower collision pass", follow)
-        self.assertNotIn("kinematic reconstructions of their guide", follow)
+    def test_instanced_hair_uses_current_weighted_oit_revision(self) -> None:
+        self.assertTrue(
+            self.strand_shader.lstrip().startswith(
+                "// HAIRGPU_STRAND_RIBBON_VISIBILITY_V19_WEIGHTED_OIT_ROOT_COVERAGE"
+            )
+        )
+        self.assertIn("HAIRGPU_STRAND_RIBBON_SHADER_ABI_1", self.strand_shader)
+        self.assertIn("StructuredBuffer<uint> RenderTiers", self.strand_shader)
+        self.assertIn("StructuredBuffer<uint> EditCategories", self.strand_shader)
+        for token in (
+            "ribbonSide",
+            "distanceScaledHalfWidth",
+            "rootMask",
+            "rootAlphaBoost",
+            "output.alpha",
+        ):
+            self.assertIn(token, self.strand_shader)
+        self.assertNotIn("clip(", self.strand_shader)
+        self.assertNotIn("discard;", self.strand_shader)
 
-    def test_hair_uses_camera_facing_thin_ribbons(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/shaders/HairRibbon.hlsl").read_text(encoding="utf-8")
-        self.assertIn("[maxvertexcount(4)]", source)
-        self.assertIn("ribbonSide", source)
-        self.assertIn("CameraPosition.xyz - midpoint", source)
-        self.assertIn("worldTangent", source)
-        self.assertNotIn("const uint sides", source)
-        self.assertNotIn("0.0020f", source)
+    def test_normal_preview_keeps_all_followers_visible(self) -> None:
+        self.assertIn(
+            "constants.renderFollowerStride = (fastEditPreview && heavyInteraction) ? 2u : 1u;",
+            self.sync,
+        )
+        self.assertIn("constants.renderGuideOnlyAboveTier = 0xFFFFFFFFu;", self.sync)
+        self.assertIn("constants.renderStrandAlpha = 1.0f;", self.sync)
+        experiment = self.sync[self.sync.index("if (IsExperimentModeEnabled())") :]
+        self.assertIn("constants.renderFollowerStride = 1u;", experiment)
+        self.assertIn("constants.renderStrandAlpha = 1.0f;", experiment)
 
-    def test_actual_instanced_hair_path_is_guaranteed_visible(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/shaders/HairStrandInstanced.hlsl").read_text(encoding="utf-8")
-        self.assertIn("HAIRGPU_STRAND_RIBBON_VISIBILITY_V15_DEPTH_OCCLUDED", source)
-        self.assertIn("StructuredBuffer<uint> StrandTiers", source)
-        self.assertIn("ribbonSide", source)
-        self.assertIn("screenStableFloor", source)
-        self.assertIn("rootOpening", source)
-        self.assertIn("rootAlpha", source)
-        self.assertNotIn("float3(0.0f, 0.0f, 0.0f);\n    }\n    if (!IsPlausiblePosition(point1))", source)
-        self.assertNotIn("max(RenderStrandAlpha, 0.58f)", source)
-        self.assertIn("materialAlpha", source)
-        self.assertIn("output.position = float4(0.0f, 0.0f, 2.0f, 1.0f)", source)
-        self.assertNotIn("clip(", source)
-        self.assertNotIn("discard;", source)
-        self.assertNotIn("0.0018f", source)
+    def test_render_and_edit_classification_buffers_are_separate(self) -> None:
+        self.assertIn("m_editVisualizationCategoryBuffer", self.header)
+        self.assertIn("std::vector<uint32_t> renderTiers", self.sync)
+        self.assertIn("std::vector<uint32_t> editCategories", self.sync)
+        self.assertIn("BuildEditVisualizationCategories(editCategories)", self.sync)
+        self.assertNotIn("BuildEditVisualizationCategories(renderTiers)", self.sync)
 
-    def test_default_preview_reduces_wall_density_without_hiding_formal_strands(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/04_constant_buffers_and_active_set_sync.inl").read_text(encoding="utf-8")
-        self.assertIn("(editVisualization ? 2u : 1u)", source)
-        self.assertIn("(editVisualization ? 0.22f : 0.26f)", source)
-        self.assertIn("constants.renderFollowerStride = 1u", source)
-        self.assertIn("constants.renderStrandAlpha = 0.080f", source)
+    def test_hidden_scalp_depth_prepass_is_not_reintroduced(self) -> None:
+        self.assertIn("Do not render a hidden scalp depth pre-pass", self.draw)
+        self.assertNotIn("m_depthOnlyBlendState", self.header)
+        self.assertNotIn("m_depthOnlyBlendState", self.draw)
+        self.assertNotIn("CreateBlendState(&depthOnlyBlend", self.run_loop)
+        self.assertIn("m_showScalpMesh", self.draw)
 
-    def test_preview_density_uses_spatially_distributed_follower_subset(self) -> None:
-        shader = (ROOT / "apps/dx11_viewer/shaders/HairStrandInstanced.hlsl").read_text(encoding="utf-8")
-        self.assertIn("keepProbability", shader)
-        self.assertIn("visibilitySample", shader)
-        self.assertIn("followerCoverageAlpha", shader)
-        self.assertIn("pow(", shader)
-        self.assertNotIn("(followerLocal % followerStride) == 0u", shader)
-        self.assertIn("lerp(0.94f, 1.0f", shader)
-        self.assertIn("isGuide ? 0.06f : 0.88f", shader)
-        startup = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl").read_text(encoding="utf-8")
-        self.assertIn("m_widthScale = 1.00f", startup)
+    def test_weighted_oit_resources_are_recreated_with_swapchain(self) -> None:
+        for token in (
+            "m_hairOitAccumTexture",
+            "m_hairOitAccumRtv",
+            "m_hairOitAccumSrv",
+            "m_hairOitRevealTexture",
+            "m_hairOitRevealRtv",
+            "m_hairOitRevealSrv",
+        ):
+            self.assertIn(token, self.header)
+            self.assertIn(token, self.title)
+        self.assertIn("CreateHairOitResources(m_width, m_height)", self.title)
+        self.assertIn("DXGI_FORMAT_R16G16B16A16_FLOAT", self.title)
+        self.assertIn("DXGI_FORMAT_R16_FLOAT", self.title)
 
-    def test_runtime_rejects_incompatible_instanced_hair_shader_abi(self) -> None:
-        runtime = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/02a_required_runtime_foundation.inl").read_text(encoding="utf-8")
-        shader = (ROOT / "apps/dx11_viewer/shaders/HairStrandInstanced.hlsl").read_text(encoding="utf-8")
-        self.assertIn("HAIRGPU_STRAND_RIBBON_SHADER_ABI_1", runtime)
-        self.assertIn("HAIRGPU_STRAND_RIBBON_SHADER_ABI_1", shader)
-        self.assertIn("rejected: incompatible strand shader ABI", runtime)
-        self.assertNotIn("HAIRGPU_STRAND_RIBBON_VISIBILITY_V11_FULL_COVERAGE", runtime)
-        project = (ROOT / "HairSystem.vcxproj").read_text(encoding="utf-8")
-        self.assertIn("HairStrandInstanced.hlsl", project)
-        self.assertIn("copy /Y", project)
-
-    def test_balanced_root_distribution_and_cache_generation(self) -> None:
-        sample = (ROOT / "src/hairgpu_core/SampleAsset.cpp").read_text(encoding="utf-8")
-        self.assertIn("(guideCount * 18u) / 100u", sample)
-        self.assertIn("(guideCount * 14u) / 100u", sample)
-        self.assertNotIn("guideCount / 2u", sample)
-        self.assertNotIn("guideCount / 4u", sample)
-        startup = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl").read_text(encoding="utf-8")
-        self.assertIn("sample_hybrid_cache_v15_depth_occluded_single_volume", startup)
-
+    def test_asset_builder_preserves_crown_and_hairline_coverage(self) -> None:
+        for token in (
+            "EvaluateAllowedRootMinV",
+            "return 0.0f;",
+            "SampleAreaDistributedRootBinding",
+            "for (uint32_t attempt = 0; attempt < 16u; ++attempt)",
+            "EvaluateRootCoverageWeight",
+            "const float topFlowMask",
+            "Vec3 crownFlow",
+            "const float supportMix = 0.0f",
+        ):
+            self.assertIn(token, self.sample)
 
     def test_generated_asset_uses_contiguous_guide_then_follower_layout(self) -> None:
-        sample = (ROOT / "src/hairgpu_core/SampleAsset.cpp").read_text(encoding="utf-8")
-        validation = (ROOT / "src/hairgpu_core/Validation.cpp").read_text(encoding="utf-8")
-        shader = (ROOT / "apps/dx11_viewer/shaders/HairSim.hlsl").read_text(encoding="utf-8")
-        self.assertIn("ReorderGeneratedGuideFollowerLayout", sample)
-        self.assertIn("oldGuideIndex + 1u + followerIndex", sample)
-        self.assertIn("guides must occupy [0, guideStrandCount)", validation)
-        self.assertIn("uint strandIndex = GuideStrandCount + followerIndex", shader)
+        guide_marker = "Runtime and HLSL contracts require a contiguous guide prefix"
+        follower_marker = "Append followers only after every guide has been emitted"
+        self.assertIn(guide_marker, self.sample)
+        self.assertIn(follower_marker, self.sample)
+        self.assertLess(self.sample.index(guide_marker), self.sample.index(follower_marker))
+        self.assertIn("invalidGuidePrefixCount", self.validation)
+        self.assertIn("invalidFollowerSuffixCount", self.validation)
+        self.assertIn("uint strandIndex = GuideStrandCount + followerIndex", self.sim_shader)
 
-    def test_blended_hair_does_not_write_depth(self) -> None:
-        header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(encoding="utf-8")
-        resources = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl").read_text(encoding="utf-8")
-        draw = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl").read_text(encoding="utf-8")
-        self.assertIn("D3D11_DEPTH_WRITE_MASK_ZERO", resources)
-        self.assertIn("OMSetDepthStencilState(m_hairDepthState.Get()", draw)
+    def test_saved_selection_requires_explicit_groom_edit_mode(self) -> None:
+        marker = self.quick_edit.index("if (!layer.strandSelection.empty()")
+        selection = self.quick_edit[marker : marker + 500]
+        self.assertIn("m_workspaceMode == WorkspaceMode::Groom", selection)
+        self.assertIn("m_interactionMode == InteractionMode::Edit", selection)
+        self.assertIn("m_selectedStrandIndex >= 0", self.overlay)
+        self.assertIn("m_workspaceMode == WorkspaceMode::Groom", self.overlay)
+        self.assertIn("m_interactionMode == InteractionMode::Edit", self.overlay)
 
-    def test_follower_scalp_guard_is_near_root_only(self) -> None:
-        source = (ROOT / "apps/dx11_viewer/shaders/HairSim.hlsl").read_text(encoding="utf-8")
-        self.assertIn("if (strandT < 0.12f)", source)
-        self.assertIn("lerp(0.0030f, 0.0012f", source)
-        self.assertNotIn("if (strandT < 0.58f)", source)
-
-
-
-    def test_interactive_preview_does_not_reenable_opaque_scalp(self) -> None:
-        source = (
-            ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl"
-        ).read_text(encoding="utf-8")
-        self.assertIn("m_showScalpMesh = m_experimentCase.enabled;", source)
-        self.assertNotIn(
-            "m_renderMode = RenderMode::StrandRibbon;\n        m_showScalpMesh = true;",
-            source,
-        )
-        preset = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/08_ui_state_sync_and_controls.inl").read_text(encoding="utf-8")
-        self.assertIn("m_showScalpMesh = IsExperimentModeEnabled();", preset)
-
-    def test_window_title_exposes_scalp_and_visual_fix_version(self) -> None:
-        source = (
-            ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"
-        ).read_text(encoding="utf-8")
-        self.assertIn('L"  scalp="', source)
-        self.assertIn('L"  visualFix=V15  previewFollowers=100%  depthOccluder=on"', source)
-        self.assertIn('L"Hair GPU Viewer | visualFix=V15 depthOccluder=on"', source)
-
-    def test_startup_does_not_auto_select_or_draw_edit_gizmo(self) -> None:
-        form = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/09_settings_load_save_and_export.inl").read_text(encoding="utf-8")
-        startup = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl").read_text(encoding="utf-8")
-        overlay = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/14_scalp_overlay_and_window_messages.inl").read_text(encoding="utf-8")
-        self.assertNotIn("m_selectedStrandIndex = static_cast<int32_t>(layer.strandSelection.front())", form)
-        self.assertIn("HAIRGPU_START_IN_GROOM", startup)
-        self.assertIn("m_selectedStrandIndex = -1", startup)
-        self.assertIn("showSelectedStrandOverlay", overlay)
-        self.assertIn("m_workspaceMode == WorkspaceMode::Groom", overlay)
-        self.assertIn("m_interactionMode == InteractionMode::Edit", overlay)
-
-    def test_procedural_groom_uses_parted_flow_not_circular_crown_shell(self) -> None:
-        sample = (ROOT / "src/hairgpu_core/SampleAsset.cpp").read_text(encoding="utf-8")
-        self.assertIn("signedPartDistance", sample)
-        self.assertIn("partFlowMask", sample)
-        self.assertIn("scalpTangent * partSideSign", sample)
-        self.assertIn("const float rootPhase = Clamp(t / 0.10f", sample)
-        self.assertIn("const float fallPhase = Clamp((t - 0.10f) / 0.90f", sample)
-        self.assertNotIn("const float crownFlowBlend = 0.62f", sample)
-
-
-    def test_interactive_preview_uses_invisible_scalp_depth_occluder(self) -> None:
-        header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(encoding="utf-8")
-        resources = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl").read_text(encoding="utf-8")
-        draw = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl").read_text(encoding="utf-8")
-        self.assertIn("m_depthOnlyBlendState", header)
-        self.assertIn("RenderTargetWriteMask = 0u", resources)
-        self.assertIn("!m_showScalpMesh && m_depthOnlyBlendState", draw)
-        self.assertIn("OMSetBlendState(m_depthOnlyBlendState.Get()", draw)
-        self.assertIn("OMSetDepthStencilState(m_depthState.Get()", draw)
-
-    def test_procedural_groom_avoids_mid_length_balloon_shell(self) -> None:
-        sample = (ROOT / "src/hairgpu_core/SampleAsset.cpp").read_text(encoding="utf-8")
-        self.assertIn("singleVolumeBell", sample)
-        self.assertIn("parameters.sideVolume * sideFactor * 0.10f", sample)
-        self.assertIn("parameters.backVolume * backFactor * 0.12f", sample)
-        self.assertNotIn("parameters.sideVolume * sideFactor * 0.55f", sample)
-        self.assertNotIn("parameters.backVolume * backFactor * 0.70f", sample)
-
+    def test_title_reports_current_presentation_runtime_and_real_metrics(self) -> None:
+        self.assertIn('[HAIRGPU V11 PRESENTATION-STABLE]', self.title)
+        for token in (
+            "sessionFPS=",
+            "rollingFPS=",
+            "onePctLow=",
+            "instantFPS=",
+            "gpuFrameMs=",
+            "presentSync=",
+            "evidence=",
+        ):
+            self.assertIn(token, self.title)
 
 
 if __name__ == "__main__":

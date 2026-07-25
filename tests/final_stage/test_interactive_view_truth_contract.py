@@ -108,8 +108,12 @@ class InteractiveViewTruthContractTests(unittest.TestCase):
 
     def test_canonical_subject_uses_tight_centered_camera(self) -> None:
         self.assertIn("const bool canonicalBenchmarkWig", self.camera)
-        self.assertIn("Clamp(m_assetBoundsCenter.y, 1.40f, 1.52f)", self.camera)
-        self.assertIn("Clamp(desiredDistance, 0.92f, 1.12f)", self.camera)
+        self.assertIn(
+            "Clamp(m_assetBoundsCenter.y + 0.015f, 1.42f, 1.54f)",
+            self.camera,
+        )
+        self.assertIn("kTargetViewportOccupancy = 0.66f", self.camera)
+        self.assertIn("Clamp(projectedFitDistance, 0.56f, 0.74f)", self.camera)
 
     def test_visible_scalp_is_not_rendered_as_a_black_hole(self) -> None:
         self.assertIn("mannequinFace", (

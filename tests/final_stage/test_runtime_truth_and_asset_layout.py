@@ -70,11 +70,15 @@ class RuntimeTruthAndAssetLayoutTests(unittest.TestCase):
         self.assertIn("invalidFollowerSuffixCount", self.validation)
 
     def test_old_broken_asset_cache_cannot_be_reused(self) -> None:
-        self.assertIn("sample_hybrid_cache_v3_runtime_verified", self.startup)
-        self.assertNotIn("sample_hybrid_cache_v1_g", self.startup)
+        self.assertIn("sample_hybrid_cache_v5_root_oit_g", self.startup)
+        self.assertIn('name.rfind(L"sample_hybrid_cache_v1"', self.startup)
+        self.assertIn('name.rfind(L"sample_hybrid_cache_v2"', self.startup)
+        self.assertIn('name.rfind(L"sample_hybrid_cache_v3"', self.startup)
         self.assertIn("cachedTopologyReport", self.startup)
         self.assertIn("formalTopologyReport", self.startup)
         self.assertIn("generatedTopologyReport", self.startup)
+        self.assertIn("invalidGuidePrefixCount == 0u", self.startup)
+        self.assertIn("invalidFollowerSuffixCount == 0u", self.startup)
 
     def test_long_stalls_are_not_replaced_with_sixty_fps(self) -> None:
         self.assertIn("const double rawFrameSeconds", self.run_loop)
