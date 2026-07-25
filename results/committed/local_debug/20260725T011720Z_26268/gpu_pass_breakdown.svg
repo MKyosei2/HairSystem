@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="100" y="38" font-family="Segoe UI, sans-serif" font-size="26" font-weight="600">Mean GPU pass cost</text>
+<rect x="100" y="72" width="1144" height="478" fill="#fafafa" stroke="#cbd5e1"/>
+<rect x="124.15" y="550.00" width="78.81" height="0.00" fill="#2563eb"/>
+<text x="163.56" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="163.56" y="568.00" transform="rotate(35 163.56 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">block classify</text>
+<rect x="251.26" y="550.00" width="78.81" height="0.00" fill="#059669"/>
+<text x="290.67" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="290.67" y="568.00" transform="rotate(35 290.67 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">group classify</text>
+<rect x="378.37" y="550.00" width="78.81" height="0.00" fill="#d97706"/>
+<text x="417.78" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="417.78" y="568.00" transform="rotate(35 417.78 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">compaction</text>
+<rect x="505.48" y="550.00" width="78.81" height="0.00" fill="#9333ea"/>
+<text x="544.89" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="544.89" y="568.00" transform="rotate(35 544.89 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">static transform</text>
+<rect x="632.60" y="123.21" width="78.81" height="426.79" fill="#dc2626"/>
+<text x="672.00" y="115.21" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.343</text>
+<text x="672.00" y="568.00" transform="rotate(35 672.00 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">dynamic solve</text>
+<rect x="759.71" y="550.00" width="78.81" height="0.00" fill="#0891b2"/>
+<text x="799.11" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="799.11" y="568.00" transform="rotate(35 799.11 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">boundary repair</text>
+<rect x="886.82" y="550.00" width="78.81" height="0.00" fill="#4f46e5"/>
+<text x="926.22" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="926.22" y="568.00" transform="rotate(35 926.22 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">watchdog</text>
+<rect x="1013.93" y="550.00" width="78.81" height="0.00" fill="#65a30d"/>
+<text x="1053.33" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="1053.33" y="568.00" transform="rotate(35 1053.33 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">follower reconstruction</text>
+<rect x="1141.04" y="550.00" width="78.81" height="0.00" fill="#2563eb"/>
+<text x="1180.44" y="542.00" text-anchor="middle" font-family="Consolas, monospace" font-size="14">0.000</text>
+<text x="1180.44" y="568.00" transform="rotate(35 1180.44 568.00)" text-anchor="start" font-family="Segoe UI, sans-serif" font-size="13">hair draw</text>
+<text x="22" y="311.00" transform="rotate(-90 22 311.00)" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="16">milliseconds</text>
+</svg>
