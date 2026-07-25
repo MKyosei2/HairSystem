@@ -1,0 +1,120 @@
+name: Validate F5 per-second novelty capture
+
+on:
+  push:
+    branches:
+      - agent/f5-per-second-v3-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore and apply validated patch
+        shell: pwsh
+        run: |
+          python -c "import base64,gzip,pathlib; p=pathlib.Path(r'tools/final_stage/f5_per_second_v3.patch.gz.b64'); pathlib.Path(r'f5_per_second_v3.patch').write_bytes(gzip.decompress(base64.b64decode(p.read_text(encoding='ascii'))))"
+          git apply --check f5_per_second_v3.patch
+          git apply f5_per_second_v3.patch
+
+      - name: Verify Python and recovery contract
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_local_debug_report.py
+          python -m py_compile tests/final_stage/test_local_debug_capture_contract.py
+          python -m unittest tests/final_stage/test_local_debug_capture_contract.py -v
+
+      - name: Verify per-second source contract
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          app = Path('apps/dx11_viewer/src/AppMain.cpp').read_text(encoding='utf-8-sig')
+          header = Path('apps/dx11_viewer/src/GpuHairViewer.h').read_text(encoding='utf-8-sig')
+          telemetry = Path('apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl').read_text(encoding='utf-8-sig')
+          required = [
+              'latest_run.json',
+              'PostprocessCompletedSuccessfully',
+              'LocalDebugSecondAccumulator',
+              'local_debug_per_second.csv',
+              'secondIndex,capturePhase,wallTimeStartSeconds',
+              'FlushLocalDebugPerSecondBucket(true, true)',
+              'FlushFileBuffers',
+          ]
+          combined = app + header + telemetry
+          missing = [item for item in required if item not in combined]
+          if missing:
+              raise SystemExit(f'Missing per-second contract markers: {missing}')
+          print('Per-second source contract verified.')
+          '@ | python -
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: pwsh
+        run: |
+          msbuild HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false
+
+      - name: Native ABI self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Shader self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package requested modified files
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import hashlib, zipfile
+          files = [
+              'HairSystem.vcxproj.user',
+              'apps/dx11_viewer/src/AppMain.cpp',
+              'apps/dx11_viewer/src/GpuHairViewer.h',
+              'apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl',
+              'apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl',
+              'apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl',
+              'tools/final_stage/hairgpu_local_debug_report.py',
+              'tests/final_stage/test_local_debug_capture_contract.py',
+          ]
+          out = Path('out/HairSystem_F5_PerSecond_Novelty_Data_Fix_8Files.zip')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for item in files:
+                  archive.write(item, item)
+          with zipfile.ZipFile(out) as archive:
+              if set(archive.namelist()) != set(files) or archive.testzip() is not None:
+                  raise SystemExit('ZIP verification failed')
+          digest = hashlib.sha256(out.read_bytes()).hexdigest()
+          out.with_suffix(out.suffix + '.sha256').write_text(f'{digest}  {out.name}\n', encoding='ascii')
+          print(digest)
+          '@ | python -
+
+      - name: Upload modified-file ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-F5-PerSecond-Novelty-Data-Fix-8Files
+          path: |
+            out/HairSystem_F5_PerSecond_Novelty_Data_Fix_8Files.zip
+            out/HairSystem_F5_PerSecond_Novelty_Data_Fix_8Files.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
