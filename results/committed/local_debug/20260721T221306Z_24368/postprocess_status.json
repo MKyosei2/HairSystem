@@ -1,5 +1,0 @@
-{
-  "schemaVersion": "hairgpu-local-debug-evidence-v1",
-  "success": false,
-  "error": "FileNotFoundError: Telemetry CSV was not produced: C:\\Users\\kyose\\source\\repos\\HairSystem\\results\\committed\\local_debug\\20260721T221306Z_24368\\local_debug_frames.csv"
-}
