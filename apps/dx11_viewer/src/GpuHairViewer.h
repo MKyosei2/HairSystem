@@ -8,11 +8,13 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <dxgi.h>
+#include <dxgi1_2.h>
 #include <wrl/client.h>
 
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <string>
@@ -39,6 +41,9 @@ namespace hairgpu::viewer
         int RunNativeSelfTests() const;
         int ExportCanonicalFrozenAssetSource(const std::filesystem::path& outputDirectory);
         int ValidateCanonicalFrozenAssetSource(const std::filesystem::path& sourceDirectory);
+        bool ExportLocalDebugCapture(const std::filesystem::path& outputDirectory, const std::wstring& runName) const;
+        bool FinalizeLocalDebugStreaming();
+        bool CaptureBackBufferBmp(const std::filesystem::path& outputPath);
 
     private:
         static constexpr uint32_t kFixedGuideCount = 4000u;
@@ -277,6 +282,13 @@ namespace hairgpu::viewer
             uint32_t strandIndex = 0;
         };
 
+        enum class PerformanceEvidenceClass : uint32_t
+        {
+            InteractiveRealtime = 0u,
+            DiagnosticDebugger = 1u,
+            FormalThroughput = 2u
+        };
+
         struct PerformanceSample
         {
             float elapsedSeconds = 0.0f;
@@ -284,7 +296,21 @@ namespace hairgpu::viewer
             float frameIntervalMilliseconds = 0.0f;
             float cpuFrameWorkMilliseconds = 0.0f;
             float simulationMilliseconds = 0.0f;
+            // Explicit cadence metrics. fps/frameMilliseconds remain compatibility
+            // aliases for renderFps/renderFrameMilliseconds in existing exporters.
             float fps = 0.0f;
+            float renderFps = 0.0f;
+            float simulationHz = 0.0f;
+            float renderFrameMilliseconds = 0.0f;
+            float gpuFrameMilliseconds = 0.0f;
+            float gpuSimulationMilliseconds = 0.0f;
+            float gpuHairDrawMilliseconds = 0.0f;
+            float gpuThroughputFps = 0.0f;
+            uint32_t simulationTicksThisFrame = 0u;
+            float droppedSimulationMilliseconds = 0.0f;
+            uint32_t presentSyncInterval = 0u;
+            uint32_t evidenceClass =
+                static_cast<uint32_t>(PerformanceEvidenceClass::InteractiveRealtime);
             uint32_t guideCount = 0;
             uint32_t followerCount = 0;
             uint32_t totalStrandCount = 0;
@@ -476,6 +502,34 @@ namespace hairgpu::viewer
             float bandwidthMegabytesPerFrame = 0.0f;
             float meanDecodeErrorMm = 0.0f;
             float maxPenetrationMm = 0.0f;
+        };
+
+        // HAIRGPU_LOCAL_DEBUG_PER_SECOND_V3: one durable row is committed for
+        // every completed wall-clock second.  State/counter fields are sampled from
+        // the last frame in the bucket; timing fields are averaged over the bucket.
+        struct LocalDebugSecondAccumulator
+        {
+            uint64_t secondIndex = 1ull;
+            double wallTimeStartSeconds = 0.0;
+            double durationSeconds = 0.0;
+            uint64_t frameCount = 0ull;
+            uint64_t simulationTickCount = 0ull;
+            double frameMillisecondsSum = 0.0;
+            double cpuWorkMillisecondsSum = 0.0;
+            double simulationMillisecondsSum = 0.0;
+            double gpuFrameMillisecondsSum = 0.0;
+            double gpuSimulationMillisecondsSum = 0.0;
+            double gpuHairDrawMillisecondsSum = 0.0;
+            double totalHairGpuMillisecondsSum = 0.0;
+            double gpuThroughputFpsSum = 0.0;
+            uint64_t gpuFrameSampleCount = 0ull;
+            uint64_t gpuSimulationSampleCount = 0ull;
+            uint64_t gpuHairDrawSampleCount = 0ull;
+            uint64_t totalHairGpuSampleCount = 0ull;
+            uint64_t gpuThroughputSampleCount = 0ull;
+            std::vector<float> frameMilliseconds;
+            PerformanceSample lastSample = {};
+            bool hasSample = false;
         };
 
         // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V2
@@ -765,7 +819,7 @@ namespace hairgpu::viewer
             uint32_t sortedPaddedEntryCount = 1u;
             uint32_t enableRuntimeAngularBend = 1u;
             uint32_t dispatchBaseIndex = 0u;
-            uint32_t runtimePadding1 = 0u;
+            uint32_t enableCatastrophicRecovery = 0u;
 
             float angularBendRadians = 0.18f;
             float angularBendCompliance = 5.0e-6f;
@@ -1148,6 +1202,7 @@ namespace hairgpu::viewer
         bool CreateWindowAndDevice(HINSTANCE instance, int showCommand);
         bool CreateSimulationResources();
         bool CreateRenderResources();
+        bool CreateHairOitResources(UINT width, UINT height);
         bool LoadShaders();
         bool CreateUiControls();
         bool RebuildAsset(uint32_t guideCount, uint32_t followersPerGuide, uint32_t particlesPerStrand);
@@ -1212,6 +1267,8 @@ namespace hairgpu::viewer
         void Resize(UINT width, UINT height);
         void UpdateCamera();
         void UpdateWindowTitle();
+        const wchar_t* GetPerformanceEvidenceClassDisplayName() const;
+        const char* GetPerformanceEvidenceClassCode() const;
         void Shutdown();
         void UpdateAnimatedScalp(float elapsedSeconds);
         void RebuildActiveSetFoundation();
@@ -1247,7 +1304,15 @@ namespace hairgpu::viewer
         bool LoadSettingsFromFile(const std::wstring& filePath);
         bool ExportCurrentFrameCsv(const std::wstring& filePath);
         bool ExportPerformanceCsv(const std::wstring& filePath) const;
+        bool ExportRealtimeCadenceCsv(const std::wstring& filePath) const;
+        bool ExportPerSecondTelemetryCsv(const std::wstring& filePath) const;
         bool ExportPerformanceJsonl(const std::wstring& filePath) const;
+        bool EnsureLocalDebugStreamingInitialized() const;
+        bool AppendLocalDebugSample(const PerformanceSample& sample) const;
+        bool AppendLocalDebugPerSecondSample(const PerformanceSample& sample) const;
+        bool FlushLocalDebugPerSecondBucket(bool completeSecond, bool durable) const;
+        void FlushLocalDebugStreaming(bool durable) const;
+        void WriteLocalDebugRunState(const char* status, const char* exitMode) const;
         bool ExportExperimentSettingsJson(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
@@ -1353,10 +1418,16 @@ namespace hairgpu::viewer
         HWND m_hwnd = nullptr;
         UINT m_width = 1600;
         UINT m_height = 900;
+        UINT m_pendingResizeWidth = 0u;
+        UINT m_pendingResizeHeight = 0u;
+        bool m_resizePending = false;
         bool m_vsyncEnabled = true;
         UINT m_presentSyncInterval = 1u;
         UINT m_lastObservedPresentSyncInterval = 1u;
         HRESULT m_lastPresentResult = S_OK;
+        std::filesystem::path m_pendingVisualCapturePath;
+        bool m_visualCapturePending = false;
+        bool m_visualCaptureSucceeded = false;
         bool m_running = true;
         bool m_paused = false;
         bool m_dragging = false;
@@ -1490,16 +1561,56 @@ namespace hairgpu::viewer
         hairgpu::HairAsset m_baseAsset;
         MaskSourceMode m_maskSourceMode = MaskSourceMode::Auto;
         MaskOverlayMode m_maskOverlayMode = MaskOverlayMode::None;
-        float m_scalpCoverageStrength = 1.00f;
-        float m_scalpPartLineWidth = 0.034f;
-        float m_scalpTintDarkness = 0.55f;
-        float m_scalpHairBlend = 0.70f;
-        float m_smoothedFps = 0.0f;
+        float m_scalpCoverageStrength = 1.30f;
+        float m_scalpPartLineWidth = 0.012f;
+        float m_scalpTintDarkness = 0.88f;
+        float m_scalpHairBlend = 0.96f;
+        // Non-invasive cadence metrics. Render cadence uses QPC start-to-start
+        // intervals; GPU throughput uses delayed timestamp queries and never waits.
+        float m_smoothedFps = 0.0f; // compatibility alias for m_renderFps
+        float m_renderFps = 0.0f;
+        float m_simulationHz = 0.0f;
+        float m_gpuThroughputFps = 0.0f;
         float m_lastFrameSeconds = 0.0f;
         float m_lastFrameIntervalMilliseconds = 0.0f;
+        static constexpr size_t kRealtimeFrameHistoryCapacity = 600u;
+        std::array<float, kRealtimeFrameHistoryCapacity> m_recentFrameIntervalsMilliseconds = {};
+        size_t m_recentFrameIntervalCount = 0u;
+        size_t m_recentFrameIntervalWriteIndex = 0u;
+        float m_recentFrameAverageMilliseconds = 0.0f;
+        float m_sessionEffectiveFps = 0.0f;
+        double m_sessionWallSeconds = 0.0;
+        uint64_t m_sessionCompletedFrameCount = 0ull;
+        float m_recentEffectiveFps = 0.0f;
+        float m_recentOnePercentLowFps = 0.0f;
+        float m_recentFrameP95Milliseconds = 0.0f;
+        float m_recentFrameWorstMilliseconds = 0.0f;
+        uint32_t m_recentFrameStallCount100Milliseconds = 0u;
+        uint64_t m_observedStallCount100Milliseconds = 0ull;
         float m_lastCpuFrameWorkMilliseconds = 0.0f;
         float m_lastSimulationStepMilliseconds = 0.0f;
+        float m_droppedSimulationMilliseconds = 0.0f;
         float m_statsUpdateAccumulator = 0.0f;
+        uint32_t m_simulationTicksThisFrame = 0u;
+        bool m_renderCadenceWindowValid = false;
+        bool m_localDebugCaptureActive = false;
+        uint32_t m_localDebugWarmupFrames = 120u;
+        uint32_t m_localDebugCaptureFrames = 1800u;
+        mutable bool m_localDebugStreamingInitialized = false;
+        mutable bool m_localDebugStreamingFailed = false;
+        mutable uint64_t m_localDebugStreamSampleCount = 0ull;
+        mutable uint64_t m_localDebugMeasurementSampleCount = 0ull;
+        mutable LocalDebugSecondAccumulator m_localDebugSecondAccumulator = {};
+        mutable std::filesystem::path m_localDebugRunDirectory;
+        mutable std::filesystem::path m_localDebugPartialCsvPath;
+        mutable std::filesystem::path m_localDebugPartialJsonlPath;
+        mutable std::filesystem::path m_localDebugPartialPerSecondPath;
+        mutable std::filesystem::path m_localDebugFinalCsvPath;
+        mutable std::filesystem::path m_localDebugFinalJsonlPath;
+        mutable std::filesystem::path m_localDebugFinalPerSecondPath;
+        mutable std::ofstream m_localDebugCsvStream;
+        mutable std::ofstream m_localDebugJsonlStream;
+        mutable std::ofstream m_localDebugPerSecondStream;
         hairgpu::HairAsset m_asset;
         hairgpu::GpuSimulationConfig m_simConfig;
         hairgpu::ColliderSet m_colliders;
@@ -1562,6 +1673,12 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_rtv;
         Microsoft::WRL::ComPtr<ID3D11Texture2D> m_depthTexture;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_dsv;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> m_hairOitAccumTexture;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_hairOitAccumRtv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_hairOitAccumSrv;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> m_hairOitRevealTexture;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_hairOitRevealRtv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_hairOitRevealSrv;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_particleVS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particlePointGS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_particleBillboardGS;
@@ -1569,6 +1686,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_ribbonVS;
         Microsoft::WRL::ComPtr<ID3D11GeometryShader> m_ribbonGS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ribbonPS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ribbonOitPS;
+        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_hairOitCompositeVS;
+        Microsoft::WRL::ComPtr<ID3D11PixelShader> m_hairOitCompositePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_debugLineVS;
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_debugLinePS;
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_scalpVS;
@@ -1577,7 +1697,9 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11PixelShader> m_hairMeshPS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_rootBindCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_integrateCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_clearConstraintLambdasCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_distanceCS;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_stabilityGuardCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_bendCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_collisionCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_clearGridCS;
@@ -1620,6 +1742,11 @@ namespace hairgpu::viewer
         StructuredBuffer m_pointWidths;
         StructuredBuffer m_followBuffer;
         StructuredBuffer m_renderStrandTiersBuffer;
+        // Rendering LOD/simulation tier and edit-visualization category are
+        // intentionally separate. Reusing one buffer for both caused category
+        // values 3/4 to be interpreted as hidden LOD tiers, producing large
+        // missing bands in the wig.
+        StructuredBuffer m_editVisualizationCategoryBuffer;
         StructuredBuffer m_guideTierAssignmentsBuffer;
         StructuredBuffer m_followerTierAssignmentsBuffer;
         StructuredBuffer m_compactedFollowerIndicesBuffer;
@@ -1688,7 +1815,11 @@ namespace hairgpu::viewer
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_renderConstants;
         Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
         Microsoft::WRL::ComPtr<ID3D11BlendState> m_blendState;
+        Microsoft::WRL::ComPtr<ID3D11BlendState> m_hairOitBlendState;
         Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthState;
+        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_overlayDepthState;
+        // Transparent hair ribbons test depth but do not write it.
+        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_hairDepthState;
         size_t m_hairMeshVertexCapacity = 0;
         size_t m_debugLineEntryCapacity = 0;
         bool m_gpuDebugLinesDirty = true;

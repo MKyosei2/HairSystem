@@ -58,3 +58,9 @@ Thumbs.db
 # Frozen Novelty01 bundle is generated once by the Release viewer.
 benchmarks/novelty01/frozen_asset_bundle/*
 !benchmarks/novelty01/frozen_asset_bundle/frozen_asset_lock.json
+
+# Visual Studio local-debugger diagnostic evidence is ignored by default.
+# The successful postprocessor uses `git add -f` for its exact run directory;
+# failed or partial captures therefore cannot be staged accidentally.
+results/committed/local_debug/
+

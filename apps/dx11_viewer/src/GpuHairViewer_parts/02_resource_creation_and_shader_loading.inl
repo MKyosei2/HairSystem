@@ -38,23 +38,128 @@
         RecomputeAssetBounds();
         AutoFrameCameraToAsset(true);
         ResetSimulation();
+        // Formal and local-debug captures must exercise the production ribbon renderer.
+        // Particle modes remain an explicit interactive diagnostic only.
+        if (IsExperimentModeEnabled() ||
+            EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE")))
+        {
+            m_renderMode = RenderMode::StrandRibbon;
+        }
         QueryPerformanceFrequency(&m_qpcFrequency);
         QueryPerformanceCounter(&m_lastTick);
         LoadQuickEditFormFromInlineText(m_selectedInlineLayerIndex);
+        // Loading the inline form may contain a saved strandSelection. It must not
+        // activate edit gizmos in the default Sim/View workspace.
+        if (m_workspaceMode != WorkspaceMode::Groom ||
+            m_interactionMode != InteractionMode::Edit)
+        {
+            m_selectedStrandIndex = -1;
+            m_gizmoDragging = false;
+            m_brushStrokeActive = false;
+            m_gpuDebugLinesDirty = true;
+        }
         SyncControlsFromState();
         LayoutUiControls();
         UpdateStatsLabel();
         RefreshAssetStatsText();
         UpdateWindowTitle();
+
+        // Runtime proof is written beside the exact executable that initialized.
+        // A missing file or a title without V9 proves that an older EXE was launched.
+        wchar_t runtimeModulePath[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, runtimeModulePath, MAX_PATH);
+        const std::filesystem::path runtimeExecutablePath(runtimeModulePath);
+        const std::filesystem::path runtimeProofPath =
+            runtimeExecutablePath.parent_path() / L"HAIRGPU_RUNTIME_IDENTITY_V9.txt";
+        std::ofstream runtimeProof(runtimeProofPath, std::ios::binary | std::ios::trunc);
+        if (runtimeProof)
+        {
+            runtimeProof << "buildId=HAIRGPU_BUILD_V11_20260724_STABLE_PRESENTATION\n";
+#if defined(_DEBUG)
+            runtimeProof << "configuration=Debug\n";
+#else
+            runtimeProof << "configuration=Release\n";
+#endif
+            runtimeProof << "executablePath=" << runtimeExecutablePath.u8string() << "\n";
+            runtimeProof << "assetCacheSchema=v5_root_distribution_oit\n";
+            runtimeProof << "assetSource=" << WideToUtf8(m_lastAssetSource) << "\n";
+            runtimeProof << "workspace=Sim\ninteraction=View\nrender=StrandRibbon\n";
+        }
         return true;
     }
 
     int GpuHairViewer::Run()
     {
         MSG msg = {};
+        int runExitCode = 0;
         // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V1: configuration was loaded before initialization.
         m_globalFrameIndex = 0u;
         m_measuredFrameIndex = 0u;
+        m_sessionWallSeconds = 0.0;
+        m_sessionCompletedFrameCount = 0ull;
+        m_sessionEffectiveFps = 0.0f;
+        const bool localDebugCaptureEnabled =
+            EnvironmentValueIsTrue(GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE"));
+        const uint32_t localDebugWarmupFrames = localDebugCaptureEnabled
+            ? EnvironmentValueToUInt(
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_WARMUP_FRAMES"),
+                120u)
+            : 0u;
+        const uint32_t localDebugCaptureFrames = localDebugCaptureEnabled
+            ? std::max<uint32_t>(EnvironmentValueToUInt(
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES"),
+                1800u), 1u)
+            : 0u;
+        // Normal interactive title statistics begin only after resources, the
+        // first presents, and driver lazy initialization have settled. Formal
+        // and local-debug evidence keep their existing explicit warm-up rules.
+        const uint32_t interactiveCadenceWarmupFrames =
+            (!IsExperimentModeEnabled() && !localDebugCaptureEnabled) ? 120u : 0u;
+        uint32_t interactiveCadenceWarmupRemaining = interactiveCadenceWarmupFrames;
+        m_localDebugCaptureActive = localDebugCaptureEnabled;
+        LARGE_INTEGER cadenceWindowStart = {};
+        QueryPerformanceCounter(&cadenceWindowStart);
+        // Do not count initialization, shader compilation, or window creation as
+        // the first interactive frame. From here onward QPC measures complete
+        // frame cadence, including Present blocking and OS scheduling stalls.
+        m_lastTick = cadenceWindowStart;
+        uint64_t cadenceWindowRenderFrames = 0ull;
+        uint64_t cadenceWindowSimulationTicks = 0ull;
+        if (localDebugCaptureEnabled)
+        {
+            std::wstring runName =
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_RUN_NAME");
+            if (runName.empty())
+            {
+                runName = L"local_debug";
+            }
+            std::wstring methodCode =
+                GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_METHOD");
+            if (methodCode.empty())
+            {
+                methodCode = L"DEV";
+            }
+            // Keep enabled=false so a debugger run can never satisfy the formal gate.
+            m_experimentCase.enabled = false;
+            m_experimentCase.caseId = runName;
+            m_experimentCase.variant = methodCode;
+            m_experimentCase.scenario = L"S01_LocalDebug";
+            m_experimentCase.seed = 1103u;
+            m_experimentCase.warmupFrames = localDebugWarmupFrames;
+            m_experimentCase.measurementFrames = localDebugCaptureFrames;
+            m_experimentCase.fixedTimeStepEnabled = true;
+            m_experimentCase.fixedTimeStepSeconds = m_simConfig.fixedTimeStep;
+            m_experimentCase.realMeasurement = false;
+            m_experimentCase.runStatus = ExperimentRunStatus::Incomplete;
+            m_experimentRunStatus = ExperimentRunStatus::Incomplete;
+            // Visual Studio/F5 is interactive real-time evidence. Present(1)
+            // provides display pacing without Flush/GetData/DwmFlush busy waits.
+            // Formal BAT throughput remains Present(0) through experiment config.
+            m_vsyncEnabled = true;
+            m_presentSyncInterval = 1u;
+            m_accumulator = 0.0f;
+            m_paused = false;
+        }
         while (m_running)
         {
             for (GpuTimingFrame& pendingTiming : m_gpuTimingFrames)
@@ -85,15 +190,120 @@
                 DispatchMessageW(&msg);
             }
 
+            // Coalesce WM_SIZE bursts and resize once between frames. ResizeBuffers
+            // may wait for the presentation queue; interactive window management is
+            // presentation work, not a simulation performance sample. Formal and
+            // local-debug captures reject a resolution change instead of hiding it.
+            if (m_resizePending)
+            {
+                const UINT requestedWidth = m_pendingResizeWidth;
+                const UINT requestedHeight = m_pendingResizeHeight;
+                m_resizePending = false;
+
+                const bool actualChange =
+                    requestedWidth > 0u &&
+                    requestedHeight > 0u &&
+                    (requestedWidth != m_width || requestedHeight != m_height);
+                if (actualChange)
+                {
+                    if (IsExperimentModeEnabled())
+                    {
+                        SetFatalExperimentFailure(1201u,
+                            L"Render resolution changed during formal measurement.");
+                        m_running = false;
+                        runExitCode = 92;
+                        continue;
+                    }
+                    if (localDebugCaptureEnabled)
+                    {
+                        m_running = false;
+                        runExitCode = 93;
+                        continue;
+                    }
+
+                    Resize(requestedWidth, requestedHeight);
+                    AutoFrameCameraToAsset(false);
+                    interactiveCadenceWarmupRemaining =
+                        std::max<uint32_t>(interactiveCadenceWarmupRemaining, 30u);
+                    m_accumulator = 0.0f;
+                    m_sessionWallSeconds = 0.0;
+                    m_sessionCompletedFrameCount = 0ull;
+                    m_sessionEffectiveFps = 0.0f;
+                    m_recentFrameIntervalsMilliseconds.fill(0.0f);
+                    m_recentFrameIntervalWriteIndex = 0u;
+                    m_recentFrameIntervalCount = 0u;
+                    m_recentEffectiveFps = 0.0f;
+                    m_recentOnePercentLowFps = 0.0f;
+                    m_recentFrameP95Milliseconds = 0.0f;
+                    m_recentFrameWorstMilliseconds = 0.0f;
+                    m_observedStallCount100Milliseconds = 0u;
+                    cadenceWindowRenderFrames = 0ull;
+                    cadenceWindowSimulationTicks = 0ull;
+                    QueryPerformanceCounter(&cadenceWindowStart);
+                    m_lastTick = cadenceWindowStart;
+                    continue;
+                }
+            }
+
             LARGE_INTEGER now = {};
             QueryPerformanceCounter(&now);
-            const float dt = static_cast<float>(now.QuadPart - m_lastTick.QuadPart) / static_cast<float>(m_qpcFrequency.QuadPart);
+            const double rawFrameSeconds =
+                static_cast<double>(now.QuadPart - m_lastTick.QuadPart) /
+                static_cast<double>(m_qpcFrequency.QuadPart);
             m_lastTick = now;
-            m_lastFrameSeconds = dt;
-            m_lastFrameIntervalMilliseconds = dt * 1000.0f;
-            const float instantFps = (dt > 1.0e-6f) ? (1.0f / dt) : 0.0f;
-            m_smoothedFps = (m_smoothedFps <= 0.0f) ? instantFps : (m_smoothedFps * 0.92f + instantFps * 0.08f);
-            m_statsUpdateAccumulator += dt;
+
+            // Wall-clock cadence and simulation time are different quantities.
+            // The old code replaced every interval above one second with 1/60 s,
+            // so a real freeze was displayed as a perfect 60-FPS frame. Preserve
+            // every finite positive stall for FPS/telemetry and clamp only the
+            // amount of time fed into the fixed-step simulation accumulator.
+            const float wallFrameSeconds =
+                (std::isfinite(rawFrameSeconds) && rawFrameSeconds > 0.0)
+                ? static_cast<float>(std::min(rawFrameSeconds, 3600.0))
+                : m_simConfig.fixedTimeStep;
+            m_lastFrameSeconds = wallFrameSeconds;
+            m_lastFrameIntervalMilliseconds = wallFrameSeconds * 1000.0f;
+            // Session FPS is never reset by the 0.5-second presentation window.
+            // A freeze therefore remains visible for the entire viewer session,
+            // while rolling and instant values remain available as diagnostics.
+            if (interactiveCadenceWarmupRemaining > 0u)
+            {
+                --interactiveCadenceWarmupRemaining;
+                m_sessionWallSeconds = 0.0;
+                m_sessionCompletedFrameCount = 0ull;
+                m_sessionEffectiveFps = 0.0f;
+                m_recentFrameIntervalsMilliseconds.fill(0.0f);
+                m_recentFrameIntervalWriteIndex = 0u;
+                m_recentFrameIntervalCount = 0u;
+                m_recentEffectiveFps = 0.0f;
+                m_recentOnePercentLowFps = 0.0f;
+                m_recentFrameP95Milliseconds = 0.0f;
+                m_recentFrameWorstMilliseconds = 0.0f;
+                m_observedStallCount100Milliseconds = 0u;
+            }
+            else
+            {
+                m_sessionWallSeconds += static_cast<double>(wallFrameSeconds);
+                ++m_sessionCompletedFrameCount;
+                m_sessionEffectiveFps =
+                    m_sessionWallSeconds > 1.0e-9
+                    ? static_cast<float>(
+                        static_cast<double>(m_sessionCompletedFrameCount) /
+                        m_sessionWallSeconds)
+                    : 0.0f;
+                m_recentFrameIntervalsMilliseconds[m_recentFrameIntervalWriteIndex] =
+                    m_lastFrameIntervalMilliseconds;
+                m_recentFrameIntervalWriteIndex =
+                    (m_recentFrameIntervalWriteIndex + 1u) % kRealtimeFrameHistoryCapacity;
+                m_recentFrameIntervalCount = std::min(
+                    m_recentFrameIntervalCount + 1u,
+                    kRealtimeFrameHistoryCapacity);
+                if (m_lastFrameIntervalMilliseconds >= 100.0f)
+                {
+                    ++m_observedStallCount100Milliseconds;
+                }
+            }
+            m_statsUpdateAccumulator += wallFrameSeconds;
 
             GpuTimingFrame& gpuFrame = m_gpuTimingFrames[m_gpuTimingWriteIndex];
             m_activeGpuTimingFrameIndex = -1;
@@ -101,7 +311,9 @@
             // Formal measurements keep per-frame timing coverage. Interactive development
             // samples once every 16 frames to avoid query pressure while retaining diagnostics.
             const bool shouldIssueGpuTiming =
-                IsExperimentModeEnabled() || ((m_globalFrameIndex % 16u) == 0u);
+                IsExperimentModeEnabled() ||
+                localDebugCaptureEnabled ||
+                ((m_globalFrameIndex % 16u) == 0u);
             const bool canIssueGpuTiming =
                 shouldIssueGpuTiming &&
                 gpuFrame.disjoint &&
@@ -129,27 +341,47 @@
             QueryPerformanceCounter(&frameWorkBegin);
             QueryPerformanceCounter(&simBegin);
 
+            uint32_t simulationStepCountThisFrame = 0u;
+            float droppedSimulationSecondsThisFrame = 0.0f;
             if (!m_paused)
             {
                 if (IsExperimentModeEnabled())
                 {
-                    // Exactly one deterministic simulation tick per captured render frame.
+                    // Formal evidence is deterministic throughput: one fixed solver
+                    // tick per captured frame and no VSync/pacing.
                     ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
                     m_elapsedSeconds += m_simConfig.fixedTimeStep;
+                    simulationStepCountThisFrame = 1u;
                 }
                 else
                 {
-                    // Never enter a catch-up spiral on a workload this large. Interactive
-                    // development performs at most one fixed simulation step per render frame.
-                    m_accumulator += std::min(dt, m_simConfig.fixedTimeStep);
-                    if (m_accumulator >= m_simConfig.fixedTimeStep)
+                    // Interactive/F5 playback follows wall-clock time. Two catch-up
+                    // ticks absorb short scheduler delays without entering a spiral.
+                    const float safeDt = std::clamp(wallFrameSeconds, 0.0f, 0.10f);
+                    m_accumulator += safeDt;
+                    constexpr uint32_t kMaximumCatchUpTicks = 2u;
+                    while (m_accumulator >= m_simConfig.fixedTimeStep &&
+                           simulationStepCountThisFrame < kMaximumCatchUpTicks)
                     {
                         ExecuteExperimentSimulationTick(m_simConfig.fixedTimeStep);
                         m_elapsedSeconds += m_simConfig.fixedTimeStep;
-                        m_accumulator = 0.0f;
+                        m_accumulator -= m_simConfig.fixedTimeStep;
+                        ++simulationStepCountThisFrame;
+                    }
+                    if (m_accumulator >= m_simConfig.fixedTimeStep)
+                    {
+                        const float remainder = std::fmod(
+                            m_accumulator,
+                            m_simConfig.fixedTimeStep);
+                        droppedSimulationSecondsThisFrame =
+                            std::max(m_accumulator - remainder, 0.0f);
+                        m_accumulator = remainder;
                     }
                 }
             }
+            m_simulationTicksThisFrame = simulationStepCountThisFrame;
+            m_droppedSimulationMilliseconds +=
+                droppedSimulationSecondsThisFrame * 1000.0f;
 
             QueryPerformanceCounter(&simEnd);
             m_lastSimulationStepMilliseconds =
@@ -173,14 +405,49 @@
             LARGE_INTEGER frameWorkEnd = {};
             QueryPerformanceCounter(&frameWorkEnd);
             m_lastCpuFrameWorkMilliseconds = static_cast<float>(frameWorkEnd.QuadPart - frameWorkBegin.QuadPart) * 1000.0f / static_cast<float>(m_qpcFrequency.QuadPart);
-            const bool captureCurrentFrame = ShouldCaptureCurrentFrame();
+            // Measure completed frame cadence from QPC. This interval includes
+            // Render(), Present(), driver throttling, message handling, and OS
+            // scheduling. It therefore cannot report a high FPS while the window
+            // is visibly frozen merely because CPU submission was fast.
+            ++cadenceWindowRenderFrames;
+            cadenceWindowSimulationTicks += simulationStepCountThisFrame;
+            LARGE_INTEGER cadenceNow = {};
+            QueryPerformanceCounter(&cadenceNow);
+            const double cadenceWindowSeconds =
+                static_cast<double>(cadenceNow.QuadPart - cadenceWindowStart.QuadPart) /
+                static_cast<double>(m_qpcFrequency.QuadPart);
+            if (std::isfinite(cadenceWindowSeconds) && cadenceWindowSeconds >= 0.50)
+            {
+                m_renderFps = static_cast<float>(
+                    static_cast<double>(cadenceWindowRenderFrames) /
+                    cadenceWindowSeconds);
+                m_simulationHz = static_cast<float>(
+                    static_cast<double>(cadenceWindowSimulationTicks) /
+                    cadenceWindowSeconds);
+                m_smoothedFps = m_renderFps;
+                m_renderCadenceWindowValid = true;
+                cadenceWindowStart = cadenceNow;
+                cadenceWindowRenderFrames = 0ull;
+                cadenceWindowSimulationTicks = 0ull;
+            }
+            const bool localDebugCaptureCurrentFrame =
+                localDebugCaptureEnabled &&
+                m_globalFrameIndex >= localDebugWarmupFrames &&
+                m_performanceSamples.size() < static_cast<size_t>(localDebugCaptureFrames);
+            const bool captureCurrentFrame =
+                ShouldCaptureCurrentFrame() || localDebugCaptureCurrentFrame;
             if (captureCurrentFrame)
             {
                 // Finalize availability-aware rates once, then persist the exact
                 // same frame evidence to CSV/JSONL/formal sidecar.
                 hairgpu::FinalizeNoveltyTelemetryRates(m_noveltyTelemetry);
             }
-            PerformanceSample sample = BuildPerformanceSample(dt, instantFps);
+            const float sampledRenderFps = m_renderCadenceWindowValid
+                ? m_renderFps
+                : ((wallFrameSeconds > 1.0e-6f) ? (1.0f / wallFrameSeconds) : 0.0f);
+            PerformanceSample sample = BuildPerformanceSample(
+                wallFrameSeconds,
+                sampledRenderFps);
             if (captureCurrentFrame)
             {
                 sample.measuredFrameIndex = m_measuredFrameIndex++;
@@ -191,6 +458,11 @@
                 }
             }
             ++m_globalFrameIndex;
+            if (localDebugCaptureEnabled &&
+                m_performanceSamples.size() >= static_cast<size_t>(localDebugCaptureFrames))
+            {
+                m_running = false;
+            }
             if (ShouldAutoExitAfterCurrentFrame())
             {
                 m_running = false;
@@ -205,6 +477,29 @@
                 UpdateStatsLabel();
                 UpdateWindowTitle();
                 m_statsUpdateAccumulator = 0.0f;
+            }
+        }
+
+        // Render the final state once more outside the measured frame set and copy
+        // it before Present. This keeps visual validation out of performance timing
+        // and avoids relying on undefined post-Present flip-discard contents.
+        const std::wstring visualCapturePath =
+            GetEnvironmentVariableString(L"HAIRGPU_VISUAL_CAPTURE_BMP");
+        if (!visualCapturePath.empty())
+        {
+            m_pendingVisualCapturePath = std::filesystem::path(visualCapturePath);
+            m_visualCapturePending = true;
+            m_visualCaptureSucceeded = false;
+            Render();
+            if (!m_visualCaptureSucceeded)
+            {
+                std::ofstream error(
+                    m_pendingVisualCapturePath.wstring() +
+                    L".capture_error.txt");
+                error <<
+                    "The post-measurement back-buffer visual evidence "
+                    "could not be captured before Present.\n";
+                runExitCode = 91;
             }
         }
 
@@ -283,17 +578,39 @@
             }
             std::error_code ec;
             std::filesystem::create_directories(telemetryDir, ec);
-            const std::filesystem::path summaryPath = telemetryDir / (runName + L"_summary.json");
-            const std::filesystem::path frameCsvPath = telemetryDir / (runName + L"_frames.csv");
-            const std::filesystem::path frameJsonlPath = telemetryDir / (runName + L"_frames.jsonl");
-            const std::filesystem::path settingsJsonPath = telemetryDir / (runName + L"_settings.json");
+            auto explicitPath = [&](
+                const wchar_t* environmentName,
+                const std::filesystem::path& fallback)
+            {
+                const std::wstring value =
+                    GetEnvironmentVariableString(environmentName);
+                return value.empty()
+                    ? fallback
+                    : std::filesystem::path(value);
+            };
+            const std::filesystem::path summaryPath = explicitPath(
+                L"HAIRGPU_SUMMARY_JSON",
+                telemetryDir / (runName + L"_summary.json"));
+            const std::filesystem::path frameCsvPath = explicitPath(
+                L"HAIRGPU_TELEMETRY_CSV",
+                telemetryDir / (runName + L"_frames.csv"));
+            const std::filesystem::path frameJsonlPath = explicitPath(
+                L"HAIRGPU_TELEMETRY_JSONL",
+                telemetryDir / (runName + L"_frames.jsonl"));
+            const std::filesystem::path settingsJsonPath = explicitPath(
+                L"HAIRGPU_SETTINGS_JSON",
+                telemetryDir / (runName + L"_settings.json"));
             ExportPerformanceCsv(frameCsvPath.wstring());
             ExportPerformanceJsonl(frameJsonlPath.wstring());
+            ExportRealtimeCadenceCsv(
+                (telemetryDir / (runName + L"_realtime_cadence.csv")).wstring());
+            ExportPerSecondTelemetryCsv(
+                (telemetryDir / (runName + L"_per_second.csv")).wstring());
             ExportExperimentSettingsJson(settingsJsonPath.wstring());
             ExportRuntimeReport(summaryPath.wstring());
         }
         Shutdown();
-        return 0;
+        return runExitCode;
     }
 
     bool GpuHairViewer::CreateWindowAndDevice(HINSTANCE instance, int showCommand)
@@ -399,6 +716,17 @@
                 L"- use x64 configuration if available";
             ShowStartupDialog(m_hwnd, L"Hair GPU Viewer Startup Failure", message);
             return false;
+        }
+
+        // Bound CPU submission to one frame ahead of the GPU. Without this,
+        // Present(0) can enqueue several expensive 100k-strand frames and make the
+        // CPU-side cadence look much faster than the work the GPU is completing.
+        // This does not wait for timestamp queries and applies equally to local and
+        // formal runs, keeping their observed cadence honest.
+        ComPtr<IDXGIDevice1> dxgiDevice1;
+        if (SUCCEEDED(m_device.As(&dxgiDevice1)) && dxgiDevice1)
+        {
+            dxgiDevice1->SetMaximumFrameLatency(1u);
         }
 
         if (IsExperimentModeEnabled() &&
@@ -543,6 +871,12 @@
             initialCompactedGuideIndices[i] = i;
         }
         m_renderStrandTiersBuffer = CreateStructuredBuffer(sizeof(uint32_t), totalStrands, initialRenderTiers.data(), false);
+        const std::vector<uint32_t> initialEditCategories(totalStrands, 1u);
+        m_editVisualizationCategoryBuffer = CreateStructuredBuffer(
+            sizeof(uint32_t),
+            totalStrands,
+            initialEditCategories.data(),
+            false);
         m_guideTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialGuideTiers.size()), initialGuideTiers.data(), false);
         m_followerTierAssignmentsBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialFollowerTiers.size()), initialFollowerTiers.data(), false);
         m_compactedFollowerIndicesBuffer = CreateStructuredBuffer(sizeof(uint32_t), static_cast<UINT>(initialCompactedFollowerIndices.size()), initialCompactedFollowerIndices.data(), true);
@@ -1268,6 +1602,9 @@
             m_lastGpuSimulationMilliseconds = static_cast<float>(static_cast<double>(simEnd - simStart) * invFreqMs);
             m_lastGpuHairDrawMilliseconds = static_cast<float>(static_cast<double>(hairEnd - hairStart) * invFreqMs);
             m_lastGpuDebugDrawMilliseconds = static_cast<float>(static_cast<double>(debugEnd - debugStart) * invFreqMs);
+            m_gpuThroughputFps = m_lastGpuFrameMilliseconds > 1.0e-6f
+                ? (1000.0f / m_lastGpuFrameMilliseconds)
+                : 0.0f;
             for (size_t passIndex = 0u; passIndex < kGpuPassCount; ++passIndex)
             {
                 if (frame.passIssued[passIndex] != 0u && passEnds[passIndex] >= passStarts[passIndex])
@@ -1284,6 +1621,10 @@
                 {
                     sample.sourceFrameIndex = frame.sourceFrameIndex;
                     sample.gpuHairMilliseconds = m_lastGpuSimulationMilliseconds + m_lastGpuHairDrawMilliseconds;
+                    sample.gpuFrameMilliseconds = m_lastGpuFrameMilliseconds;
+                    sample.gpuSimulationMilliseconds = m_lastGpuSimulationMilliseconds;
+                    sample.gpuHairDrawMilliseconds = m_lastGpuHairDrawMilliseconds;
+                    sample.gpuThroughputFps = m_gpuThroughputFps;
                     sample.blockClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BlockClassification)];
                     sample.groupClassificationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::GroupClassification)];
                     sample.compactionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Compaction)];
@@ -1338,11 +1679,52 @@
             return false;
         }
 
+        D3D11_BLEND_DESC oitBlend = {};
+        oitBlend.IndependentBlendEnable = TRUE;
+        oitBlend.RenderTarget[0].BlendEnable = TRUE;
+        oitBlend.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+        oitBlend.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        oitBlend.RenderTarget[1].BlendEnable = TRUE;
+        oitBlend.RenderTarget[1].SrcBlend = D3D11_BLEND_ZERO;
+        oitBlend.RenderTarget[1].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        oitBlend.RenderTarget[1].BlendOp = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[1].SrcBlendAlpha = D3D11_BLEND_ZERO;
+        oitBlend.RenderTarget[1].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        oitBlend.RenderTarget[1].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        oitBlend.RenderTarget[1].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED;
+        if (FAILED(m_device->CreateBlendState(&oitBlend, &m_hairOitBlendState)))
+        {
+            return false;
+        }
+
         D3D11_DEPTH_STENCIL_DESC depthDesc = {};
         depthDesc.DepthEnable = TRUE;
         depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
         depthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
         if (FAILED(m_device->CreateDepthStencilState(&depthDesc, &m_depthState)))
+        {
+            return false;
+        }
+
+        D3D11_DEPTH_STENCIL_DESC overlayDepthDesc = depthDesc;
+        overlayDepthDesc.DepthEnable = FALSE;
+        overlayDepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(m_device->CreateDepthStencilState(&overlayDepthDesc, &m_overlayDepthState)))
+        {
+            return false;
+        }
+
+        // Alpha-blended hair must test against the scalp depth but must not
+        // write depth itself. Per-ribbon depth writes caused the first ribbons
+        // to occlude later layers and produced a solid helmet/curtain shell.
+        D3D11_DEPTH_STENCIL_DESC hairDepthDesc = depthDesc;
+        hairDepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        if (FAILED(m_device->CreateDepthStencilState(&hairDepthDesc, &m_hairDepthState)))
         {
             return false;
         }

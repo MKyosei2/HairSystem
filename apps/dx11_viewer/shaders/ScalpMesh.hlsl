@@ -58,6 +58,6 @@ float4 PSMain(VSOutput input) : SV_Target
 
     const float3 baseColor = input.color;
     const float3 rimColor = baseColor * 1.08f;
-    const float3 shaded = baseColor * (0.34f + 0.58f * diffuse) + rimColor * (fresnel * 0.03f) + specular.xxx;
+    const float3 shaded = baseColor * (0.52f + 0.44f * diffuse) + rimColor * (fresnel * 0.03f) + specular.xxx;
     return float4(saturate(shaded), 1.0f);
 }

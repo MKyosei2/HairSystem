@@ -17,7 +17,7 @@
         const HINSTANCE instance = reinterpret_cast<HINSTANCE>(
             GetWindowLongPtrW(m_hwnd, GWLP_HINSTANCE));
         m_uiPanel = CreateWindowExW(
-            WS_EX_CONTROLPARENT,
+            WS_EX_CONTROLPARENT | WS_EX_TRANSPARENT,
             L"STATIC",
             L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
@@ -160,12 +160,15 @@
         }
         else
         {
-            addCandidate(requested);
-            addCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / requested);
-            addCandidate(exeDirectory / requested);
+            // Prefer the deployed shader next to the executable. Relative
+            // current-directory candidates may contain stale copies when Visual
+            // Studio launches Release builds with the solution directory as CWD.
             addCandidate(exeDirectory / L"shaders" / requested);
-            addCandidate(std::filesystem::current_path() / requested);
+            addCandidate(exeDirectory / requested);
             addCandidate(std::filesystem::current_path() / L"shaders" / requested);
+            addCandidate(std::filesystem::current_path() / requested);
+            addCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / requested);
+            addCandidate(requested);
 
             std::filesystem::path root = exeDirectory;
             for (int depth = 0; depth < 7; ++depth)
@@ -200,6 +203,28 @@
             if (!exists)
             {
                 continue;
+            }
+
+            // HairStrandInstanced previously appeared unchanged because an older
+            // output copy was silently compiled. Require the visibility-fix marker
+            // and continue searching until the current shader source is found.
+            if (requested.filename() == L"HairStrandInstanced.hlsl")
+            {
+                std::ifstream sourceStream(candidate, std::ios::binary);
+                const std::string sourceText(
+                    (std::istreambuf_iterator<char>(sourceStream)),
+                    std::istreambuf_iterator<char>());
+                // Visual tuning versions (V12, V13, ...) may change without
+                // changing the CPU/HLSL binding contract. Validate the stable ABI
+                // marker instead of hard-coding a visual-fix version; otherwise a
+                // newer valid shader is incorrectly rejected as stale.
+                constexpr const char* kRequiredStrandShaderAbi =
+                    "HAIRGPU_STRAND_RIBBON_SHADER_ABI_1";
+                if (sourceText.find(kRequiredStrandShaderAbi) == std::string::npos)
+                {
+                    attemptedPaths << L"  [rejected: incompatible strand shader ABI]\r\n";
+                    continue;
+                }
             }
 
             shaderBlob.Reset();

@@ -6,6 +6,32 @@ namespace
     constexpr UINT kHairGpuNonBlockingQueryFlags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
 }
 
+    const wchar_t* GpuHairViewer::GetPerformanceEvidenceClassDisplayName() const
+    {
+        if (IsExperimentModeEnabled())
+        {
+            return L"formal-throughput";
+        }
+        if (m_localDebugCaptureActive)
+        {
+            return L"diagnostic-debugger";
+        }
+        return L"interactive-realtime";
+    }
+
+    const char* GpuHairViewer::GetPerformanceEvidenceClassCode() const
+    {
+        if (IsExperimentModeEnabled())
+        {
+            return "formal_throughput";
+        }
+        if (m_localDebugCaptureActive)
+        {
+            return "diagnostic_debugger";
+        }
+        return "interactive_realtime";
+    }
+
     const wchar_t* GpuHairViewer::GetGroomToolDisplayName() const
     {
         switch (m_groomTool)
@@ -51,7 +77,15 @@ namespace
 
         RECT client = {};
         GetClientRect(m_hwnd, &client);
-        const int panelX = (std::max)(static_cast<int>(client.right) - kUiPanelWidth, 0);
+        // Sim/View starts as an uncluttered full-width review viewport. The
+        // controls are moved outside the client area while the panel is hidden,
+        // so direct child controls cannot leave a blank 500-pixel reservation.
+        const bool showUiPanel =
+            IsGroomWorkspace() || m_showInspectorPane || m_showBottomTray;
+        ShowWindow(m_uiPanel, showUiPanel ? SW_SHOW : SW_HIDE);
+        const int panelX = showUiPanel
+            ? (std::max)(static_cast<int>(client.right) - kUiPanelWidth, 0)
+            : static_cast<int>(client.right);
         const int panelHeight = (std::max)(static_cast<int>(client.bottom), 1);
         MoveWindow(m_uiPanel, panelX, 0, kUiPanelWidth, panelHeight, TRUE);
 
@@ -59,7 +93,7 @@ namespace
         // Formal runs are rejected later when this differs from the requested
         // fixed resolution, preventing the UI panel from silently shrinking
         // a nominal 1920 x 1080 measurement.
-        const RECT observedViewport = GetRenderViewportRect();
+        const RECT observedViewport = this->GetRenderViewportRect();
         m_actualRenderWidth = static_cast<uint32_t>(
             (std::max<LONG>)(observedViewport.right - observedViewport.left, 0));
         m_actualRenderHeight = static_cast<uint32_t>(
@@ -215,7 +249,7 @@ namespace
             show(hwnd, false);
         }
 
-        SetWindowTextFormat(m_labelWorkspaceTitle, std::wstring(L"Workspace  •  ") + GetWorkspaceDisplayName());
+        SetWindowTextFormat(m_labelWorkspaceTitle, std::wstring(L"Workspace  •  ") + this->GetWorkspaceDisplayName());
         SetWindowTextFormat(m_labelInspectorTitle, IsGroomWorkspace() ? (std::wstring(L"Tool Options  •  ") + GetGroomToolDisplayName()) :
             (IsSimWorkspace() ? L"Tool Options  •  Simulation" : (IsReviewWorkspace() ? L"Tool Options  •  Review" : L"Tool Options  •  Report")));
         SetWindowTextFormat(m_labelTrayTitle, std::wstring(L"Panels  •  ") + GetBottomTrayDisplayName());
@@ -627,15 +661,37 @@ namespace
         m_showFollowLinks = (SendMessageW(m_checkShowLinks, BM_GETCHECK, 0, 0) == BST_CHECKED);
         {
             const LRESULT renderSel = SendMessageW(m_comboRenderMode, CB_GETCURSEL, 0, 0);
-            m_renderMode = (renderSel <= 0) ? RenderMode::ParticlePointSprite : ((renderSel == 1) ? RenderMode::ParticleBillboard : RenderMode::StrandRibbon);
+            // CB_GETCURSEL returns CB_ERR (-1) while the combo is being created or
+            // synchronized. Treating every value <= 0 as Point Sprite silently changed
+            // the production renderer into a dotted diagnostic view during startup.
+            if (IsExperimentModeEnabled())
+            {
+                m_renderMode = RenderMode::StrandRibbon;
+            }
+            else if (renderSel == 0)
+            {
+                m_renderMode = RenderMode::ParticlePointSprite;
+            }
+            else if (renderSel == 1)
+            {
+                m_renderMode = RenderMode::ParticleBillboard;
+            }
+            else if (renderSel == 2)
+            {
+                m_renderMode = RenderMode::StrandRibbon;
+            }
+            // CB_ERR/unknown selection preserves the current mode.
         }
         m_interactionMode = IsGroomWorkspace() ? InteractionMode::Edit :
             ((SendMessageW(m_comboInteractionMode, CB_GETCURSEL, 0, 0) == 1) ? InteractionMode::Edit : InteractionMode::View);
-        m_debugColorMode = static_cast<DebugColorMode>(std::max<LRESULT>(0, SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0)));
-        if (m_interactionMode == InteractionMode::Edit && m_debugColorMode == DebugColorMode::Natural)
+        const LRESULT debugColorSelection =
+            SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0);
+        if (debugColorSelection >= 0 && debugColorSelection <= 3)
         {
-            m_debugColorMode = DebugColorMode::Editability;
+            m_debugColorMode = static_cast<DebugColorMode>(debugColorSelection);
         }
+        // Groom/Edit is an interaction state, not a request to recolor the hair.
+        // CB_ERR and workspace changes preserve the explicitly selected color mode.
 
         m_widthScale = FloatFromSlider(static_cast<int>(SendMessageW(m_trackWidth, TBM_GETPOS, 0, 0)), 0.2f, 8.0f);
         m_simConfig.gravity = FloatFromSlider(static_cast<int>(SendMessageW(m_trackGravity, TBM_GETPOS, 0, 0)), 0.0f, 30.0f);

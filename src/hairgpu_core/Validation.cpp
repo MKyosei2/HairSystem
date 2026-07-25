@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <numeric>
 #include <sstream>
 
 namespace hairgpu
@@ -167,6 +168,33 @@ namespace hairgpu
         for (size_t strandIndex = 0; strandIndex < asset.strands.size(); ++strandIndex)
         {
             const StrandRange& strand = asset.strands[strandIndex];
+            const bool expectedGuide = strandIndex < asset.guideStrandCount;
+            const bool markedGuide =
+                (strand.flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u;
+            if (expectedGuide)
+            {
+                if (!markedGuide)
+                {
+                    ++report.invalidGuidePrefixCount;
+                }
+                if (strandIndex < asset.followData.size() &&
+                    asset.followData[strandIndex].parentGuide != static_cast<int32_t>(strandIndex))
+                {
+                    ++report.invalidGuidePrefixCount;
+                }
+            }
+            else
+            {
+                if (markedGuide)
+                {
+                    ++report.invalidFollowerSuffixCount;
+                }
+                if (strandIndex < asset.followData.size() &&
+                    asset.followData[strandIndex].parentGuide < 0)
+                {
+                    ++report.invalidFollowerSuffixCount;
+                }
+            }
 
             if (strand.pointCount == 0u)
             {
@@ -257,6 +285,16 @@ namespace hairgpu
         {
             PushIssue(report, ValidationSeverity::Error, "Asset contains invalid follower-to-guide references.");
         }
+        if (report.invalidGuidePrefixCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error,
+                "The guide prefix is not contiguous or guide parent indices do not match their direct strand indices.");
+        }
+        if (report.invalidFollowerSuffixCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error,
+                "The follower suffix contains guide flags or followers without a valid parent guide.");
+        }
 
         return report;
     }
@@ -277,7 +315,9 @@ namespace hairgpu
            << ", zeroLengthSegments=" << report.zeroLengthSegmentCount
            << ", nonFinitePoints=" << report.nonFinitePointCount
            << ", invalidRootBindings=" << report.invalidRootBindingCount
-           << ", invalidFollowReferences=" << report.invalidFollowReferenceCount;
+           << ", invalidFollowReferences=" << report.invalidFollowReferenceCount
+           << ", invalidGuidePrefix=" << report.invalidGuidePrefixCount
+           << ", invalidFollowerSuffix=" << report.invalidFollowerSuffixCount;
 
         if (includeIssueList)
         {
@@ -286,6 +326,385 @@ namespace hairgpu
             {
                 ss << "\n[" << SeverityName(report.issues[i].severity) << "] "
                    << report.issues[i].message;
+            }
+        }
+        return ss.str();
+    }
+
+
+    BenchmarkWigValidationReport ValidateBenchmarkWigShape(const HairAsset& asset)
+    {
+        BenchmarkWigValidationReport report = {};
+        auto pushIssue = [&](ValidationSeverity severity, const std::string& message)
+        {
+            report.issues.push_back({ severity, message });
+            if (severity == ValidationSeverity::Error)
+            {
+                ++report.errorCount;
+                report.valid = false;
+            }
+            else if (severity == ValidationSeverity::Warning)
+            {
+                ++report.warningCount;
+            }
+        };
+
+        const HairAssetValidationReport structural = ValidateHairAsset(asset);
+        if (!structural.valid)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig failed the structural HairAsset validation.");
+        }
+        if (asset.guideStrandCount == 0u || asset.strands.size() < asset.guideStrandCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig does not contain the declared guide strands.");
+            return report;
+        }
+        if (asset.rootBindings.size() < asset.guideStrandCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig is missing guide root bindings.");
+            return report;
+        }
+
+        constexpr float kTau = 6.28318530717958647692f;
+        report.minimumGuideLength = std::numeric_limits<float>::max();
+        Vec3 boundsMin(
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max());
+        Vec3 boundsMax(
+            -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max());
+
+        double guideLengthSum = 0.0;
+        double frontLengthSum = 0.0;
+        double backLengthSum = 0.0;
+        std::vector<float> tipHeights;
+        tipHeights.reserve(asset.guideStrandCount);
+
+        const size_t rootCount = std::min<size_t>(
+            asset.guideStrandCount,
+            std::min(asset.rootBindings.size(), asset.strands.size()));
+        uint32_t crownAzimuthMask = 0u;
+        uint32_t frontHairlineMask = 0u;
+        uint32_t transitionAzimuthMask = 0u;
+        for (size_t rootIndex = 0u; rootIndex < rootCount; ++rootIndex)
+        {
+            const Vec2& uv = asset.rootBindings[rootIndex].rootUv;
+            if (!std::isfinite(uv.x) || !std::isfinite(uv.y))
+            {
+                continue;
+            }
+
+            float wrappedU = uv.x - std::floor(uv.x);
+            if (wrappedU < 0.0f)
+            {
+                wrappedU += 1.0f;
+            }
+
+            report.minimumRootV = std::min(
+                report.minimumRootV,
+                uv.y);
+            ++report.evaluatedRootCount;
+
+            if (uv.y <= 0.11f)
+            {
+                ++report.crownRootCount;
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(wrappedU * 16.0f),
+                    15u);
+                crownAzimuthMask |= (1u << bin);
+            }
+            if (uv.y >= 0.10f && uv.y <= 0.22f)
+            {
+                ++report.transitionRootCount;
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(wrappedU * 16.0f),
+                    15u);
+                transitionAzimuthMask |= (1u << bin);
+            }
+
+            float frontDu = std::fabs(wrappedU - 0.25f);
+            frontDu = std::min(frontDu, 1.0f - frontDu);
+            if (frontDu <= 0.13f &&
+                uv.y >= 0.16f &&
+                uv.y <= 0.34f)
+            {
+                ++report.frontHairlineRootCount;
+                const float normalizedFront = std::clamp(
+                    (wrappedU - 0.12f) / 0.26f,
+                    0.0f,
+                    0.999999f);
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(
+                        normalizedFront * 8.0f),
+                    7u);
+                frontHairlineMask |= (1u << bin);
+            }
+        }
+
+        for (uint32_t bit = 0u; bit < 16u; ++bit)
+        {
+            report.crownAzimuthBinCount +=
+                (crownAzimuthMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+        for (uint32_t bit = 0u; bit < 8u; ++bit)
+        {
+            report.frontHairlineBinCount +=
+                (frontHairlineMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+        for (uint32_t bit = 0u; bit < 16u; ++bit)
+        {
+            report.transitionAzimuthBinCount +=
+                (transitionAzimuthMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+
+        if (report.evaluatedRootCount > 0u)
+        {
+            const float rootCountFloat =
+                static_cast<float>(report.evaluatedRootCount);
+            report.crownRootFraction =
+                static_cast<float>(report.crownRootCount) /
+                rootCountFloat;
+            report.frontHairlineRootFraction =
+                static_cast<float>(
+                    report.frontHairlineRootCount) /
+                rootCountFloat;
+            report.transitionRootFraction =
+                static_cast<float>(report.transitionRootCount) /
+                rootCountFloat;
+        }
+        else
+        {
+            report.minimumRootV = 1.0f;
+        }
+
+        for (uint32_t guideIndex = 0u; guideIndex < asset.guideStrandCount; ++guideIndex)
+        {
+            const StrandRange& strand = asset.strands[guideIndex];
+            const uint64_t strandEnd = static_cast<uint64_t>(strand.pointOffset) + strand.pointCount;
+            if (strand.pointCount < 2u || strandEnd > asset.restPoints.size())
+            {
+                pushIssue(ValidationSeverity::Error,
+                    "A guide strand has an invalid point range.");
+                continue;
+            }
+
+            float guideLength = 0.0f;
+            float minimumSegment = std::numeric_limits<float>::max();
+            float maximumSegment = 0.0f;
+            for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const Vec3& point = asset.restPoints[strand.pointOffset + localIndex];
+                boundsMin.x = std::min(boundsMin.x, point.x);
+                boundsMin.y = std::min(boundsMin.y, point.y);
+                boundsMin.z = std::min(boundsMin.z, point.z);
+                boundsMax.x = std::max(boundsMax.x, point.x);
+                boundsMax.y = std::max(boundsMax.y, point.y);
+                boundsMax.z = std::max(boundsMax.z, point.z);
+
+                if (localIndex > 0u)
+                {
+                    const Vec3& previous = asset.restPoints[strand.pointOffset + localIndex - 1u];
+                    const float segment = Distance(previous, point);
+                    guideLength += segment;
+                    minimumSegment = std::min(minimumSegment, segment);
+                    maximumSegment = std::max(maximumSegment, segment);
+                }
+            }
+
+            if (!std::isfinite(guideLength) || guideLength <= 0.0f)
+            {
+                pushIssue(ValidationSeverity::Error,
+                    "A guide strand has a non-finite or non-positive length.");
+                continue;
+            }
+
+            report.minimumGuideLength = std::min(report.minimumGuideLength, guideLength);
+            report.maximumGuideLength = std::max(report.maximumGuideLength, guideLength);
+            guideLengthSum += guideLength;
+            ++report.evaluatedGuideCount;
+            tipHeights.push_back(asset.restPoints[strand.pointOffset + strand.pointCount - 1u].y);
+
+            if (minimumSegment > 1.0e-7f)
+            {
+                report.maximumWithinStrandSegmentRatio = std::max(
+                    report.maximumWithinStrandSegmentRatio,
+                    maximumSegment / minimumSegment);
+            }
+
+            const float angle = asset.rootBindings[guideIndex].rootUv.x * kTau;
+            const float front = std::sin(angle);
+            if (front >= 0.60f)
+            {
+                frontLengthSum += guideLength;
+                ++report.frontGuideCount;
+            }
+            else if (front <= -0.60f)
+            {
+                backLengthSum += guideLength;
+                ++report.backGuideCount;
+            }
+        }
+
+        if (report.evaluatedGuideCount == 0u)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "No guide strand could be evaluated.");
+            report.minimumGuideLength = 0.0f;
+            return report;
+        }
+
+        report.averageGuideLength = static_cast<float>(
+            guideLengthSum / static_cast<double>(report.evaluatedGuideCount));
+        report.frontAverageGuideLength = report.frontGuideCount > 0u
+            ? static_cast<float>(frontLengthSum / static_cast<double>(report.frontGuideCount))
+            : 0.0f;
+        report.backAverageGuideLength = report.backGuideCount > 0u
+            ? static_cast<float>(backLengthSum / static_cast<double>(report.backGuideCount))
+            : 0.0f;
+
+        const double tipMean = std::accumulate(
+            tipHeights.begin(), tipHeights.end(), 0.0) /
+            static_cast<double>(std::max<size_t>(tipHeights.size(), 1u));
+        double tipVariance = 0.0;
+        for (float tipHeight : tipHeights)
+        {
+            const double delta = static_cast<double>(tipHeight) - tipMean;
+            tipVariance += delta * delta;
+        }
+        tipVariance /= static_cast<double>(std::max<size_t>(tipHeights.size(), 1u));
+        report.tipHeightStandardDeviation = static_cast<float>(std::sqrt(tipVariance));
+
+        report.boundsWidth = boundsMax.x - boundsMin.x;
+        report.boundsHeight = boundsMax.y - boundsMin.y;
+        report.boundsDepth = boundsMax.z - boundsMin.z;
+
+        if (report.evaluatedRootCount == 0u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "No finite root binding could be evaluated for scalp coverage.");
+        }
+        if (report.minimumRootV > 0.025f)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "The scalp pole is not covered by roots; a circular crown hole would remain visible.");
+        }
+        if (report.crownRootFraction < 0.025f ||
+            report.crownAzimuthBinCount < 14u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Crown root coverage is too sparse or azimuthally incomplete.");
+        }
+        if (report.frontHairlineRootFraction < 0.020f ||
+            report.frontHairlineBinCount < 6u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Front hairline root coverage is too sparse or discontinuous.");
+        }
+        if (report.transitionRootFraction < 0.10f ||
+            report.transitionAzimuthBinCount < 14u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Crown-to-hairline transition coverage is too sparse or contains a latitude band gap.");
+        }
+
+        const uint32_t minimumRegionalCount = std::max<uint32_t>(4u, asset.guideStrandCount / 20u);
+        if (report.frontGuideCount < minimumRegionalCount || report.backGuideCount < minimumRegionalCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Front/back guide coverage is insufficient for an orientation-readable benchmark wig.");
+        }
+        if (report.minimumGuideLength < 0.16f || report.maximumGuideLength > 0.72f ||
+            report.averageGuideLength < 0.28f || report.averageGuideLength > 0.58f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Guide lengths are outside the stable benchmark range.");
+        }
+        if (report.frontAverageGuideLength <= 0.0f || report.backAverageGuideLength <= 0.0f ||
+            report.frontAverageGuideLength >= report.backAverageGuideLength * 0.90f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Front hair is not sufficiently shorter than back hair.");
+        }
+        if (report.tipHeightStandardDeviation < 0.025f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Guide tips are too uniformly aligned and would form a blunt lower ring.");
+        }
+        // This metric compares Euclidean chords, not accumulated arc length.
+        // Tight curves and head-volume projection can legitimately make one chord
+        // much shorter even when samples are uniform in arc space. Treat only
+        // extreme ratios as invalid and retain a warning for reviewable outliers.
+        if (report.maximumWithinStrandSegmentRatio > 64.0f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "A guide strand contains a catastrophic segment-length discontinuity.");
+        }
+        else if (report.maximumWithinStrandSegmentRatio > 16.0f)
+        {
+            pushIssue(ValidationSeverity::Warning,
+                "A tightly curved guide contains a short Euclidean chord; arc-length ordering remains valid.");
+        }
+        if (report.boundsWidth < 0.34f || report.boundsDepth < 0.28f ||
+            report.boundsHeight < 0.30f || report.boundsHeight > 0.90f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Benchmark wig bounds are too narrow, flat, short, or excessively long.");
+        }
+
+        return report;
+    }
+
+    std::string BuildBenchmarkWigValidationSummary(
+        const BenchmarkWigValidationReport& report,
+        bool includeIssueList,
+        size_t maxIssues)
+    {
+        std::ostringstream ss;
+        ss << "valid=" << (report.valid ? "true" : "false")
+           << ", errors=" << report.errorCount
+           << ", warnings=" << report.warningCount
+           << ", guides=" << report.evaluatedGuideCount
+           << ", roots=" << report.evaluatedRootCount
+           << ", minRootV=" << report.minimumRootV
+           << ", crownRootFraction=" << report.crownRootFraction
+           << ", crownAzimuthBins=" << report.crownAzimuthBinCount
+           << ", frontHairlineRootFraction=" << report.frontHairlineRootFraction
+           << ", frontHairlineBins=" << report.frontHairlineBinCount
+           << ", transitionRootFraction=" << report.transitionRootFraction
+           << ", transitionAzimuthBins=" << report.transitionAzimuthBinCount
+           << ", minGuideLength=" << report.minimumGuideLength
+           << ", averageGuideLength=" << report.averageGuideLength
+           << ", maxGuideLength=" << report.maximumGuideLength
+           << ", frontAverageLength=" << report.frontAverageGuideLength
+           << ", backAverageLength=" << report.backAverageGuideLength
+           << ", tipHeightStdDev=" << report.tipHeightStandardDeviation
+           << ", maxSegmentRatio=" << report.maximumWithinStrandSegmentRatio
+           << ", bounds=" << report.boundsWidth << "x"
+           << report.boundsHeight << "x" << report.boundsDepth;
+
+        if (includeIssueList)
+        {
+            const size_t count = std::min(maxIssues, report.issues.size());
+            for (size_t index = 0u; index < count; ++index)
+            {
+                ss << "\n[" << SeverityName(report.issues[index].severity) << "] "
+                   << report.issues[index].message;
             }
         }
         return ss.str();

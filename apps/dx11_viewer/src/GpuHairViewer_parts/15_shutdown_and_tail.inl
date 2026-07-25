@@ -307,6 +307,54 @@
 
 
 
+
+    bool GpuHairViewer::FinalizeLocalDebugStreaming()
+    {
+        if (!m_localDebugCaptureActive)
+        {
+            return true;
+        }
+        if (!m_localDebugStreamingInitialized)
+        {
+            return !m_localDebugStreamingFailed;
+        }
+
+        // Complete the final short second during a normal Viewer return.  Forced
+        // Visual Studio termination already leaves every completed second durable.
+        FlushLocalDebugPerSecondBucket(false, true);
+        FlushLocalDebugStreaming(true);
+        m_localDebugCsvStream.close();
+        m_localDebugJsonlStream.close();
+        m_localDebugPerSecondStream.close();
+
+        auto promote = [](const std::filesystem::path& partial,
+                          const std::filesystem::path& finalPath) -> bool
+        {
+            if (partial == finalPath)
+            {
+                return std::filesystem::is_regular_file(finalPath);
+            }
+            if (!std::filesystem::is_regular_file(partial))
+            {
+                return true;
+            }
+            std::error_code ec;
+            std::filesystem::remove(finalPath, ec);
+            ec.clear();
+            std::filesystem::rename(partial, finalPath, ec);
+            return !ec;
+        };
+
+        const bool promoted =
+            promote(m_localDebugPartialCsvPath, m_localDebugFinalCsvPath) &&
+            promote(m_localDebugPartialJsonlPath, m_localDebugFinalJsonlPath) &&
+            promote(m_localDebugPartialPerSecondPath, m_localDebugFinalPerSecondPath);
+        WriteLocalDebugRunState(
+            promoted ? "CAPTURED" : "INCOMPLETE",
+            "normal_viewer_return");
+        return promoted && !m_localDebugStreamingFailed;
+    }
+
     int GpuHairViewer::RunNativeSelfTests() const
     {
         if (sizeof(void*) != 8u) return 10;
@@ -323,6 +371,18 @@
             std::fabs(kFixedTimeStepSeconds - (1.0f / 60.0f)) > 1.0e-7f) return 14;
         if (!std::isfinite(SegmentLengthForParticleCount(kFixedParticlesPerStrand)) ||
             SegmentLengthForParticleCount(kFixedParticlesPerStrand) <= 0.0f) return 15;
+
+        const hairgpu::HairAsset benchmarkAsset = hairgpu::BuildSampleHybridHairAsset(
+            256u,
+            2u,
+            kFixedParticlesPerStrand,
+            SegmentLengthForParticleCount(kFixedParticlesPerStrand));
+        const hairgpu::HairAssetValidationReport structuralReport =
+            hairgpu::ValidateHairAsset(benchmarkAsset);
+        if (!structuralReport.valid) return 16;
+        const hairgpu::BenchmarkWigValidationReport shapeReport =
+            hairgpu::ValidateBenchmarkWigShape(benchmarkAsset);
+        if (!shapeReport.valid) return 17;
         return 0;
     }
 

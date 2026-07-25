@@ -37,6 +37,41 @@ namespace hairgpu
         uint32_t nonPositiveWidthCount = 0;
         uint32_t invalidRootBindingCount = 0;
         uint32_t invalidFollowReferenceCount = 0;
+        uint32_t invalidGuidePrefixCount = 0;
+        uint32_t invalidFollowerSuffixCount = 0;
+        std::vector<ValidationIssue> issues;
+    };
+
+
+    struct BenchmarkWigValidationReport
+    {
+        bool valid = true;
+        uint32_t errorCount = 0u;
+        uint32_t warningCount = 0u;
+        uint32_t evaluatedGuideCount = 0u;
+        uint32_t frontGuideCount = 0u;
+        uint32_t backGuideCount = 0u;
+        uint32_t evaluatedRootCount = 0u;
+        uint32_t crownRootCount = 0u;
+        uint32_t frontHairlineRootCount = 0u;
+        uint32_t transitionRootCount = 0u;
+        uint32_t crownAzimuthBinCount = 0u;
+        uint32_t frontHairlineBinCount = 0u;
+        uint32_t transitionAzimuthBinCount = 0u;
+        float minimumRootV = 1.0f;
+        float crownRootFraction = 0.0f;
+        float frontHairlineRootFraction = 0.0f;
+        float transitionRootFraction = 0.0f;
+        float minimumGuideLength = 0.0f;
+        float averageGuideLength = 0.0f;
+        float maximumGuideLength = 0.0f;
+        float frontAverageGuideLength = 0.0f;
+        float backAverageGuideLength = 0.0f;
+        float tipHeightStandardDeviation = 0.0f;
+        float maximumWithinStrandSegmentRatio = 1.0f;
+        float boundsWidth = 0.0f;
+        float boundsHeight = 0.0f;
+        float boundsDepth = 0.0f;
         std::vector<ValidationIssue> issues;
     };
 
@@ -451,6 +486,13 @@ namespace hairgpu
         const HairAssetValidationReport& report,
         bool includeIssueList = false,
         size_t maxIssues = 12);
+
+
+    BenchmarkWigValidationReport ValidateBenchmarkWigShape(const HairAsset& asset);
+    std::string BuildBenchmarkWigValidationSummary(
+        const BenchmarkWigValidationReport& report,
+        bool includeIssueList = false,
+        size_t maxIssues = 12u);
 
     bool RebuildSegmentGroupTopology(
         HairAsset& asset,

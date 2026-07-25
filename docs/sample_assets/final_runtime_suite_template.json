@@ -248,7 +248,7 @@
     "maximum_p99_frame_ms": 20.0,
     "maximum_single_frame_ms": 50.0,
     "maximum_frames_over_100ms": 0,
-    "hardware_profile": "low_gtx1660_reference",
+    "hardware_profile": "measurement_rtx4070ti_super",
     "hardware_profile_strict": true,
     "maximum_gpu_temperature_c": 88.0,
     "maximum_gpu_temperature_spread_c": 12.0,
@@ -532,5 +532,13 @@
       "maximum_single_frame_ms": 50.0,
       "maximum_frames_over_100ms": 0
     }
+  },
+  "hardware_projection": {
+    "enabled": true,
+    "model": "rtx4070ti_super_to_gtx1660_conservative_v1",
+    "source_profile": "measurement_rtx4070ti_super",
+    "target_profile": "low_gtx1660_reference",
+    "output_status": "theoretical_projection_only",
+    "formal_evidence": false
   }
 }

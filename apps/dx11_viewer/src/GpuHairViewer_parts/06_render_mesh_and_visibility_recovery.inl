@@ -4,14 +4,33 @@
 
         // GPU debug overlays are excluded from formal measurement.
         // They are auxiliary UI diagnostics and must not affect formal timing.
+const bool explicitDebugOverlayRequested =
+    (m_workspaceMode == WorkspaceMode::Groom &&
+     m_interactionMode == InteractionMode::Edit) ||
+    m_showFloorGuide ||
+    m_showGridBounds ||
+    m_showScalpWireframe ||
+    m_showGuideSkeleton ||
+    m_showFollowerSkeleton ||
+    m_showRootMarkers ||
+    m_showFollowLinks ||
+    m_showColliderDebug;
 const bool allowGpuDebugLines =
-!IsExperimentModeEnabled() &&
-m_context &&
-m_currentBufferIndex < 2u &&
+    !IsExperimentModeEnabled() &&
+    explicitDebugOverlayRequested &&
+    m_context &&
+    m_currentBufferIndex < 2u &&
     m_debugLineTemplateVertexBuffer &&
     m_debugInputLayout &&
     m_debugLineVS &&
     m_debugLinePS;
+
+if (!allowGpuDebugLines && !m_gpuDebugLineEntries.empty())
+{
+    m_gpuDebugLineEntries.clear();
+    m_debugLineStats = {};
+    m_gpuDebugLinesDirty = true;
+}
 
 if (allowGpuDebugLines && m_gpuDebugLinesDirty)
 {
@@ -162,6 +181,15 @@ if (gpuTimingFrame && gpuTimingFrame->issued)
     m_context->End(gpuTimingFrame->disjoint.Get());
 }
 
+// A flip-discard swap chain does not guarantee that the presented back buffer
+// remains readable. Capture the dedicated post-measurement render before Present.
+if (m_visualCapturePending)
+{
+    m_visualCaptureSucceeded =
+        CaptureBackBufferBmp(m_pendingVisualCapturePath);
+    m_visualCapturePending = false;
+}
+
 m_lastTotalDrawCalls += m_lastCurrentHairDrawCalls;
 UpdateRenderStatistics();
 
@@ -181,25 +209,94 @@ if (FAILED(m_lastPresentResult))
 // Window title is refreshed by Run() at the UI statistics cadence.
     }
 
+    bool GpuHairViewer::CreateHairOitResources(UINT width, UINT height)
+    {
+        m_hairOitAccumSrv.Reset();
+        m_hairOitAccumRtv.Reset();
+        m_hairOitAccumTexture.Reset();
+        m_hairOitRevealSrv.Reset();
+        m_hairOitRevealRtv.Reset();
+        m_hairOitRevealTexture.Reset();
+
+        if (!m_device || width == 0u || height == 0u)
+        {
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC textureDesc = {};
+        textureDesc.Width = width;
+        textureDesc.Height = height;
+        textureDesc.MipLevels = 1u;
+        textureDesc.ArraySize = 1u;
+        textureDesc.SampleDesc.Count = 1u;
+        textureDesc.Usage = D3D11_USAGE_DEFAULT;
+        textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+        textureDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if (FAILED(m_device->CreateTexture2D(&textureDesc, nullptr, &m_hairOitAccumTexture)) ||
+            FAILED(m_device->CreateRenderTargetView(m_hairOitAccumTexture.Get(), nullptr, &m_hairOitAccumRtv)) ||
+            FAILED(m_device->CreateShaderResourceView(m_hairOitAccumTexture.Get(), nullptr, &m_hairOitAccumSrv)))
+        {
+            return false;
+        }
+
+        textureDesc.Format = DXGI_FORMAT_R16_FLOAT;
+        if (FAILED(m_device->CreateTexture2D(&textureDesc, nullptr, &m_hairOitRevealTexture)) ||
+            FAILED(m_device->CreateRenderTargetView(m_hairOitRevealTexture.Get(), nullptr, &m_hairOitRevealRtv)) ||
+            FAILED(m_device->CreateShaderResourceView(m_hairOitRevealTexture.Get(), nullptr, &m_hairOitRevealSrv)))
+        {
+            return false;
+        }
+        return true;
+    }
+
     void GpuHairViewer::Resize(UINT width, UINT height)
     {
-        m_width = std::max<UINT>(width, 1u);
-        m_height = std::max<UINT>(height, 1u);
+        if (width == 0u || height == 0u)
+        {
+            return;
+        }
+        if (width == m_width && height == m_height && m_rtv && m_dsv &&
+            m_hairOitAccumRtv && m_hairOitRevealRtv)
+        {
+            return;
+        }
+
+        m_width = width;
+        m_height = height;
         if (!m_swapChain)
         {
             return;
         }
 
+        m_context->OMSetRenderTargets(0u, nullptr, nullptr);
+        ID3D11ShaderResourceView* nullOitSrvs[2] = {};
+        m_context->PSSetShaderResources(4u, 2u, nullOitSrvs);
+        m_hairOitAccumSrv.Reset();
+        m_hairOitAccumRtv.Reset();
+        m_hairOitAccumTexture.Reset();
+        m_hairOitRevealSrv.Reset();
+        m_hairOitRevealRtv.Reset();
+        m_hairOitRevealTexture.Reset();
         m_rtv.Reset();
         m_dsv.Reset();
         m_depthTexture.Reset();
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
-        m_swapChain->ResizeBuffers(0, m_width, m_height, DXGI_FORMAT_UNKNOWN, 0);
+        const HRESULT resizeResult =
+            m_swapChain->ResizeBuffers(0, m_width, m_height, DXGI_FORMAT_UNKNOWN, 0);
+        if (FAILED(resizeResult))
+        {
+            m_lastPresentResult = resizeResult;
+            return;
+        }
 
         ComPtr<ID3D11Texture2D> backBuffer;
-        m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-        m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, &m_rtv);
+        if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))) ||
+            FAILED(m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, &m_rtv)))
+        {
+            return;
+        }
 
         D3D11_TEXTURE2D_DESC depthDesc = {};
         depthDesc.Width = m_width;
@@ -209,8 +306,12 @@ if (FAILED(m_lastPresentResult))
         depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
         depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
         depthDesc.SampleDesc.Count = 1;
-        m_device->CreateTexture2D(&depthDesc, nullptr, &m_depthTexture);
-        m_device->CreateDepthStencilView(m_depthTexture.Get(), nullptr, &m_dsv);
+        if (FAILED(m_device->CreateTexture2D(&depthDesc, nullptr, &m_depthTexture)) ||
+            FAILED(m_device->CreateDepthStencilView(m_depthTexture.Get(), nullptr, &m_dsv)))
+        {
+            return;
+        }
+        CreateHairOitResources(m_width, m_height);
         QueueVisibilityRecovery();
         LayoutUiControls();
     }
@@ -218,34 +319,214 @@ if (FAILED(m_lastPresentResult))
     void GpuHairViewer::UpdateWindowTitle()
     {
         std::wstringstream ss;
-        ss << L"Hair GPU Viewer ActiveSet Runtime [FOLLOWER_COMPACTION + STRAND_PICK + SDF]  |  preset=" << m_activePresetName
-            << L"  fps=" << std::fixed << std::setprecision(1) << m_smoothedFps
+        ss << L"[HAIRGPU V11 PRESENTATION-STABLE] Hair GPU Viewer"
+            << L"  |  sessionFPS=" << std::fixed << std::setprecision(1)
+            << m_sessionEffectiveFps
+            << L"  rollingFPS=" << m_recentEffectiveFps
+            << L"  onePctLow=" << m_recentOnePercentLowFps
+            << L"  instantFPS="
+            << (m_renderCadenceWindowValid ? m_renderFps : 0.0f)
+            << L"  simHz=" << std::setprecision(1)
+            << (m_renderCadenceWindowValid ? m_simulationHz : 0.0f)
+            << L"  frameMs(last/p95/worst)=" << std::setprecision(2)
+            << m_lastFrameIntervalMilliseconds << L"/"
+            << m_recentFrameP95Milliseconds << L"/"
+            << m_recentFrameWorstMilliseconds
+            << L"  stalls100ms=" << m_observedStallCount100Milliseconds
+            << L"  cpuPresentMs=" << m_lastCpuFrameWorkMilliseconds
+            << L"  gpuFrameMs=" << m_lastGpuFrameMilliseconds
+            << L"  gpuThroughputFPS=" << std::setprecision(1)
+            << m_gpuThroughputFps
+            << L"  droppedSimMs=" << std::setprecision(2)
+            << m_droppedSimulationMilliseconds
+            << L"  presentSync=" << m_lastObservedPresentSyncInterval
+            << L"  evidence=" << GetPerformanceEvidenceClassDisplayName()
+            << L"  |  preset=" << m_activePresetName
             << L"  guides=" << m_asset.guideStrandCount
             << L"  followers=" << m_asset.followerStrandCount
             << L"  totalStrands=" << m_asset.strands.size()
             << L"  particles=" << m_asset.restPoints.size()
-            << L"  render=" << (m_renderMode == RenderMode::ParticlePointSprite ? L"point" : (m_renderMode == RenderMode::ParticleBillboard ? L"billboard" : L"ribbon"))
-            << L"  mode=" << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
-            << L"  gpuFrameMs=" << std::setprecision(2) << m_lastGpuFrameMilliseconds
-            << L"  vis=" << m_lastEstimatedVisibleParticles
-            << L"  suspect=" << (m_lastVisibilitySuspect ? L"yes" : L"no")
-            << L"  cpuFallback=" << (m_lastUsedCpuVisibilityFallback ? L"yes" : L"no")
-            << L"  readback=" << (m_cpuReadbackMode == CpuReadbackMode::Off ? L"off" : (m_cpuReadbackMode == CpuReadbackMode::FullParticlesDebug ? L"full-debug" : L"on-demand"))
-            << L"  readbackValid=" << (m_lastVisibilityReadbackValid ? L"yes" : L"no")
-            << L"  initialPoseFallback=" << (m_lastVisibilityUsedInitialPoseFallback ? L"yes" : L"no")
-            << L"  recoveryPending=" << (m_visibilityRecoveryPending ? L"yes" : L"no")
-            << L"  recoveries=" << m_visibilityRecoveryCount
-            << L"  readbackFailures=" << m_visibilityReadbackFailureCount
-            << L"  widthScale=" << m_widthScale
-            << L"  stretchCompliance=" << m_simConfig.stretchCompliance
-            << L"  selfCollision=" << (m_enableSelfCollision ? L"density-grid" : L"off")
-            << L"  angularXPBD=" << (m_enableRuntimeAngularBend ? L"on" : L"off")
-            << L"  scalpRoots=static-gpu"
-            << L"  selectedStrand=" << ((m_selectedStrandIndex >= 0) ? std::to_wstring(m_selectedStrandIndex) : L"none")
-            << L"  gizmo=" << ((m_strandGizmoMode == StrandGizmoMode::TipTranslate) ? L"tip" : ((m_strandGizmoMode == StrandGizmoMode::WholeTranslate) ? L"whole" : L"root"))
-            << L"  scalpAnim=" << (m_lastScalpAnimationSource.empty() ? L"sample" : std::filesystem::path(m_lastScalpAnimationSource).filename().wstring())
+            << L"  render="
+            << (m_renderMode == RenderMode::ParticlePointSprite
+                ? L"point"
+                : (m_renderMode == RenderMode::ParticleBillboard
+                    ? L"billboard"
+                    : L"ribbon"))
+            << L"  mode="
+            << (m_interactionMode == InteractionMode::Edit ? L"edit" : L"view")
             << (m_paused ? L"  [PAUSED]" : L"");
         SetWindowTextW(m_hwnd, ss.str().c_str());
+    }
+
+    bool GpuHairViewer::CaptureBackBufferBmp(
+        const std::filesystem::path& outputPath)
+    {
+        if (!m_swapChain || !m_device || !m_context || outputPath.empty())
+        {
+            return false;
+        }
+
+        ComPtr<ID3D11Texture2D> backBuffer;
+        if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))) || !backBuffer)
+        {
+            return false;
+        }
+
+        D3D11_TEXTURE2D_DESC sourceDesc = {};
+        backBuffer->GetDesc(&sourceDesc);
+        if (sourceDesc.Width == 0u || sourceDesc.Height == 0u)
+        {
+            return false;
+        }
+        const bool rgba =
+            sourceDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+            sourceDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        const bool bgra =
+            sourceDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+            sourceDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        if (!rgba && !bgra)
+        {
+            return false;
+        }
+
+        ComPtr<ID3D11Texture2D> resolved;
+        ID3D11Texture2D* copySource = backBuffer.Get();
+        if (sourceDesc.SampleDesc.Count > 1u)
+        {
+            D3D11_TEXTURE2D_DESC resolveDesc = sourceDesc;
+            resolveDesc.SampleDesc.Count = 1u;
+            resolveDesc.SampleDesc.Quality = 0u;
+            resolveDesc.Usage = D3D11_USAGE_DEFAULT;
+            resolveDesc.BindFlags = 0u;
+            resolveDesc.CPUAccessFlags = 0u;
+            resolveDesc.MiscFlags = 0u;
+            if (FAILED(m_device->CreateTexture2D(&resolveDesc, nullptr, &resolved)) || !resolved)
+            {
+                return false;
+            }
+            m_context->ResolveSubresource(
+                resolved.Get(),
+                0u,
+                backBuffer.Get(),
+                0u,
+                sourceDesc.Format);
+            copySource = resolved.Get();
+            sourceDesc = resolveDesc;
+        }
+
+        D3D11_TEXTURE2D_DESC stagingDesc = sourceDesc;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags = 0u;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags = 0u;
+        stagingDesc.SampleDesc.Count = 1u;
+        stagingDesc.SampleDesc.Quality = 0u;
+        ComPtr<ID3D11Texture2D> staging;
+        if (FAILED(m_device->CreateTexture2D(&stagingDesc, nullptr, &staging)) || !staging)
+        {
+            return false;
+        }
+        m_context->CopyResource(staging.Get(), copySource);
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (FAILED(m_context->Map(staging.Get(), 0u, D3D11_MAP_READ, 0u, &mapped)))
+        {
+            return false;
+        }
+
+        const uint32_t width = stagingDesc.Width;
+        const uint32_t height = stagingDesc.Height;
+        const uint64_t pixelBytes64 =
+            static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4ull;
+        if (pixelBytes64 > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            m_context->Unmap(staging.Get(), 0u);
+            return false;
+        }
+        std::vector<uint8_t> pixels(static_cast<size_t>(pixelBytes64));
+        for (uint32_t outputRow = 0u; outputRow < height; ++outputRow)
+        {
+            const uint32_t sourceRow = height - 1u - outputRow;
+            const uint8_t* source =
+                static_cast<const uint8_t*>(mapped.pData) +
+                static_cast<size_t>(sourceRow) * mapped.RowPitch;
+            uint8_t* destination =
+                pixels.data() +
+                static_cast<size_t>(outputRow) * static_cast<size_t>(width) * 4u;
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const uint8_t* inputPixel = source + static_cast<size_t>(x) * 4u;
+                uint8_t* outputPixel = destination + static_cast<size_t>(x) * 4u;
+                if (rgba)
+                {
+                    outputPixel[0] = inputPixel[2];
+                    outputPixel[1] = inputPixel[1];
+                    outputPixel[2] = inputPixel[0];
+                    outputPixel[3] = inputPixel[3];
+                }
+                else
+                {
+                    outputPixel[0] = inputPixel[0];
+                    outputPixel[1] = inputPixel[1];
+                    outputPixel[2] = inputPixel[2];
+                    outputPixel[3] = inputPixel[3];
+                }
+            }
+        }
+        m_context->Unmap(staging.Get(), 0u);
+
+        BITMAPFILEHEADER fileHeader = {};
+        BITMAPINFOHEADER infoHeader = {};
+        const uint32_t pixelBytes = static_cast<uint32_t>(pixelBytes64);
+        fileHeader.bfType = 0x4D42u;
+        fileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        fileHeader.bfSize = fileHeader.bfOffBits + pixelBytes;
+        infoHeader.biSize = sizeof(BITMAPINFOHEADER);
+        infoHeader.biWidth = static_cast<LONG>(width);
+        infoHeader.biHeight = static_cast<LONG>(height);
+        infoHeader.biPlanes = 1u;
+        infoHeader.biBitCount = 32u;
+        infoHeader.biCompression = BI_RGB;
+        infoHeader.biSizeImage = pixelBytes;
+
+        std::error_code error;
+        std::filesystem::create_directories(outputPath.parent_path(), error);
+        if (error)
+        {
+            return false;
+        }
+        const std::filesystem::path temporary = outputPath.wstring() + L".tmp";
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output)
+        {
+            return false;
+        }
+        output.write(
+            reinterpret_cast<const char*>(&fileHeader),
+            sizeof(fileHeader));
+        output.write(
+            reinterpret_cast<const char*>(&infoHeader),
+            sizeof(infoHeader));
+        output.write(
+            reinterpret_cast<const char*>(pixels.data()),
+            static_cast<std::streamsize>(pixels.size()));
+        output.flush();
+        if (!output.good())
+        {
+            output.close();
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        output.close();
+        std::filesystem::remove(outputPath, error);
+        error.clear();
+        std::filesystem::rename(temporary, outputPath, error);
+        if (error)
+        {
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        return true;
     }
 
     void GpuHairViewer::Shutdown()
@@ -256,187 +537,3 @@ if (FAILED(m_lastPresentResult))
         }
     }
 
-    bool GpuHairViewer::CompileShaderFromFile(
-        const wchar_t* filePath,
-        const char* entryPoint,
-        const char* target,
-        ID3DBlob** blobOut,
-        std::wstring& errorText)
-    {
-        if (!filePath || !entryPoint || !target || !blobOut)
-        {
-            errorText = L"CompileShaderFromFile received an invalid argument.";
-            return false;
-        }
-
-        *blobOut = nullptr;
-        errorText.clear();
-
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-    #if defined(_DEBUG)
-        flags &= ~D3DCOMPILE_OPTIMIZATION_LEVEL3;
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    #endif
-
-        wchar_t modulePath[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
-        const std::filesystem::path exeDir =
-            std::filesystem::path(modulePath).parent_path();
-
-        std::vector<std::filesystem::path> candidates;
-        auto pushCandidate = [&candidates](const std::filesystem::path& value)
-        {
-            if (value.empty()) return;
-            const std::filesystem::path normalized = value.lexically_normal();
-            if (std::find(candidates.begin(), candidates.end(), normalized) == candidates.end())
-                candidates.push_back(normalized);
-        };
-
-        pushCandidate(std::filesystem::path(filePath));
-        pushCandidate(std::filesystem::path(HAIRGPU_VIEWER_SHADER_DIR) / filePath);
-        pushCandidate(exeDir / filePath);
-        pushCandidate(exeDir / L"shaders" / filePath);
-        pushCandidate(std::filesystem::current_path() / filePath);
-        pushCandidate(std::filesystem::current_path() / L"shaders" / filePath);
-
-        std::filesystem::path searchRoot = exeDir;
-        for (int i = 0; i < 8; ++i)
-        {
-            pushCandidate(searchRoot / L"apps" / L"dx11_viewer" / L"shaders" / filePath);
-            pushCandidate(searchRoot / L"dx11_viewer" / L"shaders" / filePath);
-            const std::filesystem::path parent = searchRoot.parent_path();
-            if (parent.empty() || parent == searchRoot) break;
-            searchRoot = parent;
-        }
-
-        auto readBytes = [](const std::filesystem::path& path, std::string& bytes)
-        {
-            std::ifstream input(path, std::ios::binary);
-            if (!input) return false;
-            input.seekg(0, std::ios::end);
-            const std::streamoff size = input.tellg();
-            if (size < 0) return false;
-            input.seekg(0, std::ios::beg);
-            bytes.resize(static_cast<size_t>(size));
-            if (size > 0) input.read(bytes.data(), size);
-            return static_cast<bool>(input) || size == 0;
-        };
-
-        HRESULT hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-        std::filesystem::path compiledPath;
-        std::wstringstream tried;
-        ComPtr<ID3DBlob> shaderBlob;
-        ComPtr<ID3DBlob> errorBlob;
-
-        for (const auto& candidate : candidates)
-        {
-            const bool exists = std::filesystem::exists(candidate);
-            tried << candidate.c_str() << (exists ? L"  [exists]" : L"  [missing]") << L"\r\n";
-            if (!exists) continue;
-
-            std::string source;
-            if (!readBytes(candidate, source))
-            {
-                hr = HRESULT_FROM_WIN32(ERROR_READ_FAULT);
-                continue;
-            }
-
-            shaderBlob.Reset();
-            errorBlob.Reset();
-            compiledPath = candidate;
-            const std::string sourceName = candidate.string();
-            hr = D3DCompile(
-                source.data(), source.size(), sourceName.c_str(),
-                nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                entryPoint, target, flags, 0u, &shaderBlob, &errorBlob);
-            if (SUCCEEDED(hr)) break;
-        }
-
-        if (FAILED(hr) || !shaderBlob)
-        {
-            if (errorBlob)
-            {
-                const std::string message(
-                    static_cast<const char*>(errorBlob->GetBufferPointer()),
-                    errorBlob->GetBufferSize());
-                errorText.assign(message.begin(), message.end());
-            }
-            else
-            {
-                std::wstringstream message;
-                message << L"Unknown shader compilation error. HRESULT: 0x"
-                        << std::hex << std::uppercase << static_cast<unsigned long>(hr);
-                errorText = message.str();
-            }
-            if (!compiledPath.empty())
-                errorText += L"\r\nShader source path: " + compiledPath.wstring();
-            errorText += L"\r\n\r\nTried paths:\r\n" + tried.str();
-            return false;
-        }
-
-        *blobOut = shaderBlob.Detach();
-        return true;
-    }
-
-    GpuHairViewer::StructuredBuffer GpuHairViewer::CreateStructuredBuffer(
-        UINT elementSize,
-        UINT elementCount,
-        const void* initialData,
-        bool unorderedAccess)
-    {
-        StructuredBuffer result;
-        if (!m_device || elementSize == 0u || elementCount == 0u) return result;
-
-        const uint64_t byteWidth =
-            static_cast<uint64_t>(elementSize) * static_cast<uint64_t>(elementCount);
-        if (byteWidth > static_cast<uint64_t>((std::numeric_limits<UINT>::max)()))
-            return result;
-
-        D3D11_BUFFER_DESC desc = {};
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE |
-            (unorderedAccess ? D3D11_BIND_UNORDERED_ACCESS : 0u);
-        desc.ByteWidth = static_cast<UINT>(byteWidth);
-        desc.StructureByteStride = elementSize;
-        desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-
-        D3D11_SUBRESOURCE_DATA data = {};
-        data.pSysMem = initialData;
-        if (FAILED(m_device->CreateBuffer(&desc, initialData ? &data : nullptr, &result.buffer)))
-            return {};
-
-        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-        srvDesc.Buffer.FirstElement = 0u;
-        srvDesc.Buffer.NumElements = elementCount;
-        if (FAILED(m_device->CreateShaderResourceView(result.buffer.Get(), &srvDesc, &result.srv)))
-            return {};
-
-        if (unorderedAccess)
-        {
-            D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-            uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-            uavDesc.Format = DXGI_FORMAT_UNKNOWN;
-            uavDesc.Buffer.FirstElement = 0u;
-            uavDesc.Buffer.NumElements = elementCount;
-            if (FAILED(m_device->CreateUnorderedAccessView(result.buffer.Get(), &uavDesc, &result.uav)))
-                return {};
-        }
-        return result;
-    }
-
-    RECT GpuHairViewer::GetRenderViewportRect() const
-    {
-        RECT rect = {
-            0,
-            0,
-            static_cast<LONG>(std::max<UINT>(
-                m_width > static_cast<UINT>(kUiPanelWidth)
-                    ? m_width - static_cast<UINT>(kUiPanelWidth)
-                    : m_width,
-                1u)),
-            static_cast<LONG>(std::max<UINT>(m_height, 1u))
-        };
-        return rect;
-    }

@@ -162,6 +162,23 @@ return true;
         {
             return false;
         }
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "PSOitMain", "ps_5_0", &psBlob, errorText) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_ribbonOitPS)))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Hair OIT shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        if (!CompileShaderFromFile(L"HairStrandInstanced.hlsl", "VSCompositeMain", "vs_5_0", &vsBlob, errorText) ||
+            !CompileShaderFromFile(L"HairStrandInstanced.hlsl", "PSCompositeMain", "ps_5_0", &psBlob, errorText))
+        {
+            MessageBoxW(m_hwnd, errorText.c_str(), L"Hair OIT composite shader compile failed", MB_ICONERROR);
+            return false;
+        }
+        if (FAILED(m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_hairOitCompositeVS)) ||
+            FAILED(m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_hairOitCompositePS)))
+        {
+            return false;
+        }
         m_ribbonGS.Reset();
 
         // Particle-only runtime:
@@ -209,8 +226,12 @@ return true;
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_rootBindCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "IntegrateCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_integrateCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "ClearConstraintLambdasCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_clearConstraintLambdasCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "DistanceCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_distanceCS)) ||
+            !CompileShaderFromFile(L"HairSim.hlsl", "StabilityGuardCS", "cs_5_0", &csBlob, errorText) ||
+            FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_stabilityGuardCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "BendCS", "cs_5_0", &csBlob, errorText) ||
             FAILED(m_device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, &m_bendCS)) ||
             !CompileShaderFromFile(L"HairSim.hlsl", "CollisionCS", "cs_5_0", &csBlob, errorText) ||
@@ -473,15 +494,11 @@ return true;
             ? compactedGuidePointCount
             : totalGuideParticleCount;
 
-        const uint32_t compactedFollowerCount = useActiveDispatch
-            ? (std::max<uint32_t>(
-                m_activeSetPlan.summary.selectedStrandCount,
-                guideDispatchCount) - guideDispatchCount)
-            : followerStrandCount;
-
-        const uint32_t followerDispatchCount = useActiveDispatch
-            ? compactedFollowerCount
-            : followerStrandCount;
+        // Pre-novelty correctness baseline: all 96,000 followers are rebuilt
+        // every simulation tick. Guide compaction may still be evaluated, but
+        // follower temporal skipping is not allowed until a coherent cached-pose
+        // transform exists and is validated as part of the novelty experiment.
+        const uint32_t followerDispatchCount = followerStrandCount;
 
         const uint32_t sortedEntryCount =
             std::max<uint32_t>(m_sortedBroadphasePaddedCount, 1u);
@@ -515,6 +532,9 @@ return true;
                     SimConstantsHair constants = {};
                     FillHairSimConstants(constants, dt);
                     constants.dispatchBaseIndex = dispatchBaseIndex;
+                    // Interactive/F5 runs may recover a catastrophically corrupted guide.
+                    // Formal runs must expose the failure instead of silently repairing it.
+                    constants.enableCatastrophicRecovery = IsExperimentModeEnabled() ? 0u : 1u;
                     constants.broadphaseMode = effectiveBroadphaseMode;
                     constants.sortedPaddedEntryCount = std::max<uint32_t>(effectiveSortedEntryCount, 1u);
                     std::memcpy(mapped.pData, &constants, sizeof(constants));
@@ -639,6 +659,19 @@ return true;
         dispatchTiled(m_rootBindCS.Get(), totalStrandCount, kHairThreadsPerGroup);
         dispatchTiled(m_integrateCS.Get(), totalParticleCount, kHairThreadsPerGroup);
 
+        // XPBD multipliers are warm-started only inside one simulation time step.
+        // Carrying them across frames accumulates directional bias and was the main
+        // cause of the long-run rectangular/slab-shaped guide failure.
+        const uint32_t distanceConstraintCount = guideStrandCount *
+            ((particlesPerStrand > 1u) ? (particlesPerStrand - 1u) : 0u);
+        const uint32_t bendConstraintCount = guideStrandCount *
+            ((particlesPerStrand > 2u) ? (particlesPerStrand - 2u) : 0u);
+        bindPrimaryUavs();
+        dispatchTiled(
+            m_clearConstraintLambdasCS.Get(),
+            std::max<uint32_t>(distanceConstraintCount, bendConstraintCount),
+            kHairThreadsPerGroup);
+
         const uint32_t solverIterationCount = std::max<uint32_t>(m_simConfig.solverIterations, 1u);
 
         for (uint32_t iteration = 0u; iteration < solverIterationCount; ++iteration)
@@ -708,11 +741,22 @@ return true;
 
         }
 
+        // Final guide validation happens after collision/self-collision and before
+        // one guide is replicated into its 24 followers. This both enforces authored
+        // segment length and prevents one poisoned guide from becoming a dense slab.
+        bindPrimaryUavs();
+        dispatchTiled(m_stabilityGuardCS.Get(), guideDispatchCount, kHairThreadsPerGroup);
+
         // Followers consume only the final solved guide state. Running this inside every
         // solver iteration produced the same final dependency but repeated 96k x 128 work.
         bindPrimaryUavs();
-        const uint32_t followerPointDispatchCount = followerDispatchCount * particlesPerStrand;
-        dispatchTiled(m_followCS.Get(), followerPointDispatchCount, kHairThreadsPerGroup);
+        const uint32_t followerPointDispatchCount =
+            followerDispatchCount * particlesPerStrand;
+        constexpr uint32_t kFollowerPointThreadsPerGroup = 256u;
+        dispatchTiled(
+            m_followCS.Get(),
+            followerPointDispatchCount,
+            kFollowerPointThreadsPerGroup);
 
         unbindComputeState();
 
@@ -722,6 +766,24 @@ return true;
     void GpuHairViewer::ResetSimulation()
     {
         m_currentBufferIndex = 0;
+        m_accumulator = 0.0f;
+        m_simulationTicksThisFrame = 0u;
+        m_droppedSimulationMilliseconds = 0.0f;
+        m_renderFps = 0.0f;
+        m_simulationHz = 0.0f;
+        m_renderCadenceWindowValid = false;
+        m_recentFrameIntervalsMilliseconds.fill(0.0f);
+        m_recentFrameIntervalCount = 0u;
+        m_recentFrameIntervalWriteIndex = 0u;
+        m_recentFrameAverageMilliseconds = 0.0f;
+        // Session truth is reset only when Run() starts. A user-triggered
+        // simulation reset must not erase a freeze that already happened.
+        m_recentEffectiveFps = 0.0f;
+        m_recentOnePercentLowFps = 0.0f;
+        m_recentFrameP95Milliseconds = 0.0f;
+        m_recentFrameWorstMilliseconds = 0.0f;
+        m_recentFrameStallCount100Milliseconds = 0u;
+        m_observedStallCount100Milliseconds = 0ull;
         // Reset the four 204.8 MiB state buffers entirely on the GPU. The immutable rest
         // buffer already contains the exact initial pose, so CPU re-upload is redundant.
         m_context->CopyResource(m_positions[0].buffer.Get(), m_restPositions.buffer.Get());
@@ -2081,12 +2143,12 @@ return true;
                 }
             }
         }
-        constants.followerUpdateStride = useActiveDispatch ? std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u)) : 1u;
-        constants.followerUpdatePhase = useActiveDispatch ? (m_runtimeFollowerUpdatePhase % std::max<uint32_t>(constants.followerUpdateStride, 1u)) : 0u;
+        constants.followerUpdateStride = 1u;
+        constants.followerUpdatePhase = 0u;
         constants.useCompactedGuideDispatch = useActiveDispatch ? 1u : 0u;
         constants.compactedGuideCount = useActiveDispatch ? static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size()) : 0u;
-        constants.useCompactedFollowerDispatch = useActiveDispatch ? 1u : 0u;
-        constants.compactedFollowerCount = useActiveDispatch ? std::max<uint32_t>(m_activeSetPlan.summary.selectedStrandCount, constants.compactedGuideCount) - constants.compactedGuideCount : 0u;
+        constants.useCompactedFollowerDispatch = 0u;
+        constants.compactedFollowerCount = 0u;
         constants.useCompactedGuidePointDispatch = useActiveDispatch ? 1u : 0u;
         constants.compactedGuidePointCount = compactedGuidePointCount;
     }
@@ -2159,8 +2221,8 @@ return true;
             constants.capsuleData[i * 2 + 1] = { c.pointB.x, c.pointB.y, c.pointB.z, c.radiusB };
         }
         const bool useActiveDispatch = m_enableActiveSetRuntime && m_activeSetPlan.summary.selectedGuideCount > 0u;
-        constants.followerUpdateStride = useActiveDispatch ? std::max<uint32_t>(1u, (m_activeSetPlan.summary.cachedTierCount > 0u) ? 4u : ((m_activeSetPlan.summary.reducedTierCount > 0u) ? 2u : 1u)) : 1u;
-        constants.followerUpdatePhase = useActiveDispatch ? (m_runtimeFollowerUpdatePhase % std::max<uint32_t>(constants.followerUpdateStride, 1u)) : 0u;
-        constants.useCompactedFollowerDispatch = useActiveDispatch ? 1u : 0u;
-        constants.compactedFollowerCount = useActiveDispatch ? std::max<uint32_t>(m_activeSetPlan.summary.selectedStrandCount, static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size())) - static_cast<uint32_t>(m_activeSetPlan.selectedGuideStrandIndices.size()) : 0u;
+        constants.followerUpdateStride = 1u;
+        constants.followerUpdatePhase = 0u;
+        constants.useCompactedFollowerDispatch = 0u;
+        constants.compactedFollowerCount = 0u;
     }

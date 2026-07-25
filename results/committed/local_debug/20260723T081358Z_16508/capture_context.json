@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "hairgpu-local-debug-context-v1",
+  "evidenceClass": "diagnostic_debugger",
+  "formalEvidence": false,
+  "launchMode": "visual_studio_local_debugger",
+  "debuggerAttached": true,
+  "buildConfiguration": "Release",
+  "platform": "x64",
+  "warmupFrames": 120,
+  "captureFrames": 1800,
+  "methodCode": "DEV",
+  "guideCount": 4000,
+  "followersPerGuide": 24,
+  "displayStrandCount": 100000,
+  "particlesPerStrand": 128,
+  "solverIterations": 6,
+  "repositoryRoot": "C:\\Users\\kyose\\source\\repos\\HairSystem",
+  "runDirectory": "C:\\Users\\kyose\\source\\repos\\HairSystem\\results\\committed\\local_debug\\20260723T081358Z_16508",
+  "executable": "C:\\Users\\kyose\\source\\repos\\HairSystem\\bin\\Release\\HairSystem\\HairSystem.exe",
+  "automaticCommitRequested": true,
+  "automaticPushRequested": true,
+  "warning": "Debugger data is diagnostic and must not be used as formal paper evidence."
+}

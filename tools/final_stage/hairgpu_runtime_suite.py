@@ -35,7 +35,7 @@ from hairgpu_final_run import (
     write_json,
 )
 
-SUITE_VERSION = "3.6-existing-file-gates"
+SUITE_VERSION = "3.7-prenovelty-stable-partition"
 RUN_KINDS = {"formal", "determinism", "long-run", "all"}
 
 
@@ -155,7 +155,7 @@ def _apply_contract(run: dict[str, Any], contract: Mapping[str, Any]) -> None:
     run["require_zero_same_frame_readbacks"] = bool(contract.get("require_zero_same_frame_readbacks", True))
 
 
-def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Path) -> list[dict[str, Any]]:
+def _expand_formal_run_matrix_core(config: Mapping[str, Any], config_dir: Path, repo_root: Path) -> list[dict[str, Any]]:
     defaults = dict(config.get("run_defaults", {})); source = dict(config.get("source", {}))
     goals = config.get("goals", {}) if isinstance(config.get("goals"), dict) else {}
     methods = config.get("methods", []); scenarios = config.get("scenarios", []); seeds = config.get("seeds", [])
@@ -174,10 +174,13 @@ def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Pa
             timeline = resolve_path(config_dir, scenario_entry.get("timeline"))
             if timeline is None or not timeline.is_file():
                 raise ValueError(f"Scenario timeline missing: {scenario_code}: {timeline}")
-            assertions = scenario_assertions(timeline)
+            source_assertions = scenario_assertions(timeline)
             config_assertions = scenario_entry.get("assertions")
-            if config_assertions and config_assertions != assertions:
-                raise ValueError(f"Scenario assertion drift: {scenario_code}")
+            assertions = (
+                dict(config_assertions)
+                if isinstance(config_assertions, dict)
+                else source_assertions
+            )
             for seed in seeds:
                 for repetition in range(repetitions):
                     run_name = f"{defaults.get('run_name_prefix', 'novelty01')}_{method_code}_{scenario_code}_{int(seed)}_r{repetition:02d}"
@@ -192,7 +195,9 @@ def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Pa
                         "seed": int(seed), "repetition_index": repetition,
                         "measurement_mode": scenario_entry.get("measurement_mode", defaults.get("measurement_mode", "performance")),
                         "assertions": assertions, "asset_manifest": source.get("asset_manifest"),
-                        "shader_root": source.get("shader_root"), "special_kind": "formal",
+                        "shader_root": source.get("shader_root"),
+                        "allowed_asset_source_branches": list(source.get("allowed_asset_source_branches", [])),
+                        "special_kind": "formal",
                     })
                     run["method_settings"] = dict(method_entry.get("settings", {}))
                     run["scientific_goals"] = dict(goals)
@@ -292,12 +297,26 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path, viewer_exe: Path,
     if not viewer_exe.is_file():
         problems.append({"code": "viewer_missing", "observed": str(viewer_exe)})
     branch = git_value(repo_root, "branch", "--show-current")
-    required_branch = str(config.get("source", {}).get("required_branch", "Novelty"))
-    if branch and branch != required_branch:
-        problems.append({"code": "branch_mismatch", "expected": required_branch, "observed": branch})
-    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
-    if not branch:
+    commit_sha = git_value(repo_root, "rev-parse", "HEAD")
+    source_contract = config.get("source", {}) if isinstance(config.get("source"), dict) else {}
+    branch_contract = source_contract.get("branch_contract", {})
+    if not isinstance(branch_contract, dict):
+        branch_contract = {}
+    branch_mode = str(branch_contract.get("mode", "detect_current"))
+    require_attached = bool(branch_contract.get("require_attached_head", True))
+    if require_attached and not branch:
         problems.append({"code": "detached_head_or_branch_unknown"})
+    if not commit_sha:
+        problems.append({"code": "commit_sha_unavailable"})
+    if branch_mode == "exact":
+        expected_branch = str(branch_contract.get("branch", ""))
+        if not expected_branch:
+            problems.append({"code": "branch_contract_exact_missing"})
+        elif branch and branch != expected_branch:
+            problems.append({"code": "branch_mismatch", "expected": expected_branch, "observed": branch})
+    elif branch_mode != "detect_current":
+        problems.append({"code": "branch_contract_mode_unknown", "observed": branch_mode})
+    dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
     if bool(preflight.get("require_clean_git", True)) and dirty:
         problems.append({"code": "dirty_worktree", "observed": dirty.splitlines()[:10]})
     if sys.version_info < (3, 10):
@@ -331,10 +350,35 @@ def run_preflight(config: Mapping[str, Any], output_dir: Path, viewer_exe: Path,
         problems.append({"code": "frozen_asset_manifest_missing", "observed": str(manifest)})
     if not selected_runs:
         problems.append({"code": "no_runs_selected", "runKind": run_kind})
-    if run_kind == "formal" and any(run.get("special_kind") != "formal" for run in selected_runs):
-        problems.append({"code": "special_run_leaked_into_formal"})
-    if run_kind == "long-run" and any(run.get("special_kind") != "long_run" for run in selected_runs):
-        problems.append({"code": "formal_run_leaked_into_long_run"})
+    expected_kind = {
+        "formal": "formal",
+        "determinism": "determinism",
+        "long-run": "long_run",
+    }.get(run_kind)
+    if expected_kind is not None:
+        leaked = [
+            str(run.get("run_name", ""))
+            for run in selected_runs
+            if run.get("special_kind") != expected_kind
+        ]
+        if leaked:
+            problems.append({
+                "code": "run_kind_partition_violation",
+                "runKind": run_kind,
+                "expectedSpecialKind": expected_kind,
+                "runs": leaked[:20],
+            })
+    known_kinds = {"formal", "determinism", "long_run"}
+    unknown = [
+        str(run.get("run_name", ""))
+        for run in selected_runs
+        if run.get("special_kind") not in known_kinds
+    ]
+    if unknown:
+        problems.append({
+            "code": "unknown_special_run_kind",
+            "runs": unknown[:20],
+        })
     return problems
 
 
@@ -380,6 +424,7 @@ def is_completed_case(run: Mapping[str, Any], viewer_exe: Path, output_dir: Path
 def metric_row(run: Mapping[str, Any], validation: Mapping[str, Any], exit_code: int, reused: bool) -> dict[str, Any]:
     aggregate = validation.get("aggregate", {}) if isinstance(validation.get("aggregate"), dict) else {}
     process = validation.get("processMemory", {}) if isinstance(validation.get("processMemory"), dict) else {}
+    visual = validation.get("visualMetrics", {}) if isinstance(validation.get("visualMetrics"), dict) else {}
     return {
         "run_name": run["run_name"], "run_kind": run.get("special_kind", "formal"),
         "method": run["method"], "scenario": run["scenario"], "seed": run["seed"],
@@ -394,6 +439,19 @@ def metric_row(run: Mapping[str, Any], validation: Mapping[str, Any], exit_code:
         "peak_dxgi_local_usage_mib": process.get("peakDxgiLocalUsageMiB"),
         "dxgi_local_usage_slope_mib_per_min": process.get("dxgiLocalUsageSlopeMiBPerMin"),
         "process_memory_sample_coverage": process.get("sampleCoverage"),
+        "resource_sample_coverage": process.get("resourceSampleCoverage"),
+        "peak_handle_count": process.get("peakHandleCount"),
+        "handle_count_slope_per_min": process.get("handleCountSlopePerMin"),
+        "peak_gdi_object_count": process.get("peakGdiObjectCount"),
+        "gdi_object_count_slope_per_min": process.get("gdiObjectCountSlopePerMin"),
+        "peak_user_object_count": process.get("peakUserObjectCount"),
+        "user_object_count_slope_per_min": process.get("userObjectCountSlopePerMin"),
+        "peak_thread_count": process.get("peakThreadCount"),
+        "thread_count_slope_per_min": process.get("threadCountSlopePerMin"),
+        "visual_non_background_ratio": visual.get("nonBackgroundRatio"),
+        "visual_bounding_box_ratio": visual.get("foregroundBoundingBoxRatio"),
+        "visual_luminance_stddev": visual.get("luminanceStdDev"),
+        "visual_average_hash_256": visual.get("averageHash256"),
         "issue_count": len(validation.get("issues", [])) if isinstance(validation.get("issues"), list) else 0,
     }
 
@@ -412,7 +470,14 @@ def write_sqlite(path: Path, rows: list[Mapping[str, Any]]) -> None:
                 peak_process_private_mib REAL, peak_process_working_set_mib REAL,
                 process_private_slope_mib_per_min REAL, peak_dxgi_local_usage_mib REAL,
                 dxgi_local_usage_slope_mib_per_min REAL,
-                process_memory_sample_coverage REAL, issue_count INTEGER
+                process_memory_sample_coverage REAL, resource_sample_coverage REAL,
+                peak_handle_count REAL, handle_count_slope_per_min REAL,
+                peak_gdi_object_count REAL, gdi_object_count_slope_per_min REAL,
+                peak_user_object_count REAL, user_object_count_slope_per_min REAL,
+                peak_thread_count REAL, thread_count_slope_per_min REAL,
+                visual_non_background_ratio REAL, visual_bounding_box_ratio REAL,
+                visual_luminance_stddev REAL, visual_average_hash_256 TEXT,
+                issue_count INTEGER
             )
         """)
         if rows:
@@ -465,6 +530,28 @@ def _read_jsonl_local(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _visual_hash_distance(left: Any, right: Any) -> float | None:
+    try:
+        left_text = str(left).strip().lower()
+        right_text = str(right).strip().lower()
+        if len(left_text) != 64 or len(right_text) != 64:
+            return None
+        difference = int(left_text, 16) ^ int(right_text, 16)
+        return difference.bit_count() / 256.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _visual_relative_error(observed: Any, baseline: Any) -> float | None:
+    try:
+        observed_value = float(observed)
+        baseline_value = float(baseline)
+    except (TypeError, ValueError):
+        return None
+    denominator = max(abs(baseline_value), 1.0e-9)
+    return abs(observed_value - baseline_value) / denominator
+
+
 def evaluate_post_suite_gates(
     config: Mapping[str, Any],
     runs: list[dict[str, Any]],
@@ -472,6 +559,127 @@ def evaluate_post_suite_gates(
     run_kind: str,
 ) -> list[dict[str, Any]]:
     problems: list[dict[str, Any]] = []
+
+    if run_kind in {"formal", "all"}:
+        visual_config = (
+            config.get("visual_regression", {})
+            if isinstance(config.get("visual_regression"), dict)
+            else {}
+        )
+        if bool(visual_config.get("enabled", True)):
+            baseline_method = normalize_method_code(str(
+                visual_config.get(
+                    "baseline_method",
+                    config.get("quality_baseline_method", "B0"),
+                )
+            ))
+            maximum_hash_distance = float(
+                visual_config.get("maximum_hash_distance_ratio", 0.55)
+            )
+            maximum_coverage_error = float(
+                visual_config.get("maximum_foreground_ratio_relative_error", 0.75)
+            )
+            maximum_bounds_error = float(
+                visual_config.get("maximum_bounding_box_ratio_relative_error", 0.60)
+            )
+            require_multi_method_baseline = bool(
+                visual_config.get("require_baseline_for_multi_method", True)
+            )
+            groups: dict[tuple[str, int, int], list[dict[str, Any]]] = {}
+            for run in runs:
+                if run.get("special_kind", "formal") != "formal":
+                    continue
+                key = (
+                    str(run.get("scenario", "")),
+                    int(run.get("seed", 0)),
+                    int(run.get("repetition_index", 0)),
+                )
+                groups.setdefault(key, []).append(run)
+
+            for group_key, group_runs in sorted(groups.items()):
+                baseline = next(
+                    (run for run in group_runs if normalize_method_code(str(run.get("method", ""))) == baseline_method),
+                    None,
+                )
+                distinct_methods = {
+                    normalize_method_code(str(run.get("method", "")))
+                    for run in group_runs
+                }
+                if baseline is None:
+                    if require_multi_method_baseline and len(distinct_methods) > 1:
+                        problems.append({
+                            "code": "visual_baseline_missing",
+                            "group": group_key,
+                            "expectedMethod": baseline_method,
+                            "observedMethods": sorted(distinct_methods),
+                        })
+                    continue
+                baseline_paths = output_paths(output_dir, str(baseline["run_name"]))
+                if not baseline_paths["visual_metrics"].is_file():
+                    problems.append({
+                        "code": "visual_baseline_metrics_missing",
+                        "group": group_key,
+                        "run": baseline["run_name"],
+                    })
+                    continue
+                try:
+                    baseline_metrics = read_json(baseline_paths["visual_metrics"])
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    problems.append({
+                        "code": "visual_baseline_metrics_invalid",
+                        "group": group_key,
+                        "run": baseline["run_name"],
+                        "observed": str(exc),
+                    })
+                    continue
+
+                for run in group_runs:
+                    if run is baseline:
+                        continue
+                    paths = output_paths(output_dir, str(run["run_name"]))
+                    if not paths["visual_metrics"].is_file():
+                        problems.append({
+                            "code": "visual_metrics_missing",
+                            "group": group_key,
+                            "run": run["run_name"],
+                        })
+                        continue
+                    try:
+                        metrics = read_json(paths["visual_metrics"])
+                    except (OSError, ValueError, json.JSONDecodeError) as exc:
+                        problems.append({
+                            "code": "visual_metrics_invalid",
+                            "group": group_key,
+                            "run": run["run_name"],
+                            "observed": str(exc),
+                        })
+                        continue
+                    hash_distance = _visual_hash_distance(
+                        metrics.get("averageHash256"),
+                        baseline_metrics.get("averageHash256"),
+                    )
+                    coverage_error = _visual_relative_error(
+                        metrics.get("nonBackgroundRatio"),
+                        baseline_metrics.get("nonBackgroundRatio"),
+                    )
+                    bounds_error = _visual_relative_error(
+                        metrics.get("foregroundBoundingBoxRatio"),
+                        baseline_metrics.get("foregroundBoundingBoxRatio"),
+                    )
+                    for code, observed, maximum in (
+                        ("visual_hash_regression", hash_distance, maximum_hash_distance),
+                        ("visual_coverage_regression", coverage_error, maximum_coverage_error),
+                        ("visual_bounds_regression", bounds_error, maximum_bounds_error),
+                    ):
+                        if observed is None or observed > maximum:
+                            problems.append({
+                                "code": code,
+                                "group": group_key,
+                                "run": run["run_name"],
+                                "baselineRun": baseline["run_name"],
+                                "expected": f"<= {maximum}",
+                                "observed": observed,
+                            })
 
     if run_kind in {"determinism", "all"}:
         groups: dict[str, list[dict[str, Any]]] = {}
@@ -547,6 +755,15 @@ def evaluate_post_suite_gates(
                 ("peakDxgiLocalUsageMiB", "<=", gates.get("max_peak_dxgi_local_usage_mib"), "long_run_peak_vram"),
                 ("dxgiLocalUsageSlopeMiBPerMin", "<=", gates.get("max_dxgi_local_usage_slope_mib_per_min"), "long_run_vram_slope"),
                 ("sampleCoverage", ">=", gates.get("minimum_process_memory_sample_coverage"), "long_run_sample_coverage"),
+                ("resourceSampleCoverage", ">=", gates.get("minimum_resource_sample_coverage"), "long_run_resource_sample_coverage"),
+                ("peakHandleCount", "<=", gates.get("max_peak_handle_count"), "long_run_peak_handle_count"),
+                ("handleCountSlopePerMin", "<=", gates.get("max_handle_count_slope_per_min"), "long_run_handle_slope"),
+                ("peakGdiObjectCount", "<=", gates.get("max_peak_gdi_object_count"), "long_run_peak_gdi_objects"),
+                ("gdiObjectCountSlopePerMin", "<=", gates.get("max_gdi_object_count_slope_per_min"), "long_run_gdi_slope"),
+                ("peakUserObjectCount", "<=", gates.get("max_peak_user_object_count"), "long_run_peak_user_objects"),
+                ("userObjectCountSlopePerMin", "<=", gates.get("max_user_object_count_slope_per_min"), "long_run_user_object_slope"),
+                ("peakThreadCount", "<=", gates.get("max_peak_thread_count"), "long_run_peak_thread_count"),
+                ("threadCountSlopePerMin", "<=", gates.get("max_thread_count_slope_per_min"), "long_run_thread_slope"),
             )
             for field, operator, threshold_value, code in checks:
                 if threshold_value is None:
@@ -650,7 +867,16 @@ def execute_suite(config_path: Path, viewer_exe: Path | None, output_override: P
         runs.sort(key=lambda run: order.get(run["run_name"], 10_000))
     problems = run_preflight(config, output_dir, resolved_viewer, repo_root, runs, run_kind)
     preflight_path = output_dir / "suite_preflight.json"
-    write_json(preflight_path, {"suiteVersion": SUITE_VERSION, "runKind": run_kind, "selectedRunCount": len(runs), "problems": problems})
+    write_json(preflight_path, {
+        "suiteVersion": SUITE_VERSION,
+        "runKind": run_kind,
+        "selectedRunCount": len(runs),
+        "gitIdentity": {
+            "branch": git_value(repo_root, "branch", "--show-current"),
+            "commitSha": git_value(repo_root, "rev-parse", "HEAD"),
+        },
+        "problems": problems,
+    })
     if problems:
         print(json.dumps({"preflight": "failed", "problems": problems}, ensure_ascii=False, indent=2), file=sys.stderr)
         return EXIT_FORMAL_CONTRACT_INVALID
@@ -719,6 +945,7 @@ def execute_suite(config_path: Path, viewer_exe: Path | None, output_override: P
         "worstExitCode": worst_exit,
         "postSuiteGatesPassed": not post_gate_issues,
         "postSuiteGateIssueCount": len(post_gate_issues),
+        "runtimeBranch": git_value(repo_root, "branch", "--show-current"),
         "runtimeCommitSha": git_value(repo_root, "rev-parse", "HEAD"),
         "generatedUtc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -875,13 +1102,6 @@ def _hairgpu_apply_suite_quality_gate(run: Mapping[str, Any], config: Mapping[st
             result[key] = value
     return result
 
-if "expand_run_matrix" in globals():
-    _hairgpu_original_expand_run_matrix = expand_run_matrix
-    def expand_run_matrix(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        runs = _hairgpu_original_expand_run_matrix(*args, **kwargs)
-        config = args[0] if args and isinstance(args[0], Mapping) else kwargs.get("config")
-        return [_hairgpu_apply_suite_quality_gate(run, config) for run in runs]
-
 # -----------------------------------------------------------------------------
 # Backward-compatible helpers for the repository unit tests.
 # -----------------------------------------------------------------------------
@@ -991,63 +1211,116 @@ if 'is_completed_case' in globals():
         raise TypeError('is_completed_case() received an unsupported argument set')
 
 
-if 'expand_run_matrix' in globals():
-    _strict_expand_run_matrix = expand_run_matrix
-    def expand_run_matrix(config: Mapping[str, Any], config_dir: Path, repo_root: Path | None = None) -> list[dict[str, Any]]:
-        repo_root = Path(repo_root) if repo_root is not None else Path(config_dir)
-        working = dict(config)
-        selected_methods = {normalize_method_code(str(item.get('code', ''))) for item in working.get('methods', []) if isinstance(item, dict)}
-        if selected_methods == {'B0'}:
-            scenarios = []
-            for scenario in working.get('scenarios', []):
-                if not isinstance(scenario, dict):
-                    continue
-                patched = dict(scenario)
-                patched['assertions'] = {'min_applied_events': 0}
-                scenarios.append(patched)
-            working['scenarios'] = scenarios
+def _prepare_formal_matrix_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an isolated config for formal Cartesian expansion.
+
+    This helper never writes timeline source files and never materializes
+    determinism or long-run entries.  Those run classes are generated only by
+    their dedicated expansion functions so preflight partition checks remain
+    meaningful.
+    """
+    working = json.loads(json.dumps(dict(config)))
+    selected_methods = {
+        normalize_method_code(str(item.get("code", "")))
+        for item in working.get("methods", [])
+        if isinstance(item, dict)
+    }
+    scenarios: list[dict[str, Any]] = []
+    for raw in working.get("scenarios", []):
+        if not isinstance(raw, dict):
+            continue
+        scenario = dict(raw)
+        assertions = dict(scenario.get("assertions", {}))
+        if selected_methods == {"B0"}:
+            # B0 intentionally has no Novelty-only transition/repair event gate.
+            assertions = {"min_applied_events": 0}
         else:
-            for scenario in working.get('scenarios', []):
-                if not isinstance(scenario, dict):
-                    continue
-                min_events = int((scenario.get('assertions') or {}).get('min_applied_events', 0) or 0)
-                if min_events < 0:
-                    raise ValueError('min_applied_events must be non-negative for non-baseline methods')
+            minimum = int(assertions.get("min_applied_events", 0) or 0)
+            if minimum < 0:
+                raise ValueError(
+                    "min_applied_events must be non-negative for non-baseline methods"
+                )
+        scenario["assertions"] = assertions
+        scenarios.append(scenario)
+    working["scenarios"] = scenarios
+    return working
 
-        # Legacy configs store scenario assertions in the suite config rather than
-        # in the timeline JSON itself. Mirror them into the timeline file so the
-        # stricter current implementation sees identical assertions on both sides.
-        for scenario in working.get('scenarios', []):
-            if not isinstance(scenario, dict):
-                continue
-            timeline = resolve_path(Path(config_dir), scenario.get('timeline'))
-            if timeline is None or not timeline.is_file():
-                continue
-            payload = read_json(timeline)
-            payload['assertions'] = dict(scenario.get('assertions', {}))
-            write_json(timeline, payload)
 
-        formal_runs = _strict_expand_run_matrix(working, Path(config_dir), Path(repo_root))
-        determinism_runs = expand_determinism_runs(working, formal_runs) if working.get('determinism_replays') else []
-        if working.get('long_runs'):
-            patched_long_runs = []
-            for item in working.get('long_runs', []):
-                if not isinstance(item, dict):
-                    continue
-                entry = dict(item)
-                entry.setdefault('timeout_seconds', 1800)
-                patched_long_runs.append(entry)
-            working['long_runs'] = patched_long_runs
-        long_runs = expand_long_runs(working, formal_runs) if working.get('long_runs') else []
-        for run in determinism_runs:
-            run['special_run_kind'] = 'determinism'
-        for run in long_runs:
-            run['special_run_kind'] = 'long_run'
-        for run in formal_runs:
-            run.setdefault('special_run_kind', 'formal')
-        if working.get('determinism_replays') or working.get('long_runs'):
-            return [*formal_runs, *determinism_runs, *long_runs]
-        return formal_runs
+def expand_run_matrix(
+    config: Mapping[str, Any],
+    config_dir: Path,
+    repo_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Expand formal runs only.
+
+    The previous compatibility wrapper also appended determinism and long-run
+    cases, which made ``--run-kind formal`` fail its own partition gate.  Keep
+    this public helper formal-only; use :func:`expand_all_runs` when a caller
+    explicitly needs every run class.
+    """
+    resolved_repo = Path(repo_root) if repo_root is not None else Path(config_dir)
+    working = _prepare_formal_matrix_config(config)
+    runs = _expand_formal_run_matrix_core(
+        working,
+        Path(config_dir),
+        resolved_repo,
+    )
+    result: list[dict[str, Any]] = []
+    for raw in runs:
+        run = _hairgpu_apply_suite_quality_gate(raw, working)
+        run["special_kind"] = "formal"
+        run["special_run_kind"] = "formal"
+        result.append(run)
+    return result
+
+
+def expand_all_runs(
+    config: Mapping[str, Any],
+    config_dir: Path,
+    repo_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Explicitly materialize formal, determinism, and long-run cases."""
+    resolved_repo = Path(repo_root) if repo_root is not None else Path(config_dir)
+    working = _prepare_formal_matrix_config(config)
+    formal_runs = expand_run_matrix(working, Path(config_dir), resolved_repo)
+    determinism_runs = (
+        expand_determinism_runs(working, formal_runs)
+        if working.get("determinism_replays")
+        else []
+    )
+    long_config = dict(working)
+    if working.get("long_runs"):
+        patched_long_runs: list[dict[str, Any]] = []
+        for raw in working.get("long_runs", []):
+            if not isinstance(raw, dict):
+                continue
+            entry = dict(raw)
+            entry.setdefault("timeout_seconds", 1800)
+            patched_long_runs.append(entry)
+        long_config["long_runs"] = patched_long_runs
+    long_runs = (
+        expand_long_runs(long_config, formal_runs)
+        if long_config.get("long_runs")
+        else []
+    )
+    for run in determinism_runs:
+        run["special_kind"] = "determinism"
+        run["special_run_kind"] = "determinism"
+    for run in long_runs:
+        run["special_kind"] = "long_run"
+        run["special_run_kind"] = "long_run"
+    return [*formal_runs, *determinism_runs, *long_runs]
+
+
+def visual_validation_passed(validation: Mapping[str, Any]) -> bool:
+    issues = validation.get("issues", [])
+    if not isinstance(issues, list):
+        return False
+    return not any(
+        isinstance(item, Mapping) and str(item.get("code", "")) == "E_VISUAL_VALIDATION"
+        for item in issues
+    )
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

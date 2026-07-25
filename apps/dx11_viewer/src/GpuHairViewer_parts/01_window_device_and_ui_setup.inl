@@ -475,7 +475,6 @@
             return std::isfinite(outNdc.x) && std::isfinite(outNdc.y) && std::isfinite(outNdc.z);
         }
 
-
         UINT DispatchGroups(UINT itemCount, UINT groupSize)
         {
             return (itemCount + groupSize - 1u) / groupSize;
@@ -619,7 +618,6 @@
         }
     }
 
-
     void GpuHairViewer::EnforceFixedWorkload()
     {
         m_builderGuideCount = kFixedGuideCount;
@@ -632,285 +630,6 @@
         m_experimentCase.requestedParticlesPerGuide = kFixedParticlesPerStrand;
         m_experimentCase.requestedSolverIterations = kFixedSolverIterations;
         m_experimentCase.fixedTimeStepSeconds = kFixedTimeStepSeconds;
-    }
-
-    bool GpuHairViewer::CreateUiControls()
-    {
-        HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-        auto createControl = [&](DWORD exStyle, const wchar_t* klass, const wchar_t* text, DWORD style, int id) -> HWND
-        {
-            HWND hwnd = CreateWindowExW(exStyle, klass, text, style | WS_CHILD | WS_VISIBLE,
-                0, 0, 10, 10, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
-            if (hwnd && font)
-            {
-                SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-            }
-            return hwnd;
-        };
-
-        m_uiPanel = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
-        if (!m_uiPanel)
-        {
-            return false;
-        }
-
-        createControl(0, L"STATIC", L"Preset", SS_LEFT, 0);
-        m_comboPreset = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_PRESET);
-        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Rapunzel Preview"));
-        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Calm Studio"));
-        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Windy Demo"));
-        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Heavy Grounded"));
-        SendMessageW(m_comboPreset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Game-ish LOD"));
-
-        m_btnPlayPause = createControl(0, L"BUTTON", L"Pause", BS_PUSHBUTTON, IDC_BTN_PLAYPAUSE);
-        m_btnReset = createControl(0, L"BUTTON", L"Reset", BS_PUSHBUTTON, IDC_BTN_RESET);
-        m_btnStep = createControl(0, L"BUTTON", L"Step", BS_PUSHBUTTON, IDC_BTN_STEP);
-        m_btnApplyAsset = createControl(0, L"BUTTON", L"Rebuild Hair", BS_PUSHBUTTON, IDC_BTN_APPLY_ASSET);
-        m_btnImportAsset = createControl(0, L"BUTTON", L"Import Hair...", BS_PUSHBUTTON, IDC_BTN_IMPORT_ASSET);
-        m_btnSaveSettings = createControl(0, L"BUTTON", L"Save Settings", BS_PUSHBUTTON, IDC_BTN_SAVE_SETTINGS);
-        m_btnLoadSettings = createControl(0, L"BUTTON", L"Load Settings", BS_PUSHBUTTON, IDC_BTN_LOAD_SETTINGS);
-        m_btnExportCsv = createControl(0, L"BUTTON", L"Export Frame CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_CSV);
-        m_btnExportPerfCsv = createControl(0, L"BUTTON", L"Export Perf CSV", BS_PUSHBUTTON, IDC_BTN_EXPORT_PERF_CSV);
-        m_btnBrowseEditStack = createControl(0, L"BUTTON", L"Open Saved Edits...", BS_PUSHBUTTON, IDC_BTN_BROWSE_EDIT_STACK);
-        m_btnClearEditStack = createControl(0, L"BUTTON", L"Reset All Edits", BS_PUSHBUTTON, IDC_BTN_CLEAR_EDIT_STACK);
-        m_labelEditStack = createControl(0, L"STATIC", L"Edit stack: none", SS_LEFT, 0);
-        m_labelInlineEditStack = createControl(0, L"STATIC", L"Advanced Stack Text (optional)", SS_LEFT, IDC_LABEL_INLINE_EDIT_STACK);
-        m_editInlineEditStack = createControl(WS_EX_CLIENTEDGE, L"EDIT", BuildDefaultInlineEditStackText().c_str(), ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL, IDC_EDIT_INLINE_EDIT_STACK);
-        m_btnApplyInlineEditStack = createControl(0, L"BUTTON", L"Apply Inline", BS_PUSHBUTTON, IDC_BTN_APPLY_INLINE_EDIT_STACK);
-        m_btnSaveInlineEditStack = createControl(0, L"BUTTON", L"Save Inline...", BS_PUSHBUTTON, IDC_BTN_SAVE_INLINE_EDIT_STACK);
-        m_btnResetInlineEditStack = createControl(0, L"BUTTON", L"Reset Inline", BS_PUSHBUTTON, IDC_BTN_RESET_INLINE_EDIT_STACK);
-        m_labelQuickEditForm = createControl(0, L"STATIC", L"3) Edit the Selected Layer", SS_LEFT, IDC_LABEL_QUICK_EDIT_FORM);
-        m_labelLayerList = createControl(0, L"STATIC", L"2) Pick a Layer", SS_LEFT, IDC_LABEL_INLINE_LAYER_LIST);
-        m_listInlineLayers = createControl(WS_EX_CLIENTEDGE, WC_LISTBOXW, L"", LBS_NOTIFY | WS_VSCROLL | LBS_HASSTRINGS, IDC_LIST_INLINE_LAYERS);
-        m_labelQuickEditName = createControl(0, L"STATIC", L"Layer Name", SS_LEFT, IDC_LABEL_QUICK_EDIT_NAME);
-        m_editQuickEditName = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"quick_form", ES_AUTOHSCROLL, IDC_EDIT_QUICK_EDIT_NAME);
-        m_btnQuickEditMoveUp = createControl(0, L"BUTTON", L"Move Up", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_MOVE_UP);
-        m_btnQuickEditMoveDown = createControl(0, L"BUTTON", L"Move Down", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_MOVE_DOWN);
-        m_checkQuickEditEnabled = createControl(0, L"BUTTON", L"Layer Enabled", BS_AUTOCHECKBOX, IDC_CHECK_QUICK_EDIT_ENABLED);
-        m_btnQuickEditDelete = createControl(0, L"BUTTON", L"Delete Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_DELETE);
-        m_btnQuickEditDuplicate = createControl(0, L"BUTTON", L"Duplicate Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_DUPLICATE);
-        m_comboQuickEditMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_QUICK_EDIT_MODE);
-        SendMessageW(m_comboQuickEditMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Ellipse"));
-        SendMessageW(m_comboQuickEditMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Rectangle"));
-        SendMessageW(m_comboQuickEditMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Sector"));
-        SendMessageW(m_comboQuickEditMode, CB_SETCURSEL, 0, 0);
-        m_labelQuickEditFeather = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_FEATHER);
-        m_labelQuickEditLengthScale = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_LENGTHSCALE);
-        m_labelQuickEditLayerWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_LAYERWEIGHT);
-        m_labelQuickEditCenterU = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_CENTER_U);
-        m_labelQuickEditCenterV = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_CENTER_V);
-        m_labelQuickEditRadiusU = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_RADIUS_U);
-        m_labelQuickEditRadiusV = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_RADIUS_V);
-        m_labelQuickEditInnerRadius = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_INNER_RADIUS);
-        m_labelQuickEditAngleCenter = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ANGLE_CENTER);
-        m_labelQuickEditAngleHalfExtent = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ANGLE_HALF_EXTENT);
-        m_labelQuickEditRootOffsetX = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_X);
-        m_labelQuickEditRootOffsetY = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_Y);
-        m_labelQuickEditRootOffsetZ = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_ROOT_OFFSET_Z);
-        m_labelQuickEditTipOffsetX = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_TIP_OFFSET_X);
-        m_labelQuickEditTipOffsetY = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_TIP_OFFSET_Y);
-        m_labelQuickEditTipOffsetZ = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_TIP_OFFSET_Z);
-        m_labelQuickEditSideOffset = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_SIDE_OFFSET);
-        m_labelQuickEditYaw = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_YAW);
-        m_labelQuickEditWidthScale = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_WIDTHSCALE);
-        m_labelQuickEditFollowerInfluence = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_FOLLOWER_INFLUENCE);
-        m_labelQuickEditBoundarySmoothing = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_BOUNDARY_SMOOTHING);
-        m_labelQuickEditBoundaryRadiusUv = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_BOUNDARY_RADIUS_UV);
-        m_labelQuickEditGroupId = createControl(0, L"STATIC", L"Group Filter", SS_LEFT, IDC_LABEL_QUICK_EDIT_GROUP_ID);
-        m_editQuickEditGroupId = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL, IDC_EDIT_QUICK_EDIT_GROUP_ID);
-        m_checkQuickEditGuidesOnly = createControl(0, L"BUTTON", L"Guides Only", BS_AUTOCHECKBOX, IDC_CHECK_QUICK_EDIT_GUIDES_ONLY);
-        m_labelQuickEditVisualization = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_QUICK_EDIT_VISUALIZATION);
-        m_btnQuickEditReplace = createControl(0, L"BUTTON", L"Apply to This Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_REPLACE);
-        m_btnQuickEditAppend = createControl(0, L"BUTTON", L"Add New Layer", BS_PUSHBUTTON, IDC_BTN_QUICK_EDIT_APPEND);
-        m_btnBrowsePartingMask = createControl(0, L"BUTTON", L"Browse Parting Mask...", BS_PUSHBUTTON, IDC_BTN_BROWSE_PARTING_MASK);
-        m_btnBrowseRegionMask = createControl(0, L"BUTTON", L"Browse Region Mask...", BS_PUSHBUTTON, IDC_BTN_BROWSE_REGION_MASK);
-        m_labelMaskSource = createControl(0, L"STATIC", L"Mask Source", SS_LEFT, IDC_LABEL_MASK_SOURCE);
-        m_comboMaskSource = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_MASK_SOURCE);
-        SendMessageW(m_comboMaskSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto"));
-        SendMessageW(m_comboMaskSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"External Files"));
-        SendMessageW(m_comboMaskSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Procedural"));
-        SendMessageW(m_comboMaskSource, CB_SETCURSEL, 0, 0);
-        m_labelMaskOverlay = createControl(0, L"STATIC", L"Scalp Overlay", SS_LEFT, IDC_LABEL_SELF_RADIUS + 100);
-        m_comboMaskOverlay = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_MASK_OVERLAY);
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"None"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Parting Overlay"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Region Overlay"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Influence"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Boundary Compare"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Selection / Risk"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Motion Score"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Contact Score"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Uncertainty Score"));
-        SendMessageW(m_comboMaskOverlay, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Score"));
-        SendMessageW(m_comboMaskOverlay, CB_SETCURSEL, 0, 0);
-        m_labelPartingMask = createControl(0, L"STATIC", L"Parting preview", SS_LEFT, IDC_LABEL_PARTING_MASK_NAME);
-        m_previewPartingMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_PARTING_MASK);
-        m_labelRegionMask = createControl(0, L"STATIC", L"Region preview", SS_LEFT, IDC_LABEL_REGION_MASK_NAME);
-        m_previewRegionMask = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_BITMAP | SS_CENTERIMAGE | SS_NOTIFY, IDC_PREVIEW_REGION_MASK);
-
-        createControl(0, L"STATIC", L"Guides", SS_LEFT, 0);
-        m_editGuides = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_GUIDES);
-        createControl(0, L"STATIC", L"Followers / guide", SS_LEFT, 0);
-        m_editFollowers = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_FOLLOWERS);
-        createControl(0, L"STATIC", L"Particles / strand", SS_LEFT, 0);
-        m_editParticles = createControl(WS_EX_CLIENTEDGE, L"EDIT", L"", ES_AUTOHSCROLL | ES_NUMBER, IDC_EDIT_PARTICLES);
-
-        createControl(0, L"STATIC", L"Render", SS_LEFT, 0);
-        m_comboRenderMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_RENDER_MODE);
-        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Particle Point Sprite"));
-        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Particle Billboard"));
-        SendMessageW(m_comboRenderMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Strand Ribbon"));
-        SendMessageW(m_comboRenderMode, CB_SETCURSEL, 2, 0);
-
-        createControl(0, L"STATIC", L"Interaction", SS_LEFT, 0);
-        m_comboInteractionMode = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_INTERACTION_MODE);
-        SendMessageW(m_comboInteractionMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"View Mode"));
-        SendMessageW(m_comboInteractionMode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Edit Mode"));
-        SendMessageW(m_comboInteractionMode, CB_SETCURSEL, 1, 0);
-
-        createControl(0, L"STATIC", L"Color Debug", SS_LEFT, 0);
-        m_comboDebugColor = createControl(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | CBS_HASSTRINGS, IDC_COMBO_DEBUG_COLOR);
-        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Natural"));
-        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Guide / Follower"));
-        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Width Heatmap"));
-        SendMessageW(m_comboDebugColor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Editable / Locked"));
-        SendMessageW(m_comboDebugColor, CB_SETCURSEL, 0, 0);
-
-        m_checkSelfCollision = createControl(0, L"BUTTON", L"Self Collision", BS_AUTOCHECKBOX, IDC_CHECK_SELF_COLLISION);
-        m_checkGrid = createControl(0, L"BUTTON", L"Density Grid", BS_AUTOCHECKBOX, IDC_CHECK_GRID);
-        m_checkScalpMotion = createControl(0, L"BUTTON", L"Scalp Motion (disabled)", BS_AUTOCHECKBOX, IDC_CHECK_SCALP_MOTION);
-        m_checkShowColliders = createControl(0, L"BUTTON", L"Show Colliders", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_COLLIDERS);
-        m_checkShowScalpMesh = createControl(0, L"BUTTON", L"Show Scalp Mesh", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_SCALP_MESH);
-        m_checkShowScalp = createControl(0, L"BUTTON", L"Show Scalp Wireframe", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_SCALP);
-        m_checkShowGridBounds = createControl(0, L"BUTTON", L"Show Grid Bounds", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_GRID_BOUNDS);
-        m_checkShowFloor = createControl(0, L"BUTTON", L"Show Floor Guide", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_FLOOR);
-        m_checkShowGuides = createControl(0, L"BUTTON", L"Show Guide Skeletons", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_GUIDES);
-        m_checkShowFollowers = createControl(0, L"BUTTON", L"Show Follower Skeletons", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_FOLLOWERS);
-        m_checkShowRoots = createControl(0, L"BUTTON", L"Show Root Markers", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_ROOTS);
-        m_checkShowLinks = createControl(0, L"BUTTON", L"Show Follow Links", BS_AUTOCHECKBOX, IDC_CHECK_SHOW_LINKS);
-
-        auto createSlider = [&](int id) -> HWND
-        {
-            HWND hwnd = createControl(0, TRACKBAR_CLASSW, L"", TBS_AUTOTICKS | TBS_HORZ, id);
-            SendMessageW(hwnd, TBM_SETRANGEMIN, FALSE, 0);
-            SendMessageW(hwnd, TBM_SETRANGEMAX, TRUE, 1000);
-            return hwnd;
-        };
-
-        m_labelScalpCoverageStrength = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_COVERAGE_STRENGTH);
-        m_trackScalpCoverageStrength = createSlider(IDC_TRACK_SCALP_COVERAGE_STRENGTH);
-        m_labelScalpPartWidth = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_PART_WIDTH);
-        m_trackScalpPartWidth = createSlider(IDC_TRACK_SCALP_PART_WIDTH);
-        m_labelScalpDarkness = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_DARKNESS);
-        m_trackScalpDarkness = createSlider(IDC_TRACK_SCALP_DARKNESS);
-        m_labelScalpHairBlend = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SCALP_HAIR_BLEND);
-        m_trackScalpHairBlend = createSlider(IDC_TRACK_SCALP_HAIR_BLEND);
-
-        m_trackQuickEditFeather = createSlider(IDC_TRACK_QUICK_EDIT_FEATHER);
-        m_trackQuickEditLengthScale = createSlider(IDC_TRACK_QUICK_EDIT_LENGTHSCALE);
-        m_trackQuickEditLayerWeight = createSlider(IDC_TRACK_QUICK_EDIT_LAYERWEIGHT);
-        m_trackQuickEditCenterU = createSlider(IDC_TRACK_QUICK_EDIT_CENTER_U);
-        m_trackQuickEditCenterV = createSlider(IDC_TRACK_QUICK_EDIT_CENTER_V);
-        m_trackQuickEditRadiusU = createSlider(IDC_TRACK_QUICK_EDIT_RADIUS_U);
-        m_trackQuickEditRadiusV = createSlider(IDC_TRACK_QUICK_EDIT_RADIUS_V);
-        m_trackQuickEditInnerRadius = createSlider(IDC_TRACK_QUICK_EDIT_INNER_RADIUS);
-        m_trackQuickEditAngleCenter = createSlider(IDC_TRACK_QUICK_EDIT_ANGLE_CENTER);
-        m_trackQuickEditAngleHalfExtent = createSlider(IDC_TRACK_QUICK_EDIT_ANGLE_HALF_EXTENT);
-        m_trackQuickEditRootOffsetX = createSlider(IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_X);
-        m_trackQuickEditRootOffsetY = createSlider(IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_Y);
-        m_trackQuickEditRootOffsetZ = createSlider(IDC_TRACK_QUICK_EDIT_ROOT_OFFSET_Z);
-        m_trackQuickEditTipOffsetX = createSlider(IDC_TRACK_QUICK_EDIT_TIP_OFFSET_X);
-        m_trackQuickEditTipOffsetY = createSlider(IDC_TRACK_QUICK_EDIT_TIP_OFFSET_Y);
-        m_trackQuickEditTipOffsetZ = createSlider(IDC_TRACK_QUICK_EDIT_TIP_OFFSET_Z);
-        m_trackQuickEditSideOffset = createSlider(IDC_TRACK_QUICK_EDIT_SIDE_OFFSET);
-        m_trackQuickEditYaw = createSlider(IDC_TRACK_QUICK_EDIT_YAW);
-        m_trackQuickEditWidthScale = createSlider(IDC_TRACK_QUICK_EDIT_WIDTHSCALE);
-        m_trackQuickEditFollowerInfluence = createSlider(IDC_TRACK_QUICK_EDIT_FOLLOWER_INFLUENCE);
-        m_trackQuickEditBoundarySmoothing = createSlider(IDC_TRACK_QUICK_EDIT_BOUNDARY_SMOOTHING);
-        m_trackQuickEditBoundaryRadiusUv = createSlider(IDC_TRACK_QUICK_EDIT_BOUNDARY_RADIUS_UV);
-        m_labelWidth = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WIDTH);
-        m_trackWidth = createSlider(IDC_TRACK_WIDTH);
-        m_labelGravity = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_GRAVITY);
-        m_trackGravity = createSlider(IDC_TRACK_GRAVITY);
-        m_labelDamping = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_DAMPING);
-        m_trackDamping = createSlider(IDC_TRACK_DAMPING);
-        m_labelWind = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WIND);
-        m_trackWind = createSlider(IDC_TRACK_WIND);
-        m_labelIterations = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ITERATIONS);
-        m_trackIterations = createSlider(IDC_TRACK_ITERATIONS);
-        m_labelFollow = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_FOLLOW);
-        m_trackFollow = createSlider(IDC_TRACK_FOLLOW);
-        m_labelSelfRadius = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SELF_RADIUS);
-        m_trackSelfRadius = createSlider(IDC_TRACK_SELF_RADIUS);
-        m_labelSelfStiffness = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SELF_STIFFNESS);
-        m_trackSelfStiffness = createSlider(IDC_TRACK_SELF_STIFFNESS);
-        m_labelGridCellSize = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_GRID_CELL);
-        m_trackGridCellSize = createSlider(IDC_TRACK_GRID_CELL);
-        m_labelStretchCompliance = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STRETCH);
-        m_trackStretchCompliance = createSlider(IDC_TRACK_STRETCH);
-        m_labelBendCompliance = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_BEND);
-        m_trackBendCompliance = createSlider(IDC_TRACK_BEND);
-        m_labelActiveSetTuning = createControl(0, L"STATIC", L"Active-Set Runtime Tuning", SS_LEFT, IDC_LABEL_ACTIVESET_TUNING);
-        m_checkActiveSetAdaptiveBudget = createControl(0, L"BUTTON", L"Adaptive Budget", BS_AUTOCHECKBOX, IDC_CHECK_ACTIVESET_ADAPTIVE_BUDGET);
-        m_checkActiveSetHardClamp = createControl(0, L"BUTTON", L"Hard Budget Clamp", BS_AUTOCHECKBOX, IDC_CHECK_ACTIVESET_HARD_CLAMP);
-        m_labelActiveSetMaxClusters = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_MAX_CLUSTERS);
-        m_trackActiveSetMaxClusters = createSlider(IDC_TRACK_ACTIVESET_MAX_CLUSTERS);
-        m_labelActiveSetMaxGuides = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_MAX_GUIDES);
-        m_trackActiveSetMaxGuides = createSlider(IDC_TRACK_ACTIVESET_MAX_GUIDES);
-        m_labelActiveSetThreshold = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_THRESHOLD);
-        m_trackActiveSetThreshold = createSlider(IDC_TRACK_ACTIVESET_THRESHOLD);
-        m_labelActiveSetTargetFrame = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_TARGET_FRAME);
-        m_trackActiveSetTargetFrame = createSlider(IDC_TRACK_ACTIVESET_TARGET_FRAME);
-        m_labelActiveSetFixedCost = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_FIXED_COST);
-        m_trackActiveSetFixedCost = createSlider(IDC_TRACK_ACTIVESET_FIXED_COST);
-        m_labelActiveSetClusterCost = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_CLUSTER_COST);
-        m_trackActiveSetClusterCost = createSlider(IDC_TRACK_ACTIVESET_CLUSTER_COST);
-        m_labelActiveSetScoreWeights = createControl(0, L"STATIC", L"Active-Set Score Weights", SS_LEFT, IDC_LABEL_ACTIVESET_SCORE_WEIGHTS);
-        m_labelActiveSetMotionWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_MOTION_WEIGHT);
-        m_trackActiveSetMotionWeight = createSlider(IDC_TRACK_ACTIVESET_MOTION_WEIGHT);
-        m_labelActiveSetContactWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_CONTACT_WEIGHT);
-        m_trackActiveSetContactWeight = createSlider(IDC_TRACK_ACTIVESET_CONTACT_WEIGHT);
-        m_labelActiveSetUncertaintyWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_UNCERTAINTY_WEIGHT);
-        m_trackActiveSetUncertaintyWeight = createSlider(IDC_TRACK_ACTIVESET_UNCERTAINTY_WEIGHT);
-        m_labelActiveSetEditWeight = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ACTIVESET_EDIT_WEIGHT);
-        m_trackActiveSetEditWeight = createSlider(IDC_TRACK_ACTIVESET_EDIT_WEIGHT);
-        m_btnExportActiveSetJson = createControl(0, L"BUTTON", L"Export Active-Set JSON", BS_PUSHBUTTON, IDC_BTN_EXPORT_ACTIVESET_JSON);
-        m_btnExportRuntimeReport = createControl(0, L"BUTTON", L"Export Runtime Report", BS_PUSHBUTTON, IDC_BTN_EXPORT_RUNTIME_REPORT);
-
-        m_labelStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_STATS);
-        m_labelAssetStats = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_ASSET_STATS);
-        m_labelEditWorkflow = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
-        m_labelEditLegend = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, 0);
-
-        m_btnWorkspaceGroom = createControl(0, L"BUTTON", L"Groom", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_GROOM);
-        m_btnWorkspaceSim = createControl(0, L"BUTTON", L"Sim", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_SIM);
-        m_btnWorkspaceReview = createControl(0, L"BUTTON", L"Review", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_REVIEW);
-        m_btnWorkspaceReport = createControl(0, L"BUTTON", L"Report", BS_PUSHBUTTON, IDC_BTN_WORKSPACE_REPORT);
-        m_btnToolSelect = createControl(0, L"BUTTON", L"Select", BS_PUSHBUTTON, IDC_BTN_TOOL_SELECT);
-        m_btnToolComb = createControl(0, L"BUTTON", L"Comb", BS_PUSHBUTTON, IDC_BTN_TOOL_COMB);
-        m_btnToolGrab = createControl(0, L"BUTTON", L"Grab", BS_PUSHBUTTON, IDC_BTN_TOOL_GRAB);
-        m_btnToolSmooth = createControl(0, L"BUTTON", L"Smooth", BS_PUSHBUTTON, IDC_BTN_TOOL_SMOOTH);
-        m_btnToolLength = createControl(0, L"BUTTON", L"Length", BS_PUSHBUTTON, IDC_BTN_TOOL_LENGTH);
-        m_btnToolVolume = createControl(0, L"BUTTON", L"Volume", BS_PUSHBUTTON, IDC_BTN_TOOL_VOLUME);
-        m_btnToolPart = createControl(0, L"BUTTON", L"Part", BS_PUSHBUTTON, IDC_BTN_TOOL_PART);
-        m_btnToolFreeze = createControl(0, L"BUTTON", L"Freeze", BS_PUSHBUTTON, IDC_BTN_TOOL_FREEZE);
-        m_btnToolStrandFix = createControl(0, L"BUTTON", L"Strand Fix", BS_PUSHBUTTON, IDC_BTN_TOOL_STRAND_FIX);
-        m_btnUndoEdit = createControl(0, L"BUTTON", L"Undo", BS_PUSHBUTTON, IDC_BTN_UNDO_EDIT);
-        m_btnRedoEdit = createControl(0, L"BUTTON", L"Redo", BS_PUSHBUTTON, IDC_BTN_REDO_EDIT);
-        m_btnTrayLayers = createControl(0, L"BUTTON", L"Layers", BS_PUSHBUTTON, IDC_BTN_TRAY_LAYERS);
-        m_btnTrayHistory = createControl(0, L"BUTTON", L"History", BS_PUSHBUTTON, IDC_BTN_TRAY_HISTORY);
-        m_btnTrayMetrics = createControl(0, L"BUTTON", L"Metrics", BS_PUSHBUTTON, IDC_BTN_TRAY_METRICS);
-        m_btnToggleInspector = createControl(0, L"BUTTON", L"Inspector", BS_PUSHBUTTON, IDC_BTN_TOGGLE_INSPECTOR);
-        m_btnToggleTray = createControl(0, L"BUTTON", L"Layers", BS_PUSHBUTTON, IDC_BTN_TOGGLE_TRAY);
-        m_btnToggleAdvanced = createControl(0, L"BUTTON", L"Advanced", BS_PUSHBUTTON, IDC_BTN_TOGGLE_ADVANCED);
-        m_btnFastViewport = createControl(0, L"BUTTON", L"Fast View", BS_PUSHBUTTON, IDC_BTN_FAST_VIEWPORT);
-        m_labelWorkspaceTitle = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_WORKSPACE_TITLE);
-        m_labelInspectorTitle = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_INSPECTOR_TITLE);
-        m_labelTrayTitle = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_TRAY_TITLE);
-        m_labelToolHint = createControl(WS_EX_CLIENTEDGE, L"STATIC", L"", SS_LEFT, IDC_LABEL_TOOL_HINT);
-        m_labelSessionStatus = createControl(0, L"STATIC", L"", SS_LEFT, IDC_LABEL_SESSION_STATUS);
-
-        return m_comboPreset && m_comboRenderMode && m_comboInteractionMode && m_comboDebugColor && m_comboMaskSource && m_comboMaskOverlay && m_previewPartingMask && m_previewRegionMask && m_btnPlayPause && m_btnStep && m_btnImportAsset && m_btnBrowseEditStack && m_btnClearEditStack && m_labelEditStack && m_labelInlineEditStack && m_editInlineEditStack && m_btnApplyInlineEditStack && m_btnSaveInlineEditStack && m_btnResetInlineEditStack && m_labelQuickEditForm && m_labelLayerList && m_listInlineLayers && m_labelQuickEditName && m_editQuickEditName && m_btnQuickEditMoveUp && m_btnQuickEditMoveDown && m_checkQuickEditEnabled && m_btnQuickEditDelete && m_btnQuickEditDuplicate && m_comboQuickEditMode && m_trackQuickEditFeather && m_trackQuickEditLengthScale && m_trackQuickEditLayerWeight && m_trackQuickEditCenterU && m_trackQuickEditCenterV && m_trackQuickEditRadiusU && m_trackQuickEditRadiusV && m_trackQuickEditInnerRadius && m_trackQuickEditAngleCenter && m_trackQuickEditAngleHalfExtent && m_trackQuickEditRootOffsetX && m_trackQuickEditRootOffsetY && m_trackQuickEditRootOffsetZ && m_trackQuickEditTipOffsetX && m_trackQuickEditTipOffsetY && m_trackQuickEditTipOffsetZ && m_trackQuickEditSideOffset && m_trackQuickEditYaw && m_trackQuickEditWidthScale && m_trackQuickEditFollowerInfluence && m_trackQuickEditBoundarySmoothing && m_trackQuickEditBoundaryRadiusUv && m_editQuickEditGroupId && m_checkQuickEditGuidesOnly && m_labelQuickEditLayerWeight && m_labelQuickEditCenterU && m_labelQuickEditCenterV && m_labelQuickEditRadiusU && m_labelQuickEditRadiusV && m_labelQuickEditInnerRadius && m_labelQuickEditAngleCenter && m_labelQuickEditAngleHalfExtent && m_labelQuickEditRootOffsetX && m_labelQuickEditRootOffsetY && m_labelQuickEditRootOffsetZ && m_labelQuickEditTipOffsetX && m_labelQuickEditTipOffsetY && m_labelQuickEditTipOffsetZ && m_labelQuickEditSideOffset && m_labelQuickEditYaw && m_labelQuickEditWidthScale && m_labelQuickEditFollowerInfluence && m_labelQuickEditBoundarySmoothing && m_labelQuickEditBoundaryRadiusUv && m_labelQuickEditGroupId && m_labelQuickEditVisualization && m_btnQuickEditReplace && m_btnQuickEditAppend && m_trackWidth && m_labelActiveSetTuning && m_checkActiveSetAdaptiveBudget && m_checkActiveSetHardClamp && m_labelActiveSetMaxClusters && m_trackActiveSetMaxClusters && m_labelActiveSetMaxGuides && m_trackActiveSetMaxGuides && m_labelActiveSetThreshold && m_trackActiveSetThreshold && m_labelActiveSetTargetFrame && m_trackActiveSetTargetFrame && m_labelActiveSetFixedCost && m_trackActiveSetFixedCost && m_labelActiveSetClusterCost && m_trackActiveSetClusterCost && m_labelActiveSetScoreWeights && m_labelActiveSetMotionWeight && m_trackActiveSetMotionWeight && m_labelActiveSetContactWeight && m_trackActiveSetContactWeight && m_labelActiveSetUncertaintyWeight && m_trackActiveSetUncertaintyWeight && m_labelActiveSetEditWeight && m_trackActiveSetEditWeight && m_btnExportActiveSetJson && m_btnExportRuntimeReport && m_labelStats && m_labelAssetStats && m_labelEditWorkflow && m_labelEditLegend && m_checkShowScalpMesh && m_labelScalpCoverageStrength && m_trackScalpCoverageStrength && m_labelScalpPartWidth && m_trackScalpPartWidth && m_labelScalpDarkness && m_trackScalpDarkness && m_labelScalpHairBlend && m_trackScalpHairBlend && m_btnWorkspaceGroom && m_btnWorkspaceSim && m_btnWorkspaceReview && m_btnWorkspaceReport && m_btnToolSelect && m_btnToolComb && m_btnToolGrab && m_btnToolSmooth && m_btnToolLength && m_btnToolVolume && m_btnToolPart && m_btnToolFreeze && m_btnToolStrandFix && m_btnUndoEdit && m_btnRedoEdit && m_btnTrayLayers && m_btnTrayHistory && m_btnTrayMetrics && m_btnToggleInspector && m_btnToggleTray && m_btnToggleAdvanced && m_btnFastViewport && m_labelWorkspaceTitle && m_labelInspectorTitle && m_labelTrayTitle && m_labelToolHint && m_labelSessionStatus;
     }
 
     bool GpuHairViewer::Initialize(HINSTANCE instance, int showCommand)
@@ -984,10 +703,21 @@
                 formalAsset.pointWidths.size() == expectedFormalPoints &&
                 formalAsset.rootBindings.size() == expectedFormalStrands &&
                 formalAsset.followData.size() == expectedFormalStrands;
-            if (!formalShapeValid)
+            const hairgpu::HairAssetValidationReport formalTopologyReport =
+                hairgpu::ValidateHairAsset(formalAsset);
+            const bool formalTopologyValid =
+                formalTopologyReport.valid &&
+                formalTopologyReport.invalidGuidePrefixCount == 0u &&
+                formalTopologyReport.invalidFollowerSuffixCount == 0u;
+            if (!formalShapeValid || !formalTopologyValid)
             {
+                const std::string topologyDiagnostic =
+                    hairgpu::BuildHairAssetValidationSummary(
+                        formalTopologyReport,
+                        true);
                 ShowStartupDialog(nullptr, L"Hair GPU Viewer Formal Asset Failure",
-                    L"The frozen asset does not satisfy 4000 guides / 24 followers / 128 points / 100000 displayed strands.");
+                    L"The frozen asset does not satisfy the canonical workload or the contiguous guide-prefix/follower-suffix contract.\r\n\r\n" +
+                    Utf8ToWide(topologyDiagnostic));
                 return false;
             }
 
@@ -1008,8 +738,32 @@
             GetModuleFileNameW(nullptr, assetCacheModulePath, MAX_PATH);
             const std::filesystem::path assetCacheDirectory =
                 std::filesystem::path(assetCacheModulePath).parent_path() / L"asset_cache";
+            // V9 never reuses pre-V9 interactive assets. Earlier cache files can
+            // satisfy count/topology checks while still carrying the old visual/root
+            // layout, which made source changes appear to have no effect.
+            std::error_code legacyCacheError;
+            if (std::filesystem::is_directory(assetCacheDirectory, legacyCacheError) &&
+                !legacyCacheError)
+            {
+                for (const std::filesystem::directory_entry& entry :
+                     std::filesystem::directory_iterator(assetCacheDirectory, legacyCacheError))
+                {
+                    if (legacyCacheError)
+                    {
+                        break;
+                    }
+                    const std::wstring name = entry.path().filename().wstring();
+                    if (name.rfind(L"sample_hybrid_cache_v1", 0u) == 0u ||
+                        name.rfind(L"sample_hybrid_cache_v2", 0u) == 0u ||
+                        name.rfind(L"sample_hybrid_cache_v3", 0u) == 0u)
+                    {
+                        std::error_code removeError;
+                        std::filesystem::remove(entry.path(), removeError);
+                    }
+                }
+            }
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v1_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v5_root_oit_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -1027,6 +781,8 @@
             if (std::filesystem::exists(assetCachePath, assetCacheEc) && !assetCacheEc &&
                 hairgpu::LoadHairAssetFromHairBinary(assetCachePath, cachedAsset, assetCacheError))
             {
+                const hairgpu::HairAssetValidationReport cachedTopologyReport =
+                    hairgpu::ValidateHairAsset(cachedAsset);
                 loadedCachedAsset =
                     cachedAsset.guideStrandCount == m_builderGuideCount &&
                     cachedAsset.followerStrandCount == m_builderGuideCount * m_builderFollowersPerGuide &&
@@ -1035,7 +791,10 @@
                     cachedAsset.restPoints.size() == expectedCachedPoints &&
                     cachedAsset.pointWidths.size() == expectedCachedPoints &&
                     cachedAsset.rootBindings.size() == expectedCachedStrands &&
-                    cachedAsset.followData.size() == expectedCachedStrands;
+                    cachedAsset.followData.size() == expectedCachedStrands &&
+                    cachedTopologyReport.valid &&
+                    cachedTopologyReport.invalidGuidePrefixCount == 0u &&
+                    cachedTopologyReport.invalidFollowerSuffixCount == 0u;
             }
 
             if (loadedCachedAsset)
@@ -1051,6 +810,21 @@
                     m_builderFollowersPerGuide,
                     m_builderParticlesPerStrand,
                     initialSegmentLength);
+                const hairgpu::HairAssetValidationReport generatedTopologyReport =
+                    hairgpu::ValidateHairAsset(m_asset);
+                if (!generatedTopologyReport.valid ||
+                    generatedTopologyReport.invalidGuidePrefixCount > 0u ||
+                    generatedTopologyReport.invalidFollowerSuffixCount > 0u)
+                {
+                    const std::string topologyDiagnostic =
+                        hairgpu::BuildHairAssetValidationSummary(
+                            generatedTopologyReport,
+                            true);
+                    ShowStartupDialog(nullptr, L"Hair GPU Viewer Asset Topology Failure",
+                        L"The procedural asset violates the contiguous guide-prefix/follower-suffix runtime contract.\r\n\r\n" +
+                        Utf8ToWide(topologyDiagnostic));
+                    return false;
+                }
                 // Avoid double wig styling in viewer; sample/import paths already shape the asset.
                 EnsureAssetScalpConformance(m_asset, &m_lastImportStatus);
                 m_lastAssetSource = L"Sample Hybrid (cache rebuilt)";
@@ -1099,9 +873,35 @@
         m_runtimeAngularBendCompliance = 5.0e-6f;
         m_runtimeAngularBendStiffness = 0.36f;
         m_runtimeAngularBendDamping = 0.08f;
-        m_widthScale = 0.56f;
-        m_renderMode = RenderMode::ParticleBillboard;
+        // Stable preview must start in the production ribbon path. Particle modes are
+        // diagnostics only; starting in Billboard mode produces the dotted/helmet-like
+        // appearance when the scalp is hidden by the benchmark preset.
+        // The 100k-strand preview uses narrower authored ribbons than the old
+        // emergency visibility preset. Keeping the fixed workload intact while
+        // reducing width prevents the fringe from becoming a solid plate.
+        m_widthScale = 0.66f;
+        m_renderMode = RenderMode::StrandRibbon;
+        // Stable startup is a reviewable simulation view, never an implicit edit
+        // session inherited from the inline Edit Stack. The editor panel starts
+        // collapsed so the canonical subject is centered in the full viewport.
+        m_activePresetName = L"Stable Benchmark Wig";
+        m_workspaceMode = WorkspaceMode::Sim;
+        m_interactionMode = InteractionMode::View;
+        m_showInspectorPane = false;
+        m_showBottomTray = false;
+        m_showAdvancedInspector = false;
+        m_fastGroomViewport = false;
+        m_groomTool = GroomTool::Select;
+        m_debugColorMode = DebugColorMode::Natural;
+        m_maskOverlayMode = MaskOverlayMode::None;
+        m_selectedStrandIndex = -1;
+        m_cpuReadbackMode = CpuReadbackMode::Off;
         m_showScalpMesh = true;
+        // A slightly darker, better blended scalp closes sub-pixel root gaps
+        // without changing strand count, topology, simulation, or formal data.
+        m_scalpCoverageStrength = 1.04f;
+        m_scalpTintDarkness = 0.58f;
+        m_scalpHairBlend = 0.76f;
         m_showScalpWireframe = false;
         m_showGridBounds = false;
         m_showGuideSkeleton = false;

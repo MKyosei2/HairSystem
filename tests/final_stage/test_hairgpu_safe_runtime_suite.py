@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import sys
 import tempfile
 import types
@@ -248,7 +249,12 @@ class CompletedEnvironmentRegressionTests(unittest.TestCase):
                 "determinism_replays": [{"id": "DET_TEST", "method": "P", "scenario": "S01_Idle", "seed": 1103, "repetitions": 3}],
                 "long_runs": [{"id": "LONG_TEST", "method": "P", "scenario": "S01_Idle", "seed": 1103, "measurement_frames": 12000, "timeline_repeat": True}],
             }
-            runs = suite.expand_run_matrix(config, root)
+            formal_runs = suite.expand_run_matrix(config, root)
+            self.assertEqual(len(formal_runs), 1)
+            self.assertTrue(all(run.get("special_kind") == "formal" for run in formal_runs))
+
+            runs = suite.expand_all_runs(config, root)
+            self.assertEqual(sum(run.get("special_run_kind") == "formal" for run in runs), 1)
             self.assertEqual(sum(run.get("special_run_kind") == "determinism" for run in runs), 3)
             self.assertEqual(sum(run.get("special_run_kind") == "long_run" for run in runs), 1)
 
@@ -368,6 +374,108 @@ class CompletedEnvironmentRegressionTests(unittest.TestCase):
 
 
 
+
+class ResourceStabilityGateTests(unittest.TestCase):
+    def test_process_sampler_summarizes_handle_gdi_user_and_thread_growth(self) -> None:
+        sampler = final_run.ProcessSampler(interval_seconds=1.0)
+        sampler.pid = 123
+        sampler.samples = [
+            {
+                "elapsedSeconds": 0.0,
+                "privateBytesMiB": 500.0,
+                "dxgiLocalUsageMiB": 1000.0,
+                "handleCount": 100.0,
+                "gdiObjectCount": 20.0,
+                "userObjectCount": 10.0,
+                "threadCount": 8.0,
+            },
+            {
+                "elapsedSeconds": 30.0,
+                "privateBytesMiB": 500.5,
+                "dxgiLocalUsageMiB": 1000.5,
+                "handleCount": 101.0,
+                "gdiObjectCount": 20.5,
+                "userObjectCount": 10.25,
+                "threadCount": 8.0,
+            },
+            {
+                "elapsedSeconds": 60.0,
+                "privateBytesMiB": 501.0,
+                "dxgiLocalUsageMiB": 1001.0,
+                "handleCount": 102.0,
+                "gdiObjectCount": 21.0,
+                "userObjectCount": 10.5,
+                "threadCount": 8.0,
+            },
+        ]
+        summary = sampler.summary(expected_duration_seconds=3.0)
+        self.assertEqual(summary["peakHandleCount"], 102.0)
+        self.assertAlmostEqual(summary["handleCountSlopePerMin"], 2.0)
+        self.assertAlmostEqual(summary["gdiObjectCountSlopePerMin"], 1.0)
+        self.assertAlmostEqual(summary["userObjectCountSlopePerMin"], 0.5)
+        self.assertAlmostEqual(summary["threadCountSlopePerMin"], 0.0)
+
+    def test_long_run_gate_rejects_resource_growth(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            run = {
+                "run_name": "LONG_RESOURCE",
+                "special_kind": "long_run",
+                "method": "B0",
+                "scenario": "S03_Walk",
+                "seed": 1103,
+            }
+            paths = final_run.output_paths(output, run["run_name"])
+            suite.write_json(paths["validation"], {
+                "processMemory": {
+                    "sampleCoverage": 1.0,
+                    "resourceSampleCoverage": 1.0,
+                    "peakProcessPrivateMiB": 800.0,
+                    "processPrivateSlopeMiBPerMin": 0.0,
+                    "peakDxgiLocalUsageMiB": 2000.0,
+                    "dxgiLocalUsageSlopeMiBPerMin": 0.0,
+                    "peakHandleCount": 200.0,
+                    "handleCountSlopePerMin": 3.0,
+                    "peakGdiObjectCount": 50.0,
+                    "gdiObjectCountSlopePerMin": 0.0,
+                    "peakUserObjectCount": 20.0,
+                    "userObjectCountSlopePerMin": 0.0,
+                    "peakThreadCount": 12.0,
+                    "threadCountSlopePerMin": 0.0,
+                }
+            })
+            suite.write_json(paths["summary"], {"gpuTimingUnresolvedFrameCount": 0})
+            paths["jsonl"].write_text(
+                ''.join(json.dumps({"frameMilliseconds": 10.0}) + "\n" for _ in range(100)),
+                encoding="utf-8",
+            )
+            issues = suite.evaluate_post_suite_gates(
+                {
+                    "long_run_gates": {
+                        "minimum_process_memory_sample_coverage": 0.95,
+                        "minimum_resource_sample_coverage": 0.95,
+                        "max_peak_process_private_mib": 32768.0,
+                        "max_process_private_slope_mib_per_min": 2.0,
+                        "max_peak_dxgi_local_usage_mib": 6144.0,
+                        "max_dxgi_local_usage_slope_mib_per_min": 1.0,
+                        "max_peak_handle_count": 4096,
+                        "max_handle_count_slope_per_min": 1.0,
+                        "max_peak_gdi_object_count": 2048,
+                        "max_gdi_object_count_slope_per_min": 0.25,
+                        "max_peak_user_object_count": 2048,
+                        "max_user_object_count_slope_per_min": 0.25,
+                        "max_peak_thread_count": 256,
+                        "max_thread_count_slope_per_min": 0.1,
+                        "max_p99_degradation_ratio": 1.1,
+                        "max_query_unresolved_slope": 0.0,
+                    }
+                },
+                [run],
+                output,
+                "long-run",
+            )
+            self.assertIn("long_run_handle_slope", {item["code"] for item in issues})
+
 class PrenoveltyCompletionGateTests(unittest.TestCase):
     def test_b0_uses_24_fps_gate(self) -> None:
         case = final_run._normalize_case({"method": "B0", "scenario": "S01_Idle"})
@@ -384,6 +492,123 @@ class PrenoveltyCompletionGateTests(unittest.TestCase):
     def test_prenovelty_smoke_matrix_is_explicit(self) -> None:
         self.assertEqual(suite.PRENOVELTY_SMOKE_METHODS, {"B0", "B6", "B8"})
         self.assertIn("S17_CloseCamera100k", suite.PRENOVELTY_SMOKE_SCENARIOS)
+
+
+
+class P0VisualValidationTests(unittest.TestCase):
+    @staticmethod
+    def _write_bmp(path: Path, width: int, height: int, foreground: bool) -> None:
+        row_stride = width * 4
+        pixels = bytearray()
+        for storage_y in range(height):
+            y = height - 1 - storage_y
+            for x in range(width):
+                inside = (
+                    foreground
+                    and width // 4 <= x < width * 3 // 4
+                    and height // 4 <= y < height * 3 // 4
+                )
+                r, g, b = ((190, 120, 55) if inside else (12, 18, 26))
+                pixels.extend((b, g, r, 255))
+        offset = 14 + 40
+        file_size = offset + len(pixels)
+        header = struct.pack("<2sIHHI", b"BM", file_size, 0, 0, offset)
+        dib = struct.pack(
+            "<IiiHHIIiiII",
+            40, width, height, 1, 32, 0, len(pixels), 2835, 2835, 0, 0,
+        )
+        path.write_bytes(header + dib + pixels)
+
+    def test_bmp_analysis_detects_visible_subject(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "visible.bmp"
+            self._write_bmp(image, 64, 64, True)
+            metrics = final_run.analyze_visual_bmp(image)
+            self.assertEqual(metrics["width"], 64)
+            self.assertGreater(metrics["nonBackgroundRatio"], 0.20)
+            self.assertLess(metrics["nonBackgroundRatio"], 0.30)
+            self.assertGreater(metrics["foregroundBoundingBoxRatio"], 0.20)
+            self.assertEqual(len(metrics["averageHash256"]), 64)
+
+    def test_blank_capture_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            paths = final_run.output_paths(output, "blank")
+            self._write_bmp(paths["visual"], 64, 64, False)
+            metrics, issues = final_run._validate_visual_capture({}, paths)
+            self.assertEqual(metrics["nonBackgroundRatio"], 0.0)
+            codes = {item["code"] for item in issues}
+            self.assertIn("E_VISUAL_EMPTY", codes)
+            self.assertIn("E_VISUAL_LOW_VARIANCE", codes)
+            self.assertTrue(paths["visual_metrics"].is_file())
+
+    def test_suite_visual_regression_uses_paired_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            runs = [
+                {"run_name": "B0", "special_kind": "formal", "method": "B0", "scenario": "S01_Idle", "seed": 1103, "repetition_index": 0},
+                {"run_name": "B6", "special_kind": "formal", "method": "B6", "scenario": "S01_Idle", "seed": 1103, "repetition_index": 0},
+            ]
+            baseline = {
+                "averageHash256": "0" * 64,
+                "nonBackgroundRatio": 0.40,
+                "foregroundBoundingBoxRatio": 0.50,
+            }
+            compared = dict(baseline)
+            for run, metrics in ((runs[0], baseline), (runs[1], compared)):
+                final_run.write_json(
+                    final_run.output_paths(output, run["run_name"])["visual_metrics"],
+                    metrics,
+                )
+            issues = suite.evaluate_post_suite_gates(
+                {"visual_regression": {"enabled": True, "baseline_method": "B0"}},
+                runs,
+                output,
+                "formal",
+            )
+            self.assertEqual(issues, [])
+
+    def test_suite_visual_regression_rejects_catastrophic_difference(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            runs = [
+                {"run_name": "B0", "special_kind": "formal", "method": "B0", "scenario": "S01_Idle", "seed": 1103, "repetition_index": 0},
+                {"run_name": "B6", "special_kind": "formal", "method": "B6", "scenario": "S01_Idle", "seed": 1103, "repetition_index": 0},
+            ]
+            final_run.write_json(final_run.output_paths(output, "B0")["visual_metrics"], {
+                "averageHash256": "0" * 64,
+                "nonBackgroundRatio": 0.40,
+                "foregroundBoundingBoxRatio": 0.50,
+            })
+            final_run.write_json(final_run.output_paths(output, "B6")["visual_metrics"], {
+                "averageHash256": "f" * 64,
+                "nonBackgroundRatio": 0.02,
+                "foregroundBoundingBoxRatio": 0.03,
+            })
+            issues = suite.evaluate_post_suite_gates(
+                {"visual_regression": {"enabled": True, "baseline_method": "B0"}},
+                runs,
+                output,
+                "formal",
+            )
+            codes = {item["code"] for item in issues}
+            self.assertIn("visual_hash_regression", codes)
+            self.assertIn("visual_coverage_regression", codes)
+            self.assertIn("visual_bounds_regression", codes)
+
+    def test_explicit_failed_visual_gate_is_rejected(self) -> None:
+        self.assertFalse(final_run._summary_visual_validation_passed(
+  {"visualValidationPassed": False}
+        ))
+
+    def test_legacy_summary_without_visual_field_remains_compatible(self) -> None:
+        self.assertTrue(final_run._summary_visual_validation_passed({}))
+
+    def test_suite_detects_visual_validation_issue(self) -> None:
+        self.assertFalse(suite.visual_validation_passed({
+  "issues": [{"code": "E_VISUAL_VALIDATION"}]
+        }))
+        self.assertTrue(suite.visual_validation_passed({"issues": []}))
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "novelty01-hardware-profile-v3-process-evidence",
+  "schemaVersion": "novelty01-hardware-profile-v4-actual-and-projection",
   "profiles": {
     "low_gtx1660_reference": {
-      "role": "primary_low_end_target",
-      "description": "Primary lower-end reproducibility target. Installed RAM describes the host only; HairSystem memory limits are process-scoped.",
+      "role": "theoretical_low_end_target_until_measured",
+      "description": "Target hardware for the final low-end claim. Projection is not formal evidence until a real GTX 1660-class run is completed.",
       "target": {
         "gpuNameRegex": "(GeForce )?GTX 1660( SUPER| Ti)?",
         "minimumDedicatedVramMiB": 5800,
@@ -28,6 +28,33 @@
         "requiredPowerSchemeRegex": "(High performance|Ultimate Performance|高パフォーマンス|究極のパフォーマンス)"
       }
     },
+    "measurement_rtx4070ti_super": {
+      "role": "actual_measurement_source",
+      "description": "Actual formal source host. Results from this profile are measured RTX 4070 Ti SUPER evidence only.",
+      "target": {
+        "gpuNameRegex": "(NVIDIA )?GeForce RTX 4070 Ti SUPER",
+        "minimumDedicatedVramMiB": 15000,
+        "maximumDedicatedVramMiB": 17000,
+        "minimumCpuPhysicalCoreCount": 6
+      },
+      "executionContract": {
+        "acPowerRequired": true,
+        "backgroundCaptureDisabled": true,
+        "vsyncDisabled": true,
+        "requiredWidth": 1920,
+        "requiredHeight": 1080,
+        "maximumGpuTemperatureCelsius": 88.0,
+        "maximumGpuTemperatureSpreadCelsius": 12.0,
+        "maximumGpuClockDropRatio": 0.15,
+        "minimumGpuClockSamples": 3,
+        "minimumGpuTimingCoverage": 0.99,
+        "maximumProcessPrivateMemoryMiB": 32768.0,
+        "targetProcessPrivateMemoryMiB": 1024.0,
+        "maximumDxgiLocalUsageMiB": 16384.0,
+        "minimumProcessMemorySampleCoverage": 0.95,
+        "requiredPowerSchemeRegex": "(High performance|Ultimate Performance|高パフォーマンス|究極のパフォーマンス)"
+      }
+    },
     "development_any_hardware": {
       "role": "non_formal_development_only",
       "description": "Permissive profile for local debugging. Results must not be mixed with formal evidence.",
@@ -42,6 +69,59 @@
         "targetProcessPrivateMemoryMiB": 1024.0,
         "maximumDxgiLocalUsageMiB": 16384.0,
         "minimumProcessMemorySampleCoverage": 0.75
+      }
+    }
+  },
+  "projectionModels": {
+    "rtx4070ti_super_to_gtx1660_conservative_v1": {
+      "sourceProfile": "measurement_rtx4070ti_super",
+      "targetProfile": "low_gtx1660_reference",
+      "status": "theoretical_projection_only",
+      "formalEvidence": false,
+      "mustValidateOnTargetHardware": true,
+      "assumptionNotice": "Slowdown factors are explicit conservative research assumptions, not measured GTX 1660 benchmark results.",
+      "slowdownFactors": {
+        "optimistic": {
+          "compute": 3.2,
+          "memory": 1.8,
+          "hybrid": 2.4,
+          "cpu": 1.0
+        },
+        "nominal": {
+          "compute": 4.2,
+          "memory": 2.3,
+          "hybrid": 3.1,
+          "cpu": 1.0
+        },
+        "conservative": {
+          "compute": 5.5,
+          "memory": 3.0,
+          "hybrid": 4.0,
+          "cpu": 1.0
+        }
+      },
+      "stageClasses": {
+        "compute": [
+          "predictiveWakeGpuMilliseconds",
+          "wakePropagationGpuMilliseconds",
+          "dynamicSolveGpuMilliseconds",
+          "velocityRecoveryGpuMilliseconds",
+          "repairSolveGpuMilliseconds",
+          "boundaryRepairGpuMilliseconds"
+        ],
+        "memory": [
+          "blockClassificationGpuMilliseconds",
+          "groupClassificationGpuMilliseconds",
+          "compactionGpuMilliseconds",
+          "staticTransformGpuMilliseconds",
+          "cacheUpdateGpuMilliseconds",
+          "followerReconstructionGpuMilliseconds",
+          "telemetryReductionGpuMilliseconds"
+        ],
+        "hybrid": [
+          "renderPreparationGpuMilliseconds",
+          "hairDrawGpuMilliseconds"
+        ]
       }
     }
   }

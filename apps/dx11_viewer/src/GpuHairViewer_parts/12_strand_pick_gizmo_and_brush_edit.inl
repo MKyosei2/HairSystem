@@ -182,6 +182,11 @@
 
         bool GpuHairViewer::BeginViewportBrushStroke(POINT clientPoint)
     {
+        if (m_workspaceMode != WorkspaceMode::Groom ||
+            m_interactionMode != InteractionMode::Edit)
+        {
+            return false;
+        }
         Vec2 centerUv = { 0.5f, 0.5f };
         int32_t guideIndex = -1;
         float screenDistance = 0.0f;
@@ -416,6 +421,11 @@
 
         bool GpuHairViewer::BeginStrandGizmoDrag(POINT clientPoint)
     {
+        if (m_workspaceMode != WorkspaceMode::Groom ||
+            m_interactionMode != InteractionMode::Edit)
+        {
+            return false;
+        }
         if (m_selectedStrandIndex < 0 || static_cast<size_t>(m_selectedStrandIndex) >= m_asset.strands.size())
         {
             return false;
@@ -595,7 +605,7 @@
             m_selectedStrandIndex = -1;
             return false;
         }
-        const RECT renderRect = GetRenderViewportRect();
+        const RECT renderRect = this->GetRenderViewportRect();
         const float renderWidth = static_cast<float>(std::max<LONG>(renderRect.right - renderRect.left, 1));
         const float renderHeight = static_cast<float>(std::max<LONG>(renderRect.bottom - renderRect.top, 1));
         const float aspectRatio = std::max(renderWidth / std::max(renderHeight, 1.0f), 0.6f);
@@ -985,7 +995,7 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         return true;
     }
 
-    
+
         bool GpuHairViewer::UndoStrandEdit()
     {
         if (m_strandUndoStack.empty()) return false;
