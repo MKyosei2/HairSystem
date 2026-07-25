@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <string>
@@ -41,6 +42,7 @@ namespace hairgpu::viewer
         int ExportCanonicalFrozenAssetSource(const std::filesystem::path& outputDirectory);
         int ValidateCanonicalFrozenAssetSource(const std::filesystem::path& sourceDirectory);
         bool ExportLocalDebugCapture(const std::filesystem::path& outputDirectory, const std::wstring& runName) const;
+        bool FinalizeLocalDebugStreaming();
         bool CaptureBackBufferBmp(const std::filesystem::path& outputPath);
 
     private:
@@ -1277,6 +1279,10 @@ namespace hairgpu::viewer
         bool ExportRealtimeCadenceCsv(const std::wstring& filePath) const;
         bool ExportPerSecondTelemetryCsv(const std::wstring& filePath) const;
         bool ExportPerformanceJsonl(const std::wstring& filePath) const;
+        bool EnsureLocalDebugStreamingInitialized() const;
+        bool AppendLocalDebugSample(const PerformanceSample& sample) const;
+        void FlushLocalDebugStreaming(bool durable) const;
+        void WriteLocalDebugRunState(const char* status, const char* exitMode) const;
         bool ExportExperimentSettingsJson(const std::wstring& filePath) const;
         bool ExportActiveSetPlanJson(const std::wstring& filePath) const;
         bool ExportRuntimeReport(const std::wstring& filePath) const;
@@ -1558,6 +1564,18 @@ namespace hairgpu::viewer
         uint32_t m_simulationTicksThisFrame = 0u;
         bool m_renderCadenceWindowValid = false;
         bool m_localDebugCaptureActive = false;
+        mutable bool m_localDebugStreamingInitialized = false;
+        mutable bool m_localDebugStreamingFailed = false;
+        mutable uint64_t m_localDebugStreamSampleCount = 0ull;
+        mutable std::filesystem::path m_localDebugRunDirectory;
+        mutable std::filesystem::path m_localDebugPartialCsvPath;
+        mutable std::filesystem::path m_localDebugPartialJsonlPath;
+        mutable std::filesystem::path m_localDebugPartialPerSecondPath;
+        mutable std::filesystem::path m_localDebugFinalCsvPath;
+        mutable std::filesystem::path m_localDebugFinalJsonlPath;
+        mutable std::filesystem::path m_localDebugFinalPerSecondPath;
+        mutable std::ofstream m_localDebugCsvStream;
+        mutable std::ofstream m_localDebugJsonlStream;
         hairgpu::HairAsset m_asset;
         hairgpu::GpuSimulationConfig m_simConfig;
         hairgpu::ColliderSet m_colliders;

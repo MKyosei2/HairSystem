@@ -1935,6 +1935,278 @@ return true;
         return true;
     }
 
+
+    // HAIRGPU_LOCAL_DEBUG_PARTIAL_STREAM_V1
+    // The partial schema is intentionally compact but keeps every column required by
+    // hairgpu_local_debug_report.py.  Normal completion overwrites these promoted
+    // files with the full existing exporter schema.
+    bool GpuHairViewer::EnsureLocalDebugStreamingInitialized() const
+    {
+        if (m_localDebugStreamingInitialized)
+        {
+            return !m_localDebugStreamingFailed;
+        }
+        if (!m_localDebugCaptureActive)
+        {
+            return false;
+        }
+
+        const std::wstring directoryText =
+            GetEnvironmentVariableString(L"HAIRGPU_TELEMETRY_DIR");
+        if (directoryText.empty())
+        {
+            m_localDebugStreamingFailed = true;
+            return false;
+        }
+        std::wstring runName =
+            GetEnvironmentVariableString(L"HAIRGPU_TELEMETRY_RUN_NAME");
+        if (runName.empty())
+        {
+            runName = L"local_debug";
+        }
+
+        m_localDebugRunDirectory = std::filesystem::path(directoryText);
+        std::error_code ec;
+        std::filesystem::create_directories(m_localDebugRunDirectory, ec);
+        if (ec)
+        {
+            m_localDebugStreamingFailed = true;
+            return false;
+        }
+
+        m_localDebugPartialCsvPath =
+            m_localDebugRunDirectory / (runName + L"_frames.partial.csv");
+        m_localDebugPartialJsonlPath =
+            m_localDebugRunDirectory / (runName + L"_frames.partial.jsonl");
+        m_localDebugPartialPerSecondPath =
+            m_localDebugRunDirectory / (runName + L"_per_second.partial.csv");
+        m_localDebugFinalCsvPath =
+            m_localDebugRunDirectory / (runName + L"_frames.csv");
+        m_localDebugFinalJsonlPath =
+            m_localDebugRunDirectory / (runName + L"_frames.jsonl");
+        m_localDebugFinalPerSecondPath =
+            m_localDebugRunDirectory / (runName + L"_per_second.csv");
+
+        m_localDebugCsvStream.open(
+            m_localDebugPartialCsvPath,
+            std::ios::binary | std::ios::trunc);
+        m_localDebugJsonlStream.open(
+            m_localDebugPartialJsonlPath,
+            std::ios::binary | std::ios::trunc);
+        if (!m_localDebugCsvStream || !m_localDebugJsonlStream)
+        {
+            m_localDebugStreamingFailed = true;
+            return false;
+        }
+
+        m_localDebugCsvStream
+            << "sampleIndex,elapsedSeconds,frameMilliseconds,renderFrameMilliseconds,"
+               "frameIntervalMilliseconds,cpuFrameWorkMilliseconds,simulationMilliseconds,"
+               "fps,renderFps,simulationHz,gpuFrameMilliseconds,gpuSimulationMilliseconds,"
+               "gpuHairMilliseconds,gpuHairDrawMilliseconds,totalHairGpuMilliseconds,"
+               "gpuThroughputFps,simulationTicksThisFrame,droppedSimulationMilliseconds,"
+               "presentSyncInterval,evidenceClass,globalFrameIndex,measuredFrameIndex,"
+               "sourceFrameIndex,variant,staticCachedGroupCount,staticTransformedGroupCount,"
+               "dynamicGroupCount,repairRequiredGroupCount,falseStaticRate,"
+               "staticDynamicBoundaryMaxErrorMm,blockClassificationGpuMilliseconds,"
+               "groupClassificationGpuMilliseconds,compactionGpuMilliseconds,"
+               "staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,"
+               "boundaryRepairGpuMilliseconds,watchdogGpuMilliseconds,"
+               "followerReconstructionGpuMilliseconds,renderPreparationGpuMilliseconds,"
+               "hairDrawGpuMilliseconds,nanStateCount,infiniteStateCount,fatalFailure,"
+               "fatalFailureCode,collisionCandidateCount,collisionMissCount,"
+               "wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,"
+               "stateTransitionCount,stateOscillationCount\n";
+        m_localDebugCsvStream << std::fixed << std::setprecision(6);
+        m_localDebugJsonlStream << std::fixed << std::setprecision(6);
+        m_localDebugStreamingInitialized = true;
+        m_localDebugStreamingFailed = false;
+        m_localDebugStreamSampleCount = 0ull;
+        WriteLocalDebugRunState("RUNNING", "visual_studio_local_debugger");
+        FlushLocalDebugStreaming(true);
+        return true;
+    }
+
+    bool GpuHairViewer::AppendLocalDebugSample(
+        const PerformanceSample& sample) const
+    {
+        if (!EnsureLocalDebugStreamingInitialized())
+        {
+            return false;
+        }
+        const std::string variant =
+            CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
+        const uint64_t sampleIndex = m_localDebugStreamSampleCount++;
+        m_localDebugCsvStream
+            << sampleIndex << ','
+            << sample.elapsedSeconds << ','
+            << sample.frameMilliseconds << ','
+            << sample.renderFrameMilliseconds << ','
+            << sample.frameIntervalMilliseconds << ','
+            << sample.cpuFrameWorkMilliseconds << ','
+            << sample.simulationMilliseconds << ','
+            << sample.fps << ','
+            << sample.renderFps << ','
+            << sample.simulationHz << ','
+            << sample.gpuFrameMilliseconds << ','
+            << sample.gpuSimulationMilliseconds << ','
+            << sample.gpuHairMilliseconds << ','
+            << sample.gpuHairDrawMilliseconds << ','
+            << sample.totalHairGpuMilliseconds << ','
+            << sample.gpuThroughputFps << ','
+            << sample.simulationTicksThisFrame << ','
+            << sample.droppedSimulationMilliseconds << ','
+            << sample.presentSyncInterval << ','
+            << "diagnostic_debugger" << ','
+            << sample.globalFrameIndex << ','
+            << sample.measuredFrameIndex << ','
+            << sample.sourceFrameIndex << ','
+            << variant << ','
+            << sample.staticCachedGroupCount << ','
+            << sample.staticTransformedGroupCount << ','
+            << sample.dynamicGroupCount << ','
+            << sample.repairRequiredGroupCount << ','
+            << sample.falseStaticRate << ','
+            << sample.staticDynamicBoundaryMaxErrorMm << ','
+            << sample.blockClassificationGpuMilliseconds << ','
+            << sample.groupClassificationGpuMilliseconds << ','
+            << sample.compactionGpuMilliseconds << ','
+            << sample.staticTransformGpuMilliseconds << ','
+            << sample.dynamicSolveGpuMilliseconds << ','
+            << sample.boundaryRepairGpuMilliseconds << ','
+            << sample.watchdogGpuMilliseconds << ','
+            << sample.followerReconstructionGpuMilliseconds << ','
+            << sample.renderPreparationGpuMilliseconds << ','
+            << sample.hairDrawGpuMilliseconds << ','
+            << sample.nanStateCount << ','
+            << sample.infiniteStateCount << ','
+            << sample.fatalFailure << ','
+            << sample.fatalFailureCode << ','
+            << sample.collisionCandidateCount << ','
+            << sample.collisionMissCount << ','
+            << sample.wakeRequestGroupCount << ','
+            << sample.repairAttemptCount << ','
+            << sample.repairSuccessCount << ','
+            << sample.stateTransitionCount << ','
+            << sample.stateOscillationCount << '\n';
+
+        auto jsonFloat = [this](float value)
+        {
+            if (std::isfinite(value))
+            {
+                m_localDebugJsonlStream << value;
+            }
+            else
+            {
+                m_localDebugJsonlStream << "null";
+            }
+        };
+        m_localDebugJsonlStream
+            << "{\"sampleIndex\":" << sampleIndex
+            << ",\"elapsedSeconds\":";
+        jsonFloat(sample.elapsedSeconds);
+        m_localDebugJsonlStream << ",\"frameMilliseconds\":";
+        jsonFloat(sample.frameMilliseconds);
+        m_localDebugJsonlStream << ",\"renderFrameMilliseconds\":";
+        jsonFloat(sample.renderFrameMilliseconds);
+        m_localDebugJsonlStream << ",\"simulationMilliseconds\":";
+        jsonFloat(sample.simulationMilliseconds);
+        m_localDebugJsonlStream << ",\"fps\":";
+        jsonFloat(sample.fps);
+        m_localDebugJsonlStream
+            << ",\"globalFrameIndex\":" << sample.globalFrameIndex
+            << ",\"measuredFrameIndex\":" << sample.measuredFrameIndex
+            << ",\"sourceFrameIndex\":" << sample.sourceFrameIndex
+            << ",\"variant\":\""
+            << JsonEscape(WideToUtf8(m_experimentCase.variant)) << "\""
+            << ",\"staticCachedGroupCount\":" << sample.staticCachedGroupCount
+            << ",\"staticTransformedGroupCount\":" << sample.staticTransformedGroupCount
+            << ",\"dynamicGroupCount\":" << sample.dynamicGroupCount
+            << ",\"repairRequiredGroupCount\":" << sample.repairRequiredGroupCount
+            << ",\"falseStaticRate\":";
+        jsonFloat(sample.falseStaticRate);
+        m_localDebugJsonlStream << ",\"staticDynamicBoundaryMaxErrorMm\":";
+        jsonFloat(sample.staticDynamicBoundaryMaxErrorMm);
+        m_localDebugJsonlStream
+            << ",\"nanStateCount\":" << sample.nanStateCount
+            << ",\"infiniteStateCount\":" << sample.infiniteStateCount
+            << ",\"fatalFailure\":" << sample.fatalFailure
+            << ",\"formalEvidence\":false"
+            << ",\"evidenceClass\":\"diagnostic_debugger\"}\n";
+
+        // One-second durability cadence.  FlushFileBuffers is deliberately not used
+        // every frame because that would dominate the diagnostic timing itself.
+        if ((m_localDebugStreamSampleCount % 60ull) == 0ull)
+        {
+            FlushLocalDebugStreaming(true);
+            ExportPerSecondTelemetryCsv(m_localDebugPartialPerSecondPath.wstring());
+            WriteLocalDebugRunState("RUNNING", "visual_studio_local_debugger");
+        }
+        return m_localDebugCsvStream.good() && m_localDebugJsonlStream.good();
+    }
+
+    void GpuHairViewer::FlushLocalDebugStreaming(bool durable) const
+    {
+        if (!m_localDebugStreamingInitialized)
+        {
+            return;
+        }
+        m_localDebugCsvStream.flush();
+        m_localDebugJsonlStream.flush();
+        if (!durable)
+        {
+            return;
+        }
+        auto flushPath = [](const std::filesystem::path& path)
+        {
+            HANDLE file = CreateFileW(
+                path.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE)
+            {
+                FlushFileBuffers(file);
+                CloseHandle(file);
+            }
+        };
+        flushPath(m_localDebugPartialCsvPath);
+        flushPath(m_localDebugPartialJsonlPath);
+    }
+
+    void GpuHairViewer::WriteLocalDebugRunState(
+        const char* status,
+        const char* exitMode) const
+    {
+        if (m_localDebugRunDirectory.empty())
+        {
+            return;
+        }
+        const std::filesystem::path target =
+            m_localDebugRunDirectory / L"run_state.json";
+        const std::filesystem::path temporary =
+            m_localDebugRunDirectory / L"run_state.json.tmp";
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output)
+        {
+            return;
+        }
+        output << "{\n"
+               << "  \"schemaVersion\": \"hairgpu-local-debug-run-state-v1\",\n"
+               << "  \"status\": \"" << (status ? status : "UNKNOWN") << "\",\n"
+               << "  \"exitMode\": \"" << (exitMode ? exitMode : "unknown") << "\",\n"
+               << "  \"processId\": " << GetCurrentProcessId() << ",\n"
+               << "  \"capturedFrameCount\": " << m_localDebugStreamSampleCount << ",\n"
+               << "  \"formalEvidence\": false,\n"
+               << "  \"partialDataRecovered\": false\n"
+               << "}\n";
+        output.flush();
+        output.close();
+        std::error_code ec;
+        std::filesystem::remove(target, ec);
+        ec.clear();
+        std::filesystem::rename(temporary, target, ec);
+    }
+
     GpuHairViewer::PerformanceSample GpuHairViewer::BuildPerformanceSample(float frameSeconds, float instantFps) const
     {
         PerformanceSample sample = {};

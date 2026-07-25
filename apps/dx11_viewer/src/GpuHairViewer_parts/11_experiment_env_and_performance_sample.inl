@@ -120,6 +120,12 @@ sample.followerReconstructionGpuMilliseconds = m_noveltyTelemetry.followerRecons
 sample.renderPreparationGpuMilliseconds = m_noveltyTelemetry.renderPreparationGpuMilliseconds;
 sample.hairDrawGpuMilliseconds = m_noveltyTelemetry.hairDrawGpuMilliseconds;
 sample.totalHairGpuMilliseconds = m_noveltyTelemetry.totalHairGpuMilliseconds;
+if (m_localDebugCaptureActive &&
+    m_globalFrameIndex >= m_experimentCase.warmupFrames &&
+    m_measuredFrameIndex < m_experimentCase.measurementFrames)
+{
+    AppendLocalDebugSample(sample);
+}
 return sample;
     }
 

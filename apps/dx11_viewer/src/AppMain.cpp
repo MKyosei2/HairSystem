@@ -468,7 +468,25 @@ namespace
                << "  \"automaticPushRequested\": " << (options.push ? "true" : "false") << ",\n"
                << "  \"warning\": \"Debugger data is diagnostic and must not be used as formal paper evidence.\"\n"
                << "}\n";
-        return output.good();
+        const bool contextWritten = output.good();
+        output.close();
+
+        // HAIRGPU_F5_STOP_RECOVERY_V1: this sidecar is created before the Viewer
+        // loop so Visual Studio Stop Debugging leaves an explicit interrupted Run.
+        std::ofstream state(options.runDirectory / L"run_state.json", std::ios::binary | std::ios::trunc);
+        if (state)
+        {
+            state << "{\n"
+                  << "  \"schemaVersion\": \"hairgpu-local-debug-run-state-v1\",\n"
+                  << "  \"status\": \"RUNNING\",\n"
+                  << "  \"exitMode\": \"visual_studio_local_debugger\",\n"
+                  << "  \"processId\": " << GetCurrentProcessId() << ",\n"
+                  << "  \"formalEvidence\": false,\n"
+                  << "  \"partialDataRecovered\": false\n"
+                  << "}\n";
+            state.flush();
+        }
+        return contextWritten && state.good();
     }
 
     std::wstring QuoteCommandLineArgument(const std::wstring& value)
@@ -535,7 +553,8 @@ namespace
 
     DWORD RunLocalDebugPostprocessor(
         const LocalDebugCaptureOptions& options,
-        int viewerExitCode)
+        int viewerExitCode,
+        bool recoverPartial = false)
     {
         const std::filesystem::path script =
             options.repositoryRoot / L"tools" / L"final_stage" / L"hairgpu_local_debug_report.py";
@@ -560,6 +579,10 @@ namespace
         {
             arguments += L" --push";
         }
+        if (recoverPartial)
+        {
+            arguments += L" --recover-partial";
+        }
 
         DWORD exitCode = 1u;
         if (LaunchAndWait(L"python.exe" + arguments, options.repositoryRoot, exitCode))
@@ -576,6 +599,106 @@ namespace
         error << "Failed to start python.exe or py.exe. Win32 errors: "
               << pythonError << ", " << exitCode << "\n";
         return exitCode;
+    }
+
+
+    // HAIRGPU_F5_STOP_RECOVERY_V1: recover runs killed by Visual Studio's
+    // Stop Debugging button.  A still-running PID is never touched.
+    bool TextFileContains(const std::filesystem::path& path, const char* token)
+    {
+        std::ifstream input(path, std::ios::binary);
+        if (!input)
+        {
+            return false;
+        }
+        const std::string text{
+            std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{}};
+        return token != nullptr && text.find(token) != std::string::npos;
+    }
+
+    DWORD ProcessIdFromRunDirectory(const std::filesystem::path& runDirectory)
+    {
+        const std::wstring name = runDirectory.filename().wstring();
+        const size_t separator = name.find_last_of(L'_');
+        if (separator == std::wstring::npos || separator + 1u >= name.size())
+        {
+            return 0u;
+        }
+        try
+        {
+            const unsigned long parsed = std::stoul(name.substr(separator + 1u));
+            return parsed <= MAXDWORD ? static_cast<DWORD>(parsed) : 0u;
+        }
+        catch (...)
+        {
+            return 0u;
+        }
+    }
+
+    bool IsProcessStillRunning(DWORD processId)
+    {
+        if (processId == 0u || processId == GetCurrentProcessId())
+        {
+            return false;
+        }
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+        if (!process)
+        {
+            return false;
+        }
+        DWORD exitCode = 0u;
+        const bool running = GetExitCodeProcess(process, &exitCode) && exitCode == STILL_ACTIVE;
+        CloseHandle(process);
+        return running;
+    }
+
+    void RecoverInterruptedLocalDebugRuns(const std::filesystem::path& repositoryRoot)
+    {
+        const std::filesystem::path root =
+            repositoryRoot / L"results" / L"committed" / L"local_debug";
+        std::error_code ec;
+        if (!std::filesystem::is_directory(root, ec) || ec)
+        {
+            return;
+        }
+
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(root, ec))
+        {
+            if (ec || !entry.is_directory())
+            {
+                continue;
+            }
+            const std::filesystem::path runDirectory = entry.path();
+            const std::filesystem::path statePath = runDirectory / L"run_state.json";
+            const std::filesystem::path partialCsv =
+                runDirectory / L"local_debug_frames.partial.csv";
+            if (!TextFileContains(statePath, "\"status\": \"RUNNING\"") ||
+                !std::filesystem::is_regular_file(partialCsv) ||
+                std::filesystem::is_regular_file(runDirectory / L"postprocess_status.json"))
+            {
+                continue;
+            }
+            if (IsProcessStillRunning(ProcessIdFromRunDirectory(runDirectory)))
+            {
+                continue;
+            }
+
+            LocalDebugCaptureOptions recovery;
+            recovery.repositoryRoot = repositoryRoot;
+            recovery.runDirectory = runDirectory;
+            recovery.runName = L"local_debug";
+            const DWORD recoveryExitCode =
+                RunLocalDebugPostprocessor(recovery, 143, true);
+            std::ofstream status(
+                runDirectory / L"RECOVERY_LAUNCH_STATUS.txt",
+                std::ios::binary | std::ios::trunc);
+            if (status)
+            {
+                status << "recoverPartialExitCode=" << recoveryExitCode << "\n";
+            }
+        }
     }
 
     bool ConfigureCommandLineAndLocalCapture(
@@ -675,6 +798,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     const std::filesystem::path executablePath(modulePath);
     const std::filesystem::path exeDir = executablePath.parent_path();
 
+    const std::filesystem::path repositoryRoot = FindRepositoryRoot(exeDir);
+    if (!repositoryRoot.empty())
+    {
+        RecoverInterruptedLocalDebugRuns(repositoryRoot);
+    }
+
     LocalDebugCaptureOptions localCapture;
     if (!ConfigureCommandLineAndLocalCapture(executablePath, localCapture))
     {
@@ -733,9 +862,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     }
 
     const int viewerExitCode = app.Run();
+    const bool streamFinalized = app.FinalizeLocalDebugStreaming();
     if (!localCapture.enabled)
     {
         return viewerExitCode;
+    }
+    if (!streamFinalized)
+    {
+        std::ofstream error(localCapture.runDirectory / L"STREAM_FINALIZE_ERROR.txt");
+        error << "Local debugger partial streams could not be finalized.\n";
     }
 
     if (!app.ExportLocalDebugCapture(localCapture.runDirectory, localCapture.runName))

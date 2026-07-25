@@ -307,6 +307,47 @@
 
 
 
+
+    bool GpuHairViewer::FinalizeLocalDebugStreaming()
+    {
+        if (!m_localDebugCaptureActive)
+        {
+            return true;
+        }
+        if (!m_localDebugStreamingInitialized)
+        {
+            return !m_localDebugStreamingFailed;
+        }
+
+        ExportPerSecondTelemetryCsv(m_localDebugPartialPerSecondPath.wstring());
+        FlushLocalDebugStreaming(true);
+        m_localDebugCsvStream.close();
+        m_localDebugJsonlStream.close();
+
+        auto promote = [](const std::filesystem::path& partial,
+                          const std::filesystem::path& finalPath) -> bool
+        {
+            if (!std::filesystem::is_regular_file(partial))
+            {
+                return true;
+            }
+            std::error_code ec;
+            std::filesystem::remove(finalPath, ec);
+            ec.clear();
+            std::filesystem::rename(partial, finalPath, ec);
+            return !ec;
+        };
+
+        const bool promoted =
+            promote(m_localDebugPartialCsvPath, m_localDebugFinalCsvPath) &&
+            promote(m_localDebugPartialJsonlPath, m_localDebugFinalJsonlPath) &&
+            promote(m_localDebugPartialPerSecondPath, m_localDebugFinalPerSecondPath);
+        WriteLocalDebugRunState(
+            promoted ? "CAPTURED" : "INCOMPLETE",
+            "normal_viewer_return");
+        return promoted && !m_localDebugStreamingFailed;
+    }
+
     int GpuHairViewer::RunNativeSelfTests() const
     {
         if (sizeof(void*) != 8u) return 10;

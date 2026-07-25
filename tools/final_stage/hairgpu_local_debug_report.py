@@ -17,6 +17,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -539,6 +540,43 @@ def _auto_commit(repo_root: Path, run_dir: Path, run_name: str, push: bool) -> d
     return result
 
 
+def _recover_partial_outputs(run_dir: Path, run_name: str) -> dict[str, Any]:
+    """Promote crash-safe partial streams after Visual Studio killed the Viewer."""
+
+    mappings = (
+        (run_dir / f"{run_name}_frames.partial.csv", run_dir / f"{run_name}_frames.csv"),
+        (run_dir / f"{run_name}_frames.partial.jsonl", run_dir / f"{run_name}_frames.jsonl"),
+        (run_dir / f"{run_name}_per_second.partial.csv", run_dir / f"{run_name}_per_second.csv"),
+    )
+    promoted: list[str] = []
+    for partial, final in mappings:
+        if not partial.is_file():
+            continue
+        if final.exists():
+            final.unlink()
+        partial.replace(final)
+        promoted.append(final.name)
+
+    frames = run_dir / f"{run_name}_frames.csv"
+    if not frames.is_file():
+        raise FileNotFoundError(
+            f"Interrupted run has no recoverable frame stream: {frames}"
+        )
+
+    state = _read_json(run_dir / "run_state.json")
+    state.update({
+        "schemaVersion": "hairgpu-local-debug-run-state-v1",
+        "status": "INTERRUPTED",
+        "exitMode": "visual_studio_stop_debugging",
+        "formalEvidence": False,
+        "partialDataRecovered": True,
+        "recoveredAtUtc": datetime.now(timezone.utc).isoformat(),
+        "promotedFiles": promoted,
+    })
+    _write_json(run_dir / "run_state.json", state)
+    return state
+
+
 @dataclass(frozen=True)
 class ReportInputs:
     repo_root: Path
@@ -588,6 +626,7 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         per_second_status_counts[status] = per_second_status_counts.get(status, 0) + 1
 
     context = _read_json(run_dir / "capture_context.json")
+    run_state = _read_json(run_dir / "run_state.json")
     native_summary = _read_json(run_dir / f"{inputs.run_name}_summary.json")
     native_settings = _read_json(run_dir / f"{inputs.run_name}_settings.json")
     git_info = _git_metadata(inputs.repo_root)
@@ -618,6 +657,9 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         "runName": inputs.run_name,
         "viewerExitCode": inputs.viewer_exit_code,
         "capturedFrameCount": len(rows),
+        "runState": run_state,
+        "interrupted": run_state.get("status") == "INTERRUPTED",
+        "partialDataRecovered": bool(run_state.get("partialDataRecovered", False)),
         "frameMilliseconds": _stats(frame_ms),
         "simulationMilliseconds": _stats(sim_ms),
         "gpuHairMilliseconds": _stats(gpu_ms),
@@ -810,6 +852,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--viewer-exit-code", type=int, default=0)
     parser.add_argument("--auto-commit", action="store_true")
     parser.add_argument("--push", action="store_true")
+    parser.add_argument("--recover-partial", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -824,7 +867,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         push=bool(args.push),
     )
     try:
+        if args.recover_partial:
+            _recover_partial_outputs(inputs.run_dir, inputs.run_name)
         build_report(inputs)
+        if not args.recover_partial:
+            state = _read_json(inputs.run_dir / "run_state.json")
+            state.update({
+                "schemaVersion": "hairgpu-local-debug-run-state-v1",
+                "status": "COMPLETE",
+                "exitMode": "normal_viewer_return",
+                "formalEvidence": False,
+                "partialDataRecovered": False,
+            })
+            _write_json(inputs.run_dir / "run_state.json", state)
         git_available = _find_git_executable() is not None
         delivery: dict[str, Any] = {
             "requested": inputs.auto_commit,
@@ -848,6 +903,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_json(inputs.run_dir / "postprocess_status.json", {
             "schemaVersion": SCHEMA_VERSION,
             "success": True,
+            "recoveredPartial": bool(args.recover_partial),
             "delivery": delivery,
         })
         # The status is part of the committed evidence directory, so refresh the
