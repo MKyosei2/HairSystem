@@ -17,6 +17,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -184,6 +185,142 @@ def _stats(values: Sequence[float]) -> dict[str, float | int | None]:
         "maximum": max(values),
     }
 
+
+
+def _pid_is_running(process_id: int) -> bool:
+    """Return whether the watched Viewer process still exists."""
+
+    if process_id <= 0 or process_id == os.getpid():
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        open_process.restype = wintypes.HANDLE
+        get_exit_code = kernel32.GetExitCodeProcess
+        get_exit_code.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        get_exit_code.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+
+        handle = open_process(
+            process_query_limited_information,
+            False,
+            int(process_id),
+        )
+        if not handle:
+            return False
+        try:
+            exit_code = wintypes.DWORD(0)
+            return bool(get_exit_code(handle, ctypes.byref(exit_code))) and (
+                int(exit_code.value) == still_active
+            )
+        finally:
+            close_handle(handle)
+
+    proc_stat = Path(f"/proc/{int(process_id)}/stat")
+    if proc_stat.is_file():
+        try:
+            fields = proc_stat.read_text(encoding="utf-8", errors="replace").split()
+            if len(fields) >= 3 and fields[2] == "Z":
+                return False
+        except OSError:
+            pass
+    try:
+        os.kill(int(process_id), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_process_exit(process_id: int, timeout_seconds: float) -> bool:
+    """Wait for Visual Studio to terminate or normally close the Viewer."""
+
+    deadline = (
+        time.monotonic() + timeout_seconds
+        if timeout_seconds > 0.0
+        else None
+    )
+    while _pid_is_running(process_id):
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
+        time.sleep(0.20)
+    # Let the filesystem release stream handles before rename/sanitization.
+    time.sleep(0.35)
+    return True
+
+
+def _sanitize_partial_csv(partial: Path, final: Path) -> int:
+    """Promote only complete CSV rows after a forced process termination."""
+
+    with partial.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        if not fieldnames:
+            raise RuntimeError(f"Partial telemetry has no CSV header: {partial}")
+        rows: list[dict[str, str]] = []
+        for row in reader:
+            if None in row or any(value is None for value in row.values()):
+                continue
+            if _to_int(row.get("sampleIndex"), -1) < 0:
+                continue
+            frame_ms = (
+                _to_float(row.get("renderFrameMilliseconds"))
+                or _to_float(row.get("frameMilliseconds"))
+            )
+            if frame_ms is None or frame_ms <= 0.0:
+                continue
+            rows.append({name: str(row.get(name, "")) for name in fieldnames})
+
+    temporary = final.with_suffix(final.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(final)
+    partial.unlink(missing_ok=True)
+    return len(rows)
+
+
+def _sanitize_partial_jsonl(partial: Path, final: Path) -> int:
+    """Discard a trailing torn JSON line while preserving complete samples."""
+
+    valid_lines: list[str] = []
+    with partial.open("r", encoding="utf-8-sig") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                valid_lines.append(json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+                ))
+
+    temporary = final.with_suffix(final.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        for line in valid_lines:
+            handle.write(line + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(final)
+    partial.unlink(missing_ok=True)
+    return len(valid_lines)
 
 
 def _write_per_second_csv(
@@ -543,24 +680,37 @@ def _auto_commit(repo_root: Path, run_dir: Path, run_name: str, push: bool) -> d
 def _recover_partial_outputs(run_dir: Path, run_name: str) -> dict[str, Any]:
     """Promote crash-safe partial streams after Visual Studio killed the Viewer."""
 
-    mappings = (
-        (run_dir / f"{run_name}_frames.partial.csv", run_dir / f"{run_name}_frames.csv"),
-        (run_dir / f"{run_name}_frames.partial.jsonl", run_dir / f"{run_name}_frames.jsonl"),
-        (run_dir / f"{run_name}_per_second.partial.csv", run_dir / f"{run_name}_per_second.csv"),
-    )
-    promoted: list[str] = []
-    for partial, final in mappings:
-        if not partial.is_file():
-            continue
-        if final.exists():
-            final.unlink()
-        partial.replace(final)
-        promoted.append(final.name)
+    partial_csv = run_dir / f"{run_name}_frames.partial.csv"
+    final_csv = run_dir / f"{run_name}_frames.csv"
+    partial_jsonl = run_dir / f"{run_name}_frames.partial.jsonl"
+    final_jsonl = run_dir / f"{run_name}_frames.jsonl"
+    partial_per_second = run_dir / f"{run_name}_per_second.partial.csv"
+    final_per_second = run_dir / f"{run_name}_per_second.csv"
 
-    frames = run_dir / f"{run_name}_frames.csv"
-    if not frames.is_file():
+    promoted: list[str] = []
+    recovered_row_count = 0
+    if partial_csv.is_file():
+        recovered_row_count = _sanitize_partial_csv(partial_csv, final_csv)
+        promoted.append(final_csv.name)
+    if partial_jsonl.is_file():
+        _sanitize_partial_jsonl(partial_jsonl, final_jsonl)
+        promoted.append(final_jsonl.name)
+
+    # The per-second sidecar may be one flush behind at termination.  Regenerate
+    # it from sanitized frame rows instead of promoting potentially stale data.
+    partial_per_second.unlink(missing_ok=True)
+    final_per_second.unlink(missing_ok=True)
+
+    if not final_csv.is_file():
         raise FileNotFoundError(
-            f"Interrupted run has no recoverable frame stream: {frames}"
+            f"Interrupted run has no recoverable frame stream: {final_csv}"
+        )
+    if recovered_row_count <= 0:
+        with final_csv.open("r", encoding="utf-8-sig", newline="") as handle:
+            recovered_row_count = sum(1 for _ in csv.DictReader(handle))
+    if recovered_row_count <= 0:
+        raise RuntimeError(
+            "The Viewer was stopped before the first post-warmup frame was captured."
         )
 
     state = _read_json(run_dir / "run_state.json")
@@ -570,6 +720,7 @@ def _recover_partial_outputs(run_dir: Path, run_name: str) -> dict[str, Any]:
         "exitMode": "visual_studio_stop_debugging",
         "formalEvidence": False,
         "partialDataRecovered": True,
+        "capturedFrameCount": recovered_row_count,
         "recoveredAtUtc": datetime.now(timezone.utc).isoformat(),
         "promotedFiles": promoted,
     })
@@ -853,11 +1004,61 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--auto-commit", action="store_true")
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--recover-partial", action="store_true")
+    parser.add_argument("--watch-pid", type=int, default=0)
+    parser.add_argument("--watch-timeout-seconds", type=float, default=0.0)
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # HAIRGPU_F5_DETACHED_WATCHER_V1: this Python process is launched outside
+    # the Viewer debugger job.  It waits for Visual Studio Stop Debugging, then
+    # finalizes the partial streams without requiring another F5 launch.
+    if int(args.watch_pid) > 0:
+        if not _wait_for_process_exit(
+            int(args.watch_pid),
+            max(0.0, float(args.watch_timeout_seconds)),
+        ):
+            args.run_dir.mkdir(parents=True, exist_ok=True)
+            _write_json(args.run_dir / "postprocess_status.json", {
+                "schemaVersion": SCHEMA_VERSION,
+                "success": False,
+                "watcherTimedOut": True,
+                "watchedProcessId": int(args.watch_pid),
+            })
+            return 4
+
+        existing_status = _read_json(args.run_dir / "postprocess_status.json")
+        existing_state = _read_json(args.run_dir / "run_state.json")
+        if existing_status.get("success") is True or existing_state.get("status") == "COMPLETE":
+            return 0
+
+        partial_frames = args.run_dir / f"{args.run_name}_frames.partial.csv"
+        final_frames = args.run_dir / f"{args.run_name}_frames.csv"
+        if partial_frames.is_file():
+            args.recover_partial = True
+        elif final_frames.is_file():
+            args.recover_partial = False
+        else:
+            existing_state.update({
+                "schemaVersion": "hairgpu-local-debug-run-state-v1",
+                "status": "INTERRUPTED",
+                "exitMode": "visual_studio_stop_debugging_before_first_sample",
+                "formalEvidence": False,
+                "partialDataRecovered": False,
+                "capturedFrameCount": 0,
+            })
+            _write_json(args.run_dir / "run_state.json", existing_state)
+            _write_json(args.run_dir / "postprocess_status.json", {
+                "schemaVersion": SCHEMA_VERSION,
+                "success": False,
+                "recoveredPartial": False,
+                "error": "No post-warmup frame was captured before Visual Studio stopped the Viewer.",
+                "watchedProcessId": int(args.watch_pid),
+            })
+            return 3
+
     inputs = ReportInputs(
         repo_root=args.repo_root.resolve(),
         run_dir=args.run_dir.resolve(),

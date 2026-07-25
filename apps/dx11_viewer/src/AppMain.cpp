@@ -602,6 +602,137 @@ namespace
     }
 
 
+    bool LaunchDetachedProcess(
+        const std::wstring& commandLine,
+        const std::filesystem::path& workingDirectory,
+        DWORD& processId,
+        DWORD& errorCode)
+    {
+        auto tryCreate = [&](DWORD creationFlags, PROCESS_INFORMATION& processInfo) -> BOOL
+        {
+            std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+            mutableCommand.push_back(L'\0');
+            STARTUPINFOW startupInfo = {};
+            startupInfo.cb = sizeof(startupInfo);
+            return CreateProcessW(
+                nullptr,
+                mutableCommand.data(),
+                nullptr,
+                nullptr,
+                FALSE,
+                creationFlags,
+                nullptr,
+                workingDirectory.c_str(),
+                &startupInfo,
+                &processInfo);
+        };
+
+        PROCESS_INFORMATION processInfo = {};
+        const DWORD detachedFlags =
+            DETACHED_PROCESS |
+            CREATE_NEW_PROCESS_GROUP |
+            CREATE_NO_WINDOW |
+            CREATE_BREAKAWAY_FROM_JOB;
+        BOOL created = tryCreate(detachedFlags, processInfo);
+        if (!created && GetLastError() == ERROR_ACCESS_DENIED)
+        {
+            // Some debugger jobs do not allow explicit breakaway.  Retry detached;
+            // next-start recovery remains the fallback if Visual Studio still owns
+            // the child process tree.
+            processInfo = {};
+            created = tryCreate(
+                DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                processInfo);
+        }
+        if (!created)
+        {
+            processId = 0u;
+            errorCode = GetLastError();
+            return false;
+        }
+
+        processId = processInfo.dwProcessId;
+        errorCode = ERROR_SUCCESS;
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        return true;
+    }
+
+    bool LaunchLocalDebugStopWatcher(const LocalDebugCaptureOptions& options)
+    {
+        const std::filesystem::path script =
+            options.repositoryRoot / L"tools" / L"final_stage" /
+            L"hairgpu_local_debug_report.py";
+        if (!std::filesystem::is_regular_file(script))
+        {
+            std::ofstream error(
+                options.runDirectory / L"WATCHER_LAUNCH_ERROR.txt",
+                std::ios::binary | std::ios::trunc);
+            error << "Watcher script was not found: " << script.u8string() << "\n";
+            return false;
+        }
+
+        std::wstring arguments =
+            L" " + QuoteCommandLineArgument(script.wstring()) +
+            L" --repo-root " + QuoteCommandLineArgument(options.repositoryRoot.wstring()) +
+            L" --run-dir " + QuoteCommandLineArgument(options.runDirectory.wstring()) +
+            L" --run-name " + QuoteCommandLineArgument(options.runName) +
+            L" --viewer-exit-code 143" +
+            L" --watch-pid " + std::to_wstring(GetCurrentProcessId()) +
+            L" --watch-timeout-seconds 0";
+        if (options.autoCommit)
+        {
+            arguments += L" --auto-commit";
+        }
+        if (options.push)
+        {
+            arguments += L" --push";
+        }
+
+        DWORD watcherPid = 0u;
+        DWORD pythonError = ERROR_SUCCESS;
+        bool launched = LaunchDetachedProcess(
+            L"python.exe" + arguments,
+            options.repositoryRoot,
+            watcherPid,
+            pythonError);
+        DWORD launcherError = pythonError;
+        if (!launched)
+        {
+            launched = LaunchDetachedProcess(
+                L"py.exe -3" + arguments,
+                options.repositoryRoot,
+                watcherPid,
+                launcherError);
+        }
+
+        std::ofstream status(
+            options.runDirectory / L"watcher_launch_status.json",
+            std::ios::binary | std::ios::trunc);
+        if (status)
+        {
+            status << "{\n"
+                   << "  \"schemaVersion\": \"hairgpu-local-debug-watcher-v1\",\n"
+                   << "  \"launched\": " << (launched ? "true" : "false") << ",\n"
+                   << "  \"viewerProcessId\": " << GetCurrentProcessId() << ",\n"
+                   << "  \"watcherProcessId\": " << watcherPid << ",\n"
+                   << "  \"pythonLaunchError\": " << pythonError << ",\n"
+                   << "  \"finalLaunchError\": " << launcherError << "\n"
+                   << "}\n";
+            status.flush();
+        }
+        if (!launched)
+        {
+            std::ofstream error(
+                options.runDirectory / L"WATCHER_LAUNCH_ERROR.txt",
+                std::ios::binary | std::ios::trunc);
+            error << "Failed to launch detached watcher with python.exe or py.exe. "
+                  << "Win32 errors: " << pythonError << ", " << launcherError << "\n";
+        }
+        return launched;
+    }
+
+
     // HAIRGPU_F5_STOP_RECOVERY_V1: recover runs killed by Visual Studio's
     // Stop Debugging button.  A still-running PID is never touched.
     bool TextFileContains(const std::filesystem::path& path, const char* token)
@@ -785,7 +916,16 @@ namespace
         SetEnvironmentValue(L"HAIRGPU_TELEMETRY_DIR", options.runDirectory.wstring());
         SetEnvironmentValue(L"HAIRGPU_TELEMETRY_RUN_NAME", options.runName);
         SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_EVIDENCE_CLASS", L"diagnostic_debugger");
-        return WriteCaptureContext(options, executablePath);
+        if (!WriteCaptureContext(options, executablePath))
+        {
+            return false;
+        }
+
+        // The detached watcher survives Visual Studio Stop Debugging and promotes
+        // the flushed partial streams immediately.  RecoverInterruptedLocalDebugRuns
+        // remains a second-start fallback when the host blocks process breakaway.
+        LaunchLocalDebugStopWatcher(options);
+        return true;
     }
 
 

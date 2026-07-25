@@ -1564,6 +1564,8 @@ namespace hairgpu::viewer
         uint32_t m_simulationTicksThisFrame = 0u;
         bool m_renderCadenceWindowValid = false;
         bool m_localDebugCaptureActive = false;
+        uint32_t m_localDebugWarmupFrames = 120u;
+        uint32_t m_localDebugCaptureFrames = 1800u;
         mutable bool m_localDebugStreamingInitialized = false;
         mutable bool m_localDebugStreamingFailed = false;
         mutable uint64_t m_localDebugStreamSampleCount = 0ull;

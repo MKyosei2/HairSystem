@@ -120,11 +120,23 @@ sample.followerReconstructionGpuMilliseconds = m_noveltyTelemetry.followerRecons
 sample.renderPreparationGpuMilliseconds = m_noveltyTelemetry.renderPreparationGpuMilliseconds;
 sample.hairDrawGpuMilliseconds = m_noveltyTelemetry.hairDrawGpuMilliseconds;
 sample.totalHairGpuMilliseconds = m_noveltyTelemetry.totalHairGpuMilliseconds;
+// HAIRGPU_F5_LOCAL_CAPTURE_RANGE_V2: F5 capture uses the dedicated local
+// debugger counters populated from --local-capture-warmup/--local-capture-frames.
+// The ordinary interactive ExperimentCaseConfig intentionally remains disabled and
+// therefore has zero warm-up/measurement values.
 if (m_localDebugCaptureActive &&
-    m_globalFrameIndex >= m_experimentCase.warmupFrames &&
-    m_measuredFrameIndex < m_experimentCase.measurementFrames)
+    m_globalFrameIndex >= m_localDebugWarmupFrames &&
+    m_localDebugStreamSampleCount < static_cast<uint64_t>(m_localDebugCaptureFrames))
 {
-    AppendLocalDebugSample(sample);
+    PerformanceSample localDebugSample = sample;
+    localDebugSample.warmupFrames = m_localDebugWarmupFrames;
+    localDebugSample.measurementFrames = m_localDebugCaptureFrames;
+    localDebugSample.measuredFrameIndex =
+        static_cast<uint32_t>(m_localDebugStreamSampleCount);
+    if (!AppendLocalDebugSample(localDebugSample))
+    {
+        m_localDebugStreamingFailed = true;
+    }
 }
 return sample;
     }

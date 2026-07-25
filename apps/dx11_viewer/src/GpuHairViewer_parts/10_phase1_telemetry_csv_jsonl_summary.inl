@@ -951,6 +951,63 @@ return true;
     bool GpuHairViewer::LoadExperimentCaseFromEnvironment()
     {
         m_experimentCase = {};
+
+        // HAIRGPU_F5_LOCAL_CAPTURE_CONFIG_V2: local debugger capture has its own
+        // warm-up and measurement contract.  It must not inherit the zero-valued
+        // defaults of ExperimentCaseConfig during an ordinary F5 launch.
+        auto localDebugEnvBool = [](const wchar_t* name, bool fallback) -> bool
+        {
+            std::wstring value = GetEnvironmentVariableString(name);
+            if (value.empty())
+            {
+                return fallback;
+            }
+            std::transform(value.begin(), value.end(), value.begin(), ::towlower);
+            if (value == L"1" || value == L"true" || value == L"yes" || value == L"on")
+            {
+                return true;
+            }
+            if (value == L"0" || value == L"false" || value == L"no" || value == L"off")
+            {
+                return false;
+            }
+            return fallback;
+        };
+        auto localDebugEnvUInt = [](const wchar_t* name, uint32_t fallback) -> uint32_t
+        {
+            const std::wstring value = GetEnvironmentVariableString(name);
+            if (value.empty())
+            {
+                return fallback;
+            }
+            try
+            {
+                const unsigned long parsed = std::stoul(value);
+                return parsed > 0ul ? static_cast<uint32_t>(parsed) : fallback;
+            }
+            catch (...)
+            {
+                return fallback;
+            }
+        };
+
+        m_localDebugCaptureActive = localDebugEnvBool(
+            L"HAIRGPU_LOCAL_DEBUG_CAPTURE", false);
+        m_localDebugWarmupFrames = localDebugEnvUInt(
+            L"HAIRGPU_LOCAL_DEBUG_WARMUP_FRAMES", 120u);
+        m_localDebugCaptureFrames = localDebugEnvUInt(
+            L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES", 1800u);
+
+        // Create crash-safe partial streams before the first rendered frame.
+        // Visual Studio Stop Debugging can then terminate the Viewer at any later
+        // point without losing the already-flushed diagnostic rows.
+        if (m_localDebugCaptureActive && !EnsureLocalDebugStreamingInitialized())
+        {
+            m_experimentFailureMessage =
+                L"Local debugger telemetry streams could not be initialized.";
+            return false;
+        }
+
         const std::wstring caseJsonPath = GetEnvironmentVariableString(L"HAIRGPU_CASE_JSON");
         if (caseJsonPath.empty())
         {
@@ -2279,8 +2336,14 @@ return true;
         sample.repairSuccessCount = m_noveltyTelemetry.repairSuccessCount;
         sample.stateTransitionCount = m_noveltyTelemetry.stateTransitionCount;
         sample.stateOscillationCount = m_noveltyTelemetry.stateOscillationCount;
-        sample.warmupFrames = m_experimentCase.warmupFrames;
-        sample.measurementFrames = m_experimentCase.measurementFrames;
+        const bool localDebuggerOnly =
+            m_localDebugCaptureActive && !IsExperimentModeEnabled();
+        sample.warmupFrames = localDebuggerOnly
+            ? m_localDebugWarmupFrames
+            : m_experimentCase.warmupFrames;
+        sample.measurementFrames = localDebuggerOnly
+            ? m_localDebugCaptureFrames
+            : m_experimentCase.measurementFrames;
         sample.seed = m_experimentCase.seed;
         sample.certificateFailureCount = 0u;
         sample.certificateFailureRate = 0.0f;
