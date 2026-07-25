@@ -1,0 +1,107 @@
+name: Package F5 stop-debugging recovery
+
+on:
+  push:
+    branches:
+      - agent/package-f5-stop-recovery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore temporary patch script
+        shell: pwsh
+        run: |
+          python -c "import base64,gzip,pathlib; source=pathlib.Path(r'tools/final_stage/chatgpt_apply_f5_stop_recovery.py.gz.b64'); target=pathlib.Path(r'tools/final_stage/chatgpt_apply_f5_stop_recovery.py'); target.write_bytes(gzip.decompress(base64.b64decode(source.read_text(encoding='utf-8'))))"
+          python -m py_compile tools/final_stage/chatgpt_apply_f5_stop_recovery.py
+
+      - name: Apply patch and create requested ZIP
+        shell: pwsh
+        run: |
+          python tools/final_stage/chatgpt_apply_f5_stop_recovery.py --package out/f5-stop-debugging-recovery-modified-files.zip
+
+      - name: Verify Python and recovery contract
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_local_debug_report.py
+          python -m py_compile tests/final_stage/test_local_debug_capture_contract.py
+          python -m unittest tests/final_stage/test_local_debug_capture_contract.py -v
+
+      - name: Verify requested ZIP contents
+        shell: pwsh
+        run: |
+          @'
+          import zipfile
+          from pathlib import Path
+
+          expected = {
+              'HairSystem.vcxproj.user',
+              'apps/dx11_viewer/src/AppMain.cpp',
+              'apps/dx11_viewer/src/GpuHairViewer.h',
+              'apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl',
+              'apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl',
+              'apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl',
+              'tools/final_stage/hairgpu_local_debug_report.py',
+              'tests/final_stage/test_local_debug_capture_contract.py',
+          }
+          archive_path = Path('out/f5-stop-debugging-recovery-modified-files.zip')
+          with zipfile.ZipFile(archive_path) as archive:
+              observed = set(archive.namelist())
+              bad = archive.testzip()
+          if observed != expected:
+              raise SystemExit(f'ZIP content mismatch: expected={sorted(expected)} observed={sorted(observed)}')
+          if bad is not None:
+              raise SystemExit(f'Corrupt ZIP member: {bad}')
+          print(f'Validated {len(observed)} requested files in {archive_path}')
+          '@ | python -
+
+      - name: Locate MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release x64
+        shell: pwsh
+        run: |
+          msbuild HairSystem.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /p:HairGpuFormalSelfTest=false
+
+      - name: Native ABI self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Shader self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Write SHA-256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash out/f5-stop-debugging-recovery-modified-files.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  f5-stop-debugging-recovery-modified-files.zip" | Set-Content -Encoding ascii out/f5-stop-debugging-recovery-modified-files.zip.sha256
+          Get-Content out/f5-stop-debugging-recovery-modified-files.zip.sha256
+
+      - name: Upload modified-file ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: f5-stop-debugging-recovery-modified-files
+          path: |
+            out/f5-stop-debugging-recovery-modified-files.zip
+            out/f5-stop-debugging-recovery-modified-files.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
