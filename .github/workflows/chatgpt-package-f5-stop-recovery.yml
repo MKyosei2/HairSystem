@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/package-f5-stop-recovery
+  pull_request:
+    branches:
+      - prenovelty-ready
   workflow_dispatch:
 
 permissions:
