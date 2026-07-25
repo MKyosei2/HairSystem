@@ -29,7 +29,7 @@ jobs:
       - name: Restore temporary patch script
         shell: pwsh
         run: |
-          python -c "import base64,gzip,pathlib; source=pathlib.Path(r'tools/final_stage/chatgpt_apply_f5_stop_recovery.py.gz.b64'); target=pathlib.Path(r'tools/final_stage/chatgpt_apply_f5_stop_recovery.py'); target.write_bytes(gzip.decompress(base64.b64decode(source.read_text(encoding='utf-8'))))"
+          python -c "import base64,gzip,pathlib; root=pathlib.Path(r'tools/final_stage/f5_stop_recovery_payload'); encoded=''.join(p.read_text(encoding='utf-8').strip() for p in sorted(root.glob('*.txt'))); target=pathlib.Path(r'tools/final_stage/chatgpt_apply_f5_stop_recovery.py'); target.write_bytes(gzip.decompress(base64.b64decode(encoded)))"
           python -m py_compile tools/final_stage/chatgpt_apply_f5_stop_recovery.py
 
       - name: Apply patch and create requested ZIP
