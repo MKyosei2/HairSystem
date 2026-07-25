@@ -48,7 +48,6 @@ using Microsoft::WRL::ComPtr;
 #include "GpuHairViewer_parts/04_constant_buffers_and_active_set_sync.inl"  // constant_buffers_and_active_set_sync
 #include "GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl"  // active_set_scoring_and_runtime_update
 #include "GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"  // render_mesh_and_visibility_recovery
-#include "GpuHairViewer_parts/02a_required_runtime_foundation.inl"  // recovered definitions inserted at a complete function boundary
 #include "GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl"  // draw_path_and_gpu_timing
 #include "GpuHairViewer_parts/08_ui_state_sync_and_controls.inl"  // ui_state_sync_and_controls
 #include "GpuHairViewer_parts/09_settings_load_save_and_export.inl"  // settings_load_save_and_export
