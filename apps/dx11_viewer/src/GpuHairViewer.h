@@ -504,6 +504,34 @@ namespace hairgpu::viewer
             float maxPenetrationMm = 0.0f;
         };
 
+        // HAIRGPU_LOCAL_DEBUG_PER_SECOND_V3: one durable row is committed for
+        // every completed wall-clock second.  State/counter fields are sampled from
+        // the last frame in the bucket; timing fields are averaged over the bucket.
+        struct LocalDebugSecondAccumulator
+        {
+            uint64_t secondIndex = 1ull;
+            double wallTimeStartSeconds = 0.0;
+            double durationSeconds = 0.0;
+            uint64_t frameCount = 0ull;
+            uint64_t simulationTickCount = 0ull;
+            double frameMillisecondsSum = 0.0;
+            double cpuWorkMillisecondsSum = 0.0;
+            double simulationMillisecondsSum = 0.0;
+            double gpuFrameMillisecondsSum = 0.0;
+            double gpuSimulationMillisecondsSum = 0.0;
+            double gpuHairDrawMillisecondsSum = 0.0;
+            double totalHairGpuMillisecondsSum = 0.0;
+            double gpuThroughputFpsSum = 0.0;
+            uint64_t gpuFrameSampleCount = 0ull;
+            uint64_t gpuSimulationSampleCount = 0ull;
+            uint64_t gpuHairDrawSampleCount = 0ull;
+            uint64_t totalHairGpuSampleCount = 0ull;
+            uint64_t gpuThroughputSampleCount = 0ull;
+            std::vector<float> frameMilliseconds;
+            PerformanceSample lastSample = {};
+            bool hasSample = false;
+        };
+
         // HAIRGPU_EXPERIMENT_RUNTIME_PATCH_V2
         enum class ExperimentMethodId : uint32_t
         {
@@ -1281,6 +1309,8 @@ namespace hairgpu::viewer
         bool ExportPerformanceJsonl(const std::wstring& filePath) const;
         bool EnsureLocalDebugStreamingInitialized() const;
         bool AppendLocalDebugSample(const PerformanceSample& sample) const;
+        bool AppendLocalDebugPerSecondSample(const PerformanceSample& sample) const;
+        bool FlushLocalDebugPerSecondBucket(bool completeSecond, bool durable) const;
         void FlushLocalDebugStreaming(bool durable) const;
         void WriteLocalDebugRunState(const char* status, const char* exitMode) const;
         bool ExportExperimentSettingsJson(const std::wstring& filePath) const;
@@ -1569,6 +1599,8 @@ namespace hairgpu::viewer
         mutable bool m_localDebugStreamingInitialized = false;
         mutable bool m_localDebugStreamingFailed = false;
         mutable uint64_t m_localDebugStreamSampleCount = 0ull;
+        mutable uint64_t m_localDebugMeasurementSampleCount = 0ull;
+        mutable LocalDebugSecondAccumulator m_localDebugSecondAccumulator = {};
         mutable std::filesystem::path m_localDebugRunDirectory;
         mutable std::filesystem::path m_localDebugPartialCsvPath;
         mutable std::filesystem::path m_localDebugPartialJsonlPath;
@@ -1578,6 +1610,7 @@ namespace hairgpu::viewer
         mutable std::filesystem::path m_localDebugFinalPerSecondPath;
         mutable std::ofstream m_localDebugCsvStream;
         mutable std::ofstream m_localDebugJsonlStream;
+        mutable std::ofstream m_localDebugPerSecondStream;
         hairgpu::HairAsset m_asset;
         hairgpu::GpuSimulationConfig m_simConfig;
         hairgpu::ColliderSet m_colliders;

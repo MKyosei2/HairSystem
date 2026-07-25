@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 EVIDENCE_CLASS = "diagnostic_debugger"
-SCHEMA_VERSION = "hairgpu-local-debug-evidence-v3"
+SCHEMA_VERSION = "hairgpu-local-debug-evidence-v4"
 
 
 def _run(
@@ -260,7 +260,13 @@ def _wait_for_process_exit(process_id: int, timeout_seconds: float) -> bool:
     return True
 
 
-def _sanitize_partial_csv(partial: Path, final: Path) -> int:
+def _sanitize_partial_csv(
+    partial: Path,
+    final: Path,
+    *,
+    index_field: str = "sampleIndex",
+    require_frame_time: bool = True,
+) -> int:
     """Promote only complete CSV rows after a forced process termination."""
 
     with partial.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -272,14 +278,15 @@ def _sanitize_partial_csv(partial: Path, final: Path) -> int:
         for row in reader:
             if None in row or any(value is None for value in row.values()):
                 continue
-            if _to_int(row.get("sampleIndex"), -1) < 0:
+            if _to_int(row.get(index_field), -1) < 0:
                 continue
-            frame_ms = (
-                _to_float(row.get("renderFrameMilliseconds"))
-                or _to_float(row.get("frameMilliseconds"))
-            )
-            if frame_ms is None or frame_ms <= 0.0:
-                continue
+            if require_frame_time:
+                frame_ms = (
+                    _to_float(row.get("renderFrameMilliseconds"))
+                    or _to_float(row.get("frameMilliseconds"))
+                )
+                if frame_ms is None or frame_ms <= 0.0:
+                    continue
             rows.append({name: str(row.get(name, "")) for name in fieldnames})
 
     temporary = final.with_suffix(final.suffix + ".tmp")
@@ -696,10 +703,17 @@ def _recover_partial_outputs(run_dir: Path, run_name: str) -> dict[str, Any]:
         _sanitize_partial_jsonl(partial_jsonl, final_jsonl)
         promoted.append(final_jsonl.name)
 
-    # The per-second sidecar may be one flush behind at termination.  Regenerate
-    # it from sanitized frame rows instead of promoting potentially stale data.
-    partial_per_second.unlink(missing_ok=True)
-    final_per_second.unlink(missing_ok=True)
+    # Every completed second is already durably flushed by the Viewer, normally
+    # directly to the final filename.  Preserve those exact rows; a legacy partial
+    # sidecar is sanitized only when present.
+    if partial_per_second.is_file():
+        _sanitize_partial_csv(
+            partial_per_second,
+            final_per_second,
+            index_field="secondIndex",
+            require_frame_time=False,
+        )
+        promoted.append(final_per_second.name)
 
     if not final_csv.is_file():
         raise FileNotFoundError(
@@ -756,23 +770,38 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
     else:
         per_second_rows = _write_per_second_csv(per_second_path, rows)
 
-    frame_ms = _column(rows, "frameMilliseconds")
-    sim_ms = _column(rows, "simulationMilliseconds")
-    gpu_ms = _column(rows, "gpuHairMilliseconds")
-    fps = _column(rows, "fps")
-    total_hair_gpu = _column(rows, "totalHairGpuMilliseconds")
-    static_cached = _column(rows, "staticCachedGroupCount")
-    static_transformed = _column(rows, "staticTransformedGroupCount")
-    dynamic = _column(rows, "dynamicGroupCount")
-    repair = _column(rows, "repairRequiredGroupCount")
-    boundary_error = _column(rows, "staticDynamicBoundaryMaxErrorMm")
-    false_static_rate = _column(rows, "falseStaticRate")
-    per_second_render_fps = _column(per_second_rows, "renderFps")
-    per_second_simulation_hz = _column(per_second_rows, "simulationHz")
-    per_second_gpu_throughput_fps = _column(per_second_rows, "meanGpuThroughputFps")
-    per_second_dropped_ms = _column(per_second_rows, "droppedSimulationMillisecondsDelta")
+    # Raw files preserve warm-up and measurement data.  Statistical summaries and
+    # graphs use measurement rows only so novelty comparisons are not biased by
+    # shader/cache warm-up.  Legacy captures without phase columns remain usable.
+    measurement_rows = [
+        row for row in rows
+        if str(row.get("capturePhase", "")).strip().lower() == "measurement"
+        or str(row.get("isWarmup", "")).strip() == "0"
+    ]
+    analysis_rows = measurement_rows or rows
+    measurement_per_second_rows = [
+        row for row in per_second_rows
+        if str(row.get("capturePhase", "")).strip().lower() == "measurement"
+    ]
+    analysis_per_second_rows = measurement_per_second_rows or per_second_rows
+
+    frame_ms = _column(analysis_rows, "frameMilliseconds")
+    sim_ms = _column(analysis_rows, "simulationMilliseconds")
+    gpu_ms = _column(analysis_rows, "gpuHairMilliseconds")
+    fps = _column(analysis_rows, "fps")
+    total_hair_gpu = _column(analysis_rows, "totalHairGpuMilliseconds")
+    static_cached = _column(analysis_rows, "staticCachedGroupCount")
+    static_transformed = _column(analysis_rows, "staticTransformedGroupCount")
+    dynamic = _column(analysis_rows, "dynamicGroupCount")
+    repair = _column(analysis_rows, "repairRequiredGroupCount")
+    boundary_error = _column(analysis_rows, "staticDynamicBoundaryMaxErrorMm")
+    false_static_rate = _column(analysis_rows, "falseStaticRate")
+    per_second_render_fps = _column(analysis_per_second_rows, "renderFps")
+    per_second_simulation_hz = _column(analysis_per_second_rows, "simulationHz")
+    per_second_gpu_throughput_fps = _column(analysis_per_second_rows, "meanGpuThroughputFps")
+    per_second_dropped_ms = _column(analysis_per_second_rows, "droppedSimulationMillisecondsDelta")
     per_second_status_counts: dict[str, int] = {}
-    for row in per_second_rows:
+    for row in analysis_per_second_rows:
         status = str(row.get("realtimeStatus", "unknown"))
         per_second_status_counts[status] = per_second_status_counts.get(status, 0) + 1
 
@@ -795,7 +824,7 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
     ]
     gpu_pass_means: list[tuple[str, float]] = []
     for label, column_name in gpu_columns:
-        values = _column(rows, column_name)
+        values = _column(analysis_rows, column_name)
         if values:
             gpu_pass_means.append((label, statistics.fmean(values)))
 
@@ -808,6 +837,9 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         "runName": inputs.run_name,
         "viewerExitCode": inputs.viewer_exit_code,
         "capturedFrameCount": len(rows),
+        "warmupFrameCount": max(0, len(rows) - len(measurement_rows)) if measurement_rows else 0,
+        "measurementFrameCount": len(analysis_rows),
+        "summaryUsesMeasurementPhase": bool(measurement_rows),
         "runState": run_state,
         "interrupted": run_state.get("status") == "INTERRUPTED",
         "partialDataRecovered": bool(run_state.get("partialDataRecovered", False)),
@@ -817,13 +849,15 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         "totalHairGpuMilliseconds": _stats(total_hair_gpu),
         "fps": _stats(fps),
         "perSecondSampleCount": len(per_second_rows),
+        "measurementPerSecondSampleCount": len(analysis_per_second_rows),
+        "perSecondSummaryUsesMeasurementPhase": bool(measurement_per_second_rows),
         "perSecondRenderFps": _stats(per_second_render_fps),
         "perSecondSimulationHz": _stats(per_second_simulation_hz),
         "perSecondGpuThroughputFps": _stats(per_second_gpu_throughput_fps),
         "perSecondDroppedSimulationMilliseconds": _stats(per_second_dropped_ms),
         "perSecondRealtimeStatusCounts": per_second_status_counts,
         "gpuTimingNonzeroSampleCount": nonzero_gpu_samples,
-        "gpuTimingNonzeroCoverage": nonzero_gpu_samples / max(len(rows), 1),
+        "gpuTimingNonzeroCoverage": nonzero_gpu_samples / max(len(analysis_rows), 1),
         "staticCachedGroups": _stats(static_cached),
         "staticTransformedGroups": _stats(static_transformed),
         "dynamicGroups": _stats(dynamic),
@@ -831,10 +865,10 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
         "maximumBoundaryErrorMm": max(boundary_error) if boundary_error else None,
         "maximumFalseStaticRate": max(false_static_rate) if false_static_rate else None,
         "novelty01Interpretation": {
-            "preNoveltyComparable": str(rows[0].get("variant", "")).upper() in {"B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"},
-            "proposalComparable": str(rows[0].get("variant", "")).upper() == "P",
+            "preNoveltyComparable": str(analysis_rows[0].get("variant", "")).upper() in {"B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"},
+            "proposalComparable": str(analysis_rows[0].get("variant", "")).upper() == "P",
             "pointLinePointGroupMetricsPresent": any(
-                name in rows[0]
+                name in analysis_rows[0]
                 for name in (
                     "staticCachedGroupCount",
                     "dynamicGroupCount",
@@ -918,7 +952,9 @@ def build_report(inputs: ReportInputs) -> dict[str, Any]:
 ## Run identity
 
 - Run: `{inputs.run_name}`
-- Captured frames: {len(rows)}
+- Captured frames (raw): {len(rows)}
+- Measurement frames used in summary: {len(analysis_rows)}
+- Warm-up frames excluded from summary: {max(0, len(rows) - len(analysis_rows)) if measurement_rows else 0}
 - Viewer exit code: {inputs.viewer_exit_code}
 - Branch: `{git_info.get('branch', '')}`
 - Source commit before data commit: `{git_info.get('commitBeforeDataCommit', '')}`

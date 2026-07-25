@@ -17,6 +17,7 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
         text = (ROOT / "HairSystem.vcxproj.user").read_text(encoding="utf-8-sig")
         arguments = "--local-capture --local-capture-warmup 120 --local-capture-frames 1800"
         self.assertEqual(text.count(arguments), 2)
+        self.assertEqual(text.count("<LocalDebuggerCommand>$(TargetPath)</LocalDebuggerCommand>"), 2)
 
     def test_cpp_contract_contains_streaming_and_startup_recovery(self) -> None:
         app = (ROOT / "apps/dx11_viewer/src/AppMain.cpp").read_text(encoding="utf-8-sig")
@@ -26,6 +27,10 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
         inl15 = (ROOT / "apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl").read_text(encoding="utf-8-sig")
 
         self.assertIn("RecoverInterruptedLocalDebugRuns", app)
+        self.assertIn("PostprocessCompletedSuccessfully", app)
+        self.assertIn(r'\"success\": true', app)
+        self.assertIn("WriteLatestRunPointer", app)
+        self.assertIn("latest_run.json", app)
         self.assertIn("LaunchLocalDebugStopWatcher", app)
         self.assertIn("CREATE_BREAKAWAY_FROM_JOB", app)
         self.assertIn("--watch-pid", app)
@@ -35,15 +40,24 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
         self.assertIn("m_localDebugCaptureFrames", header)
         self.assertIn("m_localDebugPartialCsvPath", header)
         self.assertIn("m_localDebugCsvStream", header)
+        self.assertIn("LocalDebugSecondAccumulator", header)
+        self.assertIn("m_localDebugPerSecondStream", header)
+        self.assertIn("m_localDebugMeasurementSampleCount", header)
         self.assertIn("HAIRGPU_F5_LOCAL_CAPTURE_CONFIG_V2", inl10)
         self.assertIn("HAIRGPU_LOCAL_DEBUG_WARMUP_FRAMES", inl10)
         self.assertIn("HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES", inl10)
         self.assertIn("EnsureLocalDebugStreamingInitialized()", inl10)
         self.assertIn("HAIRGPU_LOCAL_DEBUG_PARTIAL_STREAM_V1", inl10)
+        self.assertIn("HAIRGPU_LOCAL_DEBUG_PER_SECOND_V3", header)
+        self.assertIn("secondIndex,capturePhase,wallTimeStartSeconds", inl10)
+        self.assertIn("AppendLocalDebugPerSecondSample", inl10)
+        self.assertIn("FlushLocalDebugPerSecondBucket", inl10)
+        self.assertIn("m_localDebugRunDirectory / (runName + L\"_per_second.csv\")", inl10)
         self.assertIn("FlushFileBuffers", inl10)
+        self.assertIn("sample.frameIntervalMilliseconds", inl10)
         self.assertIn("HAIRGPU_F5_LOCAL_CAPTURE_RANGE_V2", inl11)
-        self.assertIn("m_globalFrameIndex >= m_localDebugWarmupFrames", inl11)
-        self.assertIn("m_localDebugStreamSampleCount < static_cast<uint64_t>(m_localDebugCaptureFrames)", inl11)
+        self.assertIn("static_cast<uint64_t>(m_localDebugWarmupFrames)", inl11)
+        self.assertIn("static_cast<uint64_t>(m_localDebugCaptureFrames)", inl11)
         self.assertNotIn("m_measuredFrameIndex < m_experimentCase.measurementFrames", inl11)
         self.assertIn("AppendLocalDebugSample(localDebugSample)", inl11)
         self.assertIn("bool GpuHairViewer::FinalizeLocalDebugStreaming()", inl15)
@@ -71,7 +85,8 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             fields = [
-                "sampleIndex", "frameMilliseconds", "renderFrameMilliseconds",
+                "sampleIndex", "capturePhase", "isWarmup",
+                "frameMilliseconds", "renderFrameMilliseconds",
                 "simulationMilliseconds", "fps", "gpuHairMilliseconds",
                 "totalHairGpuMilliseconds", "simulationTicksThisFrame",
                 "droppedSimulationMilliseconds", "presentSyncInterval", "evidenceClass",
@@ -87,6 +102,8 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
                 for index in range(3):
                     writer.writerow({
                         "sampleIndex": index,
+                        "capturePhase": "measurement",
+                        "isWarmup": 0,
                         "frameMilliseconds": 16.6,
                         "renderFrameMilliseconds": 16.6,
                         "simulationMilliseconds": 4.0,
@@ -109,6 +126,48 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
                         "fatalFailure": 0,
                     })
 
+            per_second_fields = [
+                "secondIndex", "capturePhase", "wallTimeStartSeconds",
+                "wallTimeEndSeconds", "durationSeconds", "completeSecond",
+                "frameCount", "simulationTickCount", "renderFps", "simulationHz",
+                "meanFrameMilliseconds", "p95FrameMilliseconds", "maxFrameMilliseconds",
+                "meanCpuWorkMilliseconds", "meanSimulationMilliseconds",
+                "meanGpuFrameMilliseconds", "meanGpuSimulationMilliseconds",
+                "meanGpuHairDrawMilliseconds", "meanTotalHairGpuMilliseconds",
+                "gpuTimingCoverage", "meanGpuThroughputFps",
+                "droppedSimulationMillisecondsEnd", "evidenceClass",
+            ]
+            with (run_dir / "local_debug_per_second.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=per_second_fields)
+                writer.writeheader()
+                writer.writerow({
+                    "secondIndex": 1,
+                    "capturePhase": "measurement",
+                    "wallTimeStartSeconds": 0.0,
+                    "wallTimeEndSeconds": 1.0,
+                    "durationSeconds": 1.0,
+                    "completeSecond": 1,
+                    "frameCount": 60,
+                    "simulationTickCount": 60,
+                    "renderFps": 60.0,
+                    "simulationHz": 60.0,
+                    "meanFrameMilliseconds": 16.666,
+                    "p95FrameMilliseconds": 16.9,
+                    "maxFrameMilliseconds": 17.1,
+                    "meanCpuWorkMilliseconds": 4.0,
+                    "meanSimulationMilliseconds": 3.0,
+                    "meanGpuFrameMilliseconds": 5.0,
+                    "meanGpuSimulationMilliseconds": 2.5,
+                    "meanGpuHairDrawMilliseconds": 1.0,
+                    "meanTotalHairGpuMilliseconds": 4.0,
+                    "gpuTimingCoverage": 1.0,
+                    "meanGpuThroughputFps": 60.0,
+                    "droppedSimulationMillisecondsEnd": 0.0,
+                    "evidenceClass": "diagnostic_debugger",
+                })
+
             result = module.main([
                 "--repo-root", str(temp),
                 "--run-dir", str(run_dir),
@@ -121,9 +180,21 @@ class LocalDebugCaptureContractTests(unittest.TestCase):
             self.assertTrue((run_dir / "report.md").is_file())
             self.assertTrue((run_dir / "frame_time.svg").is_file())
             self.assertTrue((run_dir / "postprocess_status.json").is_file())
+            with (run_dir / "local_debug_per_second.csv").open(
+                "r", encoding="utf-8-sig", newline=""
+            ) as handle:
+                per_second_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(per_second_rows), 1)
+            self.assertEqual(per_second_rows[0]["capturePhase"], "measurement")
             state = json.loads((run_dir / "run_state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "INTERRUPTED")
             self.assertTrue(state["partialDataRecovered"])
+            summary = json.loads(
+                (run_dir / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(summary["summaryUsesMeasurementPhase"])
+            self.assertEqual(summary["measurementFrameCount"], 3)
+            self.assertEqual(summary["measurementPerSecondSampleCount"], 1)
 
 
     def test_detached_watcher_finalizes_after_watched_process_exits(self) -> None:

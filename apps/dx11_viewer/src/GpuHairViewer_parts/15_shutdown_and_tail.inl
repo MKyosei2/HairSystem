@@ -319,14 +319,21 @@
             return !m_localDebugStreamingFailed;
         }
 
-        ExportPerSecondTelemetryCsv(m_localDebugPartialPerSecondPath.wstring());
+        // Complete the final short second during a normal Viewer return.  Forced
+        // Visual Studio termination already leaves every completed second durable.
+        FlushLocalDebugPerSecondBucket(false, true);
         FlushLocalDebugStreaming(true);
         m_localDebugCsvStream.close();
         m_localDebugJsonlStream.close();
+        m_localDebugPerSecondStream.close();
 
         auto promote = [](const std::filesystem::path& partial,
                           const std::filesystem::path& finalPath) -> bool
         {
+            if (partial == finalPath)
+            {
+                return std::filesystem::is_regular_file(finalPath);
+            }
             if (!std::filesystem::is_regular_file(partial))
             {
                 return true;

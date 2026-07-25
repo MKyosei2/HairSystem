@@ -431,6 +431,34 @@ namespace
         return stream.str();
     }
 
+    bool WriteLatestRunPointer(const LocalDebugCaptureOptions& options)
+    {
+        const std::filesystem::path root = options.runDirectory.parent_path();
+        const std::filesystem::path temporary = root / L"latest_run.json.tmp";
+        const std::filesystem::path target = root / L"latest_run.json";
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output)
+        {
+            return false;
+        }
+        output << "{\n"
+               << "  \"schemaVersion\": \"hairgpu-local-debug-latest-v1\",\n"
+               << "  \"processId\": " << GetCurrentProcessId() << ",\n"
+               << "  \"runDirectory\": \""
+               << JsonEscapeText(options.runDirectory.u8string()) << "\",\n"
+               << "  \"perSecondCsv\": \""
+               << JsonEscapeText((options.runDirectory / L"local_debug_per_second.csv").u8string())
+               << "\"\n"
+               << "}\n";
+        output.flush();
+        output.close();
+        std::error_code ec;
+        std::filesystem::remove(target, ec);
+        ec.clear();
+        std::filesystem::rename(temporary, target, ec);
+        return !ec;
+    }
+
     bool WriteCaptureContext(
         const LocalDebugCaptureOptions& options,
         const std::filesystem::path& executablePath)
@@ -748,6 +776,19 @@ namespace
         return token != nullptr && text.find(token) != std::string::npos;
     }
 
+    bool PostprocessCompletedSuccessfully(const std::filesystem::path& runDirectory)
+    {
+        const std::filesystem::path statusPath =
+            runDirectory / L"postprocess_status.json";
+        if (!std::filesystem::is_regular_file(statusPath))
+        {
+            return false;
+        }
+        // A previous failed watcher must remain recoverable on the next F5 launch.
+        // Presence alone is not success; inspect the explicit JSON value.
+        return TextFileContains(statusPath, "\"success\": true");
+    }
+
     DWORD ProcessIdFromRunDirectory(const std::filesystem::path& runDirectory)
     {
         const std::wstring name = runDirectory.filename().wstring();
@@ -807,7 +848,7 @@ namespace
                 runDirectory / L"local_debug_frames.partial.csv";
             if (!TextFileContains(statePath, "\"status\": \"RUNNING\"") ||
                 !std::filesystem::is_regular_file(partialCsv) ||
-                std::filesystem::is_regular_file(runDirectory / L"postprocess_status.json"))
+                PostprocessCompletedSuccessfully(runDirectory))
             {
                 continue;
             }
@@ -916,7 +957,8 @@ namespace
         SetEnvironmentValue(L"HAIRGPU_TELEMETRY_DIR", options.runDirectory.wstring());
         SetEnvironmentValue(L"HAIRGPU_TELEMETRY_RUN_NAME", options.runName);
         SetEnvironmentValue(L"HAIRGPU_LOCAL_DEBUG_EVIDENCE_CLASS", L"diagnostic_debugger");
-        if (!WriteCaptureContext(options, executablePath))
+        if (!WriteCaptureContext(options, executablePath) ||
+            !WriteLatestRunPointer(options))
         {
             return false;
         }

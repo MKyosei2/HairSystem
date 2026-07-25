@@ -1912,7 +1912,11 @@ return true;
 
         for (const PerformanceSample& sample : m_performanceSamples)
         {
-            float frameMilliseconds = sample.renderFrameMilliseconds;
+            float frameMilliseconds = sample.frameIntervalMilliseconds;
+            if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
+            {
+                frameMilliseconds = sample.renderFrameMilliseconds;
+            }
             if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
             {
                 frameMilliseconds = sample.frameMilliseconds;
@@ -2035,14 +2039,15 @@ return true;
             m_localDebugRunDirectory / (runName + L"_frames.partial.csv");
         m_localDebugPartialJsonlPath =
             m_localDebugRunDirectory / (runName + L"_frames.partial.jsonl");
+        // Per-second rows are already complete and durably flushed, so expose the
+        // final filename from startup instead of hiding it behind a partial suffix.
         m_localDebugPartialPerSecondPath =
-            m_localDebugRunDirectory / (runName + L"_per_second.partial.csv");
+            m_localDebugRunDirectory / (runName + L"_per_second.csv");
         m_localDebugFinalCsvPath =
             m_localDebugRunDirectory / (runName + L"_frames.csv");
         m_localDebugFinalJsonlPath =
             m_localDebugRunDirectory / (runName + L"_frames.jsonl");
-        m_localDebugFinalPerSecondPath =
-            m_localDebugRunDirectory / (runName + L"_per_second.csv");
+        m_localDebugFinalPerSecondPath = m_localDebugPartialPerSecondPath;
 
         m_localDebugCsvStream.open(
             m_localDebugPartialCsvPath,
@@ -2050,14 +2055,18 @@ return true;
         m_localDebugJsonlStream.open(
             m_localDebugPartialJsonlPath,
             std::ios::binary | std::ios::trunc);
-        if (!m_localDebugCsvStream || !m_localDebugJsonlStream)
+        m_localDebugPerSecondStream.open(
+            m_localDebugPartialPerSecondPath,
+            std::ios::binary | std::ios::trunc);
+        if (!m_localDebugCsvStream || !m_localDebugJsonlStream ||
+            !m_localDebugPerSecondStream)
         {
             m_localDebugStreamingFailed = true;
             return false;
         }
 
         m_localDebugCsvStream
-            << "sampleIndex,elapsedSeconds,frameMilliseconds,renderFrameMilliseconds,"
+            << "sampleIndex,capturePhase,isWarmup,measurementFrameIndex,elapsedSeconds,frameMilliseconds,renderFrameMilliseconds,"
                "frameIntervalMilliseconds,cpuFrameWorkMilliseconds,simulationMilliseconds,"
                "fps,renderFps,simulationHz,gpuFrameMilliseconds,gpuSimulationMilliseconds,"
                "gpuHairMilliseconds,gpuHairDrawMilliseconds,totalHairGpuMilliseconds,"
@@ -2074,11 +2083,39 @@ return true;
                "fatalFailureCode,collisionCandidateCount,collisionMissCount,"
                "wakeRequestGroupCount,repairAttemptCount,repairSuccessCount,"
                "stateTransitionCount,stateOscillationCount\n";
+        m_localDebugPerSecondStream
+            << "secondIndex,capturePhase,wallTimeStartSeconds,wallTimeEndSeconds,durationSeconds,"
+               "completeSecond,frameCount,simulationTickCount,renderFps,simulationHz,"
+               "meanFrameMilliseconds,p95FrameMilliseconds,maxFrameMilliseconds,"
+               "meanCpuWorkMilliseconds,meanSimulationMilliseconds,"
+               "meanGpuFrameMilliseconds,meanGpuSimulationMilliseconds,"
+               "meanGpuHairDrawMilliseconds,meanTotalHairGpuMilliseconds,"
+               "gpuTimingCoverage,meanGpuThroughputFps,droppedSimulationMillisecondsEnd,"
+               "guideCount,followerCount,totalStrandCount,totalParticleCount,vramMegabytes,"
+               "bandwidthMegabytesPerFrame,totalSegmentGroupCount,staticCachedGroupCount,"
+               "staticTransformedGroupCount,dynamicGroupCount,repairRequiredGroupCount,"
+               "fallbackGroupCount,falseStaticCount,falseStaticRate,"
+               "staticDynamicBoundaryMeanErrorMm,staticDynamicBoundaryMaxErrorMm,"
+               "cacheHitCount,cacheMissCount,cacheInvalidationCount,dirtyBlockCount,dirtyGroupCount,"
+               "certificateValidGroupCount,certificateInvalidGroupCount,wakeRequestGroupCount,"
+               "repairAttemptCount,repairSuccessCount,stateTransitionCount,stateOscillationCount,"
+               "collisionCandidateCount,collisionMissCount,nanStateCount,infiniteStateCount,"
+               "fatalFailure,fatalFailureCode,blockClassificationGpuMilliseconds,"
+               "groupClassificationGpuMilliseconds,compactionGpuMilliseconds,"
+               "predictiveWakeGpuMilliseconds,wakePropagationGpuMilliseconds,"
+               "staticTransformGpuMilliseconds,dynamicSolveGpuMilliseconds,"
+               "velocityRecoveryGpuMilliseconds,repairSolveGpuMilliseconds,"
+               "boundaryRepairGpuMilliseconds,cacheUpdateGpuMilliseconds,watchdogGpuMilliseconds,"
+               "followerReconstructionGpuMilliseconds,renderPreparationGpuMilliseconds,"
+               "hairDrawGpuMilliseconds,totalHairGpuMilliseconds,evidenceClass\n";
         m_localDebugCsvStream << std::fixed << std::setprecision(6);
         m_localDebugJsonlStream << std::fixed << std::setprecision(6);
+        m_localDebugPerSecondStream << std::fixed << std::setprecision(6);
         m_localDebugStreamingInitialized = true;
         m_localDebugStreamingFailed = false;
         m_localDebugStreamSampleCount = 0ull;
+        m_localDebugMeasurementSampleCount = 0ull;
+        m_localDebugSecondAccumulator = {};
         WriteLocalDebugRunState("RUNNING", "visual_studio_local_debugger");
         FlushLocalDebugStreaming(true);
         return true;
@@ -2093,9 +2130,17 @@ return true;
         }
         const std::string variant =
             CsvEscapeUtf8(WideToUtf8(m_experimentCase.variant));
+        const bool isWarmup = sample.globalFrameIndex < m_localDebugWarmupFrames;
+        const char* capturePhase = isWarmup ? "warmup" : "measurement";
+        const uint64_t measurementFrameIndex = isWarmup
+            ? 0ull
+            : m_localDebugMeasurementSampleCount++;
         const uint64_t sampleIndex = m_localDebugStreamSampleCount++;
         m_localDebugCsvStream
             << sampleIndex << ','
+            << capturePhase << ','
+            << (isWarmup ? 1 : 0) << ','
+            << measurementFrameIndex << ','
             << sample.elapsedSeconds << ','
             << sample.frameMilliseconds << ','
             << sample.renderFrameMilliseconds << ','
@@ -2160,6 +2205,9 @@ return true;
         };
         m_localDebugJsonlStream
             << "{\"sampleIndex\":" << sampleIndex
+            << ",\"capturePhase\":\"" << capturePhase << "\""
+            << ",\"isWarmup\":" << (isWarmup ? "true" : "false")
+            << ",\"measurementFrameIndex\":" << measurementFrameIndex
             << ",\"elapsedSeconds\":";
         jsonFloat(sample.elapsedSeconds);
         m_localDebugJsonlStream << ",\"frameMilliseconds\":";
@@ -2191,15 +2239,204 @@ return true;
             << ",\"formalEvidence\":false"
             << ",\"evidenceClass\":\"diagnostic_debugger\"}\n";
 
-        // One-second durability cadence.  FlushFileBuffers is deliberately not used
-        // every frame because that would dominate the diagnostic timing itself.
-        if ((m_localDebugStreamSampleCount % 60ull) == 0ull)
+        if (!AppendLocalDebugPerSecondSample(sample))
+        {
+            m_localDebugStreamingFailed = true;
+        }
+
+        // Frame streams are buffered for throughput, while the per-second stream is
+        // durably committed at each completed second.  A 30-frame fallback keeps
+        // short, low-FPS runs recoverable even before the first complete second.
+        if ((m_localDebugStreamSampleCount % 30ull) == 0ull)
         {
             FlushLocalDebugStreaming(true);
-            ExportPerSecondTelemetryCsv(m_localDebugPartialPerSecondPath.wstring());
             WriteLocalDebugRunState("RUNNING", "visual_studio_local_debugger");
         }
-        return m_localDebugCsvStream.good() && m_localDebugJsonlStream.good();
+        return m_localDebugCsvStream.good() && m_localDebugJsonlStream.good() &&
+               m_localDebugPerSecondStream.good();
+    }
+
+    bool GpuHairViewer::AppendLocalDebugPerSecondSample(
+        const PerformanceSample& sample) const
+    {
+        LocalDebugSecondAccumulator& bucket = m_localDebugSecondAccumulator;
+        // Use start-to-start frame interval for true wall-clock one-second buckets.
+        // Render/work durations remain fallback values when cadence timing is unavailable.
+        float frameMilliseconds = sample.frameIntervalMilliseconds;
+        if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
+        {
+            frameMilliseconds = sample.renderFrameMilliseconds;
+        }
+        if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
+        {
+            frameMilliseconds = sample.frameMilliseconds;
+        }
+        if (!std::isfinite(frameMilliseconds) || frameMilliseconds <= 0.0f)
+        {
+            return true;
+        }
+
+        const bool currentWarmup = sample.globalFrameIndex < m_localDebugWarmupFrames;
+        if (bucket.hasSample)
+        {
+            const bool previousWarmup =
+                bucket.lastSample.globalFrameIndex < m_localDebugWarmupFrames;
+            if (previousWarmup != currentWarmup &&
+                !FlushLocalDebugPerSecondBucket(false, true))
+            {
+                return false;
+            }
+        }
+
+        const double frameSeconds = static_cast<double>(frameMilliseconds) / 1000.0;
+        bucket.hasSample = true;
+        ++bucket.frameCount;
+        bucket.durationSeconds += frameSeconds;
+        bucket.simulationTickCount += sample.simulationTicksThisFrame;
+        bucket.frameMillisecondsSum += frameMilliseconds;
+        bucket.cpuWorkMillisecondsSum += sample.cpuFrameWorkMilliseconds;
+        bucket.simulationMillisecondsSum += sample.simulationMilliseconds;
+        bucket.frameMilliseconds.push_back(frameMilliseconds);
+        if (std::isfinite(sample.gpuFrameMilliseconds) && sample.gpuFrameMilliseconds > 0.0f)
+        {
+            bucket.gpuFrameMillisecondsSum += sample.gpuFrameMilliseconds;
+            ++bucket.gpuFrameSampleCount;
+        }
+        if (std::isfinite(sample.gpuSimulationMilliseconds) && sample.gpuSimulationMilliseconds > 0.0f)
+        {
+            bucket.gpuSimulationMillisecondsSum += sample.gpuSimulationMilliseconds;
+            ++bucket.gpuSimulationSampleCount;
+        }
+        if (std::isfinite(sample.gpuHairDrawMilliseconds) && sample.gpuHairDrawMilliseconds > 0.0f)
+        {
+            bucket.gpuHairDrawMillisecondsSum += sample.gpuHairDrawMilliseconds;
+            ++bucket.gpuHairDrawSampleCount;
+        }
+        if (std::isfinite(sample.totalHairGpuMilliseconds) && sample.totalHairGpuMilliseconds > 0.0f)
+        {
+            bucket.totalHairGpuMillisecondsSum += sample.totalHairGpuMilliseconds;
+            ++bucket.totalHairGpuSampleCount;
+        }
+        if (std::isfinite(sample.gpuThroughputFps) && sample.gpuThroughputFps > 0.0f)
+        {
+            bucket.gpuThroughputFpsSum += sample.gpuThroughputFps;
+            ++bucket.gpuThroughputSampleCount;
+        }
+        bucket.lastSample = sample;
+
+        if (bucket.durationSeconds >= 1.0)
+        {
+            return FlushLocalDebugPerSecondBucket(true, true);
+        }
+        return true;
+    }
+
+    bool GpuHairViewer::FlushLocalDebugPerSecondBucket(
+        bool completeSecond,
+        bool durable) const
+    {
+        LocalDebugSecondAccumulator& bucket = m_localDebugSecondAccumulator;
+        if (!bucket.hasSample || bucket.frameCount == 0ull)
+        {
+            return true;
+        }
+
+        std::vector<float> ordered = bucket.frameMilliseconds;
+        std::sort(ordered.begin(), ordered.end());
+        const size_t p95Index = ordered.empty()
+            ? 0u
+            : static_cast<size_t>(std::ceil(
+                0.95 * static_cast<double>(ordered.size() - 1u)));
+        const double duration = std::max(bucket.durationSeconds, 1.0e-6);
+        const double frameDenominator = static_cast<double>(bucket.frameCount);
+        const PerformanceSample& last = bucket.lastSample;
+        const bool warmup = last.globalFrameIndex < m_localDebugWarmupFrames;
+        const char* phase = warmup ? "warmup" : "measurement";
+        const auto meanOrZero = [](double sum, uint64_t count) -> double
+        {
+            return count > 0ull ? sum / static_cast<double>(count) : 0.0;
+        };
+
+        m_localDebugPerSecondStream
+            << bucket.secondIndex << ','
+            << phase << ','
+            << bucket.wallTimeStartSeconds << ','
+            << (bucket.wallTimeStartSeconds + duration) << ','
+            << duration << ','
+            << (completeSecond ? 1 : 0) << ','
+            << bucket.frameCount << ','
+            << bucket.simulationTickCount << ','
+            << (frameDenominator / duration) << ','
+            << (static_cast<double>(bucket.simulationTickCount) / duration) << ','
+            << (bucket.frameMillisecondsSum / frameDenominator) << ','
+            << (ordered.empty() ? 0.0f : ordered[std::min(p95Index, ordered.size() - 1u)]) << ','
+            << (ordered.empty() ? 0.0f : ordered.back()) << ','
+            << (bucket.cpuWorkMillisecondsSum / frameDenominator) << ','
+            << (bucket.simulationMillisecondsSum / frameDenominator) << ','
+            << meanOrZero(bucket.gpuFrameMillisecondsSum, bucket.gpuFrameSampleCount) << ','
+            << meanOrZero(bucket.gpuSimulationMillisecondsSum, bucket.gpuSimulationSampleCount) << ','
+            << meanOrZero(bucket.gpuHairDrawMillisecondsSum, bucket.gpuHairDrawSampleCount) << ','
+            << meanOrZero(bucket.totalHairGpuMillisecondsSum, bucket.totalHairGpuSampleCount) << ','
+            << (static_cast<double>(bucket.gpuFrameSampleCount) / frameDenominator) << ','
+            << meanOrZero(bucket.gpuThroughputFpsSum, bucket.gpuThroughputSampleCount) << ','
+            << last.droppedSimulationMilliseconds << ','
+            << last.guideCount << ',' << last.followerCount << ','
+            << last.totalStrandCount << ',' << last.totalParticleCount << ','
+            << last.vramMegabytes << ',' << last.bandwidthMegabytesPerFrame << ','
+            << last.totalSegmentGroupCount << ',' << last.staticCachedGroupCount << ','
+            << last.staticTransformedGroupCount << ',' << last.dynamicGroupCount << ','
+            << last.repairRequiredGroupCount << ',' << last.fallbackGroupCount << ','
+            << last.falseStaticCount << ',' << last.falseStaticRate << ','
+            << last.staticDynamicBoundaryMeanErrorMm << ','
+            << last.staticDynamicBoundaryMaxErrorMm << ','
+            << last.cacheHitCount << ',' << last.cacheMissCount << ','
+            << last.cacheInvalidationCount << ',' << last.dirtyBlockCount << ','
+            << last.dirtyGroupCount << ',' << last.certificateValidGroupCount << ','
+            << last.certificateInvalidGroupCount << ',' << last.wakeRequestGroupCount << ','
+            << last.repairAttemptCount << ',' << last.repairSuccessCount << ','
+            << last.stateTransitionCount << ',' << last.stateOscillationCount << ','
+            << last.collisionCandidateCount << ',' << last.collisionMissCount << ','
+            << last.nanStateCount << ',' << last.infiniteStateCount << ','
+            << last.fatalFailure << ',' << last.fatalFailureCode << ','
+            << last.blockClassificationGpuMilliseconds << ','
+            << last.groupClassificationGpuMilliseconds << ','
+            << last.compactionGpuMilliseconds << ','
+            << last.predictiveWakeGpuMilliseconds << ','
+            << last.wakePropagationGpuMilliseconds << ','
+            << last.staticTransformGpuMilliseconds << ','
+            << last.dynamicSolveGpuMilliseconds << ','
+            << last.velocityRecoveryGpuMilliseconds << ','
+            << last.repairSolveGpuMilliseconds << ','
+            << last.boundaryRepairGpuMilliseconds << ','
+            << last.cacheUpdateGpuMilliseconds << ','
+            << last.watchdogGpuMilliseconds << ','
+            << last.followerReconstructionGpuMilliseconds << ','
+            << last.renderPreparationGpuMilliseconds << ','
+            << last.hairDrawGpuMilliseconds << ','
+            << last.totalHairGpuMilliseconds << ','
+            << "diagnostic_debugger" << '\n';
+
+        const double nextStart = bucket.wallTimeStartSeconds + duration;
+        const uint64_t nextIndex = bucket.secondIndex + 1ull;
+        bucket = {};
+        bucket.secondIndex = nextIndex;
+        bucket.wallTimeStartSeconds = nextStart;
+
+        m_localDebugPerSecondStream.flush();
+        if (durable)
+        {
+            HANDLE file = CreateFileW(
+                m_localDebugPartialPerSecondPath.c_str(), GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE)
+            {
+                FlushFileBuffers(file);
+                CloseHandle(file);
+            }
+            WriteLocalDebugRunState("RUNNING", "visual_studio_local_debugger");
+        }
+        return m_localDebugPerSecondStream.good();
     }
 
     void GpuHairViewer::FlushLocalDebugStreaming(bool durable) const
@@ -2210,6 +2447,7 @@ return true;
         }
         m_localDebugCsvStream.flush();
         m_localDebugJsonlStream.flush();
+        m_localDebugPerSecondStream.flush();
         if (!durable)
         {
             return;
@@ -2228,6 +2466,7 @@ return true;
         };
         flushPath(m_localDebugPartialCsvPath);
         flushPath(m_localDebugPartialJsonlPath);
+        flushPath(m_localDebugPartialPerSecondPath);
     }
 
     void GpuHairViewer::WriteLocalDebugRunState(

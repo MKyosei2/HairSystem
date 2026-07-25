@@ -125,14 +125,17 @@ sample.totalHairGpuMilliseconds = m_noveltyTelemetry.totalHairGpuMilliseconds;
 // The ordinary interactive ExperimentCaseConfig intentionally remains disabled and
 // therefore has zero warm-up/measurement values.
 if (m_localDebugCaptureActive &&
-    m_globalFrameIndex >= m_localDebugWarmupFrames &&
-    m_localDebugStreamSampleCount < static_cast<uint64_t>(m_localDebugCaptureFrames))
+    m_localDebugStreamSampleCount <
+        static_cast<uint64_t>(m_localDebugWarmupFrames) +
+        static_cast<uint64_t>(m_localDebugCaptureFrames))
 {
     PerformanceSample localDebugSample = sample;
     localDebugSample.warmupFrames = m_localDebugWarmupFrames;
     localDebugSample.measurementFrames = m_localDebugCaptureFrames;
     localDebugSample.measuredFrameIndex =
-        static_cast<uint32_t>(m_localDebugStreamSampleCount);
+        m_globalFrameIndex >= m_localDebugWarmupFrames
+            ? static_cast<uint32_t>(m_localDebugMeasurementSampleCount)
+            : 0u;
     if (!AppendLocalDebugSample(localDebugSample))
     {
         m_localDebugStreamingFailed = true;
@@ -930,9 +933,18 @@ return sample;
         }
 
         const std::filesystem::path stem = outputDirectory / runName;
-        const bool frameCsvOk = ExportPerformanceCsv((stem.wstring() + L"_frames.csv"));
-        const bool frameJsonlOk = ExportPerformanceJsonl((stem.wstring() + L"_frames.jsonl"));
-        const bool perSecondOk = ExportPerSecondTelemetryCsv((stem.wstring() + L"_per_second.csv"));
+        const std::filesystem::path streamedFrameCsv = stem.wstring() + L"_frames.csv";
+        const std::filesystem::path streamedFrameJsonl = stem.wstring() + L"_frames.jsonl";
+        const std::filesystem::path streamedPerSecond = stem.wstring() + L"_per_second.csv";
+        // FinalizeLocalDebugStreaming already promoted the crash-safe streams.  Do
+        // not overwrite them with an in-memory exporter that may contain a different
+        // capture range during an ordinary F5 launch.
+        const bool frameCsvOk = std::filesystem::is_regular_file(streamedFrameCsv)
+            || ExportPerformanceCsv(streamedFrameCsv.wstring());
+        const bool frameJsonlOk = std::filesystem::is_regular_file(streamedFrameJsonl)
+            || ExportPerformanceJsonl(streamedFrameJsonl.wstring());
+        const bool perSecondOk = std::filesystem::is_regular_file(streamedPerSecond)
+            || ExportPerSecondTelemetryCsv(streamedPerSecond.wstring());
         const bool settingsOk = ExportExperimentSettingsJson((stem.wstring() + L"_settings.json"));
         const bool summaryOk = ExportRuntimeReport((stem.wstring() + L"_summary.json"));
         return frameCsvOk && frameJsonlOk && perSecondOk && settingsOk && summaryOk;
