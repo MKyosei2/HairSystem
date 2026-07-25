@@ -1,13 +1,20 @@
 #include "hairgpu/Validation.h"
 
+#include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <numeric>
 #include <sstream>
 
 namespace hairgpu
 {
     namespace
     {
+        constexpr float kZeroLengthEpsilon = 1.0e-7f;
+        constexpr uint64_t kFnvOffset = 1469598103934665603ull;
+        constexpr uint64_t kFnvPrime = 1099511628211ull;
+
         bool IsFinite(float v)
         {
             return std::isfinite(v) != 0;
@@ -18,7 +25,44 @@ namespace hairgpu
             return IsFinite(v.x) && IsFinite(v.y) && IsFinite(v.z);
         }
 
-        void PushIssue(HairAssetValidationReport& report, ValidationSeverity severity, const std::string& message)
+        float Distance(const Vec3& a, const Vec3& b)
+        {
+            const float x = b.x - a.x;
+            const float y = b.y - a.y;
+            const float z = b.z - a.z;
+            return std::sqrt(x * x + y * y + z * z);
+        }
+
+        void HashU32(uint64_t& hash, uint32_t value)
+        {
+            for (uint32_t shift = 0u; shift < 32u; shift += 8u)
+            {
+                hash ^= static_cast<uint8_t>((value >> shift) & 0xffu);
+                hash *= kFnvPrime;
+            }
+        }
+
+        uint64_t ComputeTopologyHash(const HairAsset& asset, uint32_t groupsPerBlock)
+        {
+            uint64_t hash = kFnvOffset;
+            HashU32(hash, static_cast<uint32_t>(asset.strands.size()));
+            HashU32(hash, static_cast<uint32_t>(asset.restPoints.size()));
+            HashU32(hash, groupsPerBlock);
+
+            for (const StrandRange& strand : asset.strands)
+            {
+                HashU32(hash, strand.pointOffset);
+                HashU32(hash, strand.pointCount);
+                HashU32(hash, strand.groupId);
+                HashU32(hash, strand.flags);
+            }
+            return hash;
+        }
+
+        void PushIssue(
+            HairAssetValidationReport& report,
+            ValidationSeverity severity,
+            const std::string& message)
         {
             report.issues.push_back({ severity, message });
             switch (severity)
@@ -33,6 +77,38 @@ namespace hairgpu
                 ++report.errorCount;
                 report.valid = false;
                 break;
+            }
+        }
+
+        void PushIssue(
+            SegmentGroupValidationReport& report,
+            ValidationSeverity severity,
+            const std::string& message)
+        {
+            report.issues.push_back({ severity, message });
+            switch (severity)
+            {
+            case ValidationSeverity::Info:
+                ++report.infoCount;
+                break;
+            case ValidationSeverity::Warning:
+                ++report.warningCount;
+                break;
+            case ValidationSeverity::Error:
+                ++report.errorCount;
+                report.valid = false;
+                break;
+            }
+        }
+
+        const char* SeverityName(ValidationSeverity severity)
+        {
+            switch (severity)
+            {
+            case ValidationSeverity::Info: return "INFO";
+            case ValidationSeverity::Warning: return "WARNING";
+            case ValidationSeverity::Error: return "ERROR";
+            default: return "UNKNOWN";
             }
         }
     }
@@ -51,214 +127,987 @@ namespace hairgpu
         {
             PushIssue(report, ValidationSeverity::Error, "Asset has no point positions.");
         }
-        if (asset.pointWidths.size() != asset.restPoints.size())
+        if (!asset.pointWidths.empty() && asset.pointWidths.size() != asset.restPoints.size())
         {
-            std::ostringstream ss;
-            ss << "pointWidths count (" << asset.pointWidths.size() << ") does not match restPoints count (" << asset.restPoints.size() << ").";
-            PushIssue(report, ValidationSeverity::Error, ss.str());
+            PushIssue(report, ValidationSeverity::Error, "pointWidths count does not match restPoints count.");
         }
         if (!asset.materials.empty() && asset.materials.size() != asset.strands.size())
         {
-            std::ostringstream ss;
-            ss << "materials count (" << asset.materials.size() << ") does not match strands count (" << asset.strands.size() << ").";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Warning, "materials count does not match strands count.");
         }
         if (!asset.rootBindings.empty() && asset.rootBindings.size() != asset.strands.size())
         {
-            std::ostringstream ss;
-            ss << "rootBindings count (" << asset.rootBindings.size() << ") does not match strands count (" << asset.strands.size() << ").";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Warning, "rootBindings count does not match strands count.");
         }
         if (!asset.followData.empty() && asset.followData.size() != asset.strands.size())
         {
-            std::ostringstream ss;
-            ss << "followData count (" << asset.followData.size() << ") does not match strands count (" << asset.strands.size() << ").";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Warning, "followData count does not match strands count.");
         }
         if (asset.guideStrandCount + asset.followerStrandCount != asset.strands.size())
         {
-            std::ostringstream ss;
-            ss << "guideStrandCount + followerStrandCount != total strands ("
-               << asset.guideStrandCount << " + " << asset.followerStrandCount << " vs " << asset.strands.size() << ").";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
-        }
-        if (asset.particlesPerStrand == 0)
-        {
-            PushIssue(report, ValidationSeverity::Warning, "particlesPerStrand is zero.");
+            PushIssue(report, ValidationSeverity::Warning, "guideStrandCount + followerStrandCount does not match strands count.");
         }
 
-        uint32_t segmentCount = 0;
-        float totalSegmentLength = 0.0f;
-        uint32_t previousMaxPointEnd = 0;
+        for (size_t pointIndex = 0; pointIndex < asset.restPoints.size(); ++pointIndex)
+        {
+            if (!IsFinite(asset.restPoints[pointIndex]))
+            {
+                ++report.nonFinitePointCount;
+            }
+            if (pointIndex < asset.pointWidths.size() &&
+                (!IsFinite(asset.pointWidths[pointIndex]) || asset.pointWidths[pointIndex] <= 0.0f))
+            {
+                ++report.nonPositiveWidthCount;
+            }
+        }
+
+        uint64_t segmentCount = 0u;
+        double totalSegmentLength = 0.0;
+        uint32_t previousEnd = 0u;
+
         for (size_t strandIndex = 0; strandIndex < asset.strands.size(); ++strandIndex)
         {
             const StrandRange& strand = asset.strands[strandIndex];
-            if (strand.pointCount == 0)
+            const bool expectedGuide = strandIndex < asset.guideStrandCount;
+            const bool markedGuide =
+                (strand.flags & static_cast<uint32_t>(StrandFlags::Guide)) != 0u;
+            if (expectedGuide)
+            {
+                if (!markedGuide)
+                {
+                    ++report.invalidGuidePrefixCount;
+                }
+                if (strandIndex < asset.followData.size() &&
+                    asset.followData[strandIndex].parentGuide != static_cast<int32_t>(strandIndex))
+                {
+                    ++report.invalidGuidePrefixCount;
+                }
+            }
+            else
+            {
+                if (markedGuide)
+                {
+                    ++report.invalidFollowerSuffixCount;
+                }
+                if (strandIndex < asset.followData.size() &&
+                    asset.followData[strandIndex].parentGuide < 0)
+                {
+                    ++report.invalidFollowerSuffixCount;
+                }
+            }
+
+            if (strand.pointCount == 0u)
             {
                 std::ostringstream ss;
                 ss << "Strand " << strandIndex << " has zero points.";
                 PushIssue(report, ValidationSeverity::Error, ss.str());
                 continue;
             }
-            if (strand.pointOffset >= asset.restPoints.size() || strand.pointOffset + strand.pointCount > asset.restPoints.size())
+
+            const uint64_t first = strand.pointOffset;
+            const uint64_t end = first + strand.pointCount;
+            if (end > asset.restPoints.size())
             {
                 std::ostringstream ss;
-                ss << "Strand " << strandIndex << " point range is out of bounds.";
+                ss << "Strand " << strandIndex << " exceeds restPoints range.";
                 PushIssue(report, ValidationSeverity::Error, ss.str());
                 continue;
             }
-            if (strandIndex > 0 && strand.pointOffset < previousMaxPointEnd)
+
+            if (strandIndex > 0u && strand.pointOffset < previousEnd)
             {
                 std::ostringstream ss;
-                ss << "Strand " << strandIndex << " overlaps a previous strand point range.";
-                PushIssue(report, ValidationSeverity::Warning, ss.str());
+                ss << "Strand " << strandIndex << " overlaps a previous point range.";
+                PushIssue(report, ValidationSeverity::Error, ss.str());
             }
-            previousMaxPointEnd = std::max<uint32_t>(previousMaxPointEnd, strand.pointOffset + strand.pointCount);
-            if (asset.particlesPerStrand != 0 && strand.pointCount != asset.particlesPerStrand)
+            previousEnd = std::max(previousEnd, static_cast<uint32_t>(end));
+
+            if (strandIndex < asset.rootBindings.size() &&
+                asset.rootBindings[strandIndex].triangleIndex >= asset.scalpMesh.triangles.size() &&
+                !asset.scalpMesh.triangles.empty())
             {
-                std::ostringstream ss;
-                ss << "Strand " << strandIndex << " pointCount (" << strand.pointCount
-                   << ") differs from particlesPerStrand (" << asset.particlesPerStrand << ").";
-                PushIssue(report, ValidationSeverity::Info, ss.str());
+                ++report.invalidRootBindingCount;
             }
 
-            for (uint32_t localPointIndex = 0; localPointIndex < strand.pointCount; ++localPointIndex)
+            if (strandIndex < asset.followData.size())
             {
-                const uint32_t pointIndex = strand.pointOffset + localPointIndex;
-                const Vec3& p = asset.restPoints[pointIndex];
-                if (!IsFinite(p))
-                {
-                    ++report.nonFinitePointCount;
-                }
-                if (pointIndex < asset.pointWidths.size() && (!IsFinite(asset.pointWidths[pointIndex]) || asset.pointWidths[pointIndex] <= 0.0f))
-                {
-                    ++report.nonPositiveWidthCount;
-                }
-                if (localPointIndex > 0)
-                {
-                    const Vec3& prev = asset.restPoints[pointIndex - 1u];
-                    const float segLength = Length(p - prev);
-                    report.minSegmentLength = std::min(report.minSegmentLength, segLength);
-                    report.maxSegmentLength = std::max(report.maxSegmentLength, segLength);
-                    totalSegmentLength += segLength;
-                    ++segmentCount;
-                    if (segLength <= 1.0e-6f)
-                    {
-                        ++report.zeroLengthSegmentCount;
-                    }
-                }
-            }
-
-            if (strandIndex < asset.followData.size() && strandIndex >= asset.guideStrandCount)
-            {
-                const FollowData& follow = asset.followData[strandIndex];
-                if (follow.parentGuide < 0 || static_cast<uint32_t>(follow.parentGuide) >= asset.guideStrandCount)
+                const int32_t parent = asset.followData[strandIndex].parentGuide;
+                if (parent >= 0 && static_cast<uint32_t>(parent) >= asset.guideStrandCount)
                 {
                     ++report.invalidFollowReferenceCount;
                 }
             }
 
-            if (strandIndex < asset.rootBindings.size())
+            for (uint32_t local = 0u; local + 1u < strand.pointCount; ++local)
             {
-                const RootBinding& binding = asset.rootBindings[strandIndex];
-                if (!asset.scalpMesh.triangles.empty())
+                const uint32_t a = strand.pointOffset + local;
+                const uint32_t b = a + 1u;
+                const float length = Distance(asset.restPoints[a], asset.restPoints[b]);
+                if (!IsFinite(length) || length <= kZeroLengthEpsilon)
                 {
-                    if (binding.triangleIndex >= asset.scalpMesh.triangles.size())
-                    {
-                        ++report.invalidRootBindingCount;
-                    }
+                    ++report.zeroLengthSegmentCount;
+                    continue;
                 }
-                if (!IsFinite(binding.barycentric.x) || !IsFinite(binding.barycentric.y) || !IsFinite(binding.barycentric.z))
-                {
-                    ++report.invalidRootBindingCount;
-                }
+                report.minSegmentLength = std::min(report.minSegmentLength, length);
+                report.maxSegmentLength = std::max(report.maxSegmentLength, length);
+                totalSegmentLength += length;
+                ++segmentCount;
             }
         }
 
-        if (segmentCount > 0)
+        if (segmentCount > 0u)
         {
-            report.averageSegmentLength = totalSegmentLength / static_cast<float>(segmentCount);
+            report.averageSegmentLength =
+                static_cast<float>(totalSegmentLength / static_cast<double>(segmentCount));
         }
         else
         {
             report.minSegmentLength = 0.0f;
         }
 
-        if (report.nonFinitePointCount > 0)
+        if (report.nonFinitePointCount > 0u)
         {
-            std::ostringstream ss;
-            ss << report.nonFinitePointCount << " non-finite point positions found.";
-            PushIssue(report, ValidationSeverity::Error, ss.str());
+            PushIssue(report, ValidationSeverity::Error, "Asset contains non-finite point positions.");
         }
-        if (report.nonPositiveWidthCount > 0)
+        if (report.nonPositiveWidthCount > 0u)
         {
-            std::ostringstream ss;
-            ss << report.nonPositiveWidthCount << " widths are non-finite or <= 0.";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Warning, "Asset contains non-positive or non-finite point widths.");
         }
-        if (report.zeroLengthSegmentCount > 0)
+        if (report.zeroLengthSegmentCount > 0u)
         {
-            std::ostringstream ss;
-            ss << report.zeroLengthSegmentCount << " zero-length segments detected.";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Warning, "Asset contains zero-length or invalid segments.");
         }
-        if (report.invalidRootBindingCount > 0)
+        if (report.invalidRootBindingCount > 0u)
         {
-            std::ostringstream ss;
-            ss << report.invalidRootBindingCount << " invalid root bindings detected.";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Warning, "Asset contains invalid root bindings.");
         }
-        if (report.invalidFollowReferenceCount > 0)
+        if (report.invalidFollowReferenceCount > 0u)
         {
-            std::ostringstream ss;
-            ss << report.invalidFollowReferenceCount << " follower strands reference invalid guides.";
-            PushIssue(report, ValidationSeverity::Warning, ss.str());
+            PushIssue(report, ValidationSeverity::Error, "Asset contains invalid follower-to-guide references.");
         }
-
-        if (!asset.scalpMesh.positions.empty())
+        if (report.invalidGuidePrefixCount > 0u)
         {
-            if (!asset.scalpMesh.normals.empty() && asset.scalpMesh.normals.size() != asset.scalpMesh.positions.size())
-            {
-                PushIssue(report, ValidationSeverity::Warning, "Scalp normal count does not match scalp vertex count.");
-            }
-            if (!asset.scalpMesh.uvs.empty() && asset.scalpMesh.uvs.size() != asset.scalpMesh.positions.size())
-            {
-                PushIssue(report, ValidationSeverity::Warning, "Scalp UV count does not match scalp vertex count.");
-            }
+            PushIssue(report, ValidationSeverity::Error,
+                "The guide prefix is not contiguous or guide parent indices do not match their direct strand indices.");
         }
-
-        if (report.valid && report.warningCount == 0 && report.infoCount == 0)
+        if (report.invalidFollowerSuffixCount > 0u)
         {
-            PushIssue(report, ValidationSeverity::Info, "Asset validation passed without issues.");
+            PushIssue(report, ValidationSeverity::Error,
+                "The follower suffix contains guide flags or followers without a valid parent guide.");
         }
 
         return report;
     }
 
-    std::string BuildHairAssetValidationSummary(const HairAssetValidationReport& report, bool includeIssueList, size_t maxIssues)
+    std::string BuildHairAssetValidationSummary(
+        const HairAssetValidationReport& report,
+        bool includeIssueList,
+        size_t maxIssues)
     {
         std::ostringstream ss;
-        ss << (report.valid ? "valid" : "invalid")
-           << " | errors=" << report.errorCount
-           << " warnings=" << report.warningCount
-           << " info=" << report.infoCount
-           << " | avgSeg=" << report.averageSegmentLength
-           << " maxSeg=" << report.maxSegmentLength;
-        if (includeIssueList && !report.issues.empty())
+        ss << "valid=" << (report.valid ? "true" : "false")
+           << ", info=" << report.infoCount
+           << ", warnings=" << report.warningCount
+           << ", errors=" << report.errorCount
+           << ", minSegmentLength=" << report.minSegmentLength
+           << ", averageSegmentLength=" << report.averageSegmentLength
+           << ", maxSegmentLength=" << report.maxSegmentLength
+           << ", zeroLengthSegments=" << report.zeroLengthSegmentCount
+           << ", nonFinitePoints=" << report.nonFinitePointCount
+           << ", invalidRootBindings=" << report.invalidRootBindingCount
+           << ", invalidFollowReferences=" << report.invalidFollowReferenceCount
+           << ", invalidGuidePrefix=" << report.invalidGuidePrefixCount
+           << ", invalidFollowerSuffix=" << report.invalidFollowerSuffixCount;
+
+        if (includeIssueList)
         {
-            const size_t issueCount = std::min(maxIssues, report.issues.size());
-            for (size_t i = 0; i < issueCount; ++i)
+            const size_t count = std::min(maxIssues, report.issues.size());
+            for (size_t i = 0; i < count; ++i)
             {
-                const char* severity = (report.issues[i].severity == ValidationSeverity::Error)
-                    ? "error"
-                    : ((report.issues[i].severity == ValidationSeverity::Warning) ? "warning" : "info");
-                ss << "\n- [" << severity << "] " << report.issues[i].message;
-            }
-            if (report.issues.size() > issueCount)
-            {
-                ss << "\n- ... " << (report.issues.size() - issueCount) << " more issue(s)";
+                ss << "\n[" << SeverityName(report.issues[i].severity) << "] "
+                   << report.issues[i].message;
             }
         }
         return ss.str();
+    }
+
+
+    BenchmarkWigValidationReport ValidateBenchmarkWigShape(const HairAsset& asset)
+    {
+        BenchmarkWigValidationReport report = {};
+        auto pushIssue = [&](ValidationSeverity severity, const std::string& message)
+        {
+            report.issues.push_back({ severity, message });
+            if (severity == ValidationSeverity::Error)
+            {
+                ++report.errorCount;
+                report.valid = false;
+            }
+            else if (severity == ValidationSeverity::Warning)
+            {
+                ++report.warningCount;
+            }
+        };
+
+        const HairAssetValidationReport structural = ValidateHairAsset(asset);
+        if (!structural.valid)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig failed the structural HairAsset validation.");
+        }
+        if (asset.guideStrandCount == 0u || asset.strands.size() < asset.guideStrandCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig does not contain the declared guide strands.");
+            return report;
+        }
+        if (asset.rootBindings.size() < asset.guideStrandCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "The benchmark wig is missing guide root bindings.");
+            return report;
+        }
+
+        constexpr float kTau = 6.28318530717958647692f;
+        report.minimumGuideLength = std::numeric_limits<float>::max();
+        Vec3 boundsMin(
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max());
+        Vec3 boundsMax(
+            -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max());
+
+        double guideLengthSum = 0.0;
+        double frontLengthSum = 0.0;
+        double backLengthSum = 0.0;
+        std::vector<float> tipHeights;
+        tipHeights.reserve(asset.guideStrandCount);
+
+        const size_t rootCount = std::min<size_t>(
+            asset.guideStrandCount,
+            std::min(asset.rootBindings.size(), asset.strands.size()));
+        uint32_t crownAzimuthMask = 0u;
+        uint32_t frontHairlineMask = 0u;
+        uint32_t transitionAzimuthMask = 0u;
+        for (size_t rootIndex = 0u; rootIndex < rootCount; ++rootIndex)
+        {
+            const Vec2& uv = asset.rootBindings[rootIndex].rootUv;
+            if (!std::isfinite(uv.x) || !std::isfinite(uv.y))
+            {
+                continue;
+            }
+
+            float wrappedU = uv.x - std::floor(uv.x);
+            if (wrappedU < 0.0f)
+            {
+                wrappedU += 1.0f;
+            }
+
+            report.minimumRootV = std::min(
+                report.minimumRootV,
+                uv.y);
+            ++report.evaluatedRootCount;
+
+            if (uv.y <= 0.11f)
+            {
+                ++report.crownRootCount;
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(wrappedU * 16.0f),
+                    15u);
+                crownAzimuthMask |= (1u << bin);
+            }
+            if (uv.y >= 0.10f && uv.y <= 0.22f)
+            {
+                ++report.transitionRootCount;
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(wrappedU * 16.0f),
+                    15u);
+                transitionAzimuthMask |= (1u << bin);
+            }
+
+            float frontDu = std::fabs(wrappedU - 0.25f);
+            frontDu = std::min(frontDu, 1.0f - frontDu);
+            if (frontDu <= 0.13f &&
+                uv.y >= 0.16f &&
+                uv.y <= 0.34f)
+            {
+                ++report.frontHairlineRootCount;
+                const float normalizedFront = std::clamp(
+                    (wrappedU - 0.12f) / 0.26f,
+                    0.0f,
+                    0.999999f);
+                const uint32_t bin = std::min<uint32_t>(
+                    static_cast<uint32_t>(
+                        normalizedFront * 8.0f),
+                    7u);
+                frontHairlineMask |= (1u << bin);
+            }
+        }
+
+        for (uint32_t bit = 0u; bit < 16u; ++bit)
+        {
+            report.crownAzimuthBinCount +=
+                (crownAzimuthMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+        for (uint32_t bit = 0u; bit < 8u; ++bit)
+        {
+            report.frontHairlineBinCount +=
+                (frontHairlineMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+        for (uint32_t bit = 0u; bit < 16u; ++bit)
+        {
+            report.transitionAzimuthBinCount +=
+                (transitionAzimuthMask & (1u << bit)) != 0u
+                    ? 1u
+                    : 0u;
+        }
+
+        if (report.evaluatedRootCount > 0u)
+        {
+            const float rootCountFloat =
+                static_cast<float>(report.evaluatedRootCount);
+            report.crownRootFraction =
+                static_cast<float>(report.crownRootCount) /
+                rootCountFloat;
+            report.frontHairlineRootFraction =
+                static_cast<float>(
+                    report.frontHairlineRootCount) /
+                rootCountFloat;
+            report.transitionRootFraction =
+                static_cast<float>(report.transitionRootCount) /
+                rootCountFloat;
+        }
+        else
+        {
+            report.minimumRootV = 1.0f;
+        }
+
+        for (uint32_t guideIndex = 0u; guideIndex < asset.guideStrandCount; ++guideIndex)
+        {
+            const StrandRange& strand = asset.strands[guideIndex];
+            const uint64_t strandEnd = static_cast<uint64_t>(strand.pointOffset) + strand.pointCount;
+            if (strand.pointCount < 2u || strandEnd > asset.restPoints.size())
+            {
+                pushIssue(ValidationSeverity::Error,
+                    "A guide strand has an invalid point range.");
+                continue;
+            }
+
+            float guideLength = 0.0f;
+            float minimumSegment = std::numeric_limits<float>::max();
+            float maximumSegment = 0.0f;
+            for (uint32_t localIndex = 0u; localIndex < strand.pointCount; ++localIndex)
+            {
+                const Vec3& point = asset.restPoints[strand.pointOffset + localIndex];
+                boundsMin.x = std::min(boundsMin.x, point.x);
+                boundsMin.y = std::min(boundsMin.y, point.y);
+                boundsMin.z = std::min(boundsMin.z, point.z);
+                boundsMax.x = std::max(boundsMax.x, point.x);
+                boundsMax.y = std::max(boundsMax.y, point.y);
+                boundsMax.z = std::max(boundsMax.z, point.z);
+
+                if (localIndex > 0u)
+                {
+                    const Vec3& previous = asset.restPoints[strand.pointOffset + localIndex - 1u];
+                    const float segment = Distance(previous, point);
+                    guideLength += segment;
+                    minimumSegment = std::min(minimumSegment, segment);
+                    maximumSegment = std::max(maximumSegment, segment);
+                }
+            }
+
+            if (!std::isfinite(guideLength) || guideLength <= 0.0f)
+            {
+                pushIssue(ValidationSeverity::Error,
+                    "A guide strand has a non-finite or non-positive length.");
+                continue;
+            }
+
+            report.minimumGuideLength = std::min(report.minimumGuideLength, guideLength);
+            report.maximumGuideLength = std::max(report.maximumGuideLength, guideLength);
+            guideLengthSum += guideLength;
+            ++report.evaluatedGuideCount;
+            tipHeights.push_back(asset.restPoints[strand.pointOffset + strand.pointCount - 1u].y);
+
+            if (minimumSegment > 1.0e-7f)
+            {
+                report.maximumWithinStrandSegmentRatio = std::max(
+                    report.maximumWithinStrandSegmentRatio,
+                    maximumSegment / minimumSegment);
+            }
+
+            const float angle = asset.rootBindings[guideIndex].rootUv.x * kTau;
+            const float front = std::sin(angle);
+            if (front >= 0.60f)
+            {
+                frontLengthSum += guideLength;
+                ++report.frontGuideCount;
+            }
+            else if (front <= -0.60f)
+            {
+                backLengthSum += guideLength;
+                ++report.backGuideCount;
+            }
+        }
+
+        if (report.evaluatedGuideCount == 0u)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "No guide strand could be evaluated.");
+            report.minimumGuideLength = 0.0f;
+            return report;
+        }
+
+        report.averageGuideLength = static_cast<float>(
+            guideLengthSum / static_cast<double>(report.evaluatedGuideCount));
+        report.frontAverageGuideLength = report.frontGuideCount > 0u
+            ? static_cast<float>(frontLengthSum / static_cast<double>(report.frontGuideCount))
+            : 0.0f;
+        report.backAverageGuideLength = report.backGuideCount > 0u
+            ? static_cast<float>(backLengthSum / static_cast<double>(report.backGuideCount))
+            : 0.0f;
+
+        const double tipMean = std::accumulate(
+            tipHeights.begin(), tipHeights.end(), 0.0) /
+            static_cast<double>(std::max<size_t>(tipHeights.size(), 1u));
+        double tipVariance = 0.0;
+        for (float tipHeight : tipHeights)
+        {
+            const double delta = static_cast<double>(tipHeight) - tipMean;
+            tipVariance += delta * delta;
+        }
+        tipVariance /= static_cast<double>(std::max<size_t>(tipHeights.size(), 1u));
+        report.tipHeightStandardDeviation = static_cast<float>(std::sqrt(tipVariance));
+
+        report.boundsWidth = boundsMax.x - boundsMin.x;
+        report.boundsHeight = boundsMax.y - boundsMin.y;
+        report.boundsDepth = boundsMax.z - boundsMin.z;
+
+        if (report.evaluatedRootCount == 0u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "No finite root binding could be evaluated for scalp coverage.");
+        }
+        if (report.minimumRootV > 0.025f)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "The scalp pole is not covered by roots; a circular crown hole would remain visible.");
+        }
+        if (report.crownRootFraction < 0.025f ||
+            report.crownAzimuthBinCount < 14u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Crown root coverage is too sparse or azimuthally incomplete.");
+        }
+        if (report.frontHairlineRootFraction < 0.020f ||
+            report.frontHairlineBinCount < 6u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Front hairline root coverage is too sparse or discontinuous.");
+        }
+        if (report.transitionRootFraction < 0.10f ||
+            report.transitionAzimuthBinCount < 14u)
+        {
+            pushIssue(
+                ValidationSeverity::Error,
+                "Crown-to-hairline transition coverage is too sparse or contains a latitude band gap.");
+        }
+
+        const uint32_t minimumRegionalCount = std::max<uint32_t>(4u, asset.guideStrandCount / 20u);
+        if (report.frontGuideCount < minimumRegionalCount || report.backGuideCount < minimumRegionalCount)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Front/back guide coverage is insufficient for an orientation-readable benchmark wig.");
+        }
+        if (report.minimumGuideLength < 0.16f || report.maximumGuideLength > 0.72f ||
+            report.averageGuideLength < 0.28f || report.averageGuideLength > 0.58f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Guide lengths are outside the stable benchmark range.");
+        }
+        if (report.frontAverageGuideLength <= 0.0f || report.backAverageGuideLength <= 0.0f ||
+            report.frontAverageGuideLength >= report.backAverageGuideLength * 0.90f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Front hair is not sufficiently shorter than back hair.");
+        }
+        if (report.tipHeightStandardDeviation < 0.025f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Guide tips are too uniformly aligned and would form a blunt lower ring.");
+        }
+        // This metric compares Euclidean chords, not accumulated arc length.
+        // Tight curves and head-volume projection can legitimately make one chord
+        // much shorter even when samples are uniform in arc space. Treat only
+        // extreme ratios as invalid and retain a warning for reviewable outliers.
+        if (report.maximumWithinStrandSegmentRatio > 64.0f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "A guide strand contains a catastrophic segment-length discontinuity.");
+        }
+        else if (report.maximumWithinStrandSegmentRatio > 16.0f)
+        {
+            pushIssue(ValidationSeverity::Warning,
+                "A tightly curved guide contains a short Euclidean chord; arc-length ordering remains valid.");
+        }
+        if (report.boundsWidth < 0.34f || report.boundsDepth < 0.28f ||
+            report.boundsHeight < 0.30f || report.boundsHeight > 0.90f)
+        {
+            pushIssue(ValidationSeverity::Error,
+                "Benchmark wig bounds are too narrow, flat, short, or excessively long.");
+        }
+
+        return report;
+    }
+
+    std::string BuildBenchmarkWigValidationSummary(
+        const BenchmarkWigValidationReport& report,
+        bool includeIssueList,
+        size_t maxIssues)
+    {
+        std::ostringstream ss;
+        ss << "valid=" << (report.valid ? "true" : "false")
+           << ", errors=" << report.errorCount
+           << ", warnings=" << report.warningCount
+           << ", guides=" << report.evaluatedGuideCount
+           << ", roots=" << report.evaluatedRootCount
+           << ", minRootV=" << report.minimumRootV
+           << ", crownRootFraction=" << report.crownRootFraction
+           << ", crownAzimuthBins=" << report.crownAzimuthBinCount
+           << ", frontHairlineRootFraction=" << report.frontHairlineRootFraction
+           << ", frontHairlineBins=" << report.frontHairlineBinCount
+           << ", transitionRootFraction=" << report.transitionRootFraction
+           << ", transitionAzimuthBins=" << report.transitionAzimuthBinCount
+           << ", minGuideLength=" << report.minimumGuideLength
+           << ", averageGuideLength=" << report.averageGuideLength
+           << ", maxGuideLength=" << report.maximumGuideLength
+           << ", frontAverageLength=" << report.frontAverageGuideLength
+           << ", backAverageLength=" << report.backAverageGuideLength
+           << ", tipHeightStdDev=" << report.tipHeightStandardDeviation
+           << ", maxSegmentRatio=" << report.maximumWithinStrandSegmentRatio
+           << ", bounds=" << report.boundsWidth << "x"
+           << report.boundsHeight << "x" << report.boundsDepth;
+
+        if (includeIssueList)
+        {
+            const size_t count = std::min(maxIssues, report.issues.size());
+            for (size_t index = 0u; index < count; ++index)
+            {
+                ss << "\n[" << SeverityName(report.issues[index].severity) << "] "
+                   << report.issues[index].message;
+            }
+        }
+        return ss.str();
+    }
+
+    bool RebuildSegmentGroupTopology(
+        HairAsset& asset,
+        uint32_t groupsPerBlock,
+        std::string* outError)
+    {
+        if (outError)
+        {
+            outError->clear();
+        }
+        groupsPerBlock = std::max(groupsPerBlock, 1u);
+
+        SegmentGroupTopologyInfo topology = {};
+        topology.groupsPerBlock = groupsPerBlock;
+        topology.guideStrandCount = asset.guideStrandCount;
+        topology.followerStrandCount = asset.followerStrandCount;
+        topology.particlesPerStrand = asset.particlesPerStrand;
+        topology.topologyVersion = std::max(asset.segmentGroupTopology.topologyVersion + 1u, 1u);
+        topology.strandGroupRanges.reserve(asset.strands.size());
+
+        uint64_t totalGroupCount64 = 0u;
+        double totalLength = 0.0;
+        uint64_t validLengthCount = 0u;
+        float minLength = std::numeric_limits<float>::max();
+        float maxLength = 0.0f;
+
+        for (uint32_t strandIndex = 0u;
+             strandIndex < static_cast<uint32_t>(asset.strands.size());
+             ++strandIndex)
+        {
+            const StrandRange& strand = asset.strands[strandIndex];
+            const uint64_t end = static_cast<uint64_t>(strand.pointOffset) + strand.pointCount;
+            if (end > asset.restPoints.size())
+            {
+                if (outError)
+                {
+                    std::ostringstream ss;
+                    ss << "Strand " << strandIndex << " exceeds restPoints.";
+                    *outError = ss.str();
+                }
+                return false;
+            }
+
+            const uint32_t groupCount = strand.pointCount > 1u ? strand.pointCount - 1u : 0u;
+            if (totalGroupCount64 + groupCount > std::numeric_limits<uint32_t>::max())
+            {
+                if (outError)
+                {
+                    *outError = "Segment-group count exceeds uint32_t capacity.";
+                }
+                return false;
+            }
+
+            SegmentGroupRange range = {};
+            range.firstGroup = static_cast<uint32_t>(totalGroupCount64);
+            range.groupCount = groupCount;
+            topology.strandGroupRanges.push_back(range);
+
+            uint32_t localFirst = 0u;
+            uint32_t blockIndex = 0u;
+            while (localFirst < groupCount)
+            {
+                SegmentGroupBlockRange block = {};
+                block.firstGroup = range.firstGroup + localFirst;
+                block.groupCount = std::min(groupsPerBlock, groupCount - localFirst);
+                block.strandIndex = strandIndex;
+                block.blockIndex = blockIndex++;
+                topology.blocks.push_back(block);
+                localFirst += block.groupCount;
+            }
+
+            for (uint32_t local = 0u; local < groupCount; ++local)
+            {
+                const uint32_t a = strand.pointOffset + local;
+                const uint32_t b = a + 1u;
+                const float length = Distance(asset.restPoints[a], asset.restPoints[b]);
+                if (IsFinite(length) && length > kZeroLengthEpsilon)
+                {
+                    totalLength += length;
+                    ++validLengthCount;
+                    minLength = std::min(minLength, length);
+                    maxLength = std::max(maxLength, length);
+                }
+            }
+            totalGroupCount64 += groupCount;
+        }
+
+        topology.totalGroupCount = static_cast<uint32_t>(totalGroupCount64);
+        topology.averageSegmentLength = validLengthCount > 0u
+            ? static_cast<float>(totalLength / static_cast<double>(validLengthCount))
+            : 0.0f;
+
+        if (validLengthCount > 0u)
+        {
+            const float average = topology.averageSegmentLength;
+            topology.maximumSegmentLengthDeviation =
+                std::max(std::fabs(maxLength - average), std::fabs(average - minLength));
+        }
+
+        topology.topologyHash = ComputeTopologyHash(asset, groupsPerBlock);
+        asset.segmentGroupTopology = std::move(topology);
+        return true;
+    }
+
+    SegmentGroupValidationReport ValidateSegmentGroupTopology(
+        const HairAsset& asset,
+        uint32_t expectedParticlesPerStrand,
+        uint32_t expectedTotalStrandCount)
+    {
+        SegmentGroupValidationReport report = {};
+        report.valid = true;
+        const SegmentGroupTopologyInfo& topology = asset.segmentGroupTopology;
+
+        if (expectedTotalStrandCount > 0u &&
+            asset.strands.size() != expectedTotalStrandCount)
+        {
+            std::ostringstream ss;
+            ss << "Expected " << expectedTotalStrandCount
+               << " strands, got " << asset.strands.size() << ".";
+            PushIssue(report, ValidationSeverity::Error, ss.str());
+        }
+
+        uint64_t expectedGroups64 = 0u;
+        uint64_t expectedBlocks64 = 0u;
+        const uint32_t groupsPerBlock = std::max(topology.groupsPerBlock, 1u);
+
+        for (uint32_t strandIndex = 0u;
+             strandIndex < static_cast<uint32_t>(asset.strands.size());
+             ++strandIndex)
+        {
+            const StrandRange& strand = asset.strands[strandIndex];
+
+            if (expectedParticlesPerStrand > 0u &&
+                strand.pointCount != expectedParticlesPerStrand)
+            {
+                ++report.nonUniformPointCountStrandCount;
+            }
+
+            const uint32_t groupCount = strand.pointCount > 1u ? strand.pointCount - 1u : 0u;
+            expectedGroups64 += groupCount;
+            expectedBlocks64 += (groupCount + groupsPerBlock - 1u) / groupsPerBlock;
+
+            const uint64_t pointEnd =
+                static_cast<uint64_t>(strand.pointOffset) + strand.pointCount;
+            if (pointEnd > asset.restPoints.size())
+            {
+                ++report.invalidStrandRangeCount;
+            }
+            else
+            {
+                for (uint32_t local = 0u; local < groupCount; ++local)
+                {
+                    const Vec3& a = asset.restPoints[strand.pointOffset + local];
+                    const Vec3& b = asset.restPoints[strand.pointOffset + local + 1u];
+                    if (!IsFinite(a) || !IsFinite(b))
+                    {
+                        ++report.nonFinitePointCount;
+                    }
+                    if (Distance(a, b) <= kZeroLengthEpsilon)
+                    {
+                        ++report.zeroLengthSegmentCount;
+                    }
+                }
+            }
+        }
+
+        if (expectedGroups64 > std::numeric_limits<uint32_t>::max() ||
+            expectedBlocks64 > std::numeric_limits<uint32_t>::max())
+        {
+            PushIssue(report, ValidationSeverity::Error, "Expected topology exceeds uint32_t capacity.");
+            return report;
+        }
+
+        report.expectedGroupCount = static_cast<uint32_t>(expectedGroups64);
+        report.actualGroupCount = topology.totalGroupCount;
+        report.expectedBlockCount = static_cast<uint32_t>(expectedBlocks64);
+        report.actualBlockCount = static_cast<uint32_t>(topology.blocks.size());
+
+        if (topology.strandGroupRanges.size() != asset.strands.size())
+        {
+            PushIssue(report, ValidationSeverity::Error, "strandGroupRanges count does not match strands count.");
+        }
+
+        uint32_t expectedFirstGroup = 0u;
+        const size_t rangeCount = std::min(
+            topology.strandGroupRanges.size(),
+            asset.strands.size());
+
+        for (size_t strandIndex = 0u; strandIndex < rangeCount; ++strandIndex)
+        {
+            const SegmentGroupRange& range = topology.strandGroupRanges[strandIndex];
+            const uint32_t expectedCount =
+                asset.strands[strandIndex].pointCount > 1u
+                    ? asset.strands[strandIndex].pointCount - 1u
+                    : 0u;
+
+            if (range.firstGroup != expectedFirstGroup ||
+                range.groupCount != expectedCount ||
+                static_cast<uint64_t>(range.firstGroup) + range.groupCount > topology.totalGroupCount)
+            {
+                ++report.invalidStrandRangeCount;
+            }
+            expectedFirstGroup += expectedCount;
+        }
+
+        std::vector<uint8_t> coverage(topology.totalGroupCount, 0u);
+        for (const SegmentGroupBlockRange& block : topology.blocks)
+        {
+            const uint64_t blockEnd =
+                static_cast<uint64_t>(block.firstGroup) + block.groupCount;
+            if (block.groupCount == 0u ||
+                blockEnd > topology.totalGroupCount ||
+                block.strandIndex >= asset.strands.size())
+            {
+                ++report.invalidBlockRangeCount;
+                continue;
+            }
+
+            for (uint32_t group = block.firstGroup;
+                 group < block.firstGroup + block.groupCount;
+                 ++group)
+            {
+                if (coverage[group] != 0u)
+                {
+                    ++report.overlappingBlockCount;
+                }
+                coverage[group] = 1u;
+            }
+        }
+
+        report.uncoveredGroupCount = static_cast<uint32_t>(
+            std::count(coverage.begin(), coverage.end(), static_cast<uint8_t>(0u)));
+
+        report.expectedTopologyHash =
+            ComputeTopologyHash(asset, topology.groupsPerBlock);
+        report.actualTopologyHash = topology.topologyHash;
+        if (report.actualTopologyHash != report.expectedTopologyHash)
+        {
+            report.topologyHashMismatchCount = 1u;
+        }
+
+        if (report.actualGroupCount != report.expectedGroupCount)
+        {
+            PushIssue(report, ValidationSeverity::Error, "totalGroupCount does not match the strand-derived group count.");
+        }
+        if (report.actualBlockCount != report.expectedBlockCount)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Block count does not match the expected count.");
+        }
+        if (report.invalidStrandRangeCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Invalid strand-to-group ranges were found.");
+        }
+        if (report.invalidBlockRangeCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Invalid segment-group block ranges were found.");
+        }
+        if (report.overlappingBlockCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Overlapping segment-group blocks were found.");
+        }
+        if (report.uncoveredGroupCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Some segment groups are not covered by a block.");
+        }
+        if (report.nonUniformPointCountStrandCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "The benchmark requires a uniform point count per strand.");
+        }
+        if (report.topologyHashMismatchCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Topology hash is stale or invalid.");
+        }
+        if (report.nonFinitePointCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Error, "Non-finite points were found while validating topology.");
+        }
+        if (report.zeroLengthSegmentCount > 0u)
+        {
+            PushIssue(report, ValidationSeverity::Warning, "Zero-length segments were found while validating topology.");
+        }
+
+        return report;
+    }
+
+    std::string BuildSegmentGroupValidationSummary(
+        const SegmentGroupValidationReport& report,
+        bool includeIssueList,
+        size_t maxIssues)
+    {
+        std::ostringstream ss;
+        ss << "valid=" << (report.valid ? "true" : "false")
+           << ", groups=" << report.actualGroupCount
+           << "/" << report.expectedGroupCount
+           << ", blocks=" << report.actualBlockCount
+           << "/" << report.expectedBlockCount
+           << ", invalidStrandRanges=" << report.invalidStrandRangeCount
+           << ", invalidBlockRanges=" << report.invalidBlockRangeCount
+           << ", overlappingBlocks=" << report.overlappingBlockCount
+           << ", uncoveredGroups=" << report.uncoveredGroupCount
+           << ", nonUniformStrands=" << report.nonUniformPointCountStrandCount
+           << ", topologyHashMismatch=" << report.topologyHashMismatchCount
+           << ", zeroLengthSegments=" << report.zeroLengthSegmentCount
+           << ", nonFinitePoints=" << report.nonFinitePointCount
+           << ", topologyHash=0x" << std::hex << report.actualTopologyHash;
+
+        if (includeIssueList)
+        {
+            const size_t count = std::min(maxIssues, report.issues.size());
+            for (size_t i = 0; i < count; ++i)
+            {
+                ss << "\n[" << SeverityName(report.issues[i].severity) << "] "
+                   << report.issues[i].message;
+            }
+        }
+        return ss.str();
+    }
+
+    HairAsset BuildBenchmarkHairAsset(
+        const HairBenchmarkAssetSettings& settings,
+        SegmentGroupValidationReport* outTopologyReport,
+        std::string* outError)
+    {
+        if (outError)
+        {
+            outError->clear();
+        }
+
+        if (settings.totalStrandCount == 0u ||
+            settings.particlesPerStrand < 2u ||
+            settings.guideStrandCount == 0u ||
+            settings.segmentLength <= 0.0f)
+        {
+            if (outError)
+            {
+                *outError = "Invalid benchmark asset settings.";
+            }
+            return {};
+        }
+
+        const uint64_t calculatedTotal =
+            static_cast<uint64_t>(settings.guideStrandCount) *
+            static_cast<uint64_t>(settings.followersPerGuide + 1u);
+
+        if (settings.requireExactStrandCount &&
+            calculatedTotal != settings.totalStrandCount)
+        {
+            if (outError)
+            {
+                std::ostringstream ss;
+                ss << "guideStrandCount * (followersPerGuide + 1) must equal totalStrandCount ("
+                   << calculatedTotal << " vs " << settings.totalStrandCount << ").";
+                *outError = ss.str();
+            }
+            return {};
+        }
+
+        HairAsset asset = BuildSampleHybridHairAsset(
+            settings.guideStrandCount,
+            settings.followersPerGuide,
+            settings.particlesPerStrand,
+            settings.segmentLength);
+
+        if (settings.requireExactStrandCount &&
+            asset.strands.size() != settings.totalStrandCount)
+        {
+            if (outError)
+            {
+                std::ostringstream ss;
+                ss << "Benchmark builder returned " << asset.strands.size()
+                   << " strands instead of " << settings.totalStrandCount << ".";
+                *outError = ss.str();
+            }
+            return {};
+        }
+
+        std::string topologyError;
+        if (!RebuildSegmentGroupTopology(asset, settings.groupsPerBlock, &topologyError))
+        {
+            if (outError)
+            {
+                *outError = topologyError;
+            }
+            return {};
+        }
+
+        SegmentGroupValidationReport report = ValidateSegmentGroupTopology(
+            asset,
+            settings.requireUniformPointCount ? settings.particlesPerStrand : 0u,
+            settings.requireExactStrandCount ? settings.totalStrandCount : 0u);
+
+        if (outTopologyReport)
+        {
+            *outTopologyReport = report;
+        }
+        if (!report.valid && outError)
+        {
+            *outError = BuildSegmentGroupValidationSummary(report, true);
+        }
+        return asset;
     }
 }

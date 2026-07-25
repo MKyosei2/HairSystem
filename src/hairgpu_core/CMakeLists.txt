@@ -1,17 +1,20 @@
 add_library(hairgpu_core
     ActiveSet.cpp
-    AssetIO.cpp
-    Broadphase.cpp
-    Collision.cpp
-    DccInterop.cpp
     Adaptive.cpp
+    AssetIO.cpp
     Authoring.cpp
     Binding.cpp
     BoneAnimation.cpp
+    Broadphase.cpp
     Cards.cpp
+    Collision.cpp
+    DccInterop.cpp
+    GlobalHairBudget.cpp
     GuideCache.cpp
     HairCache.cpp
     HairMath.cpp
+    HairNoveltyFlags.cpp
+    HairNoveltyTelemetry.cpp
     HybridRuntime.cpp
     Lod.cpp
     MeshIO.cpp
@@ -24,6 +27,7 @@ add_library(hairgpu_core
     UsdExport.cpp
     Validation.cpp
     Wig.cpp
+
 )
 
 add_library(HairGpu::core ALIAS hairgpu_core)

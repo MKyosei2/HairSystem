@@ -1,0 +1,62 @@
+{
+  "scenario": "S04_SuddenStop",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "piecewise_velocity",
+    "segments": [
+      {
+        "start": 0,
+        "end": 1800,
+        "linearVelocity": [
+          0.9,
+          0,
+          0
+        ],
+        "angularVelocityDegrees": [
+          0,
+          50,
+          0
+        ]
+      },
+      {
+        "start": 1800,
+        "end": 7200,
+        "linearVelocity": [
+          0,
+          0,
+          0
+        ],
+        "angularVelocityDegrees": [
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": [
+    {
+      "id": "hard_stop_1800",
+      "frame": 1800,
+      "type": "hard_stop"
+    }
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumWakeRequests": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

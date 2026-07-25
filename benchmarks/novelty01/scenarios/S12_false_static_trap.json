@@ -1,0 +1,64 @@
+{
+  "scenario": "S12_FalseStaticTrap",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "micro_acceleration",
+    "translationAmplitudeMeters": [
+      0.001,
+      0,
+      0.001
+    ],
+    "frequencyHz": 8.0
+  },
+  "wind": {
+    "type": "subthreshold_then_contact",
+    "subthresholdVector": [
+      0.15,
+      0,
+      0
+    ],
+    "contactFrame": 1800,
+    "contactVector": [
+      2.5,
+      0,
+      0
+    ]
+  },
+  "colliders": [
+    {
+      "id": "sphere0",
+      "shape": "sphere",
+      "radiusMeters": 0.1,
+      "motion": {
+        "type": "step_approach",
+        "startPosition": [
+          0.25,
+          0.1,
+          0
+        ],
+        "contactPosition": [
+          0.09,
+          0.1,
+          0
+        ],
+        "stepFrame": 1800
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "ground_truth_wake_1800",
+      "frame": 1800,
+      "type": "ground_truth_wake_required"
+    }
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumWakeRequests": 1,
+    "minimumCollisionCandidates": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

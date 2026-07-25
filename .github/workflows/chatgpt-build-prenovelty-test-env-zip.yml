@@ -1,0 +1,153 @@
+name: Validate pre-novelty test environment
+
+on:
+  push:
+    branches:
+      - prenovelty-ready
+  pull_request:
+    branches:
+      - prenovelty-ready
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Python syntax checks
+        run: >-
+          python -m py_compile
+          tools/final_stage/freeze_novelty01_asset.py
+          tools/final_stage/hairgpu_final_run.py
+          tools/final_stage/hairgpu_runtime_suite.py
+          tools/final_stage/hairgpu_safe_runtime_suite.py
+          tools/final_stage/hairgpu_final_db.py
+          tools/final_stage/hairgpu_final_excel.py
+          tools/final_stage/hairgpu_local_debug_report.py
+          tools/final_stage/hairgpu_startup_self_test.py
+          tools/final_stage/hairgpu_prenovelty_complete.py
+          tools/final_stage/hairgpu_prenovelty_complete_v2.py
+          tools/final_stage/hairgpu_frozen_bundle_lock.py
+
+      - name: Python self-tests
+        run: |
+          python tools/final_stage/hairgpu_final_run.py --self-test
+          python tools/final_stage/hairgpu_runtime_suite.py --self-test
+          python tools/final_stage/hairgpu_prenovelty_complete.py --self-test
+          python tools/final_stage/hairgpu_prenovelty_complete_v2.py --self-test
+          python tools/final_stage/hairgpu_frozen_bundle_lock.py --self-test
+
+      - name: Final-stage unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests/final_stage -p 'test_*.py' -v 2>&1 | tee final-stage-unit-tests.log
+
+      - name: Upload unit-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prenovelty-unit-test-log-${{ github.sha }}
+          path: final-stage-unit-tests.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify composite output isolation contract
+        shell: python
+        run: |
+          from pathlib import Path
+
+          batch = Path('tools/final_stage/Run_Final_Runtime_Suite.bat').read_text(
+              encoding='utf-8'
+          )
+          required = (
+              r'!COMPLETE_ROOT!\smoke',
+              r'!COMPLETE_ROOT!\startup20',
+              r'!COMPLETE_ROOT!\coverage18',
+              r'!COMPLETE_ROOT!\determinism',
+              r'!COMPLETE_ROOT!\soak30',
+              'hairgpu_prenovelty_complete_v2.py',
+              'hairgpu_frozen_bundle_lock.py',
+              'prenovelty_complete_evidence.zip',
+          )
+          missing = [value for value in required if value not in batch]
+          if missing:
+              raise SystemExit(f'missing composite output isolation contract: {missing}')
+
+          workflow = Path(
+              '.github/workflows/chatgpt-build-prenovelty-test-env-zip.yml'
+          ).read_text(encoding='utf-8')
+          forbidden = (
+              'apply_' + 'prenovelty_test_env_fixes.py >',
+              'Apply stability and test-' + 'environment fixes',
+              'continue-on-' + 'error: true',
+          )
+          present = [value for value in forbidden if value in workflow]
+          if present:
+              raise SystemExit(f'workflow mutates or masks source failures: {present}')
+
+      - name: Verify tests did not modify tracked source
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Create source snapshot ZIP
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+
+          root = Path.cwd()
+          output = root / 'HairSystem_prenovelty_test_environment_source.zip'
+          excluded_parts = {
+              '.git', '.vs', 'bin', 'bin-int', 'build', 'out', '__pycache__',
+              '.pytest_cache', '.mypy_cache'
+          }
+          excluded_prefixes = {
+              'results/committed/local_debug',
+              'benchmarks/novelty01/frozen_asset_bundle',
+          }
+
+          with zipfile.ZipFile(
+              output,
+              'w',
+              zipfile.ZIP_DEFLATED,
+              compresslevel=9,
+          ) as archive:
+              for path in sorted(root.rglob('*')):
+                  if not path.is_file() or path == output:
+                      continue
+                  relative = path.relative_to(root)
+                  if any(part in excluded_parts for part in relative.parts):
+                      continue
+                  text = relative.as_posix()
+                  if any(text.startswith(prefix) for prefix in excluded_prefixes):
+                      continue
+                  archive.write(
+                      path,
+                      f'HairSystem_prenovelty_test_environment/{text}',
+                  )
+
+      - name: Upload validated source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-prenovelty-test-environment-${{ github.sha }}
+          path: HairSystem_prenovelty_test_environment_source.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

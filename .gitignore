@@ -8,6 +8,21 @@ cmake-build-*/
 
 # Temporary checks / generated reports
 build_check/
+profile_results/
+runtime_telemetry/
+out/
+*.sqlite
+*.sqlite3
+*.xlsx
+*_frames.csv
+*_frames.jsonl
+*_summary.json
+*_settings.json
+*_environment.json
+*_validation.json
+*_manifest.json
+*_hardware_timeseries.csv
+*.before_freeze
 *.log
 *.tlog
 *.obj
@@ -22,6 +37,11 @@ build_check/
 *.VC.db
 *.opendb
 
+# Locally generated canonical formal bundle.
+# It is frozen and hash-verified by the runner, but is intentionally not committed
+# because the 100k/128-point asset is large and machine-generated.
+benchmarks/novelty01/frozen_asset_bundle/
+
 # Python caches
 __pycache__/
 *.pyc
@@ -34,3 +54,13 @@ Thumbs.db
 .vs/
 .vscode/
 .idea/
+
+# Frozen Novelty01 bundle is generated once by the Release viewer.
+benchmarks/novelty01/frozen_asset_bundle/*
+!benchmarks/novelty01/frozen_asset_bundle/frozen_asset_lock.json
+
+# Visual Studio local-debugger diagnostic evidence is ignored by default.
+# The successful postprocessor uses `git add -f` for its exact run directory;
+# failed or partial captures therefore cannot be staged accidentally.
+results/committed/local_debug/
+

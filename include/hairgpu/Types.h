@@ -28,6 +28,101 @@ namespace hairgpu
         uint32_t flags = 0;
     };
 
+        struct SegmentGroupRange
+    {
+        uint32_t firstGroup = 0u;
+        uint32_t groupCount = 0u;
+    };
+
+    struct SegmentGroupBlockRange
+    {
+        uint32_t firstGroup = 0u;
+        uint32_t groupCount = 0u;
+        uint32_t strandIndex = 0u;
+        uint32_t blockIndex = 0u;
+    };
+
+    struct SegmentGroupTopologyInfo
+    {
+        std::vector<SegmentGroupRange> strandGroupRanges;
+        std::vector<SegmentGroupBlockRange> blocks;
+
+        uint32_t totalGroupCount = 0u;
+        uint32_t groupsPerBlock = 8u;
+
+        uint64_t topologyHash = 0u;
+        uint32_t guideStrandCount = 0;
+        uint32_t followerStrandCount = 0;
+        uint32_t particlesPerStrand = 0;
+        uint32_t topologyVersion = 1u;
+
+        float averageSegmentLength = 0.0f;
+        float maximumSegmentLengthDeviation = 0.0f;
+    };
+
+    enum class SegmentGroupRuntimeStateValue : uint32_t
+    {
+        StaticCached = 0u,
+        StaticTransformed = 1u,
+        Dynamic = 2u,
+        Deferred = 3u,
+        Repair = 4u
+    };
+
+    struct SegmentGroupRuntimeSnapshot
+    {
+        uint32_t groupId = 0u;
+        uint32_t strandIndex = 0u;
+        uint32_t blockIndex = 0u;
+
+        SegmentGroupRuntimeStateValue state =
+            SegmentGroupRuntimeStateValue::Dynamic;
+
+        float motionRisk = 0.0f;
+        float collisionRisk = 0.0f;
+        float penetrationRisk = 0.0f;
+        float boundaryRisk = 0.0f;
+        float editRisk = 0.0f;
+        float certificateRisk = 0.0f;
+
+        float estimatedTimeCostMilliseconds = 0.0f;
+        float estimatedMemoryCostMegabytes = 0.0f;
+
+        uint8_t falseStatic = 0u;
+        uint8_t mandatoryRepair = 0u;
+        uint8_t cacheValid = 0u;
+        uint8_t reserved = 0u;
+    };
+
+
+    struct VisualValidationSettings
+    {
+        float maximumRootDriftMillimeters = 0.5f;
+        float maximumSegmentStretchRatio = 1.20f;
+        float maximumBoundsExpansionRatio = 1.50f;
+        float maximumFollowerParentDeviationMeters = 0.08f;
+        uint32_t requireFinitePositions = 1u;
+        uint32_t reserved0 = 0u;
+        uint32_t reserved1 = 0u;
+        uint32_t reserved2 = 0u;
+    };
+
+    struct VisualValidationResult
+    {
+        uint32_t invalidPointCount = 0u;
+        uint32_t nanPointCount = 0u;
+        uint32_t infinitePointCount = 0u;
+        uint32_t invalidFollowerParentCount = 0u;
+        float rootDriftMaxMillimeters = 0.0f;
+        float segmentStretchP99 = 1.0f;
+        float segmentStretchMax = 1.0f;
+        float boundsExpansionRatio = 1.0f;
+        float followerParentDeviationMaxMeters = 0.0f;
+        float frameToFrameDisplacementMaxMeters = 0.0f;
+        uint32_t passed = 1u;
+        uint32_t reserved = 0u;
+    };
+
     struct StrandMaterial
     {
         float rootWidth = 0.006f;
@@ -82,6 +177,10 @@ namespace hairgpu
         std::vector<StrandMaterial> materials;
         std::vector<RootBinding> rootBindings;
         std::vector<FollowData> followData;
+
+        // Optional segment-group topology cache.
+        // The viewer may rebuild this when topologyVersion changes.
+        SegmentGroupTopologyInfo segmentGroupTopology;
 
         ScalpMesh scalpMesh;
 

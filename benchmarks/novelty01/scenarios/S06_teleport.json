@@ -1,0 +1,52 @@
+{
+  "scenario": "S06_Teleport",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": [
+    {
+      "id": "teleport_root_1800",
+      "frame": 1800,
+      "type": "teleport_root",
+      "positionDeltaMeters": [
+        0.3,
+        0.1,
+        -0.2
+      ],
+      "rotationDeltaDegrees": [
+        0,
+        120,
+        0
+      ]
+    }
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumWakeRequests": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

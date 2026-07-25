@@ -1,16 +1,18 @@
 set(HAIRGPU_DX11_VIEWER_SHADERS
     DebugLine.hlsl
+    HairActiveSet.hlsl
     HairBrickInstanced.hlsl
     HairCpuMesh.hlsl
-    HairActiveSet.hlsl
     HairIndirectArgs.hlsl
     HairLine.hlsl
     HairParticle.hlsl
     HairRibbon.hlsl
+    HairSegmentGroupRuntime.hlsl
     HairSim.hlsl
     HairStrandInstanced.hlsl
     HairTube.hlsl
     HairVoxel.hlsl
+    ScalpCoverage.hlsl
     ScalpMesh.hlsl
     ScalpSim.hlsl
 )
@@ -35,6 +37,25 @@ target_link_libraries(hairgpu_dx11_viewer PRIVATE
     dxgi
     d3dcompiler
 )
+
+# Keep the Viewer debuggable without paying the unoptimized Debug cost on
+# the 100,000-strand / 12,800,000-particle workload.
+if(MSVC)
+    target_compile_options(hairgpu_dx11_viewer PRIVATE
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/Zi>
+        $<$<CONFIG:RelWithDebInfo>:/O2>
+        $<$<CONFIG:RelWithDebInfo>:/Zi>
+    )
+    target_link_options(hairgpu_dx11_viewer PRIVATE
+        $<$<CONFIG:Release>:/DEBUG>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>
+        $<$<CONFIG:RelWithDebInfo>:/DEBUG>
+        $<$<CONFIG:RelWithDebInfo>:/OPT:REF>
+        $<$<CONFIG:RelWithDebInfo>:/OPT:ICF>
+    )
+endif()
 
 foreach(shader ${HAIRGPU_DX11_VIEWER_SHADERS})
     add_custom_command(TARGET hairgpu_dx11_viewer POST_BUILD

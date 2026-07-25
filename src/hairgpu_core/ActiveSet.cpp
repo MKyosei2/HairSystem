@@ -278,6 +278,46 @@ namespace hairgpu
             return Clamp(AverageScalar(values, indices), 0.0f, 1.0f);
         }
 
+        uint32_t ResolveGuideIndexForStrand(
+            const HairAsset& asset,
+            uint32_t strandIndex)
+        {
+            if (strandIndex < asset.guideStrandCount)
+            {
+                return strandIndex;
+            }
+
+            if (strandIndex < asset.followData.size())
+            {
+                const int32_t parentGuide =
+                    asset.followData[strandIndex].parentGuide;
+
+                if (parentGuide >= 0 &&
+                    static_cast<uint32_t>(parentGuide) <
+                        asset.guideStrandCount)
+                {
+                    return static_cast<uint32_t>(parentGuide);
+                }
+            }
+
+            return UINT32_MAX;
+        }
+
+        float SafeMaximum(
+            const std::vector<float>& values,
+            const std::vector<uint32_t>& indices)
+        {
+            float result = 0.0f;
+            for (uint32_t index : indices)
+            {
+                if (index < values.size())
+                {
+                    result = std::max(result, values[index]);
+                }
+            }
+            return result;
+        }
+
         float ComputeNaturalnessGainCompact(const ActiveSetScoringSettings& scoringSettings,
                                             float motion,
                                             float displacement,
@@ -355,6 +395,119 @@ namespace hairgpu
                 : strandFactor;
             return baseCost * (0.55f + 0.30f * strandFactor + 0.15f * pointFactor);
         }
+    }
+
+    bool BuildActiveSetRuntimeInputFromSegmentGroups(
+        const HairAsset& asset,
+        const std::vector<SegmentGroupRuntimeSnapshot>& snapshots,
+        ActiveSetRuntimeInput& inOutRuntimeInput,
+        std::string& outError)
+    {
+        outError.clear();
+
+        const uint32_t guideCount =
+            std::min<uint32_t>(
+                asset.guideStrandCount,
+                static_cast<uint32_t>(asset.strands.size()));
+
+        if (guideCount == 0u)
+        {
+            outError =
+                "BuildActiveSetRuntimeInputFromSegmentGroups: "
+                "asset has no guide strands.";
+            return false;
+        }
+
+        inOutRuntimeInput.segmentGroupSnapshots = snapshots;
+        inOutRuntimeInput.guideSegmentGroupRisk.assign(guideCount, 0.0f);
+        inOutRuntimeInput.guideRepairUrgency.assign(guideCount, 0.0f);
+        inOutRuntimeInput.guideFalseStaticRisk.assign(guideCount, 0.0f);
+        inOutRuntimeInput.guideCertificateRisk.assign(guideCount, 0.0f);
+        inOutRuntimeInput.totalDynamicSegmentGroupCount = 0u;
+        inOutRuntimeInput.totalRepairSegmentGroupCount = 0u;
+
+        for (const SegmentGroupRuntimeSnapshot& snapshot : snapshots)
+        {
+            if (snapshot.strandIndex >= asset.strands.size())
+            {
+                continue;
+            }
+
+            const uint32_t guideIndex =
+                ResolveGuideIndexForStrand(asset, snapshot.strandIndex);
+
+            if (guideIndex == UINT32_MAX || guideIndex >= guideCount)
+            {
+                continue;
+            }
+
+            const float combinedRisk =
+                Clamp(
+                    std::max(
+                        snapshot.motionRisk,
+                        std::max(
+                            snapshot.collisionRisk,
+                            std::max(
+                                snapshot.penetrationRisk,
+                                std::max(
+                                    snapshot.boundaryRisk,
+                                    snapshot.editRisk)))),
+                    0.0f,
+                    1.0f);
+
+            inOutRuntimeInput.guideSegmentGroupRisk[guideIndex] =
+                std::max(
+                    inOutRuntimeInput.guideSegmentGroupRisk[guideIndex],
+                    combinedRisk);
+
+            const bool isRepair =
+                snapshot.state == SegmentGroupRuntimeStateValue::Repair ||
+                snapshot.mandatoryRepair != 0u;
+
+            const bool isDynamic =
+                snapshot.state == SegmentGroupRuntimeStateValue::Dynamic;
+
+            if (isDynamic)
+            {
+                ++inOutRuntimeInput.totalDynamicSegmentGroupCount;
+            }
+
+            if (isRepair)
+            {
+                ++inOutRuntimeInput.totalRepairSegmentGroupCount;
+            }
+
+            const float repairUrgency =
+                isRepair
+                    ? 1.0f
+                    : Clamp(
+                        snapshot.boundaryRisk * 0.55f +
+                        snapshot.penetrationRisk * 0.45f,
+                        0.0f,
+                        1.0f);
+
+            inOutRuntimeInput.guideRepairUrgency[guideIndex] =
+                std::max(
+                    inOutRuntimeInput.guideRepairUrgency[guideIndex],
+                    repairUrgency);
+
+            inOutRuntimeInput.guideFalseStaticRisk[guideIndex] =
+                std::max(
+                    inOutRuntimeInput.guideFalseStaticRisk[guideIndex],
+                    snapshot.falseStatic != 0u ? 1.0f : 0.0f);
+
+            const float certificateRisk =
+                snapshot.cacheValid != 0u
+                    ? Clamp(snapshot.certificateRisk, 0.0f, 1.0f)
+                    : 1.0f;
+
+            inOutRuntimeInput.guideCertificateRisk[guideIndex] =
+                std::max(
+                    inOutRuntimeInput.guideCertificateRisk[guideIndex],
+                    certificateRisk);
+        }
+
+        return true;
     }
 
     std::vector<ActiveSetCluster> BuildActiveSetClusters(const HairAsset& asset,
@@ -552,9 +705,11 @@ namespace hairgpu
             float naturalnessGain = 0.0f;
             float efficiencyScore = 0.0f;
             float editScore = 0.0f;
+            float repairUrgencyScore = 0.0f;
             float timeCostMs = 0.0f;
             float memoryCostMb = 0.0f;
             bool mandatoryEdit = false;
+            bool mandatoryRepair = false;
             uint32_t guideCount = 0u;
             uint32_t strandCount = 0u;
         };
@@ -566,6 +721,7 @@ namespace hairgpu
         float highestScore = 0.0f;
         float totalNaturalnessGain = 0.0f;
         uint32_t mandatoryClusterCount = 0u;
+        uint32_t mandatoryRepairClusterCount = 0u;
         for (const ActiveSetCluster& cluster : clusters)
         {
             const Vec3 centroidCurrent = AveragePosition(currentGuideRoots, cluster.guideStrandIndices);
@@ -604,6 +760,40 @@ namespace hairgpu
             if (mandatoryEdit)
             {
                 ++mandatoryClusterCount;
+            }
+
+            const float segmentGroupRisk =
+                SafeMaximum(
+                    runtimeInput.guideSegmentGroupRisk,
+                    cluster.guideStrandIndices);
+
+            const float repairUrgency =
+                SafeMaximum(
+                    runtimeInput.guideRepairUrgency,
+                    cluster.guideStrandIndices);
+
+            const float falseStaticRisk =
+                SafeMaximum(
+                    runtimeInput.guideFalseStaticRisk,
+                    cluster.guideStrandIndices);
+
+            const float certificateRisk =
+                SafeMaximum(
+                    runtimeInput.guideCertificateRisk,
+                    cluster.guideStrandIndices);
+
+            const bool mandatoryRepair =
+                budget.enforceRepairCoverage &&
+                (
+                    repairUrgency >=
+                        Clamp(budget.mandatoryRepairThreshold, 0.0f, 1.0f) ||
+                    falseStaticRisk >=
+                        Clamp(budget.mandatoryRepairThreshold, 0.0f, 1.0f)
+                );
+
+            if (mandatoryRepair)
+            {
+                ++mandatoryRepairClusterCount;
             }
 
             uint32_t pointCount = 0u;
@@ -647,11 +837,45 @@ namespace hairgpu
                 normalizedTimeCost * std::max(scoringSettings.naturalnessGainWeight, 0.0f) +
                 normalizedMemoryCost * std::max(scoringSettings.efficiencyWeight, 0.0f));
             const float efficiencyScore = Clamp(naturalnessGain / combinedCost, 0.0f, 10.0f);
-            const float finalScore = Clamp(
+            float finalScore = Clamp(
                 naturalnessGain * std::max(scoringSettings.naturalnessGainWeight, 0.0f) +
                 Clamp(efficiencyScore / 10.0f, 0.0f, 1.0f) * std::max(scoringSettings.efficiencyWeight, 0.0f),
                 0.0f,
                 1.0f);
+
+            const float segmentGroupContribution =
+                segmentGroupRisk *
+                    std::max(scoringSettings.segmentGroupRiskWeight, 0.0f) +
+                repairUrgency *
+                    std::max(scoringSettings.repairUrgencyWeight, 0.0f) +
+                falseStaticRisk *
+                    std::max(scoringSettings.falseStaticWeight, 0.0f) +
+                certificateRisk *
+                    std::max(scoringSettings.certificateRiskWeight, 0.0f);
+
+            const float segmentGroupWeightSum =
+                std::max(scoringSettings.segmentGroupRiskWeight, 0.0f) +
+                std::max(scoringSettings.repairUrgencyWeight, 0.0f) +
+                std::max(scoringSettings.falseStaticWeight, 0.0f) +
+                std::max(scoringSettings.certificateRiskWeight, 0.0f);
+
+            if (segmentGroupWeightSum > 1.0e-6f)
+            {
+                const float normalizedSegmentGroupScore =
+                    segmentGroupContribution / segmentGroupWeightSum;
+
+                finalScore =
+                    Clamp(
+                        finalScore * 0.72f +
+                        normalizedSegmentGroupScore * 0.28f,
+                        0.0f,
+                        1.0f);
+            }
+
+            if (mandatoryRepair)
+            {
+                finalScore = std::max(finalScore, 0.95f);
+            }
 
             ActiveSetClusterScore score = {};
             score.clusterIndex = cluster.clusterIndex;
@@ -670,6 +894,10 @@ namespace hairgpu
             score.editScore = edit;
             score.styleBreakScore = styleBreak;
             score.recentEditScore = recentEdit;
+            score.segmentGroupRiskScore = segmentGroupRisk;
+            score.repairUrgencyScore = repairUrgency;
+            score.falseStaticRiskScore = falseStaticRisk;
+            score.certificateRiskScore = certificateRisk;
             score.editRisk = editRisk;
             score.clusterSizeScore = clusterSizeScore;
             score.naturalnessGain = naturalnessGain;
@@ -678,6 +906,7 @@ namespace hairgpu
             score.efficiencyScore = efficiencyScore;
             score.finalScore = finalScore;
             score.mandatoryEditCluster = mandatoryEdit;
+            score.mandatoryRepairCluster = mandatoryRepair;
             outPlan.scores.push_back(score);
 
             RankedCluster rankedCluster = {};
@@ -686,13 +915,15 @@ namespace hairgpu
             rankedCluster.naturalnessGain = naturalnessGain;
             rankedCluster.efficiencyScore = efficiencyScore;
             rankedCluster.editScore = edit;
+            rankedCluster.repairUrgencyScore = repairUrgency;
             rankedCluster.timeCostMs = timeCostMs;
             rankedCluster.memoryCostMb = memoryCostMb;
             rankedCluster.mandatoryEdit = mandatoryEdit;
+            rankedCluster.mandatoryRepair = mandatoryRepair;
             rankedCluster.guideCount = static_cast<uint32_t>(cluster.guideStrandIndices.size());
             rankedCluster.strandCount = static_cast<uint32_t>(cluster.strandIndices.size());
 
-            if (mandatoryEdit)
+            if (mandatoryEdit || mandatoryRepair)
             {
                 mandatoryCandidates.push_back(rankedCluster);
             }
@@ -707,6 +938,14 @@ namespace hairgpu
 
         auto sortMandatory = [](const RankedCluster& a, const RankedCluster& b)
         {
+            if (a.mandatoryRepair != b.mandatoryRepair)
+            {
+                return a.mandatoryRepair > b.mandatoryRepair;
+            }
+            if (a.repairUrgencyScore != b.repairUrgencyScore)
+            {
+                return a.repairUrgencyScore > b.repairUrgencyScore;
+            }
             if (a.editScore != b.editScore)
             {
                 return a.editScore > b.editScore;
@@ -742,6 +981,7 @@ namespace hairgpu
         uint32_t selectedGuideCount = 0u;
         uint32_t selectedStrandCount = 0u;
         uint32_t selectedMandatoryCount = 0u;
+        uint32_t selectedMandatoryRepairCount = 0u;
         float selectedScoreSum = 0.0f;
         float selectedNaturalnessSum = 0.0f;
         float selectedEfficiencySum = 0.0f;
@@ -791,7 +1031,10 @@ namespace hairgpu
             {
                 return false;
             }
-            if (!requiredByMinimum && candidate.finalScore < budget.promoteScoreThreshold && !candidate.mandatoryEdit)
+            if (!requiredByMinimum &&
+                candidate.finalScore < budget.promoteScoreThreshold &&
+                !candidate.mandatoryEdit &&
+                !candidate.mandatoryRepair)
             {
                 return false;
             }
@@ -828,6 +1071,10 @@ namespace hairgpu
             if (candidate.mandatoryEdit)
             {
                 ++selectedMandatoryCount;
+            }
+            if (candidate.mandatoryRepair)
+            {
+                ++selectedMandatoryRepairCount;
             }
 
             ActiveSetClusterScore& score = outPlan.scores[candidate.clusterIndex];
@@ -972,6 +1219,14 @@ namespace hairgpu
             : (selectedEfficiencySum / static_cast<float>(outPlan.selectedClusterIndices.size()));
         outPlan.summary.mandatoryClusterCount = mandatoryClusterCount;
         outPlan.summary.selectedMandatoryClusterCount = selectedMandatoryCount;
+        outPlan.summary.mandatoryRepairClusterCount =
+            mandatoryRepairClusterCount;
+        outPlan.summary.selectedMandatoryRepairClusterCount =
+            selectedMandatoryRepairCount;
+        outPlan.summary.inputDynamicSegmentGroupCount =
+            runtimeInput.totalDynamicSegmentGroupCount;
+        outPlan.summary.inputRepairSegmentGroupCount =
+            runtimeInput.totalRepairSegmentGroupCount;
         outPlan.summary.editCoverageRatio = (mandatoryClusterCount > 0u)
             ? (static_cast<float>(selectedMandatoryCount) / static_cast<float>(mandatoryClusterCount))
             : 1.0f;
@@ -980,7 +1235,12 @@ namespace hairgpu
         for (size_t clusterIndex = 0u; clusterIndex < outPlan.scores.size(); ++clusterIndex)
         {
             const ActiveSetClusterScore& score = outPlan.scores[clusterIndex];
-            if (!score.selected && (score.finalScore >= budget.promoteScoreThreshold || score.mandatoryEditCluster))
+            if (!score.selected &&
+                (
+                    score.finalScore >= budget.promoteScoreThreshold ||
+                    score.mandatoryEditCluster ||
+                    score.mandatoryRepairCluster
+                ))
             {
                 ++outPlan.summary.pendingClusterCount;
             }
@@ -1004,9 +1264,27 @@ namespace hairgpu
             return false;
         }
 
-        if (budget.enforceEditCoverage && mandatoryClusterCount > 0u && selectedMandatoryCount < mandatoryClusterCount)
+        if (budget.enforceEditCoverage &&
+            mandatoryClusterCount > 0u &&
+            selectedMandatoryCount < mandatoryClusterCount)
         {
-            outError = "Only part of the mandatory edit region fit inside the 16.67 ms / 32 GB budget. Increase the budget or reduce edit scope.";
+            outError =
+                "Only part of the mandatory edit region fit inside the "
+                "16.67 ms / 32 GB budget. Increase the budget or reduce "
+                "edit scope.";
+        }
+
+        if (budget.enforceRepairCoverage &&
+            mandatoryRepairClusterCount > 0u &&
+            selectedMandatoryRepairCount < mandatoryRepairClusterCount)
+        {
+            if (!outError.empty())
+            {
+                outError += " ";
+            }
+            outError +=
+                "Only part of the mandatory segment-group repair region "
+                "fit inside the active-set budget.";
         }
 
         (void)totalNaturalnessGain;
@@ -1026,6 +1304,14 @@ namespace hairgpu
             << " selectedNaturalnessGain=" << plan.summary.selectedNaturalnessGain
             << " averageEfficiencyScore=" << plan.summary.averageEfficiencyScore
             << " editCoverageRatio=" << plan.summary.editCoverageRatio
+            << " mandatoryRepairClusters="
+            << plan.summary.mandatoryRepairClusterCount
+            << " selectedMandatoryRepairClusters="
+            << plan.summary.selectedMandatoryRepairClusterCount
+            << " inputDynamicSegmentGroups="
+            << plan.summary.inputDynamicSegmentGroupCount
+            << " inputRepairSegmentGroups="
+            << plan.summary.inputRepairSegmentGroupCount
             << " budgetScale=" << plan.summary.budgetScale
             << " pendingClusters=" << plan.summary.pendingClusterCount
             << " hardMaxClusters=" << plan.summary.hardMaxActiveClusters
@@ -1534,6 +1820,10 @@ namespace hairgpu
         out << "    \"editCoverageRatio\": " << plan.summary.editCoverageRatio << ",\n";
         out << "    \"mandatoryClusterCount\": " << plan.summary.mandatoryClusterCount << ",\n";
         out << "    \"selectedMandatoryClusterCount\": " << plan.summary.selectedMandatoryClusterCount << ",\n";
+        out << "    \"mandatoryRepairClusterCount\": " << plan.summary.mandatoryRepairClusterCount << ",\n";
+        out << "    \"selectedMandatoryRepairClusterCount\": " << plan.summary.selectedMandatoryRepairClusterCount << ",\n";
+        out << "    \"inputDynamicSegmentGroupCount\": " << plan.summary.inputDynamicSegmentGroupCount << ",\n";
+        out << "    \"inputRepairSegmentGroupCount\": " << plan.summary.inputRepairSegmentGroupCount << ",\n";
         out << "    \"estimatedFrameMilliseconds\": " << plan.summary.estimatedFrameMilliseconds << ",\n";
         out << "    \"estimatedMemoryMegabytes\": " << plan.summary.estimatedMemoryMegabytes << "\n";
         out << "  },\n";
@@ -1581,12 +1871,17 @@ namespace hairgpu
             out << "        \"leakage\": " << score.leakageScore << ",\n";
             out << "        \"modelError\": " << score.modelErrorScore << ",\n";
             out << "        \"edit\": " << score.editScore << ",\n";
+            out << "        \"segmentGroupRisk\": " << score.segmentGroupRiskScore << ",\n";
+            out << "        \"repairUrgency\": " << score.repairUrgencyScore << ",\n";
+            out << "        \"falseStaticRisk\": " << score.falseStaticRiskScore << ",\n";
+            out << "        \"certificateRisk\": " << score.certificateRiskScore << ",\n";
             out << "        \"clusterSize\": " << score.clusterSizeScore << ",\n";
             out << "        \"naturalnessGain\": " << score.naturalnessGain << ",\n";
             out << "        \"estimatedTimeCostMilliseconds\": " << score.estimatedTimeCostMilliseconds << ",\n";
             out << "        \"estimatedMemoryCostMegabytes\": " << score.estimatedMemoryCostMegabytes << ",\n";
             out << "        \"efficiencyScore\": " << score.efficiencyScore << ",\n";
             out << "        \"mandatoryEditCluster\": " << (score.mandatoryEditCluster ? "true" : "false") << ",\n";
+            out << "        \"mandatoryRepairCluster\": " << (score.mandatoryRepairCluster ? "true" : "false") << ",\n";
             out << "        \"final\": " << score.finalScore << "\n";
             out << "      },\n";
             out << "      \"guideStrands\": [";

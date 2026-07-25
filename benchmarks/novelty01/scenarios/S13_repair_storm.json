@@ -1,0 +1,64 @@
+{
+  "scenario": "S13_RepairStorm",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "impulse_train",
+    "translationImpulseMeters": [
+      0.04,
+      0.02,
+      0.03
+    ],
+    "rotationImpulseDegrees": [
+      12,
+      18,
+      7
+    ],
+    "periodFrames": 240
+  },
+  "wind": {
+    "type": "gust_train",
+    "vector": [
+      5,
+      1,
+      2
+    ],
+    "periodFrames": 180,
+    "durationFrames": 45
+  },
+  "colliders": [
+    {
+      "id": "sphere0",
+      "shape": "sphere",
+      "radiusMeters": 0.14,
+      "motion": {
+        "type": "lissajous",
+        "amplitudeMeters": [
+          0.08,
+          0.05,
+          0.06
+        ],
+        "frequencyHz": [
+          0.7,
+          1.1,
+          0.9
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "repair_stress_600",
+      "frame": 600,
+      "type": "enable_repair_stress"
+    }
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumRepairAttempts": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

@@ -168,7 +168,7 @@ void BuildFollowDispatchArgsCS(uint3 tid : SV_DispatchThreadID)
         : ((FollowerStrandCount <= FollowerUpdatePhase)
             ? 0u
             : ((FollowerStrandCount - 1u - FollowerUpdatePhase) / max(FollowerUpdateStride, 1u) + 1u));
-    uint groupsX = (activeFollowerCount + 63u) / 64u;
+    uint groupsX = min((activeFollowerCount + 63u) / 64u, 65535u);
     IndirectArgs.Store(0u, groupsX);
     IndirectArgs.Store(4u, 1u);
     IndirectArgs.Store(8u, 1u);
@@ -198,7 +198,7 @@ void CompactGuideDispatchCS(uint3 tid : SV_DispatchThreadID)
 void BuildGuideDispatchArgsCS(uint3 tid : SV_DispatchThreadID)
 {
     uint activeGuideCount = GuideCompactionCountersIn[0];
-    uint groupsX = (activeGuideCount + 63u) / 64u;
+    uint groupsX = min((activeGuideCount + 63u) / 64u, 65535u);
     IndirectArgs.Store(0u, groupsX);
     IndirectArgs.Store(4u, 1u);
     IndirectArgs.Store(8u, 1u);
@@ -244,7 +244,7 @@ void BuildGuidePointDispatchArgsCS(uint3 tid : SV_DispatchThreadID)
 {
     uint activeGuideCount = GuideCompactionCountersIn[0];
     uint activeGuidePointCount = (ParticlesPerStrand > 1u) ? (activeGuideCount * (ParticlesPerStrand - 1u)) : 0u;
-    uint groupsX = (activeGuidePointCount + 63u) / 64u;
+    uint groupsX = min((activeGuidePointCount + 63u) / 64u, 65535u);
     IndirectArgs.Store(0u, groupsX);
     IndirectArgs.Store(4u, 1u);
     IndirectArgs.Store(8u, 1u);

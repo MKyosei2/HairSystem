@@ -1,0 +1,15 @@
+﻿# 3.7 本研究の新規性の整理
+
+本研究の新規性は、髪シミュレーションを単に高速化することではなく、十万本規模の髪をストランドごとに管理し、メモリ解像度と物理解像度を実行時に割り当てる枠組みとして再定義する点にある。本研究では、四つの主新規性と一つの副新規性を設定する。
+
+第一の主新規性は、Physics-Certified Strand Microtypeである。従来の圧縮表現や量子化は、主に形状やappearanceを少ないデータ量で再構成することを目的としている。これに対し、本研究のmicrotypeは、圧縮表現上で長さ、曲げ、ねじれ、decode誤差を評価し、certificateとして保持する。したがって、単なる低ビット表現ではなく、物理的安全性を持つ髪専用のデータ型である点に新規性がある。
+
+第二の主新規性は、Counterfactual Budgeted Mode Allocationである。従来のLODやactive setは、距離、可視性、リスクなどに基づいて処理量を削減することが多い。これに対し、本研究では、各ストランドについて複数の計算モードを選んだ場合の誤差、破綻確率、計算コストを予測し、固定60FPS予算下でmodeを割り当てる。このように、計算モード選択を反実仮想的な制約付き最適化として扱う点に新規性がある。
+
+第三の主新規性は、Self-Materializing Strand Physics Islandsである。従来の局所処理やactive setは、あらかじめ定義された領域や重要度に基づくことが多い。これに対し、本研究では、危険なpersistent strand ID集合が、近接グラフに基づいて一時的なphysics islandとして自己実体化する。islandは、merge、split、budget、commit certificateを持ち、実ストランド集合として扱われる。
+
+第四の主新規性は、Certificate-Driven Rod Repair Calculusである。従来のロッドソルバは、髪や繊維状物体を高精度に解くための物理モデルとして用いられることが多い。これに対し、本研究では、ロッドソルバを全体に常用するのではなく、破綻した局所セグメント帯に対してJITに適用し、その修復範囲、iteration数、成功判定をcertificateで制御する。修復を定量的な証明値に基づくcalculusとして扱う点に新規性がある。
+
+副新規性は、GPU-Resident Strand Runtimeである。GPUを用いた髪処理自体は既存研究や実装にも見られるが、本研究では、microtype decode、certificate評価、risk計算、mode allocation、island生成、repair task生成、indirect dispatchをGPU上で閉ループ化する。これにより、CPU readbackを極力避け、十万本規模の髪を固定フレーム予算下で扱う実行基盤を構築する。
+
+以上の新規性は、それぞれ独立した技術要素として意味を持つ。しかし、本研究の最も重要な点は、それらを統合することで、髪を全体ソルバで一様に解く対象から、ストランドごとにデータ量と物理処理を実行時に割り当てる対象へと変えることである。

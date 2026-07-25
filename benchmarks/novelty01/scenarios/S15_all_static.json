@@ -1,0 +1,42 @@
+{
+  "scenario": "S15_AllStatic",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": [
+    {
+      "id": "allow_all_static_600",
+      "frame": 600,
+      "type": "allow_all_groups_static"
+    }
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumStateTransitions": 1,
+    "maximumStateOscillations": 0,
+    "timelineFinalFrameRequired": true
+  }
+}

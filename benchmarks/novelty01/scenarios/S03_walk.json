@@ -1,0 +1,36 @@
+{
+  "scenario": "S03_Walk",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "walk_cycle",
+    "translationAmplitudeMeters": [
+      0.02,
+      0.035,
+      0.01
+    ],
+    "rotationAmplitudeDegrees": [
+      4,
+      7,
+      3
+    ],
+    "frequencyHz": 1.8
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0.4,
+      0,
+      0.2
+    ]
+  },
+  "colliders": [],
+  "events": [],
+  "assertions": {
+    "exactAppliedEventCount": 0,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

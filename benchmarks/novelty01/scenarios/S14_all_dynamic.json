@@ -1,0 +1,64 @@
+{
+  "scenario": "S14_AllDynamic",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "walk_cycle",
+    "translationAmplitudeMeters": [
+      0.03,
+      0.04,
+      0.02
+    ],
+    "rotationAmplitudeDegrees": [
+      8,
+      12,
+      5
+    ],
+    "frequencyHz": 2.0
+  },
+  "wind": {
+    "type": "turbulent",
+    "meanVector": [
+      8,
+      2,
+      3
+    ],
+    "gustAmplitude": 5,
+    "frequencyHz": 1.5,
+    "noiseSeedFromRunSeed": true
+  },
+  "colliders": [
+    {
+      "id": "sphere0",
+      "shape": "sphere",
+      "radiusMeters": 0.16,
+      "motion": {
+        "type": "lissajous",
+        "amplitudeMeters": [
+          0.1,
+          0.1,
+          0.08
+        ],
+        "frequencyHz": [
+          0.9,
+          1.2,
+          0.8
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "force_all_dynamic_0",
+      "frame": 0,
+      "type": "force_all_groups_dynamic"
+    }
+  ],
+  "assertions": {
+    "exactAppliedEventCount": 1,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

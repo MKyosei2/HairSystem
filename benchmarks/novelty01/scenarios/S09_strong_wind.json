@@ -1,0 +1,38 @@
+{
+  "scenario": "S09_StrongWind",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "turbulent",
+    "meanVector": [
+      7.0,
+      1.0,
+      2.0
+    ],
+    "gustAmplitude": 4.0,
+    "frequencyHz": 1.2,
+    "noiseSeedFromRunSeed": true
+  },
+  "colliders": [],
+  "events": [],
+  "assertions": {
+    "exactAppliedEventCount": 0,
+    "minimumStateTransitions": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

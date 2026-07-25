@@ -1,0 +1,1 @@
+﻿If this improves frame time, GPU to CPU synchronization/readback is a bottleneck.

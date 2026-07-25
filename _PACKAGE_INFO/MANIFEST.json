@@ -1,0 +1,45 @@
+{
+  "package": "HairSystem_non_novelty_performance_10fixes_20260717.zip",
+  "date": "2026-07-17",
+  "repository": "MKyosei2/HairSystem",
+  "branch": "Novelty",
+  "constraints": {
+    "display_strands": 100000,
+    "guide_strands": 4000,
+    "followers_per_guide": 24,
+    "particles_per_strand": 128,
+    "total_particles": 12800000,
+    "novelty_logic_changed": false
+  },
+  "base_git_blob_sha": {
+    "apps/dx11_viewer/CMakeLists.txt": "02371c827cae325e13211f0682369a33958161ab",
+    "apps/dx11_viewer/src/GpuHairViewer.h": "2d2039f68c479731759ef04df33adac32da5c466",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl": "3cda049e2976853bca0d2a9751b82c012f156050",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl": "3d8705f136b03ccc7c701fbe6c8e9040f93a04d1",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl": "9dd518b3c3bad1f2998a78f7d9fc7821e6f68ab0",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl": "8d20c2f14110b15e6b45a2c9ecfa1d7006612a97"
+  },
+  "modified_sha256": {
+    "apps/dx11_viewer/CMakeLists.txt": "01e7934d9c9d7eac08a84381f462a9fcb54af997d3756056d59aac6491cab831",
+    "apps/dx11_viewer/src/GpuHairViewer.h": "47a3945d8dad3f7efe335ed5b57109536c53bd7d53c2eb6bfb4b93898f5d4415",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl": "a1613e9d0b2decdfb36c873e90230d1e328cb283b53683b2b783c8372961c9c6",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl": "a217a5b84ad5aeef58e78b584a92c00586586826104401165bcbfc3b1276bdf2",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl": "9533d5046c47be32957a90255ee1db892a015b15d0266e8621b31d49c118cdc4",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl": "037d5aa1f953dd63aa41d80980e1efe82a7e614ab6bbdb2c432c89da2bb7b632"
+  },
+  "modified_source_files": [
+    "apps/dx11_viewer/CMakeLists.txt",
+    "apps/dx11_viewer/src/GpuHairViewer.h",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"
+  ],
+  "validation": {
+    "semantic_checks_passed": 21,
+    "semantic_checks_failed": 0,
+    "windows_build_executed": false,
+    "hlsl_compile_executed": false,
+    "gpu_runtime_test_executed": false
+  }
+}

@@ -1,29 +1,544 @@
 {
-  "db": "../../out/final_runtime/runtime_suite.sqlite",
-  "excel": "../../out/final_runtime/runtime_suite.xlsx",
-  "outputs_dir": "../../out/final_runtime/summary",
-  "telemetry_dir": "../../runtime_telemetry",
-  "schema": "../../tools/final_stage/schema.sql",
-  "runs": [
+  "suite_name": "novelty01_formal_runtime_suite",
+  "suite_version": "3.6-frozen-asset-source",
+  "experiment_name": "Novelty01_SegmentGroup_FormalEvaluation",
+  "outputs_dir": "../../out/novelty01_baseline",
+  "telemetry_dir": "../../out/novelty01_baseline/telemetry",
+  "hardware_profiles": "../../benchmarks/novelty01/hardware_profiles.json",
+  "baseline_method": "B8",
+  "performance_baseline_method": "B6",
+  "quality_baseline_method": "B0",
+  "repetitions_per_seed": 1,
+  "run_generation": {
+    "mode": "cartesian_product",
+    "dimensions": [
+      "methods",
+      "scenarios",
+      "seeds",
+      "repetitions"
+    ]
+  },
+  "source": {
+    "viewer_exe": "../../bin/Release/HairSystem/HairSystem.exe",
+    "schema": "../../tools/final_stage/schema.sql",
+    "asset_manifest": "../../benchmarks/novelty01/frozen_asset_bundle/frozen_asset_manifest.json",
+    "shader_root": "../../apps/dx11_viewer/shaders",
+    "required_branch": "Novelty"
+  },
+  "preflight": {
+    "strict": true,
+    "require_clean_git": true,
+    "require_release_x64": true,
+    "required_build_configuration": "Release",
+    "required_platform": "x64",
+    "required_width": 1920,
+    "required_height": 1080,
+    "required_fixed_timestep_seconds": 0.016666666666666666,
+    "minimum_warmup_frames": 600,
+    "minimum_measurement_frames": 6000,
+    "minimum_seed_count": 5,
+    "require_frozen_asset": true,
+    "require_hardware_adapter": true,
+    "reject_warp": true,
+    "require_vsync_off": true,
+    "minimum_gpu_timing_coverage": 0.99,
+    "minimum_free_disk_gib": 20,
+    "reject_network_output_path": true,
+    "required_method_codes": [
+      "B0",
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+      "B6",
+      "B7",
+      "B8",
+      "P"
+    ],
+    "required_scenario_codes": [
+      "S01_Idle",
+      "S02_Breathing",
+      "S03_Walk",
+      "S04_SuddenStop",
+      "S05_HeadRotation",
+      "S06_Teleport",
+      "S07_ColliderApproach",
+      "S08_StaticDynamicBoundaryContact",
+      "S09_StrongWind",
+      "S10_WindStop",
+      "S11_LocalEdit",
+      "S12_FalseStaticTrap",
+      "S13_RepairStorm",
+      "S14_AllDynamic",
+      "S15_AllStatic",
+      "S16_StateThrashing",
+      "S17_CloseCamera100k",
+      "S18_FarCamera100k"
+    ],
+    "required_telemetry_fields": [
+      "sourceFrameIndex",
+      "availabilityMask",
+      "metricAvailabilityMask",
+      "fatalFailure",
+      "fatalFailureCode",
+      "totalStrandCount",
+      "totalSegmentGroupCount",
+      "staticCachedGroupCount",
+      "staticTransformedGroupCount",
+      "dynamicGroupCount",
+      "repairRequiredGroupCount",
+      "falseStaticCount",
+      "collisionCandidateCount",
+      "collisionMissCount",
+      "wakeRequestGroupCount",
+      "repairAttemptCount",
+      "repairSuccessCount",
+      "stateTransitionCount",
+      "stateOscillationCount",
+      "blockClassificationGpuMilliseconds",
+      "groupClassificationGpuMilliseconds",
+      "compactionGpuMilliseconds",
+      "staticTransformGpuMilliseconds",
+      "dynamicSolveGpuMilliseconds",
+      "boundaryRepairGpuMilliseconds",
+      "watchdogGpuMilliseconds",
+      "telemetryReductionGpuMilliseconds",
+      "gpuHairMilliseconds",
+      "syntheticMetricCount",
+      "sameFrameReadbackCount",
+      "nanStateCount",
+      "infiniteStateCount"
+    ]
+  },
+  "frozen_asset_contract": {
+    "manifest_version": "novelty01-100k-v1.6",
+    "generation_mode": "viewer-canonical-export",
+    "asset_format_version": 1,
+    "topology_format_version": 1,
+    "generator_settings_schema_version": "novelty01-generator-settings-v1",
+    "required_guide_strand_count": 4000,
+    "required_followers_per_guide": 24,
+    "required_display_strand_count": 100000,
+    "required_particles_per_strand": 128,
+    "required_solver_iterations": 6,
+    "required_groups_per_block": 8,
+    "require_round_trip_validation": true,
+    "require_viewer_runtime_validation": true
+  },
+  "telemetry_contract": {
+    "schema_version": 4,
+    "required_fields": [
+      "sourceFrameIndex",
+      "availabilityMask",
+      "metricAvailabilityMask",
+      "fatalFailure",
+      "fatalFailureCode",
+      "totalStrandCount",
+      "totalSegmentGroupCount",
+      "staticCachedGroupCount",
+      "staticTransformedGroupCount",
+      "dynamicGroupCount",
+      "repairRequiredGroupCount",
+      "falseStaticCount",
+      "collisionCandidateCount",
+      "collisionMissCount",
+      "wakeRequestGroupCount",
+      "repairAttemptCount",
+      "repairSuccessCount",
+      "stateTransitionCount",
+      "stateOscillationCount",
+      "blockClassificationGpuMilliseconds",
+      "groupClassificationGpuMilliseconds",
+      "compactionGpuMilliseconds",
+      "staticTransformGpuMilliseconds",
+      "dynamicSolveGpuMilliseconds",
+      "boundaryRepairGpuMilliseconds",
+      "watchdogGpuMilliseconds",
+      "telemetryReductionGpuMilliseconds",
+      "gpuHairMilliseconds",
+      "syntheticMetricCount",
+      "sameFrameReadbackCount",
+      "nanStateCount",
+      "infiniteStateCount"
+    ],
+    "minimum_field_coverage": 0.99,
+    "require_zero_synthetic_metrics": true,
+    "require_zero_same_frame_readbacks": true,
+    "required_availability_by_scenario": {
+      "S01_Idle": [
+        "FrameInterval",
+        "CpuFrameWork",
+        "GpuTiming",
+        "GpuCounters",
+        "Scenario",
+        "ObservedSettings",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S07_ColliderApproach": [
+        "GpuTiming",
+        "CollisionGroundTruth",
+        "WakeGroundTruth",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S08_StaticDynamicBoundaryContact": [
+        "GpuTiming",
+        "BoundaryComparison",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S12_FalseStaticTrap": [
+        "GpuTiming",
+        "FalseStaticGroundTruth",
+        "WakeGroundTruth",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S13_RepairStorm": [
+        "GpuTiming",
+        "RepairVerification",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ],
+      "S16_StateThrashing": [
+        "GpuTiming",
+        "DeterminismHash",
+        "AdapterIdentity",
+        "PerformanceEnvironment",
+        "ResultIntegrity"
+      ]
+    }
+  },
+  "run_defaults": {
+    "run_name": "generated",
+    "run_name_prefix": "novelty01",
+    "variant": "formal",
+    "measurement_mode": "performance",
+    "width": 1920,
+    "height": 1080,
+    "fixed_timestep": true,
+    "fixed_timestep_seconds": 0.016666666666666666,
+    "vsync": false,
+    "present_sync_interval": 0,
+    "warmup_frames": 600,
+    "measurement_frames": 6000,
+    "guide_strand_count": 4000,
+    "followers_per_guide": 24,
+    "display_strand_count": 100000,
+    "particles_per_guide": 128,
+    "solver_iterations": 6,
+    "gpu_timestamp_delay_frames": 6,
+    "timeout_seconds": 900,
+    "auto_exit_after_capture": true,
+    "strict_validation": true,
+    "real_measurement_required": true,
+    "minimum_gpu_timing_coverage": 0.99,
+    "minimum_metric_coverage": 0.99,
+    "minimum_average_fps": 60.0,
+    "minimum_sixty_fps_ratio": 0.95,
+    "maximum_frame_budget_overrun_rate": 0.05,
+    "maximum_p95_frame_ms": 16.6667,
+    "maximum_p99_frame_ms": 20.0,
+    "maximum_single_frame_ms": 50.0,
+    "maximum_frames_over_100ms": 0,
+    "hardware_profile": "measurement_rtx4070ti_super",
+    "hardware_profile_strict": true,
+    "maximum_gpu_temperature_c": 88.0,
+    "maximum_gpu_temperature_spread_c": 12.0,
+    "maximum_gpu_clock_drop_ratio": 0.15,
+    "build_configuration": "Release",
+    "platform": "x64",
+    "hardware_sample_interval_seconds": 3.0,
+    "minimum_process_memory_sample_coverage": 0.95,
+    "maximum_process_private_memory_mib": 32768.0,
+    "target_process_private_memory_mib": 1024.0,
+    "maximum_dxgi_local_usage_mib": 6144.0,
+    "evaluation_phase": "prenovelty"
+  },
+  "seeds": [
+    1103,
+    2207,
+    3301,
+    4409,
+    5519
+  ],
+  "methods": [
     {
-      "experiment": "proposal_final_runtime",
-      "method": "prediction_only",
-      "scenario": "idle",
-      "asset": "sample_groom",
-      "run_name": "prediction_idle",
-      "summary_json": "../../runtime_telemetry/prediction_idle_summary.json",
-      "frame_csv": "../../runtime_telemetry/prediction_idle_frames.csv",
-      "notes": "Replace with real telemetry files or add viewer_exe on Windows."
+      "code": "B0",
+      "settings": {}
     },
     {
-      "experiment": "proposal_final_runtime",
-      "method": "proposal_hybrid",
-      "scenario": "idle",
-      "asset": "sample_groom",
-      "run_name": "hybrid_idle",
-      "summary_json": "../../runtime_telemetry/hybrid_idle_summary.json",
-      "frame_csv": "../../runtime_telemetry/hybrid_idle_frames.csv",
-      "notes": "Template entry for the proposed method."
+      "code": "B1",
+      "settings": {}
+    },
+    {
+      "code": "B2",
+      "settings": {}
+    },
+    {
+      "code": "B3",
+      "settings": {}
+    },
+    {
+      "code": "B4",
+      "settings": {}
+    },
+    {
+      "code": "B5",
+      "settings": {}
+    },
+    {
+      "code": "B6",
+      "settings": {}
+    },
+    {
+      "code": "B7",
+      "settings": {}
+    },
+    {
+      "code": "B8",
+      "settings": {}
+    },
+    {
+      "code": "P",
+      "settings": {}
     }
-  ]
+  ],
+  "scenarios": [
+    {
+      "code": "S01_Idle",
+      "timeline": "../../benchmarks/novelty01/scenarios/S01_idle.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S02_Breathing",
+      "timeline": "../../benchmarks/novelty01/scenarios/S02_breathing.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S03_Walk",
+      "timeline": "../../benchmarks/novelty01/scenarios/S03_walk.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S04_SuddenStop",
+      "timeline": "../../benchmarks/novelty01/scenarios/S04_sudden_stop.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S05_HeadRotation",
+      "timeline": "../../benchmarks/novelty01/scenarios/S05_head_rotation.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S06_Teleport",
+      "timeline": "../../benchmarks/novelty01/scenarios/S06_teleport.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S07_ColliderApproach",
+      "timeline": "../../benchmarks/novelty01/scenarios/S07_collider_approach.json",
+      "measurement_mode": "quality"
+    },
+    {
+      "code": "S08_StaticDynamicBoundaryContact",
+      "timeline": "../../benchmarks/novelty01/scenarios/S08_boundary_contact.json",
+      "measurement_mode": "quality"
+    },
+    {
+      "code": "S09_StrongWind",
+      "timeline": "../../benchmarks/novelty01/scenarios/S09_strong_wind.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S10_WindStop",
+      "timeline": "../../benchmarks/novelty01/scenarios/S10_wind_stop.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S11_LocalEdit",
+      "timeline": "../../benchmarks/novelty01/scenarios/S11_local_edit.json",
+      "measurement_mode": "quality"
+    },
+    {
+      "code": "S12_FalseStaticTrap",
+      "timeline": "../../benchmarks/novelty01/scenarios/S12_false_static_trap.json",
+      "measurement_mode": "quality"
+    },
+    {
+      "code": "S13_RepairStorm",
+      "timeline": "../../benchmarks/novelty01/scenarios/S13_repair_storm.json",
+      "measurement_mode": "quality"
+    },
+    {
+      "code": "S14_AllDynamic",
+      "timeline": "../../benchmarks/novelty01/scenarios/S14_all_dynamic.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S15_AllStatic",
+      "timeline": "../../benchmarks/novelty01/scenarios/S15_all_static.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S16_StateThrashing",
+      "timeline": "../../benchmarks/novelty01/scenarios/S16_state_thrashing.json",
+      "measurement_mode": "robustness"
+    },
+    {
+      "code": "S17_CloseCamera100k",
+      "timeline": "../../benchmarks/novelty01/scenarios/S17_close_camera_100k.json",
+      "measurement_mode": "performance"
+    },
+    {
+      "code": "S18_FarCamera100k",
+      "timeline": "../../benchmarks/novelty01/scenarios/S18_far_camera_100k.json",
+      "measurement_mode": "performance"
+    }
+  ],
+  "statistics": {
+    "pairing_keys": [
+      "scenario",
+      "seed",
+      "asset_sha256",
+      "hardware_profile",
+      "repetition_index",
+      "commit_sha",
+      "executable_sha256",
+      "shader_bundle_sha256",
+      "gpu_vendor_id",
+      "gpu_device_id",
+      "driver_version"
+    ],
+    "bootstrap_iterations": 2000,
+    "confidence_level": 0.95,
+    "percentiles": [
+      50.0,
+      95.0,
+      99.0,
+      99.9
+    ],
+    "randomize_execution_order": true,
+    "execution_order_seed": 20260719,
+    "block_bootstrap_frames": 120
+  },
+  "goals": {
+    "minimum_average_fps": 60.0,
+    "minimum_sixty_fps_ratio": 0.95,
+    "frame_time_p999_ms_max": 20.0,
+    "frame_budget_overrun_rate_max": 0.05,
+    "false_static_rate_max": 0.001,
+    "collision_miss_rate_max": 0.001,
+    "repair_failure_rate_max": 0.01,
+    "state_oscillation_rate_max": 0.001,
+    "static_dynamic_boundary_max_error_mm_max": 2.0,
+    "determinism_mismatch_count_max": 0,
+    "minimum_gpu_timing_coverage": 0.99
+  },
+  "determinism_replays": [
+    {
+      "id": "DET_B0_WALK",
+      "method": "B0",
+      "scenario": "S03_Walk",
+      "seed": 1103,
+      "repetitions": 5
+    },
+    {
+      "id": "DET_B8_FALSE_STATIC",
+      "method": "B8",
+      "scenario": "S12_FalseStaticTrap",
+      "seed": 2207,
+      "repetitions": 5
+    },
+    {
+      "id": "DET_P_REPAIR",
+      "method": "P",
+      "scenario": "S13_RepairStorm",
+      "seed": 3301,
+      "repetitions": 5
+    },
+    {
+      "id": "DET_P_THRASH",
+      "method": "P",
+      "scenario": "S16_StateThrashing",
+      "seed": 4409,
+      "repetitions": 5
+    }
+  ],
+  "runs": [],
+  "long_runs": [
+    {
+      "id": "L30_Walk",
+      "method": "P",
+      "scenario": "S03_Walk",
+      "seed": 1103,
+      "measurement_frames": 108000,
+      "timeline_repeat": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "L2H_StrongWind",
+      "method": "P",
+      "scenario": "S09_StrongWind",
+      "seed": 2207,
+      "measurement_frames": 432000,
+      "timeline_repeat": true,
+      "timeout_seconds": 9000
+    },
+    {
+      "id": "L8H_StateThrashing",
+      "method": "P",
+      "scenario": "S16_StateThrashing",
+      "seed": 3301,
+      "measurement_frames": 1728000,
+      "timeline_repeat": true,
+      "timeout_seconds": 33000
+    }
+  ],
+  "long_run_gates": {
+    "max_peak_process_private_mib": 32768.0,
+    "target_peak_process_private_mib": 1024.0,
+    "max_process_private_slope_mib_per_min": 2.0,
+    "max_peak_dxgi_local_usage_mib": 6144.0,
+    "max_dxgi_local_usage_slope_mib_per_min": 1.0,
+    "minimum_process_memory_sample_coverage": 0.95,
+    "max_p99_degradation_ratio": 1.1,
+    "max_query_unresolved_slope": 0.0
+  },
+  "method_settings_source": "tools/final_stage/hairgpu_final_run.py::METHOD_PRESETS",
+  "quality_gates": {
+    "prenovelty": {
+      "minimum_average_fps": 24.0,
+      "minimum_target_fps_ratio": 0.95,
+      "maximum_frame_budget_overrun_rate": 0.05,
+      "maximum_p95_frame_ms": 41.6667,
+      "maximum_p99_frame_ms": 50.0,
+      "maximum_single_frame_ms": 100.0,
+      "maximum_frames_over_100ms": 0
+    },
+    "proposal": {
+      "minimum_average_fps": 60.0,
+      "minimum_target_fps_ratio": 0.95,
+      "maximum_frame_budget_overrun_rate": 0.05,
+      "maximum_p95_frame_ms": 16.6667,
+      "maximum_p99_frame_ms": 20.0,
+      "maximum_single_frame_ms": 50.0,
+      "maximum_frames_over_100ms": 0
+    }
+  },
+  "hardware_projection": {
+    "enabled": true,
+    "model": "rtx4070ti_super_to_gtx1660_conservative_v1",
+    "source_profile": "measurement_rtx4070ti_super",
+    "target_profile": "low_gtx1660_reference",
+    "output_status": "theoretical_projection_only",
+    "formal_evidence": false
+  }
 }

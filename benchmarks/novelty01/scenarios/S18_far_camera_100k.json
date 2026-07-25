@@ -1,0 +1,47 @@
+{
+  "scenario": "S18_FarCamera100k",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "walk_cycle",
+    "translationAmplitudeMeters": [
+      0.01,
+      0.02,
+      0.01
+    ],
+    "rotationAmplitudeDegrees": [
+      3,
+      5,
+      2
+    ],
+    "frequencyHz": 1.2
+  },
+  "camera": {
+    "position": [
+      0,
+      1.8,
+      -4.5
+    ],
+    "target": [
+      0,
+      1.55,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0.3,
+      0,
+      0.1
+    ]
+  },
+  "colliders": [],
+  "events": [],
+  "assertions": {
+    "exactAppliedEventCount": 0,
+    "timelineFinalFrameRequired": true
+  }
+}

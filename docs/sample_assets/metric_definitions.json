@@ -1,74 +1,72 @@
 {
-  "editMetrics": [
-    {
-      "name": "rmsPositionError",
-      "category": "shape",
-      "formula": "sqrt(mean(||p_ref(t)-p_edit(t)||^2)) over all sampled strand points",
-      "interpretation": "Lower is better; measures average spatial deviation after editing."
+  "schemaVersion": "novelty01-metrics-v3.4",
+  "frameBudgetMilliseconds": 16.666666666666668,
+  "statusSeparation": {
+    "evidenceStatus": "Whether the recorded evidence is complete, internally consistent and reproducible.",
+    "stable60FpsStatus": "Whether valid evidence satisfies all stable-60 performance gates.",
+    "hypothesisSupportStatus": "Whether the valid result supports the stated performance hypothesis."
+  },
+  "metrics": {
+    "averageFps": {
+      "definition": "1000 * measured frame count / sum(frameMilliseconds)",
+      "unit": "frames/second",
+      "gate": { "direction": "minimum", "value": 60.0 }
     },
-    {
-      "name": "silhouetteError",
-      "category": "shape",
-      "formula": "sqrt(mean((x_ref-x_edit)^2 + (z_ref-z_edit)^2)) over sampled points",
-      "interpretation": "Lower is better; approximates screen-space outer contour change using the XZ projection."
+    "sixtyFpsRatio": {
+      "definition": "Fraction of measured frames with frameMilliseconds <= 16.6666666667",
+      "unit": "ratio",
+      "gate": { "direction": "minimum", "value": 0.95 }
     },
-    {
-      "name": "clumpPreservationScore",
-      "category": "shape",
-      "formula": "clamp(1 - averageLengthDelta / (0.35 * averageReferenceLength + eps), 0, 1)",
-      "interpretation": "Higher is better; rewards edits that preserve strand-group length structure."
+    "frameBudgetOverrunRate": {
+      "definition": "Fraction of measured frames with frameMilliseconds > 16.6666666667",
+      "unit": "ratio",
+      "gate": { "direction": "maximum", "value": 0.05 }
     },
-    {
-      "name": "rootLocalityScore",
-      "category": "shape",
-      "formula": "clamp(1 - averageRootDisplacement / (0.10 * assetBoundsDiagonal + eps), 0, 1)",
-      "interpretation": "Higher is better; indicates how stable root positions stay after editing."
+    "p95FrameMilliseconds": {
+      "definition": "Linear-interpolated 95th percentile of frameMilliseconds",
+      "unit": "ms",
+      "gate": { "direction": "maximum", "value": 16.6667 }
     },
-    {
-      "name": "editLocalityScore",
-      "category": "editing",
-      "formula": "1 - editedStrandRatio, where a strand is edited when RMS strand delta > 0.01 * averageReferenceLength",
-      "interpretation": "Higher is better; estimates how much of the hairstyle remained untouched outside the intended region."
+    "p99FrameMilliseconds": {
+      "definition": "Linear-interpolated 99th percentile of frameMilliseconds",
+      "unit": "ms",
+      "gate": { "direction": "maximum", "value": 20.0 }
     },
-    {
-      "name": "boundaryNaturalnessScore",
-      "category": "editing",
-      "formula": "clamp(1 - averageNeighborDisplacementJump / (0.08 * averageReferenceLength + eps), 0, 1)",
-      "interpretation": "Higher is better; compares nearby guide strands across UV-space boundaries to penalize visible discontinuities."
+    "p999FrameMilliseconds": {
+      "definition": "Linear-interpolated 99.9th percentile of frameMilliseconds",
+      "unit": "ms",
+      "suiteGoal": { "direction": "maximum", "value": 20.0 }
     },
-    {
-      "name": "editedStrandRatio",
-      "category": "editing",
-      "formula": "changedStrandCount / min(referenceStrands, editedStrands)",
-      "interpretation": "Lower is better when locality is important; reports the fraction of strands whose sampled deformation exceeds the edit threshold."
+    "maximumFrameMilliseconds": {
+      "definition": "Maximum frameMilliseconds in the measured interval",
+      "unit": "ms",
+      "gate": { "direction": "maximum", "value": 50.0 }
     },
-    {
-      "name": "editToRunLatencyMilliseconds",
-      "category": "timing",
-      "formula": "wall-clock milliseconds spent applying the edit stack and preparing runtime state",
-      "interpretation": "Lower is better; approximates interactive response time from edit commit to runtime-ready output."
+    "gpuTimingCoverage": {
+      "definition": "Frames with a finite non-negative gpuHairMilliseconds value / measured frames",
+      "unit": "ratio",
+      "gate": { "direction": "minimum", "value": 0.99 }
+    },
+    "vramSlopeMbPerMin": {
+      "definition": "Least-squares slope of sampled GPU memory usage against elapsed minutes",
+      "unit": "MiB/min",
+      "longRunGate": { "direction": "maximum", "value": 1.0 }
+    },
+    "ramSlopeMbPerMin": {
+      "definition": "Least-squares slope of sampled system memory usage against elapsed minutes",
+      "unit": "MiB/min",
+      "longRunGate": { "direction": "maximum", "value": 2.0 }
+    },
+    "p99DegradationRatio": {
+      "definition": "p99 of final 10 percent of measured frames / p99 of first 10 percent",
+      "unit": "ratio",
+      "longRunGate": { "direction": "maximum", "value": 1.1 }
+    },
+    "queryUnresolvedSlope": {
+      "definition": "Unresolved GPU timing query count normalized per measured hour",
+      "unit": "count/hour",
+      "longRunGate": { "direction": "maximum", "value": 0.0 }
     }
-  ],
-  "runtimeMetrics": [
-    {
-      "name": "selectedClusterCount",
-      "formula": "number of active-set clusters selected under the current budget",
-      "interpretation": "Higher generally means more corrective work scheduled this frame."
-    },
-    {
-      "name": "selectedGuideCount",
-      "formula": "total guide strands promoted to full corrective simulation",
-      "interpretation": "Higher means more of the hairstyle receives high-cost correction."
-    },
-    {
-      "name": "estimatedFrameMilliseconds",
-      "formula": "estimatedFixedCostMilliseconds + selectedClusterCount * estimatedClusterCostMilliseconds",
-      "interpretation": "Predicted frame cost used for bounded-latency reasoning; lower is safer for the 16.67 ms budget."
-    },
-    {
-      "name": "recommendedSolverIterations",
-      "formula": "budget-adapted iteration recommendation derived from the current budget scale",
-      "interpretation": "Higher means the runtime can afford more local corrective iterations this frame."
-    }
-  ]
+  },
+  "missingEvidencePolicy": "A missing required metric is unavailable evidence and must never be replaced with a proxy or zero."
 }

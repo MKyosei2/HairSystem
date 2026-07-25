@@ -1,0 +1,57 @@
+{
+  "scenario": "S07_ColliderApproach",
+  "version": 2,
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [
+    {
+      "id": "sphere0",
+      "shape": "sphere",
+      "radiusMeters": 0.12,
+      "motion": {
+        "type": "linear",
+        "startPosition": [
+          0.45,
+          0.15,
+          0
+        ],
+        "endPosition": [
+          0.08,
+          0.15,
+          0
+        ],
+        "startFrame": 600,
+        "endFrame": 1800
+      }
+    }
+  ],
+  "events": [],
+  "assertions": {
+    "exactAppliedEventCount": 0,
+    "minimumCollisionCandidates": 1,
+    "minimumWakeRequests": 1,
+    "timelineFinalFrameRequired": true
+  }
+}

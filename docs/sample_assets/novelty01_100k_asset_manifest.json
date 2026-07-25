@@ -1,0 +1,37 @@
+{
+  "manifestVersion": "novelty01-100k-v1.4",
+  "freezeStatus": "TEMPLATE_REQUIRES_LOCAL_FREEZE",
+  "assetFormatVersion": "hairbin-v1",
+  "sourceAssetPath": "REPLACE_WITH_ABSOLUTE_FROZEN_ASSET_PATH",
+  "sourceAssetSha256": "REPLACE_WITH_64_HEX_SHA256",
+  "sourceAssetSizeBytes": 0,
+  "generatedTopologyPath": "REPLACE_WITH_ABSOLUTE_TOPOLOGY_PATH",
+  "generatedTopologySha256": "REPLACE_WITH_64_HEX_SHA256",
+  "generatorSettingsPath": "REPLACE_WITH_ABSOLUTE_GENERATOR_SETTINGS_PATH",
+  "generatorSettingsSha256": "REPLACE_WITH_64_HEX_SHA256",
+  "sourceCommitSha": "REPLACE_WITH_40_HEX_COMMIT_SHA",
+  "sourceBranch": "Novelty",
+  "generation": {
+    "displayStrandCount": 100000,
+    "primaryGuideStrandCount": 4000,
+    "followersPerGuide": 24,
+    "particlesPerGuide": 128,
+    "solverIterations": 6,
+    "renderWidth": 1920,
+    "renderHeight": 1080,
+    "fixedTimeStepSeconds": 0.016666666666666666,
+    "vsync": false,
+    "presentSyncInterval": 0
+  },
+  "evidenceGate": {
+    "rejectWhenFreezeStatusIsNot": "FROZEN",
+    "rejectPlaceholderHashes": true,
+    "requireExactSha256Format": true,
+    "requireSameAssetHashAcrossAllMethodsAndSeeds": true,
+    "requireSourceCommitMatch": true,
+    "requireCleanGitWorktreeAtFreeze": true,
+    "requireLocalFileHashVerification": true,
+    "requireViewerObservedAssetPathMatch": true,
+    "requirePreAndPostRunAssetHashMatch": true
+  }
+}

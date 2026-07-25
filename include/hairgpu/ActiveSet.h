@@ -43,6 +43,17 @@ namespace hairgpu
         Vec3 cameraPosition = { 0.0f, 1.6f, -1.8f };
         Vec3 cameraForward = { 0.0f, 0.0f, 1.0f };
         float fixedTimeStep = 1.0f / 60.0f;
+        // Optional 01 segment-group input.
+        std::vector<SegmentGroupRuntimeSnapshot> segmentGroupSnapshots;
+
+        // Per-guide values derived from segment-group states.
+        std::vector<float> guideSegmentGroupRisk;
+        std::vector<float> guideRepairUrgency;
+        std::vector<float> guideFalseStaticRisk;
+        std::vector<float> guideCertificateRisk;
+
+        uint32_t totalDynamicSegmentGroupCount = 0u;
+        uint32_t totalRepairSegmentGroupCount = 0u;
     };
 
     struct ActiveSetScoringSettings
@@ -62,6 +73,10 @@ namespace hairgpu
         float modelErrorWeight = 0.10f;
         float styleBreakWeight = 0.12f;
         float recentEditWeight = 0.08f;
+        float segmentGroupRiskWeight = 0.16f;
+        float repairUrgencyWeight = 0.22f;
+        float falseStaticWeight = 0.24f;
+        float certificateRiskWeight = 0.14f;
         float naturalnessGainWeight = 0.70f;
         float efficiencyWeight = 0.30f;
         float velocitySoftRange = 0.35f;
@@ -94,6 +109,12 @@ namespace hairgpu
         float estimatedClusterMemoryMegabytes = 12.0f;
         bool enforceEditCoverage = true;
         float mandatoryEditThreshold = 0.55f;
+        bool enforceRepairCoverage = true;
+        float mandatoryRepairThreshold = 0.50f;
+        uint32_t maxDynamicSegmentGroups = 0u;
+        uint32_t maxRepairSegmentGroups = 0u;
+        float estimatedSegmentGroupCostMilliseconds = 0.00001f;
+        float estimatedRepairGroupCostMilliseconds = 0.00003f;
     };
 
     struct ActiveSetClusterScore
@@ -114,6 +135,10 @@ namespace hairgpu
         float editScore = 0.0f;
         float styleBreakScore = 0.0f;
         float recentEditScore = 0.0f;
+        float segmentGroupRiskScore = 0.0f;
+        float repairUrgencyScore = 0.0f;
+        float falseStaticRiskScore = 0.0f;
+        float certificateRiskScore = 0.0f;
         float editRisk = 0.0f;
         float clusterSizeScore = 0.0f;
         float naturalnessGain = 0.0f;
@@ -121,6 +146,7 @@ namespace hairgpu
         float estimatedMemoryCostMegabytes = 0.0f;
         float efficiencyScore = 0.0f;
         float finalScore = 0.0f;
+        bool mandatoryRepairCluster = false;
         bool mandatoryEditCluster = false;
         bool selected = false;
     };
@@ -139,6 +165,10 @@ namespace hairgpu
         float editCoverageRatio = 0.0f;
         uint32_t mandatoryClusterCount = 0u;
         uint32_t selectedMandatoryClusterCount = 0u;
+        uint32_t mandatoryRepairClusterCount = 0u;
+        uint32_t selectedMandatoryRepairClusterCount = 0u;
+        uint32_t inputDynamicSegmentGroupCount = 0u;
+        uint32_t inputRepairSegmentGroupCount = 0u;
         float budgetScale = 1.0f;
         uint32_t pendingClusterCount = 0u;
         uint32_t hardMaxActiveClusters = 0u;
@@ -175,7 +205,6 @@ namespace hairgpu
         uint32_t strandOffset = 0u;
         uint32_t strandCount = 0u;
     };
-
 
     struct DispatchIndirectArgs
     {
@@ -224,7 +253,6 @@ namespace hairgpu
         ActiveSetDispatchPackTier cached = {};
     };
 
-
     struct ActiveSetDispatchPlan
     {
         std::vector<ActiveSetDispatchRange> fullSimulationClusters;
@@ -236,6 +264,7 @@ namespace hairgpu
         std::vector<uint32_t> cachedStrands;
     };
 
+    bool BuildActiveSetRuntimeInputFromSegmentGroups(const HairAsset& asset, const std::vector<SegmentGroupRuntimeSnapshot>& snapshots, ActiveSetRuntimeInput& inOutRuntimeInput, std::string& outError);
 
     std::vector<ActiveSetCluster> BuildActiveSetClusters(const HairAsset& asset,
                                                          const ActiveSetClusterSettings& settings = {});
