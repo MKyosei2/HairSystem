@@ -1,370 +1,471 @@
-# Novelty 01 企画書兼設計書
+# Novelty 01 完全版企画書兼設計書
 
-# Segment-Group Adaptive Payload Strand Type
+# GPU-Resident Segment-Group Adaptive Payload Type for Hair Strands
 
-## 経験的許容判定に基づくGPU常駐型・状態依存髪データ表現
+## 状態依存Payload、局所再利用、依存範囲伝播を備えたGPU常駐型髪データ表現
 
 ---
 
 # 0. 文書情報
 
-| 項目                   | 内容                                               |
-| -------------------- | ------------------------------------------------ |
-| 対象リポジトリ              | `MKyosei2/HairSystem`                            |
-| 対象ブランチ               | `main`                                           |
-| 基準バージョン              | Version 66                                       |
-| 基準コミット               | `8929d4685e20ed7637fbe86819ea9fe20b3d0837`       |
-| 文書種別                 | Novelty 01 企画書兼設計書                               |
-| 研究テーマ                | 新しい状態依存型Strand Data Type                         |
-| 正式名称                 | Segment-Group Adaptive Payload Strand Type       |
-| 略称                   | SG-APST                                          |
-| 対象環境                 | Windows / Visual Studio 2022 / DirectX 11 / HLSL |
-| 表示本数                 | 100,000 strands                                  |
-| Guide本数              | 4,000 strands                                    |
-| Follower本数           | 96,000 strands                                   |
-| 点数                   | 128 points / strand                              |
-| Guide Segment Group数 | 4,000 × 127 = 508,000 groups                     |
-| 表示点数                 | 12,800,000 points                                |
-| 解像度                  | Full HD                                          |
-| 時間刻み                 | 1/60秒固定                                          |
-| Solver反復数            | 6回固定                                             |
-| 旧世代GPU評価             | GTX 1660級を想定した理論換算                               |
-| 現在の実装状態              | 基盤・試作段階。正式なNovelty 01は未完成                        |
-| 現時点の新規性判定            | 危ない。ただし安全に近い条件付き候補                               |
+| 項目                   | 内容                                         |
+| -------------------- | ------------------------------------------ |
+| 対象プロジェクト             | HairSystem                                 |
+| 対象リポジトリ              | `MKyosei2/HairSystem`                      |
+| 対象ブランチ               | `main`                                     |
+| 基準バージョン              | Version 67                                 |
+| 基準コミット               | `00fbf320b24315a343362be13712cb9ff04bb8ac` |
+| 文書種別                 | 卒業研究用・企画書兼設計書                              |
+| Novelty番号            | Novelty 01                                 |
+| 提案名称                 | Segment-Group Adaptive Payload Type        |
+| 略称                   | SG-APT                                     |
+| 対象API                | DirectX 11 / HLSL                          |
+| 対象OS                 | Windows                                    |
+| 開発環境                 | Visual Studio 2022                         |
+| 計測構成                 | Release x64                                |
+| 目標解像度                | 1920 × 1080                                |
+| 固定時間刻み               | 1/60秒                                      |
+| Solver反復数            | 6回                                         |
+| 表示髪本数                | 100,000本                                   |
+| Guide本数              | 4,000本                                     |
+| Follower本数           | 96,000本                                    |
+| 点数                   | 128 points / strand                        |
+| Guide Segment Group数 | 508,000 groups                             |
+| 表示点数                 | 12,800,000 points                          |
+| 主対象GPU               | GTX 1660級以上                                |
+| 研究目標                 | 高密度髪表現における状態依存Payloadと局所更新の有効性検証           |
+| 性能目標                 | Full HD、100,000本、安定60FPS                   |
+| 新規性の主張範囲             | 状態依存Payloadを持つGPU常駐型髪データ型                  |
+| 現在の実装状況              | Segment Group試作あり。正式なSG-APTは未完成            |
 
 ---
 
-# 1. 企画概要
+# 1. 研究題目
 
-本研究では、一本の髪を構成する点列を、隣接する二点とその間の線分からなるSegment Groupへ分割する。
+## 日本語題目
 
-各Segment Groupは、単なる幾何形状や制約計算の単位ではなく、実行時に次の処理経路を選択する最小単位として扱う。
+状態依存Payloadと局所再利用を用いたGPU常駐型髪Segment Groupデータ表現
 
-* 最後に確定した形状をそのまま再利用する
-* Rootまたは親Transformの剛体変換だけを適用する
-* 通常の物理Solverを実行する
-* 局所的な境界修復を実行する
-* 異常時に通常のFull Dynamic Solverへ戻る
+## 英語題目
 
-本研究の中心は、髪を点・線分・点で表現することではない。
-
-また、髪の静止部分を再計算しないこと、Sleeping、Cache Reuse、Guide/Follower、LOD、Dirty Rangeを使用すること自体も新規性とはしない。
-
-本研究で提案する中心的な新規性は、次の一つである。
-
-> 各Segment Groupを、固定配置されたReusable Coreと、Dynamic状態でのみ実体化するOptional Dynamic Sidecarから構成される状態依存型データとして表現し、そのデータ型自身がStatic Reuse、Rigid Transform、Dynamic Solve、Repair、Fallbackの実行経路を選択できるGPU常駐型Strand Representation。
-
-Admissibility Certificate、Block Invalidation、Follower Dependency Propagation、Render Dirty Rangeは、それぞれ独立した新規性として過度に主張するのではなく、この新しいデータ型を安全かつEnd-to-Endで成立させるための必須機構として位置づける。
+GPU-Resident Segment-Group Adaptive Payload Representation for Real-Time Hair Simulation
 
 ---
 
-# 2. 研究背景
+# 2. 研究概要
 
-## 2.1 高密度髪シミュレーションの問題
+本研究では、高密度なリアルタイム髪シミュレーションにおいて、すべての髪Segmentが毎フレーム同じ量のデータと処理を必要とするわけではない点に着目する。
 
-髪は多数の細長いstrandから構成される。
+一本の髪の内部でも、次の状態が混在する。
 
-一本のstrandを128点で表現し、100,000本を表示する場合、表示点数は12,800,000点となる。
+* Root付近は頭部へ追従する
+* 中間部はほとんど変化しない
+* 毛先だけがColliderへ接触する
+* 一部のSegmentだけが風の影響を受ける
+* 編集対象周辺だけが変形する
+* Static領域とDynamic領域の境界だけに誤差が生じる
 
-各点または線分に対して、毎フレーム次の処理を行うと大きな負荷が発生する。
+従来の単純な実装では、髪全体またはGuide全体に対して、同一の物理Payloadと同一の更新経路を使用することが多い。
+
+その場合、変化していないSegmentにも以下のDynamic専用情報が常時存在する。
+
+* Previous Position
+* Velocity
+* Constraint Lambda
+* Collision Residual
+* Solver一時値
+* Dynamic List情報
+
+本研究では、各Segment Groupを固定CoreとOptional Dynamic Payloadから構成されるGPU常駐型データとして定義する。
+
+Static状態のGroupは固定Coreだけを使用し、最後に検証された形状を再利用する。
+
+Dynamic状態のGroupだけがDynamic Payloadを割り当てられ、通常の物理Solverを実行する。
+
+状態変更時にSegment Group本体を別Bufferへ移動させず、固定Indexを維持したまま、有効なPayload、許可操作、Cache再利用条件、状態遷移、Fallback先を変更する。
+
+本研究では、このデータ型をSegment-Group Adaptive Payload Type、略称SG-APTと呼ぶ。
+
+---
+
+# 3. 研究背景
+
+## 3.1 高密度髪表現の処理負荷
+
+100,000本の髪を一本あたり128点で表現する場合、総点数は次のようになる。
+
+[
+100,000 \times 128 = 12,800,000
+]
+
+総Segment数は次のようになる。
+
+[
+100,000 \times 127 = 12,700,000
+]
+
+ただし、本研究では4,000本のGuideを物理計算し、96,000本のFollowerをGuideから再構築する。
+
+Guideに対する物理計算対象Group数は次のとおりである。
+
+[
+4,000 \times 127 = 508,000
+]
+
+高密度髪システムでは、以下の処理が毎フレーム発生する。
 
 * 外力積分
 * Root追従
 * 距離制約
 * 曲げ制約
-* ねじれ制約
-* Colliderとの衝突判定
+* Collider衝突
 * 自己衝突
-* 局所座標Frame更新
+* Shared Point処理
 * GuideからFollowerへの形状再構築
 * 描画用頂点生成
-* VisibilityおよびLOD判定
+* Visibility判定
+* LOD判定
+* Draw Call生成
 
-しかし、実際の髪では、一本の髪全体が常に同じ強さで動いているとは限らない。
-
-例えば、次のような局所状態が発生する。
-
-* Root付近だけが頭部運動の影響を受ける
-* 毛先だけが肩や衣服に接触する
-* 中間部だけが風の影響を受ける
-* 編集対象周辺だけが変形する
-* 一部のSegmentだけが破綻する
-* 一本の髪の中にStatic領域とDynamic領域が混在する
-
-このような場合でもstrand全体をDynamicとして処理すると、変化していない領域に対して不要な計算が発生する。
-
-一方、strand全体をStaticとして扱うと、衝突漏れ、境界不連続、長さ誤差、編集反映漏れが発生する。
+物理計算だけを局所化しても、Follower全再構築や描画頂点全更新が残る場合、End-to-Endでは十分な高速化にならない。
 
 ---
 
-## 2.2 既存方式との関係
+## 3.2 StaticとDynamicの混在
 
-本研究は、以下の既存技術を基盤として使用する。
+髪の動きはstrand単位で一様ではない。
 
-* 点列およびSegmentによる髪表現
-* Discrete Rod
-* Position Based Dynamics
-* XPBD
-* Guide/Follower
-* WispおよびCluster
-* Sleeping
-* Cache Reuse
-* Active Set
-* Dirty Range
-* LOD
-* GPU Compute
-* Prefix Sum
-* Compaction
-* Indirect Dispatch
-* Indirect Draw
-* Persistent Buffer
-* Watchdog
-* Fallback
+例えば、頭部が移動しただけで髪の局所形状が変化していない場合、全Segmentへ物理Solverを実行する必要はない。
 
-これらの要素を使用すること自体は新規性として主張しない。
+一方で、毛先だけがColliderへ接触している場合、strand全体をStaticにすることもできない。
 
-本研究との差分は、これらをSegment Groupごとの状態依存データ型として統合し、保持Payload、Cache Validity、物理処理経路、Follower更新範囲、描画更新範囲を一つのランタイム表現から制御する点にある。
+したがって、次のような混在状態を扱う必要がある。
+
+```text
+Root側        中間部          毛先
+RigidTransform → StaticReuse → Dynamic
+```
+
+または、
+
+```text
+Root側        編集範囲        毛先
+StaticReuse → Dynamic → Repair
+```
 
 ---
 
-# 3. 研究目的
+## 3.3 単純なSleeping方式の限界
 
-本研究の目的は、100,000本、128点、Full HDの髪表示において、変化していない局所領域の物理計算、Follower再構築、描画準備を省略できる状態依存型の髪データ表現を構築することである。
+Sleepingは、変化していない対象への計算を停止する一般的な最適化である。
 
-ただし、単純に処理を省略するのではなく、次の条件を満たすことを必須とする。
+しかし、Solver実行を停止するだけでは、次の問題が残る。
 
-1. Static化したGroupの形状誤差を評価できる
-2. 衝突や編集が発生した場合は即座にDynamicへ戻せる
-3. StaticとDynamicの境界を決定論的に処理できる
-4. Groupの状態変更時に大規模Buffer Copyを発生させない
-5. Dynamic GroupだけがDynamic専用Payloadを持つ
-6. Static Groupでは最後に確定した結果を再利用する
-7. Guideの局所更新をFollowerと描画まで伝播できる
-8. Dynamic割合が高い場合は通常Solverへ退避できる
-9. 提案方式の管理コストがBaselineを恒常的に上回らない
-10. 異常時に安全な通常経路へ戻れる
+* Dynamic専用Payloadが保持されたままになる
+* StaticとDynamicで同じBuffer Layoutを使用する
+* 状態変更時に全体Copyが発生する
+* Static CacheのVersion管理が弱い
+* Payload Lifetimeが曖昧になる
+* Dynamic割合が増えた際に管理コストだけが残る
+
+本研究では、処理を停止するかどうかではなく、データ型が保持するPayloadそのものを状態依存で変化させる。
 
 ---
 
-# 4. 研究仮説
+# 4. 研究目的
 
-## H1：Segment Group単位の処理選択
+本研究の目的は、髪のSegment Groupについて、Dynamic状態でのみ必要なデータをOptional Payloadとして分離し、Static状態ではDynamic専用Payloadを保持・参照しないGPU常駐型データ表現を構築することである。
 
-一本のstrand内部にStatic領域とDynamic領域が混在する場合、strand全体を一つの処理状態にする方式よりも、Segment Group単位で処理経路を選択した方が更新対象を削減できる。
+具体的には、次の事項を検証する。
 
-## H2：状態依存Payloadによるメモリと帯域の削減
-
-Static Groupでは、速度、Previous Position、Solver Lambda、衝突計算用一時値などのDynamic専用情報を保持する必要がない。
-
-固定Reusable CoreとOptional Dynamic Sidecarを分離することで、Dynamic Groupだけに必要なPayloadを実体化できる。
-
-## H3：増分許容判定によるStatic再利用
-
-位置変化、速度、加速度、拘束残差、境界誤差、Root変換量、Collider接近量などを用いてStatic再利用の可否を判定することで、単純な移動量判定よりFalse Staticを抑制できる。
-
-## H4：Block単位の早期省略
-
-毎フレーム全508,000 Groupを評価するのではなく、変更原因から影響Blockだけを無効化することで、変化していないBlockではGroup単位判定自体を省略できる。
-
-## H5：Followerおよび描画への局所更新伝播
-
-Guideだけを局所更新しても、96,000本のFollowerを毎フレーム全再構築した場合は十分な高速化にならない。
-
-Guide GroupのDirty RangeをFollower Segment RangeとRender Vertex Rangeへ伝播することで、SimulationだけでなくEnd-to-End Frame Timeを削減できる。
-
-## H6：全動的条件での負の高速化防止
-
-強風や大規模衝突によってDynamic Groupが増えた場合、Certificate、分類、Compaction、Sidecar管理の追加コストが不利益になる。
-
-GPU実測時間に基づいてFull Dynamic Fast Pathへ切り替えることで、提案方式がBaselineより大幅に遅くなることを防止できる。
+1. Dynamic専用Payloadの実使用量を削減できるか
+2. Group関連Bufferの読み書き量を削減できるか
+3. Static GroupのSolver処理を省略できるか
+4. 状態遷移時のGroup全体Copyを排除できるか
+5. Static Cacheの誤差を許容範囲内に維持できるか
+6. Dynamic割合が高い場合にFull Dynamicへ安全に戻れるか
+7. 100,000本表示のEnd-to-End処理時間を改善できるか
+8. GTX 1660級環境で安定60FPSへ近づけるか
 
 ---
 
-# 5. 新規性の主張範囲
+# 5. 研究課題
 
-## 5.1 主新規性
+## RQ1：Payload使用量
 
-本研究の主新規性は一つに限定する。
+固定CoreとOptional Dynamic Payloadを分離することで、全Groupが常にDynamic Payloadを持つ方式よりGPUメモリ使用量を削減できるか。
 
-> Segment Groupごとに、固定Reusable Coreと必要時のみ実体化するDynamic Sidecarを持ち、Cache ValidityとRuntime Stateに応じて保持Payloadと実行経路が変化するSegment-Group Adaptive Payload Strand Type。
+## RQ2：GPU帯域
 
-このデータ型は、単なるStatic/Dynamicフラグではない。
+Static GroupがDynamic専用Payloadを読み書きしないことで、Group関連GPU帯域を削減できるか。
 
-状態によって次が変化する。
+## RQ3：状態遷移
 
-* 保持するデータ
-* 使用するGPU Buffer
-* 実行するCompute Pass
-* Cacheの再利用可否
-* Shared Pointへの書き込み権限
-* Followerの更新範囲
-* Render Bufferの更新範囲
-* Fallback先
+固定Indexを維持し、Payload Indexだけを変更する方式は、Static BufferとDynamic Buffer間でGroup本体を移動する方式より状態遷移コストを削減できるか。
 
----
+## RQ4：Static再利用精度
 
-## 5.2 主新規性を成立させる必須機構
+Static Groupが最後に確定した形状を再利用しても、Full Dynamic結果との差を許容範囲内に維持できるか。
 
-次の二つは、主新規性であるデータ型を成立させる必須構成要素とする。
+## RQ5：End-to-End性能
 
-### A. Incremental Admissibility Control
+Guide物理計算、Follower再構築、Render Vertex更新まで局所更新範囲を伝播した場合、100,000本表示全体のFrame Timeを改善できるか。
 
-GroupおよびBlockのCache Validityを経験的な許容判定によって管理し、Dirty Sourceから影響範囲だけを増分無効化する。
+## RQ6：負の高速化
 
-### B. End-to-End Dependency Propagation
-
-Guide Groupの状態変更を、Follower Dependency Range、Follower Segment Range、Render Vertex Rangeまで伝播する。
+Dynamic Groupが多い条件で、Full Dynamic Fast Pathへ切り替えることにより、提案方式の管理コストによる性能悪化を抑制できるか。
 
 ---
 
-## 5.3 補助的新規性候補
+# 6. 研究仮説
 
-Deterministic Hemisphere Shared-Point Resolveは、実験結果によって扱いを決定する。
+## H1
 
-次の改善が有意に確認できた場合のみ、補助的新規性として扱う。
+Static割合が高いシナリオでは、SG-APTは全Groupが常にDynamic Payloadを持つ方式より、Payload使用量を削減する。
 
-* Static/Dynamic境界誤差の減少
-* GPU実行順序による差の減少
-* 再実行時Hash一致率の向上
-* Repair発火数の減少
+## H2
 
-効果が小さい場合は、Engineering Safeguardとして扱う。
+Static GroupがDynamic専用Payloadを参照しないことで、Group関連Bufferの読み書き量を削減する。
+
+## H3
+
+固定Indexを維持することで、状態遷移時にGroup本体を別BufferへCopyする方式より、状態変更コストを削減する。
+
+## H4
+
+Version管理、Hysteresis、Minimum Residence、定期検証を組み合わせることで、False Staticを許容範囲内へ抑制できる。
+
+## H5
+
+Guideの局所変更をFollowerおよび描画範囲へ伝播することで、物理計算だけの局所化よりもEnd-to-End Frame Timeを改善する。
+
+## H6
+
+全動的条件では、GPU実測コストに基づくFast Path切替により、提案方式の性能悪化を小さく抑えられる。
 
 ---
 
-## 5.4 新規性として主張しない要素
+# 7. 新規性の主張
 
-以下は既存技術または一般的な最適化として扱う。
+## 7.1 主新規性
 
-* 点・線分・点による表現
+本研究の主新規性は、次の一点に限定する。
+
+> 髪のSegment Groupを、固定Indexを持つReusable Coreと、Dynamic状態でのみ有効になるOptional Dynamic Payloadから構成されるGPU常駐型データとして定義し、状態に応じて有効Payload、許可操作、Cache再利用条件、Payload Lifetime、状態遷移およびFallback先を変更する。
+
+---
+
+## 7.2 主貢献
+
+本研究の貢献は以下の三点とする。
+
+### 貢献1：状態依存Payloadを持つ髪データ型
+
+Fixed CoreとOptional Dynamic Payloadから構成される髪Segment Groupデータ型を定義する。
+
+### 貢献2：データ型の操作と不変条件
+
+以下をデータ型の正式な仕様として定義する。
+
+* Dynamic昇格
+* Static降格
+* Payload割当
+* Payload遅延解放
+* Cache再利用
+* Version無効化
+* Rigid Transform
+* Repair
+* Full Dynamic Fallback
+
+### 貢献3：状態依存Payload固有の評価方法
+
+以下を測定し、単純なSleeping方式との差を示す。
+
+* Dynamic Payload使用量
+* Payload Allocation数
+* Payload Retire数
+* Group関連GPU帯域
+* Group状態遷移量
+* Static Cache誤差
+* False Static率
+* Full Dynamic Fallback率
+
+---
+
+## 7.3 主新規性に含めない要素
+
+以下は既存技術または一般的な実装技術として扱う。
+
+* 点列による髪表現
+* Segment表現
+* Point-Line-Point構造
 * 等間隔Resample
 * PBD
 * XPBD
 * Rod Solver
 * Guide/Follower
 * Sleeping
+* Active Set
 * Cache Reuse
 * Dirty Range
-* Active Set
-* LOD
+* Partial Update
 * GPU Compute
 * Prefix Sum
-* Atomic Counter
-* Stable Compaction
+* Compaction
+* Persistent Buffer
 * Indirect Dispatch
 * Indirect Draw
-* Persistent Buffer
 * Frustum Culling
-* Screen-space LOD
-* Hysteresis
+* LOD
 * Watchdog
-* Ground Truth比較
+* Fallback
 * Telemetry
 * GPU Timer
-* Full Dynamic Solver
-* Full Dynamic Fast Path
 
 ---
 
-# 6. Segment Groupの定義
+## 7.4 補助機構の扱い
 
-## 6.1 基本構造
+以下は主新規性ではなく、SG-APTを実システムとして成立させるための補助機構とする。
+
+* Shared Pointの決定論的解決
+* Incremental Block Invalidation
+* Follower Dependency Propagation
+* Render Dirty Range
+* Full Dynamic Fast Path
+* Shadow Dynamic検証
+
+これらが単独で新しいとは主張しない。
+
+---
+
+# 8. システム要件
+
+## 8.1 固定実験条件
+
+| 項目              |         固定値 |
+| --------------- | ----------: |
+| 表示本数            |     100,000 |
+| Guide本数         |       4,000 |
+| Follower本数      |      96,000 |
+| Follower数／Guide |          24 |
+| 点数／strand       |         128 |
+| Segment数／strand |         127 |
+| Guide Group数    |     508,000 |
+| Solver反復数       |           6 |
+| 固定時間刻み          |       1/60秒 |
+| 解像度             | 1920 × 1080 |
+| ビルド             | Release x64 |
+| VSync           |          無効 |
+| CPU Readback    |  正式計測時は原則無効 |
+
+---
+
+## 8.2 機能要件
+
+* Segment Group単位でStatic／Dynamicを管理できる
+* Group Coreは固定Indexを維持する
+* Dynamic GroupだけがDynamic Payloadを持つ
+* Static Groupは最後に検証された形状を再利用する
+* Root移動を剛体変換として処理する
+* Collider接近時に該当GroupをDynamicへ戻す
+* User Edit時に影響範囲をDynamicへ戻す
+* Payload Pool不足時にFallbackできる
+* Dynamic割合が高い場合にFull Dynamicへ切り替えられる
+* 状態遷移、Payload量、誤差を記録できる
+* Ground Truthと比較できる
+
+---
+
+## 8.3 非機能要件
+
+* Release x64で再現可能
+* GPU処理順序による結果差を最小化する
+* NaNおよびInfを検出する
+* 30分以上の長時間試験を通過する
+* Payload Leakを発生させない
+* 異常時にBaselineへ復帰できる
+* 計測値をCSVおよびJSONLへ保存できる
+* 実験条件をJSONとして固定できる
+
+---
+
+# 9. Segment Groupの定義
 
 strandを次の点列として表す。
 
 [
-S = {P_0, P_1, \ldots, P_{N-1}}
+S={P_0,P_1,\ldots,P_{N-1}}
 ]
 
 Segment Group (G_i) を次のように定義する。
 
 [
-G_i = (P_i, E_i, P_{i+1})
+G_i=(P_i,E_i,P_{i+1})
 ]
-
-ここで、
 
 [
-E_i = P_{i+1} - P_i
+E_i=P_{i+1}-P_i
 ]
-
-とする。
 
 128点のstrandでは、127個のSegment Groupを持つ。
 
 [
-N_g = 128 - 1 = 127
+N_G=128-1=127
 ]
+
+Segment Groupは、新しい物理Primitiveではない。
+
+既存のSegmentを、SG-APTのデータ管理単位として使用する。
 
 ---
 
-## 6.2 子Groupの始点
+# 10. 初期形状と等間隔Resample
 
-隣接するGroupは共有点を持つ。
+一本のstrandの全長を (L)、Segment数を (N_G) とする。
 
-[
-G_i = (P_i,E_i,P_{i+1})
-]
+基準Segment長を次のように定義する。
 
 [
-G_{i+1} = (P_{i+1},E_{i+1},P_{i+2})
+l_0=\frac{L}{N_G}
 ]
 
-子Group (G_{i+1}) は、共有点 (P_{i+1}) を独立に積分しない。
+初期化時またはAsset生成時に、各strandを弧長に基づいてResampleする。
 
-子Groupの始点は、親GroupまたはShared-Point Resolveによって確定した位置を読み取り専用の入力として使用する。
+同一strand内では原則としてSegment長を統一する。
 
-子Groupが主に計算する対象は終点 (P_{i+2}) とする。
+ただし、髪ごとの全長は異なってよい。
 
-これにより、隣接Groupによる共有点への二重書き込みを防ぐ。
+元Asset形状を優先する必要がある場合は、GroupごとのRest Lengthを保持する互換モードを用意する。
 
----
-
-## 6.3 等間隔Resample
-
-一本のstrandの全長を (L)、Group数を (N_g) とした場合、基準Segment長を次のように定義する。
-
-[
-l_0 = \frac{L}{N_g}
-]
-
-初期化時またはAsset生成時に、各strandを弧長に基づいて等間隔へResampleする。
-
-髪ごとに全長が異なることは許可する。
-
-ただし、同一strand内では原則としてSegment長を統一する。
-
-Asset形状の都合で完全等長化が適さない場合のみ、GroupごとのRest Lengthを保持する互換モードを使用する。
-
-正式評価では、次を別条件として扱う。
+正式評価では以下を分ける。
 
 * Uniform Rest Length
 * Per-Group Rest Length
 
+等間隔Resample自体は新規性として主張しない。
+
 ---
 
-# 7. 新しいデータ型
+# 11. SG-APTデータ構造
 
-## 7.1 概念定義
-
-Segment-Group Adaptive Payload Strand Typeは、次の要素から構成する。
+## 11.1 概念構造
 
 ```text
 SegmentGroupAdaptivePayload
-├─ Fixed Reusable Core
+├─ Fixed Core
 ├─ Runtime State
-├─ Cache Validity
 ├─ Version Information
-├─ Admissibility Summary
-├─ Optional Dynamic Sidecar
+├─ Static Cache
+├─ Optional Dynamic Payload
 ├─ Shared-Point Ownership
-├─ Follower Dependency
-└─ Render Dependency
+├─ Dependency Metadata
+└─ Telemetry Metadata
 ```
 
 ---
 
-## 7.2 Fixed Reusable Core
+## 11.2 Fixed Core
 
 すべてのGuide Segment Groupが固定Indexで保持する。
 
@@ -379,28 +480,28 @@ struct SegmentGroupCore
 
     uint parentGroupIndex;
     uint childGroupIndex;
-
-    uint ownerGroupIndex;
     uint blockIndex;
 
     uint state;
     uint previousState;
 
-    uint dynamicSidecarIndex;
-    uint dirtyMask;
+    uint dynamicPayloadIndex;
+    uint dirtyFlags;
 
     float restLength;
-    float cachedDirectionX;
-    float cachedDirectionY;
-    float cachedDirectionZ;
+    float3 cachedLocalDirection;
 
     float maximumObservedPositionError;
     float maximumObservedBoundaryError;
     float minimumObservedCollisionMargin;
 
-    uint stateEpoch;
+    uint rootTransformVersion;
+    uint forceVersion;
+    uint colliderVersion;
+    uint topologyVersion;
+    uint editVersion;
+
     uint payloadVersion;
-    uint certificateVersion;
     uint dependencyVersion;
 
     uint lastSolvedFrame;
@@ -410,86 +511,133 @@ struct SegmentGroupCore
 };
 ```
 
-最終的な実装では、必要に応じて`cachedDirection`をOctahedral Encodingなどで圧縮する。
-
-ただし、圧縮による誤差が新規性評価へ混入しないよう、最初はfloat32を使用したReference Layoutを実装する。
+Fixed Coreは、StaticとDynamicの切替時にも別Bufferへ移動しない。
 
 ---
 
-## 7.3 Static形状の保持
+## 11.3 Optional Dynamic Payload
 
-Static Groupの線分は、始点、方向、Rest Lengthから復元する。
-
-[
-P_{i+1} = P_i + l_i d_i
-]
-
-ここで、
-
-* (P_i)：親GroupまたはRootから得た始点
-* (l_i)：Rest Length
-* (d_i)：最後にDynamic Solverで確定した方向
-
-とする。
-
-Static Groupでは、速度やPrevious Positionを保持せず、最後に確定した方向と長さをReusable Coreから復元する。
-
----
-
-## 7.4 Dynamic Sidecar
-
-Dynamic状態でのみ必要な情報をSidecarとして保持する。
+Dynamic状態でのみ必要となる情報を保持する。
 
 ```cpp
-struct DynamicGroupSidecar
+struct SegmentDynamicPayload
 {
-    float previousEndX;
-    float previousEndY;
-    float previousEndZ;
+    float3 previousEndPosition;
+    float previousPadding;
 
-    float velocityEndX;
-    float velocityEndY;
-    float velocityEndZ;
+    float3 velocity;
+    float velocityPadding;
 
     float distanceLambda;
     float bendLambda;
-
     float constraintResidual;
     float collisionResidual;
+
     float predictedPositionError;
+    float boundaryError;
 
     uint solverFlags;
     uint collisionFlags;
     uint allocationEpoch;
+    uint retireEpoch;
 };
 ```
 
-始点は親Groupの確定位置を使用するため、子Group側でPrevious Startを重複保持しないことを基本方針とする。
-
-ただし、Solverの品質上必要な場合は、Shared-Point Candidate用の一時Bufferとして始点履歴を保持する。
+Static Groupの`dynamicPayloadIndex`はInvalid値とする。
 
 ---
 
-## 7.5 データ型の不変条件
+## 11.4 Static Cache
 
-SG-APSTは次の不変条件を持つ。
+Static Groupは、最後にDynamic Solverで確定した方向とRest Lengthを保持する。
+
+[
+P_{i+1}=P_i+l_id_i
+]
+
+ここで、
+
+* (P_i)：Rootまたは親Groupから確定した始点
+* (l_i)：Rest Length
+* (d_i)：最後に検証された方向
+
+とする。
+
+Static Groupでは以下を保持しない。
+
+* Previous Position
+* Velocity
+* Distance Lambda
+* Bend Lambda
+* Collision Solver一時値
+
+---
+
+## 11.5 Block Descriptor
+
+連続するGroupをBlockとして管理する。
+
+Blockサイズ候補は以下とする。
+
+* 16 Groups
+* 32 Groups
+* 64 Groups
+
+```cpp
+struct SegmentGroupBlockDescriptor
+{
+    uint firstGroupIndex;
+    uint groupCount;
+
+    uint dirtyMask;
+    uint validMask;
+
+    float3 boundsMin;
+    float boundsPadding0;
+
+    float3 boundsMax;
+    float boundsPadding1;
+
+    float maximumMotion;
+    float maximumResidual;
+    float minimumCollisionMargin;
+
+    uint descriptorVersion;
+    uint lastValidatedFrame;
+    uint lastUpdatedFrame;
+    uint flags;
+};
+```
+
+正式なBlockサイズは実験により決定する。
+
+---
+
+# 12. データ型の不変条件
+
+SG-APTは以下の不変条件を満たさなければならない。
 
 1. Group CoreのGPU Indexは実行中に変更しない
-2. Group Core全体をStatic PoolとDynamic Poolの間でCopyしない
-3. Dynamic状態でのみ有効なSidecar Indexを持つ
-4. Static状態のSidecar IndexはInvalidとする
-5. Groupの始点は子Groupが直接所有しない
-6. Shared Pointの最終書き込みPassは一つだけとする
-7. Cache Versionが一致しないStatic Groupは使用しない
-8. Topology変更時は関連Groupを必ずInvalidまたはDynamicへ戻す
-9. NaNまたはInfを含むGroupはStaticとして再利用しない
-10. Follower CacheのVersionが一致しない場合は局所または全再構築へ戻す
+2. Static Groupは有効なDynamic Payloadを持たない
+3. Dynamic Groupは有効なDynamic Payloadを一つだけ持つ
+4. 一つのPayloadを複数Groupで共有しない
+5. Payload VersionがCore Versionと一致しない場合は使用しない
+6. Static CacheはVersion一致時だけ再利用する
+7. Topology変更後のCacheを使用しない
+8. NaNまたはInfを含むGroupをStatic化しない
+9. Static化前に最終Dynamic結果をFixed Coreへ保存する
+10. Dynamic Payloadを解放直後に再利用しない
+11. Payload Pool不足時はBaselineへFallbackする
+12. Shared Pointの最終Writerは一つに限定する
+13. 安全上必要なDynamic化をBudgetで遅延しない
+14. Follower Dependency Versionが不一致の場合は再構築する
+15. 状態遷移をTelemetryへ記録する
 
 ---
 
-# 8. Group状態
+# 13. Runtime State
 
-Groupは最低限、次の状態を持つ。
+SG-APTは以下の状態を持つ。
 
 ```text
 StaticReuse
@@ -500,244 +648,374 @@ ForcedDynamic
 Invalid
 ```
 
-## 8.1 StaticReuse
+---
 
-最後に確定した形状をそのまま再利用する。
+## 13.1 StaticReuse
 
-次の条件をすべて満たす場合に使用する。
+最後に検証された局所形状をそのまま再利用する。
 
-* Root Transformが変化していない
-* 外力Versionが一致している
-* Collider Versionが一致している
-* Edit Versionが一致している
-* Topology Versionが一致している
-* Certificateが有効
-* Certificate Ageが許容範囲内
-* 親境界が有効
-* Follower Cacheが有効
+条件は以下とする。
 
-## 8.2 StaticTransform
+* Root Transform Version一致
+* Force Version一致
+* Collider Version一致
+* Topology Version一致
+* Edit Version一致
+* Dependency Version一致
+* Descriptorが有効
+* Descriptor Ageが許容範囲内
+* 親側境界が有効
+* Collision Marginが十分
+* Watchdog未発火
+
+---
+
+## 13.2 StaticTransform
 
 内部形状を再計算せず、Rootまたは親Transformの剛体変換だけを適用する。
 
-使用可能な変換は次に限定する。
+許可する変換は以下とする。
 
 * 平行移動
 * 回転
-* 一様Scaleを許可する場合は別評価
 
-非一様ScaleはSegment Lengthと方向を変化させるため、原則としてTopologyまたはGeometry Dirtyとして扱う。
+一様Scaleは別評価とする。
 
-## 8.3 Dynamic
+非一様ScaleはGeometry Dirtyとして扱い、DynamicまたはRepairへ移行する。
 
-Baselineと同品質のSolverを実行する。
+---
 
-Dynamic Sidecarを保持する。
+## 13.3 Dynamic
 
-## 8.4 Repair
+Dynamic Payloadを使用してBaselineと同品質の物理Solverを実行する。
 
-次を局所的に補正する。
+Dynamic状態では以下を実行する。
 
-* Static/Dynamic境界
+* Integration
+* Root Constraint
+* Distance Constraint
+* Bend Constraint
+* External Force
+* Collider Constraint
+* Boundary処理
+* Cache更新
+
+---
+
+## 13.4 Repair
+
+以下の軽微な不整合を局所的に修正する。
+
+* Static／Dynamic境界誤差
 * Shared Point不整合
 * Segment Length誤差
+* Static復帰時の速度不連続
 * 軽微なCollider Penetration
-* Cache復帰時の速度不連続
 
-Repairで安全に復旧できない場合はForcedDynamicへ移行する。
+Repairで復旧できない場合はForcedDynamicへ移行する。
 
-## 8.5 ForcedDynamic
+---
 
-安全性上の理由から、通常のStatic判定を無視してDynamicへ戻す。
+## 13.5 ForcedDynamic
 
-発火条件は次とする。
+安全上の理由によりStatic判定を無視してDynamicへ戻す。
+
+発火条件は以下とする。
 
 * Collision Penetration
 * User Edit
 * Topology変更
+* Version不一致
 * Payload不整合
-* Sidecar Index不整合
-* Certificate Version不一致
-* Segment Length異常
 * Shared Point未解決
-* Follower Cache不整合
+* Segment Length異常
 * NaN
 * Inf
-* Watchdog発火
-
-## 8.6 Invalid
-
-入力、Topology、Version、Index、Dependencyに不整合がある状態。
-
-Invalid GroupはStaticとして使用しない。
-
-修復できない場合は、Strand、Guide、Frameのいずれかの単位でBaselineへFallbackする。
+* Watchdog
+* Follower Cache不整合
 
 ---
 
-# 9. Root移動と髪全体の移動
+## 13.6 Invalid
 
-## 9.1 禁止する方式
+入力、Index、Version、Topology、Payloadが不正な状態である。
 
-Rootから毛先へ向かって、Group番号に比例したXYZ差分を加算してはならない。
+Invalid GroupはStatic再利用しない。
 
-例えば、
+修復できない場合は次の単位でFallbackする。
+
+* Group
+* Block
+* Strand
+* Guide
+* Frame
+
+---
+
+# 14. データ型の操作
+
+SG-APTの操作を次のように定義する。
 
 ```text
-P_i' = P_i + i × ΔXYZ
+Initialize
+PromoteToDynamic
+DemoteToStatic
+ApplyRigidTransform
+ReuseStaticCache
+Invalidate
+Validate
+RepairBoundary
+RetireDynamicPayload
+FallbackToBaseline
 ```
 
-のような方式は禁止する。
+---
 
-この方式では隣接点間の移動量が異なるため、Segment Lengthが変化し、髪が不自然に伸長または収縮する。
+## 14.1 Initialize
+
+* Fixed Coreを生成する
+* Group Indexを固定する
+* Rest Lengthを設定する
+* Parent／Child関係を設定する
+* Block Indexを設定する
+* 初期状態をDynamicとする
+* Dynamic Payloadを割り当てる
+
+初期化直後からStaticと決め打ちしない。
 
 ---
 
-## 9.2 正しい剛体変換
+## 14.2 PromoteToDynamic
 
-最後に検証したRoot Transformを (T_r^{old})、現在のRoot Transformを (T_r^{new}) とする。
+Static GroupをDynamicへ昇格させる。
 
-差分変換を次のように定義する。
+処理内容は以下とする。
 
-[
-\Delta T_r = T_r^{new}(T_r^{old})^{-1}
-]
-
-Static Transform Groupの位置は次式で更新する。
-
-[
-P_i^{new} = \Delta T_r P_i^{old}
-]
-
-方向は回転成分だけを適用する。
-
-[
-d_i^{new} = R(\Delta T_r)d_i^{old}
-]
-
-これにより、髪全体が移動してもSegment Lengthを維持できる。
+1. Dynamic Payload Indexを確保する
+2. Previous Positionを初期化する
+3. Velocityを推定または0で初期化する
+4. Lambdaを初期化する
+5. Payload Versionを更新する
+6. 状態をDynamicへ変更する
+7. Telemetryへ記録する
 
 ---
 
-## 9.3 Root相対表現
+## 14.3 DemoteToStatic
 
-可能な範囲でStatic CacheをRoot Local Spaceに保持する。
+Dynamic GroupをStaticへ降格させる。
+
+処理内容は以下とする。
+
+1. 最終形状をFixed Coreへ保存する
+2. Local Directionを正規化して保存する
+3. 最終誤差を保存する
+4. lastValidatedFrameを更新する
+5. Dynamic PayloadをRetiredへ移動する
+6. 状態をStaticReuseへ変更する
+7. Telemetryへ記録する
+
+---
+
+## 14.4 ApplyRigidTransform
+
+Rootまたは親Transformの剛体差分を適用する。
+
+局所形状は変化させない。
+
+---
+
+## 14.5 ReuseStaticCache
+
+以下を満たす場合のみ実行する。
+
+* Cache Version一致
+* Descriptor有効
+* Collision Margin十分
+* Descriptor Age以内
+* 親境界有効
+* NaN／Infなし
+
+---
+
+## 14.6 Invalidate
+
+次の変更を検出した場合、該当GroupまたはBlockのCacheを無効化する。
+
+* Root変更
+* Collider変更
+* Force Field変更
+* User Edit
+* Topology変更
+* Solver Settings変更
+* Follower Mapping変更
+* LOD変更
+
+---
+
+## 14.7 FallbackToBaseline
+
+以下の場合にFull Dynamic経路へ戻す。
+
+* Payload Pool不足
+* Descriptor異常
+* Dynamic割合が高い
+* Proposal経路の予測時間がBaseline以上
+* Watchdog発火
+* Shared Point解決失敗
+* Dependency伝播失敗
+
+---
+
+# 15. Root移動設計
+
+## 15.1 禁止する方式
+
+Segment番号に比例してXYZ差分を増加させてはならない。
+
+[
+P_i'=P_i+i\Delta x
+]
+
+この方式は隣接点の移動量を変化させるため、髪を伸長または収縮させる。
+
+---
+
+## 15.2 剛体差分変換
+
+前回のRoot Transformを (T_{old})、現在のRoot Transformを (T_{new}) とする。
+
+[
+\Delta T=T_{new}T_{old}^{-1}
+]
+
+位置を次式で更新する。
+
+[
+P_i^{new}=\Delta TP_i^{old}
+]
+
+方向には回転成分だけを適用する。
+
+[
+d_i^{new}=R(\Delta T)d_i^{old}
+]
+
+---
+
+## 15.3 Root Local Cache
+
+Static形状をRoot Local Spaceで保持する方式を比較対象とする。
 
 ```text
 World Position
-= Current Root Transform
-× Cached Root-Local Position
+=
+Current Root Transform
+×
+Cached Root-Local Position
 ```
 
-Rootだけが移動し、Colliderや外力も同一Transformへ追従する場合は、Simulation Buffer全体を書き換えず、描画時にRoot Transformを適用する経路も評価する。
+Rootだけが移動した場合、全Simulation Bufferを書き換えず、描画時Transformだけで処理できる可能性を評価する。
 
 ---
 
-## 9.4 移動時の衝突確認
+## 15.4 Root移動時の衝突
 
-Rootが移動する場合、現在位置だけでなく移動区間を考慮する。
+Root移動中は現在位置だけでなく、移動区間を評価する。
+
+使用候補は以下とする。
 
 * Root Swept AABB
 * Group Swept AABB
 * Collider Swept AABB
-* Broad Phase Intersection
-* Spatial Hash
 * Uniform Grid
+* Spatial Hash
+* Broad Phase Intersection
 
-相対的な衝突可能性があるBlockだけを無効化する。
+相対衝突の可能性があるBlockだけをDynamicへ戻す。
 
-すべてのGroupを無条件にDynamicへ戻してはならない。
+Rootが移動したことだけを理由に全Groupを無条件でDirtyにしない。
 
 ---
 
-# 10. 状態遷移
+# 16. 状態遷移制御
 
-## 10.1 DynamicからStaticへの移行
+## 16.1 DynamicからStatic
 
-一度閾値を満たしただけではStatic化しない。
+次の条件をすべて満たす場合だけStaticへ移行する。
 
-次をすべて満たした場合にStatic候補とする。
+* 位置変化が閾値以下
+* 速度予測変位が閾値以下
+* 拘束残差が閾値以下
+* Collision Marginが十分
+* Root変換量が閾値以下
+* Force Version一致
+* Collider Version一致
+* Topology Version一致
+* 一定フレーム連続で条件を満たす
+* Minimum Residenceを満たす
+
+---
+
+## 16.2 StaticからDynamic
+
+以下の場合は即座にDynamicへ戻す。
+
+* Collider接近または侵入
+* User Edit
+* Root変換量超過
+* Force変更
+* Topology変更
+* Descriptor Age超過
+* Boundary Error超過
+* Version不一致
+* Watchdog発火
+* NaN／Inf
+
+---
+
+## 16.3 Hysteresis
+
+Static化閾値とDynamic化閾値を分離する。
+
+例：
 
 ```text
-Certificate合格がKフレーム連続
-かつ
-Minimum Residenceを満たす
-かつ
-Transition Budget内
-かつ
-親Group境界が安定
-かつ
-Follower Dependencyが有効
+Static化:
+positionError < 0.10 mm
+
+Dynamic化:
+positionError > 0.20 mm
 ```
 
----
-
-## 10.2 StaticからDynamicへの移行
-
-Hard Safety違反時は即時にDynamicへ戻す。
-
-安全上必要なStaticからDynamicへの移行は、Transition Budgetで遅延させない。
+正式な値は校正データによって決定し、評価開始前にFreezeする。
 
 ---
 
-## 10.3 Hysteresis
-
-DynamicからStaticへ移行する閾値と、StaticからDynamicへ戻る閾値を分ける。
-
-```text
-Dynamic → Static候補:
-predictedError < 0.5 × allowedError
-constraintResidual < 0.5 × allowedResidual
-velocity < staticVelocityThreshold
-
-Static → Dynamic:
-predictedError >= allowedError
-constraintResidual >= allowedResidual
-collisionMargin <= requiredMargin
-```
-
----
-
-## 10.4 Minimum Residence Time
+## 16.4 Minimum Residence
 
 状態変更後、一定フレームは同じ状態を維持する。
 
-ただし、次の場合はResidenceを無視する。
-
-* Collision Penetration
-* User Edit
-* Fatal
-* Invalid
-* Watchdog
-* Topology変更
-* NaNまたはInf
+ただし、安全上必要なDynamic化ではResidenceを無視する。
 
 ---
 
-## 10.5 Transition Budget
+## 16.5 Transition Budget
 
-一フレーム内の状態変更量を制限する。
+一フレーム内の以下の量を制限する。
 
-```text
-maxDynamicToStaticPerFrame
-maxSidecarAllocationsPerFrame
-maxSidecarRetiresPerFrame
-maxTransitionBytesPerFrame
-```
+* DynamicからStaticへの遷移数
+* Sidecar Allocation数
+* Sidecar Retire数
+* 状態遷移Byte数
 
-Budgetを超えた場合、DynamicからStaticへの移行を延期する。
-
-StaticからDynamicへの安全上必要な移行は延期しない。
+StaticからDynamicへの安全遷移はBudgetで遅延させない。
 
 ---
 
-# 11. Sidecar Pool
+# 17. Dynamic Payload Pool
 
-## 11.1 基本方針
-
-毎フレームの個別AllocationとFreeを禁止する。
-
-固定容量のPoolを使用する。
+Dynamic Payloadは固定容量Poolで管理する。
 
 ```text
 Free
@@ -747,53 +1025,64 @@ Free
 → Free
 ```
 
-## 11.2 一括割当
-
-Dynamic化するGroupをCompactionし、Prefix Sumまたは一括CounterによってSidecar Indexを割り当てる。
-
-正式方式では、Atomic到着順に依存する割当とStable Prefix Sum方式を比較する。
-
-## 11.3 遅延解放
-
-Static化したGroupのSidecarは即時再利用しない。
-
-Frame FenceまたはEpochを使用し、GPUが参照を終了したことを確認した後でFree Listへ戻す。
-
-## 11.4 Overflow
-
-Sidecar Poolが不足した場合は、次の優先順位で処理する。
-
-1. 新規Static化を停止
-2. Full Dynamic Baseline Bufferを使用
-3. Frame Full Dynamic Fast Pathへ移行
-4. TelemetryへOverflowを記録
-5. 継続不能な場合のみSafe Stop
+毎フレームの個別GPU Allocationは禁止する。
 
 ---
 
-# 12. Empirically Validated Admissibility Descriptor
+## 17.1 Allocation
 
-## 12.1 名称
+Dynamic化対象をCompactionする。
 
-数学的な厳密証明ではないため、主名称に`Proof`や`Guaranteed Error Bound`を使用しない。
+次の方式を比較する。
+
+* Atomic Counter
+* Stable Prefix Sum
+
+正式方式は決定性と性能の両方で選定する。
+
+---
+
+## 17.2 Retire
+
+Static化したPayloadを即時再利用しない。
+
+Frame EpochまたはFenceを使用する。
+
+---
+
+## 17.3 Overflow
+
+Payload Pool不足時は次の順で対処する。
+
+1. DynamicからStaticへの新規遷移を停止する
+2. Baseline用Dynamic Bufferを使用する
+3. Frame全体をFull Dynamicへ切り替える
+4. OverflowをTelemetryへ保存する
+5. 継続不能時のみSafe Stopする
+
+Payload不足によって不正なIndexを使用してはならない。
+
+---
+
+# 18. Static再利用許容判定
+
+本研究の判定は数学的安全証明ではない。
+
+そのため、Proof、Guaranteed、Certified Safeなどの表現を使用しない。
 
 正式名称は次とする。
 
-> Empirically Validated Admissibility Descriptor
+> Empirically Validated Static-Reuse Descriptor
 
-日本語では次のように表記する。
+日本語では次とする。
 
 > 経験的検証付き静的再利用許容記述子
 
-論文中で短縮する場合は`Admissibility Descriptor`または`Certificate`と記載するが、数学的証明ではないことを明示する。
-
 ---
 
-## 12.2 Hard SafetyとSoft Prediction
+## 18.1 Hard Safety
 
-### Hard Safety
-
-一つでも違反した場合、必ずStaticを解除する。
+一つでも違反した場合、Staticを解除する。
 
 * NaN
 * Inf
@@ -802,161 +1091,99 @@ Sidecar Poolが不足した場合は、次の優先順位で処理する。
 * Topology変更
 * Version不一致
 * Payload不整合
-* Sidecar Index不整合
 * Shared Point未解決
 * User Edit
-* Follower Cache不整合
-* Dependency範囲外
+* Dependency不整合
 
-### Soft Prediction
+---
 
-Staticを継続できる可能性を評価する。
+## 18.2 Soft Prediction
 
-* 位置予測誤差
+Static継続可能性を評価する。
+
+* 予測位置誤差
 * 速度
 * 加速度
 * 拘束残差
-* 境界誤差
 * Root変換量
-* 外力変化
 * Collider接近量
-* Certificate Age
+* 外力変化
+* Boundary Error
+* Descriptor Age
 * Shadow Dynamic履歴
 
 ---
 
-## 12.3 予測誤差
+## 18.3 単位正規化
 
-Group (G_i) の予測誤差を次のように定義する。
-
-[
-\hat{E}*i =
-w_pE*{position}
-+w_vE_{velocity}
-+w_aE_{acceleration}
-+w_cE_{constraint}
-+w_bE_{boundary}
-+w_rE_{root}
-+w_fE_{force}
-+w_hE_{history}
-]
-
-すべての項を同一の長さ単位へ正規化する。
-
-単位の異なる値をそのまま加算してはならない。
-
-速度による予測変位は次式とする。
+速度による予測変位は次とする。
 
 [
-E_{velocity}=|v|\Delta t
+E_v=|v|\Delta t
 ]
 
-加速度による予測変位は次式とする。
+加速度による予測変位は次とする。
 
 [
-E_{acceleration}=\frac{1}{2}|a|\Delta t^2
+E_a=\frac{1}{2}|a|\Delta t^2
 ]
 
-Root回転による変位は、Rootからの距離 (d) と回転角 (\theta) を用いて次のように近似する。
+Root回転による予測変位は次とする。
 
 [
-E_{root}=2d\sin\left(\frac{\theta}{2}\right)
+E_r=2d\sin\left(\frac{\theta}{2}\right)
 ]
+
+すべての誤差項を位置誤差単位へ変換する。
 
 ---
 
-## 12.4 Collision Margin
+## 18.4 Collision Margin
 
-Colliderとの最小距離を (m_{col}) とする。
+Colliderまでの最小距離を (m_c) とする。
 
 次を満たさないGroupはStatic化しない。
 
 [
-m_{col}>
-E_{velocity}
-+E_{acceleration}
-+E_{colliderMotion}
-+\tau_{collisionSafety}
+m_c >
+E_v
++E_a
++E_{collider}
++\tau_c
 ]
 
-高速移動Colliderに対しては、現在距離だけでなくSwept Volumeを使用する。
+高速移動ColliderにはSwept Volumeを使用する。
 
 ---
 
-## 12.5 Certificate Age
-
-Static Cacheを永久に再利用しない。
+## 18.5 Descriptor Age
 
 [
 Age_i=currentFrame-lastValidatedFrame
 ]
 
-次の場合は再検証する。
+以下の場合は再検証する。
 
-* Ageが最大値を超えた
-* Root Transformが変化した
-* 外力Versionが変化した
-* Colliderが接近した
-* 隣接GroupがDynamicになった
-* Boundary Errorが増加した
-* Shadow Dynamic誤差が増加した
-* 編集が発生した
-
----
-
-# 13. Incremental Block Invalidation
-
-## 13.1 目的
-
-毎フレーム508,000 GroupすべてのCertificateを評価すると、Static化によってSolverを省略しても判定コストが残る。
-
-そのため、連続するGroupをBlockとして管理し、変更がないBlockではGroup単位判定も省略する。
+* Age超過
+* Root Transform変更
+* Force Version変更
+* Collider接近
+* 隣接GroupがDynamic
+* Boundary Error増加
+* Shadow Dynamic誤差増加
+* User Edit発生
 
 ---
 
-## 13.2 Blockサイズ
+# 19. Incremental Block Invalidation
 
-初期候補を次とする。
+毎フレーム全508,000 Groupを評価すると、判定処理自体が負荷になる。
 
-* 32 Groups
-* 64 Groups
-
-正式なBlockサイズは性能評価で決定する。
+連続GroupをBlockとして管理し、変更のないBlockではGroup単位判定も省略する。
 
 ---
 
-## 13.3 Block Certificate
-
-```cpp
-struct BlockCertificate
-{
-    float maximumPredictedError;
-    float maximumConstraintResidual;
-    float maximumBoundaryError;
-    float minimumCollisionMargin;
-
-    uint dynamicCount;
-    uint repairCount;
-    uint invalidCount;
-
-    uint rootVersion;
-    uint forceVersion;
-    uint colliderVersion;
-    uint topologyVersion;
-    uint settingsVersion;
-    uint dependencyVersion;
-
-    uint lastValidatedFrame;
-    uint dirtyMask;
-    uint validityFlags;
-};
-```
-
----
-
-## 13.4 Dirty Source
-
-Blockを無効化する原因を次に分類する。
+## 19.1 Dirty Source
 
 ```text
 Root Dirty
@@ -972,93 +1199,67 @@ Watchdog Dirty
 
 ---
 
-## 13.5 空間的無効化
-
-Colliderが移動しただけで全Blockを無効化してはならない。
+## 19.2 空間的無効化
 
 ```text
 Dirty Source
 → Swept AABB
 → Spatial Query
 → Affected Block List
-→ Block Certificate Invalidation
+→ Block Descriptor Invalidation
 ```
-
-使用候補は次とする。
-
-* Block AABB
-* Collider Swept AABB
-* Spatial Hash
-* Uniform Grid
-* Root Binding Range
-* Edit Brush Range
 
 ---
 
-## 13.6 Block Skip
+## 19.3 Block Skip
 
-有効なStatic Blockでは、次を省略する。
+有効なStatic Blockでは以下を省略する。
 
-* Group Certificate更新
+* Group Descriptor更新
 * State Candidate生成
 * Dynamic List登録
 * Sidecar Allocation
 * Constraint Solver
 * Collision Solver
-* Shared-Point Candidate生成
-* Guide形状再生成
+* Shared Point候補生成
 * Follower再構築
 * Render Vertex再生成
 
-Root Transformだけが変化した場合はStatic Transform専用経路を使用する。
+---
+
+# 20. Shared Point設計
+
+隣接Groupは共有点を持つ。
+
+[
+G_i=(P_i,P_{i+1})
+]
+
+[
+G_{i+1}=(P_{i+1},P_{i+2})
+]
+
+子Groupは共有始点を独立に積分しない。
+
+共有点の最終書き込み元は一つに限定する。
 
 ---
 
-# 14. Shared-Point Resolve
+## 20.1 責任範囲
 
-## 14.1 問題
+Root側GroupとTip側Groupで処理候補を分ける。
 
-隣接Groupは点を共有する。
-
-複数Groupが同じPoint Bufferへ直接書き込むと、GPU実行順序によって結果が変化する。
+これは物理的に点を二つへ分割することではない。
 
 ---
 
-## 14.2 半球責任範囲
+## 20.2 Candidate生成
 
-共有点を物理的に二つへ複製しない。
-
-共有点周辺の処理候補を論理的にRoot側とTip側へ分ける。
-
-* Root側GroupはRoot方向の制約候補を生成する
-* Tip側GroupはTip方向の制約候補を生成する
-
-これは幾何的な点の分割ではなく、候補生成責任の分割である。
+各Groupは共有点に対する候補を生成する。
 
 ---
 
-## 14.3 Candidate
-
-```cpp
-struct SharedPointCandidate
-{
-    float positionX;
-    float positionY;
-    float positionZ;
-
-    float positionError;
-    float constraintResidual;
-    float collisionResidual;
-
-    uint priority;
-    uint sourceGroupId;
-    uint reasonFlags;
-};
-```
-
----
-
-## 14.4 優先順位
+## 20.3 優先順位
 
 ```text
 Fatal / Invalid Reject
@@ -1080,7 +1281,11 @@ Static Transform
 Static Reuse
 ```
 
-同一Priorityでは次の順で決定する。
+---
+
+## 20.4 Stable Reduce
+
+同じPriorityの場合は次の順で決定する。
 
 1. 有限値である
 2. Position Errorが小さい
@@ -1088,31 +1293,21 @@ Static Reuse
 4. Collision Residualが小さい
 5. Source Group IDが小さい
 
----
+Atomic到着順を最終決定に使用しない。
 
-## 14.5 Single Writer
-
-最終Positionを書き込むPassは一つだけとする。
-
-```text
-Candidate Generation
-→ Stable Reduce
-→ Apply
-```
-
-Atomicの到着順によって最終候補を決定しない。
+Shared Point処理は補助機構であり、主新規性としては扱わない。
 
 ---
 
-# 15. Dynamic Solver
+# 21. Dynamic Solver
 
-Dynamic Groupには、Baselineと同品質のSolverを使用する。
+Dynamic Groupでは、Baselineと同品質のSolverを使用する。
 
-提案方式を高速に見せるために、Dynamic Groupの品質を下げてはならない。
+提案方式を高速に見せるため、Dynamic Groupの物理品質を低下させてはならない。
 
-最低限、次を含める。
+最低限以下を含める。
 
-* Integration
+* Verletまたは同等のIntegration
 * Root Constraint
 * Distance Constraint
 * Bend Constraint
@@ -1120,36 +1315,33 @@ Dynamic Groupには、Baselineと同品質のSolverを使用する。
 * Collider Constraint
 * Boundary Repair
 
-BaselineとProposed Methodで次を一致させる。
+Baselineと提案方式では以下を一致させる。
 
 * 時間刻み
 * 反復回数
-* 制約式
 * Compliance
 * Collision条件
 * Root条件
 * 数値精度
 * Solver順序
 
-現在の簡易的な「方向をRest Lengthへ戻すだけ」のGroup Solverは正式方式として扱わない。
-
-正式実装では、現在のFull Dynamic Baselineと同じDistance、Bend、Collision品質をGroup経路へ接続する。
+単純な「方向をRest Lengthへ戻すだけ」の処理は正式Solverとしない。
 
 ---
 
-# 16. Follower全再構築の廃止
+# 22. Follower依存伝播
 
-## 16.1 成立条件
+4,000本のGuideを部分更新しても、96,000本のFollowerを毎フレーム全再構築した場合、End-to-End高速化は限定的になる。
 
-4,000本のGuideを部分更新しても、96,000本のFollowerを毎フレーム全再構築した場合、Novelty 01の効果は失われる。
+したがって、Follower局所再構築はシステム成立条件として実装する。
 
-したがって、Follower局所再構築は補助最適化ではなく、100,000本表示におけるSG-APSTの成立条件とする。
+ただし、主新規性とはしない。
 
 ---
 
-## 16.2 Dependency表現
+## 22.1 Dependency表現
 
-固定長配列ではなく、GPUで扱いやすいCSR形式を基本候補とする。
+CSR形式を基本候補とする。
 
 ```text
 GuideGroupToFollowerOffset[]
@@ -1176,20 +1368,7 @@ struct FollowerDependencyEntry
 
 ---
 
-## 16.3 Guard Band
-
-Follower生成で参照する範囲からGuard Bandを導出する。
-
-* 対象Segmentだけを参照：0
-* 前後1点からTangentを計算：1
-* 前後2点でSmoothing：2
-* 複数Guide補間：影響GuideすべてのDirty RangeをUnion
-
-固定の経験値だけで決定しない。
-
----
-
-## 16.4 Dirty Range伝播
+## 22.2 Dirty Range伝播
 
 ```text
 Guide Group Dirty
@@ -1198,45 +1377,31 @@ Guide Group Dirty
 → Target Segment Range Union
 → Guard Band Expansion
 → Follower Dirty Range
-→ Render Dirty Range
 ```
 
 ---
 
-## 16.5 Follower更新モード
+## 22.3 Follower更新モード
 
-### Cache Reuse
+* Cache Reuse
+* Rigid Transform
+* Local Reconstruct
+* Full Reconstruct Fallback
 
-依存GuideがすべてStaticReuseで、Versionが一致する場合、Follower Cacheをそのまま使用する。
-
-### Rigid Transform
-
-依存GuideがStaticTransformで内部形状が変わっていない場合、同一Root Transformを適用する。
-
-### Local Reconstruct
-
-Dirty Segment RangeとGuard Bandだけを再構築する。
-
-### Full Reconstruct
-
-次の場合は対象Follower全体を再構築する。
+以下の場合はFull Reconstructへ戻す。
 
 * Dependency Version不一致
-* Guide/Follower Mapping変更
 * Topology変更
 * LOD変更
-* Cache不整合
-* 大規模Edit
-* Watchdog発火
+* 大規模編集
 * Dirty Range計算失敗
+* Watchdog発火
 
 ---
 
-# 17. 描画への局所更新伝播
+# 23. 描画更新設計
 
-## 17.1 方針
-
-Simulationの削減効果が描画ボトルネックに隠れないよう、Follower Dirty Rangeを描画用頂点範囲へ伝播する。
+Follower Dirty RangeをRender Vertex Rangeへ伝播する。
 
 ```text
 Follower Segment Dirty
@@ -1248,19 +1413,9 @@ Follower Segment Dirty
 
 Static Rangeは前フレームのRender Bufferを再利用する。
 
----
+Rootだけが剛体移動した場合は、可能であればVertex ShaderまたはInstance Transformで移動する。
 
-## 17.2 Root Transformのみの場合
-
-Rootだけが剛体移動した場合、可能であれば全頂点を書き換えず、Vertex ShaderまたはInstance Transformで移動する。
-
-ただし、相対Collider、風、編集が変化した範囲はDynamicへ戻す。
-
----
-
-## 17.3 一般的な描画最適化
-
-次はBaselineとProposed Methodの双方に適用する。
+以下はBaselineと提案方式の両方へ適用する。
 
 * GPU Resident Buffer
 * Persistent Vertex Buffer
@@ -1269,45 +1424,34 @@ Rootだけが剛体移動した場合、可能であれば全頂点を書き換�
 * Distance LOD
 * Screen-space LOD
 * Width LOD
-* Segment LOD
 * CPU Readback排除
-* Draw Command Compaction
 
-Proposed Method固有の効果は、Guideから伝播したDirty Rangeによる部分更新として分離評価する。
+一般的な描画最適化の効果をSG-APT固有の効果として扱わない。
 
 ---
 
-# 18. Full Dynamic Fast Path
+# 24. Full Dynamic Fast Path
 
-## 18.1 目的
+Dynamic Groupが多い場合、以下の管理処理が追加負荷になる。
 
-Dynamic Groupが多い場合、次のProposal管理処理が追加負荷となる。
-
-* Certificate評価
+* Descriptor評価
 * Block判定
 * Group分類
 * Compaction
-* Sidecar管理
+* Payload管理
 * Static Transform
-* Follower Cache判定
 * Dirty Range生成
 
-Proposal経路がFull Dynamic経路より高コストになる場合は、通常Solverへ退避する。
-
----
-
-## 18.2 コストモデル
-
-Proposal経路を次のように定義する。
+提案経路の時間を次のように定義する。
 
 [
-T_P =
+T_P=
 T_{dirty}
-+T_{certificate}
-+T_{classification}
-+T_{compaction}
-+T_{sidecar}
-+T_{partialSolver}
++T_{descriptor}
++T_{classify}
++T_{compact}
++T_{payload}
++T_{partialSolve}
 +T_{followerPartial}
 +T_{renderPartial}
 ]
@@ -1315,94 +1459,88 @@ T_{dirty}
 Full Dynamic経路を次のように定義する。
 
 [
-T_F =
-T_{fullSolver}
+T_F=
+T_{fullSolve}
 +T_{followerFull}
 +T_{renderFull}
 ]
 
----
+固定Dynamic Ratioだけではなく、GPU実測時間を用いて切り替える。
 
-## 18.3 切替条件
-
-固定Dynamic Ratioだけで判定しない。
-
-次を入力とする。
+入力は以下とする。
 
 * Dynamic Group Ratio
 * Dynamic Block Ratio
 * Block Skip率
+* Payload Allocation数
+* State Transition数
 * Dirty Follower Ratio
 * Dirty Render Vertex Ratio
-* Transition数
-* Sidecar Allocation数
-* Collision対象数
-* GPU Pass別実測時間
-* 移動平均Frame Time
-* p95相当の履歴
-* Worst Frame Time
+* GPU Pass別時間
+* p95 Frame Time履歴
 
-Proposal予測時間がFull Dynamic予測時間以上となる状態がKフレーム継続した場合、Fast Pathへ移行する。
+提案経路の予測時間がFull Dynamic経路以上となる状態がKフレーム継続した場合、Full Dynamicへ移行する。
 
-Fast Path終了条件にはSafety MarginとHysteresisを設ける。
+切替にはHysteresisを設ける。
 
 ---
 
-# 19. フレーム処理Pipeline
+# 25. フレーム処理Pipeline
 
 ```text
 Phase 01  Frame Input確定
 Phase 02  Root / Collider / Force Version更新
 Phase 03  Topology / Settings / LOD変更検出
 Phase 04  Dirty Source生成
-Phase 05  Swept AABBおよびSpatial Query
-Phase 06  Affected Block抽出
-Phase 07  Block Certificate失効
-Phase 08  Fast Path Cost Prediction
-Phase 09  Full Dynamic Fast Path判定
+Phase 05  Swept AABB生成
+Phase 06  Spatial Query
+Phase 07  Affected Block抽出
+Phase 08  Block Descriptor失効
+Phase 09  Fast Path Cost Prediction
+Phase 10  Full Dynamic Fast Path判定
 
 通常経路:
-Phase 10  Invalid BlockのみGroup Descriptor更新
-Phase 11  Hard Safety判定
-Phase 12  State Candidate生成
-Phase 13  Hysteresis
-Phase 14  Minimum Residence
-Phase 15  Transition Budget
-Phase 16  Sidecar Allocation / Retire Plan
-Phase 17  Dynamic / Static / Repair List生成
-Phase 18  Dynamic Integration
-Phase 19  Dynamic Constraint Solve
-Phase 20  Collision Solve
-Phase 21  Static Reuse / Static Transform
-Phase 22  Shared-Point Candidate生成
-Phase 23  Stable Reduce
-Phase 24  Shared-Point Apply
-Phase 25  Boundary Repair
-Phase 26  Guide Dirty Range確定
-Phase 27  Follower Dependency伝播
-Phase 28  Follower Cache Reuse / Local Reconstruct
-Phase 29  Render Dirty Range生成
-Phase 30  Render Vertex部分更新
-Phase 31  Indirect Draw Data更新
-Phase 32  Telemetry更新
-Phase 33  Watchdog
-Phase 34  Shadow Dynamic検証
+Phase 11  Invalid BlockのみGroup Descriptor更新
+Phase 12  Hard Safety判定
+Phase 13  State Candidate生成
+Phase 14  Hysteresis適用
+Phase 15  Minimum Residence適用
+Phase 16  Transition Budget適用
+Phase 17  Payload Allocation / Retire Plan
+Phase 18  Dynamic / Static / Repair List生成
+Phase 19  Dynamic Integration
+Phase 20  Dynamic Constraint Solve
+Phase 21  Collision Solve
+Phase 22  Static Reuse / Static Transform
+Phase 23  Shared-Point Candidate生成
+Phase 24  Stable Reduce
+Phase 25  Shared-Point Apply
+Phase 26  Boundary Repair
+Phase 27  Guide Dirty Range確定
+Phase 28  Follower Dependency伝播
+Phase 29  Follower Cache Reuse / Local Reconstruct
+Phase 30  Render Dirty Range生成
+Phase 31  Render Vertex部分更新
+Phase 32  Indirect Draw Data更新
+Phase 33  Telemetry更新
+Phase 34  Watchdog
+Phase 35  Shadow Dynamic検証
 ```
 
 ---
 
-# 20. WatchdogとFallback
+# 26. WatchdogとFallback
 
-## 20.1 監視対象
+## 26.1 監視対象
 
 * NaN
 * Inf
 * Segment Length異常
 * Constraint Residual急増
 * Boundary Error急増
-* Sidecar Index不整合
-* Duplicate Sidecar Allocation
-* Certificate Version不一致
+* Payload Index不整合
+* Duplicate Payload Allocation
+* Descriptor Version不一致
 * Shared Point未解決
 * Follower Cache不整合
 * Dirty Range範囲外
@@ -1410,13 +1548,13 @@ Phase 34  Shadow Dynamic検証
 * Transition過多
 * False Static急増
 * Shadow Dynamic誤差急増
-* Frame Time異常
 * GPU Query未解決
+* Frame Time異常
 * Memory増加
 
 ---
 
-## 20.2 Fallback単位
+## 26.2 Fallback単位
 
 ```text
 Group Fallback
@@ -1427,153 +1565,331 @@ Frame Full Dynamic Fallback
 Application Safe Stop
 ```
 
----
-
-## 20.3 原則
-
-Proposal経路が失敗しても、可能な限り通常Solverで描画を継続する。
-
-Proposal固有Bufferに異常が発生した場合でも、Baseline BufferとFull Dynamic Solverへ戻れる経路を維持する。
+提案経路が失敗しても、可能な限り通常Solverで描画を継続する。
 
 ---
 
-# 21. Ground TruthとShadow Dynamic
+# 27. Ground TruthとShadow Dynamic
 
-## 21.1 Ground Truth
+## 27.1 Ground Truth
 
-同一入力、同一時間刻み、同一Solver設定で、すべてのGuide GroupをDynamicとして処理した結果をGround Truthとする。
+Ground Truthは、同一入力、同一時間刻み、同一Solver設定で、すべてのGuide GroupをDynamicとして処理した結果とする。
 
-## 21.2 Shadow Dynamic
+---
+
+## 27.2 Shadow Dynamic
 
 Static Groupの一部をサンプリングし、表示には使用しないDynamic Solverを並行実行する。
 
-Static結果との差を測定する。
-
-## 21.3 優先サンプリング
-
-* Certificate閾値付近
-* Static継続時間が長い
-* Collision Marginが小さい
-* Static/Dynamic境界
-* Root変換量が大きい
-* 過去にFalse Staticを発生
-* Certificate Ageが大きい
-
-## 21.4 校正と評価の分離
-
-Descriptorの重みや閾値を調整するデータと、正式評価用データを分離する。
-
-同じシナリオで調整と評価を行わない。
-
-正式評価開始前に閾値をFreezeする。
+Static結果とShadow Dynamic結果の差を測定する。
 
 ---
 
-# 22. メモリモデル
+## 27.3 優先サンプリング対象
 
-Guide Group数を (N_G)、Dynamic Group数を (N_D)、Coreサイズを (S_C)、Sidecarサイズを (S_D) とする。
+* Descriptor閾値付近
+* Static継続時間が長いGroup
+* Collision Marginが小さいGroup
+* Static／Dynamic境界
+* Root変換量が大きいGroup
+* 過去にFalse Staticを発生したGroup
+* Descriptor Ageが大きいGroup
+
+---
+
+## 27.4 校正と正式評価の分離
+
+Descriptorの閾値を調整するCalibrationデータと、正式評価データを分離する。
+
+正式評価開始前に閾値をFreezeする。
+
+評価結果を見てから閾値を都合よく変更しない。
+
+---
+
+# 28. メモリ設計
+
+Guide Group数を (N_G)、Dynamic Group数を (N_D)、Coreサイズを (S_C)、Payloadサイズを (S_P) とする。
 
 [
-M_{group}=N_GS_C+N_DS_D
+M_{group}=N_GS_C+N_DS_P
 ]
 
-本条件では、
+本研究条件では、
 
 [
 N_G=508,000
 ]
 
-となる。
-
-Dynamic Ratioを (r) とした場合、
+Dynamic Ratioを (r) とすると、
 
 [
 N_D=rN_G
 ]
 
-である。
+となる。
 
-状態依存Payloadの有効性は、次を比較して評価する。
+初期目標は次のとおりとする。
 
-* 全Groupが常にDynamic Payloadを持つ方式
-* Static/Dynamicで同一Payloadを持つ方式
-* Fixed Core＋Optional Sidecar方式
-
-評価対象は容量だけでなく、毎フレームの読み書き量とGPU帯域とする。
-
----
-
-## 22.1 初期サイズ目標
-
-初期実装の目標値を次とする。
-
-| データ                           |                          目標 |
+| データ                           |                       目標サイズ |
 | ----------------------------- | --------------------------: |
-| Group Core                    |         64～96 bytes / group |
-| Dynamic Sidecar               | 32～64 bytes / dynamic group |
-| Block Certificate             |         64～96 bytes / block |
-| Sidecar Allocation一時情報        |                       必要最小限 |
+| Fixed Core                    |         64～96 bytes / group |
+| Dynamic Payload               | 32～64 bytes / dynamic group |
+| Block Descriptor              |         64～96 bytes / block |
 | Static GroupのDynamic専用Payload |                     0 bytes |
+| Payload Temporary Data        |                       必要最小限 |
 
-これは設計目標であり、実装後に`sizeof`とGPU Resource Sizeを記録する。
-
----
-
-# 23. 現在のMain実装との対応
-
-| 機能                     | Version 66の状態 | 正式完了条件                      |
-| ---------------------- | ------------- | --------------------------- |
-| 100,000本固定条件           | 実装あり          | 維持                          |
-| Segment Group Metadata | 試作あり          | Fixed Coreへ統一               |
-| Group State            | 簡易試作          | 全状態と優先順位を実装                 |
-| Group Certificate      | Boolean中心     | 数値DescriptorとAgeへ変更         |
-| Block Metadata         | 試作あり          | 増分失効へ変更                     |
-| Static Reuse           | 試作あり          | Descriptor連携                |
-| Static Transform       | 平行移動中心        | Root剛体変換へ変更                 |
-| Dynamic Solver         | 簡易距離補正        | Baseline同品質化                |
-| Dynamic Sidecar        | 未完成           | Pool、Free、Retire、Epoch      |
-| Shared-Point Resolve   | 部分試作          | Stable ReduceとSingle Writer |
-| Compaction             | Atomic方式あり    | Stable方式と比較                 |
-| Follower Cache         | 全再構築中心        | Persistent Cache            |
-| Follower Dependency    | 未実装           | CSR Dependency追加            |
-| Follower Local Rebuild | 未実装           | Dirty Range Dispatch        |
-| Render Dirty Range     | 未完成           | Persistent部分更新              |
-| Full Dynamic Fast Path | 通常経路あり        | GPU実測コスト切替                  |
-| Shadow Dynamic         | 未完成           | Sampling比較                  |
-| Watchdog               | 部分対応          | Proposal全体へ拡張               |
+メモリ容量だけでなく、毎フレームの読み書きByte数を重視する。
 
 ---
 
-# 24. 主な実装対象ファイル
+# 29. 現行Mainとの対応
 
-## C++側
+| 機能                     | 現行状態     | 正式完了条件               |
+| ---------------------- | -------- | -------------------- |
+| 100,000本固定             | 実装あり     | 維持                   |
+| Segment Group Metadata | 試作あり     | Fixed Coreへ統一        |
+| Group State            | 簡易実装     | 全状態を実装               |
+| Static Reuse           | 試作あり     | VersionとDescriptor連携 |
+| Static Transform       | 平行移動中心   | 剛体差分Transform        |
+| Dynamic Solver         | 簡易補正     | Baseline同品質          |
+| Dynamic Payload        | 未完成      | 固定PoolとEpoch         |
+| Shared Point           | 部分試作     | Stable Reduce        |
+| Compaction             | Atomic中心 | Stable方式と比較          |
+| Block Dirty            | 全体失効あり   | 増分失効                 |
+| Follower更新             | 全再構築中心   | 局所再構築                |
+| Render Dirty Range     | 未完成      | Persistent部分更新       |
+| Full Dynamic Fast Path | 基本経路あり   | GPU実測切替              |
+| Shadow Dynamic         | 未完成      | Sampling比較           |
+| Watchdog               | 部分対応     | Proposal全体へ拡張        |
+
+---
+
+# 30. 実装対象ファイル
+
+## 30.1 C++／Header
 
 * `apps/dx11_viewer/src/GpuHairViewer.h`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl`
-* `apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl`
+* `include/hairgpu/Types.h`
+* `include/hairgpu/HairNoveltyTelemetry.h`
 
-## HLSL側
+## 30.2 Viewer Parts
+
+* `GpuHairViewer_parts/01_window_device_and_ui_setup.inl`
+* `GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl`
+* `GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl`
+* `GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl`
+* `GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl`
+* `GpuHairViewer_parts/09_runtime_quality_gate.inl`
+* `GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl`
+* `GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl`
+
+## 30.3 HLSL
 
 * `apps/dx11_viewer/shaders/HairSegmentGroupRuntime.hlsl`
 * `apps/dx11_viewer/shaders/HairSim.hlsl`
 * `apps/dx11_viewer/shaders/HairIndirectArgs.hlsl`
 * `apps/dx11_viewer/shaders/HairStrandInstanced.hlsl`
 
-## 評価基盤
+## 30.4 実験基盤
 
 * `tools/final_stage/hairgpu_final_run.py`
 * `tools/final_stage/hairgpu_runtime_suite.py`
 * `tools/final_stage/hairgpu_final_db.py`
 * `tools/final_stage/hairgpu_novelty01_preflight.py`
+* `tools/final_stage/Run_Final_Runtime_Suite.bat`
+
+## 30.5 設定・文書
+
 * `docs/sample_assets/final_runtime_suite_template.json`
+* `docs/sample_assets/hardware_profiles.json`
 * `docs/experiments/NOVELTY01_SAFE_EVALUATION_PROTOCOL.md`
+* `設計書/01_TopNovelty_NewStrandDataType.md`
+* `論文パーツ/ch02_*.md`
+* `論文パーツ/+ch02_*.md`
 
 ---
 
-# 25. 比較対象
+# 31. 実装工程
+
+## Phase 0：Baseline固定
+
+* Frozen Asset固定
+* 100,000本固定
+* 4,000 Guides固定
+* 128 points固定
+* 6 iterations固定
+* 1/60秒固定
+* Release x64固定
+* Telemetry Schema固定
+
+### 完了条件
+
+* 同一条件で再実行可能
+* Baseline計測値を保存可能
+* GPU Timerが解決される
+* 実験IDを再現可能
+
+---
+
+## Phase 1：Fixed Core
+
+* 固定Group Index
+* Parent／Child
+* Block Index
+* State
+* Version
+* Dirty Flag
+* Static Cache
+
+### 完了条件
+
+* 状態変更時にGroup本体Copyが発生しない
+* Indexが実行中に変化しない
+
+---
+
+## Phase 2：Dynamic Payload Pool
+
+* Free List
+* Active List
+* Retired List
+* Epoch
+* Overflow Fallback
+
+### 完了条件
+
+* Duplicate Allocation 0件
+* Leak 0件
+* Overflow時継続可能
+
+---
+
+## Phase 3：State Machine
+
+* PromoteToDynamic
+* DemoteToStatic
+* Hysteresis
+* Minimum Residence
+* Transition Budget
+
+### 完了条件
+
+* State Thrashingを測定可能
+* 状態遷移をTelemetryへ保存可能
+
+---
+
+## Phase 4：Static-Reuse Descriptor
+
+* Hard Safety
+* Soft Prediction
+* 単位正規化
+* Descriptor Age
+* Collision Margin
+
+### 完了条件
+
+* Ground Truthとの差を測定可能
+* False Static率を測定可能
+
+---
+
+## Phase 5：Incremental Block Invalidation
+
+* Dirty Source
+* Swept AABB
+* Spatial Query
+* Affected Block List
+* Block Skip
+
+### 完了条件
+
+* Root移動で全Groupを無条件Dirtyにしない
+* Block Skip率を測定可能
+
+---
+
+## Phase 6：Shared Point Resolve
+
+* Candidate Generation
+* Priority
+* Stable Reduce
+* Single Writer Apply
+
+### 完了条件
+
+* Atomic到着順に依存しない
+* 実行間Hash一致率を測定可能
+
+---
+
+## Phase 7：Dynamic Solver統一
+
+* Baselineと同一制約
+* 同一反復回数
+* 同一Collision条件
+
+### 完了条件
+
+* Dynamic Groupの品質がBaselineと一致する
+* Proposalのために品質を下げていない
+
+---
+
+## Phase 8：Follower Dependency
+
+* CSR Mapping
+* Support Range
+* Guard Band
+* Dirty Range Union
+
+### 完了条件
+
+* Guide局所変更がFollower範囲へ伝播する
+* 通常経路でFollower全再構築を避けられる
+
+---
+
+## Phase 9：Render Dirty Range
+
+* Persistent Render Cache
+* Dirty Vertex Update
+* Indirect Draw Data
+
+### 完了条件
+
+* Static RangeのRender Vertex再生成を省略できる
+
+---
+
+## Phase 10：Cost-Based Fast Path
+
+* Pass別GPU Timer
+* Proposal Cost Prediction
+* Full Dynamic Cost Prediction
+* Hysteresis切替
+
+### 完了条件
+
+* 全動的条件で管理コストの悪化を抑制できる
+
+---
+
+## Phase 11：正式評価
+
+* Baseline比較
+* アブレーション
+* S01～S18
+* Ground Truth
+* Shadow Dynamic
+* 決定性試験
+* 長時間試験
+* GTX 1660級実機試験
+
+---
+
+# 32. 比較対象
 
 ## B0：Current Full Dynamic Baseline
 
@@ -1590,33 +1906,39 @@ N_D=rN_G
 * Indirect Draw
 * 一般的描画最適化
 
-## B2：Strand-Level Sleeping
+## B2：Sleeping Flag
 
-strand全体をStaticまたはDynamicにする。
+* 全Groupが同じPayloadを保持
+* Static GroupのSolverだけ停止
 
-## B3：Block-Level Sleeping
+## B3：Active List
 
-Block単位で更新を省略するが、Group単位の状態依存Payloadは使用しない。
+* Dynamic GroupだけをActive Listへ登録
+* 全GroupがDynamic Payloadを保持
 
-## B4：Segment Group Flag Only
+## B4：Separate Static／Dynamic Buffer
 
-Group単位でStatic/Dynamicフラグを持つが、StaticとDynamicで同一Payloadを使用する。
+* Static GroupとDynamic Groupを別Buffer間で移動
 
-## B5：Fixed Core＋Dynamic Sidecar
+## B5：Fixed Core＋Optional Payload
 
-状態依存Payloadを使用するが、Descriptorは簡易閾値とする。
+* 固定CoreとOptional Payload
+* 単純な速度閾値で状態判定
 
-## B6：Group Descriptor
+## B6：SG-APT without Block Invalidation
 
-Group単位のDescriptorを使用するが、Block増分失効を使用しない。
+* SG-APT
+* 全Group Descriptorを毎フレーム評価
 
 ## B7：Guide Local Update Only
 
-Guideは局所更新するが、Followerを全再構築する。
+* Guideのみ局所更新
+* Follower全再構築
+* Render全更新
 
 ## B8：Strongest Practical Baseline
 
-次を可能な限り強く組み合わせる。
+以下の一般的最適化を組み合わせる。
 
 * Guide/Follower
 * Sleeping
@@ -1628,68 +1950,68 @@ Guideは局所更新するが、Followerを全再構築する。
 * LOD
 * Full Dynamic Fast Path
 
-ただし、次は使用しない。
+ただし、以下は使用しない。
 
-* Fixed Core＋Optional Dynamic Sidecarの状態依存データ型
-* Segment Group DescriptorによるPayloadと経路の統合制御
-* Guide GroupからFollowerと描画までの統合Dependency Propagation
+* 固定Core＋状態依存Optional Payloadの統合データ型
+* Payload Lifetimeを含む状態遷移仕様
+* SG-APT固有の不変条件
 
-## P：Proposed Method
+## P：Proposed SG-APT
 
-本設計のSG-APSTをすべて使用する。
-
----
-
-# 26. アブレーション
-
-| ID  | 無効化する要素                         | 確認目的                |
-| --- | ------------------------------- | ------------------- |
-| A1  | Dynamic Sidecar                 | 状態依存Payloadの効果      |
-| A2  | Group Descriptor                | 単純移動量閾値との差          |
-| A3  | Incremental Block Invalidation  | 全Group評価との差         |
-| A4  | Block Skip                      | 実際のDispatch省略効果     |
-| A5  | Hysteresis                      | State Thrashingへの影響 |
-| A6  | Minimum Residence               | 遷移頻度への影響            |
-| A7  | Transition Budget               | Frame Spikeへの影響     |
-| A8  | Stable Shared-Point Resolve     | 境界誤差と決定性            |
-| A9  | Boundary Repair                 | 境界不連続への影響           |
-| A10 | Follower Dependency Propagation | Follower全再構築との差     |
-| A11 | Render Dirty Range              | End-to-End性能        |
-| A12 | Cost-Based Fast Path            | 固定比率Fast Pathとの差    |
-| A13 | Shadow Dynamic                  | False Static検出      |
-| A14 | Watchdog Fallback               | 異常復帰                |
-| A15 | Stable Compaction               | 再現性と性能              |
+本設計をすべて適用する。
 
 ---
 
-# 27. 評価シナリオ
+# 33. アブレーション
 
-| ID  | シナリオ                            |
-| --- | ------------------------------- |
-| S01 | 完全静止                            |
-| S02 | Root平行移動                        |
-| S03 | Root回転                          |
-| S04 | 弱い風                             |
-| S05 | 通常頭部運動                          |
-| S06 | 局所衝突                            |
-| S07 | 複数Collider                      |
-| S08 | 一本単位編集                          |
-| S09 | 連続Brush編集                       |
-| S10 | 強風                              |
-| S11 | 全動的                             |
-| S12 | Static/Dynamic境界Stress          |
-| S13 | State Thrashing Stress          |
-| S14 | 複数Guide依存Follower               |
-| S15 | 長時間動作                           |
-| S16 | 決定性                             |
-| S17 | Sidecar Pool Stress             |
-| S18 | Certificate Invalidation Stress |
+| ID  | 無効化する要素                        | 評価目的            |
+| --- | ------------------------------ | --------------- |
+| A1  | Optional Dynamic Payload       | Payload分離の効果    |
+| A2  | 固定Group Index                  | Buffer移動方式との差   |
+| A3  | Version Check                  | 古いCache再利用の影響   |
+| A4  | Delayed Free                   | Payload再利用異常    |
+| A5  | Hysteresis                     | State Thrashing |
+| A6  | Minimum Residence              | 遷移回数            |
+| A7  | Static Cache                   | 再構築方式との差        |
+| A8  | Incremental Block Invalidation | 全Group評価との差     |
+| A9  | Stable Shared Point            | 決定性             |
+| A10 | Follower Dependency            | End-to-End性能    |
+| A11 | Render Dirty Range             | 描画更新量           |
+| A12 | Full Dynamic Fast Path         | 全動的条件           |
+| A13 | Shadow Dynamic                 | False Static検出  |
+| A14 | Watchdog                       | 異常復帰            |
+| A15 | Stable Compaction              | 再現性と性能          |
 
 ---
 
-# 28. 評価指標
+# 34. 評価シナリオ
 
-## 28.1 性能
+| ID  | シナリオ                   |
+| --- | ---------------------- |
+| S01 | 完全静止                   |
+| S02 | Root平行移動               |
+| S03 | Root回転                 |
+| S04 | 弱い風                    |
+| S05 | 通常頭部運動                 |
+| S06 | 局所衝突                   |
+| S07 | 複数Collider             |
+| S08 | 一本単位編集                 |
+| S09 | 連続Brush編集              |
+| S10 | 強風                     |
+| S11 | 全Group Dynamic         |
+| S12 | Static／Dynamic境界Stress |
+| S13 | State Thrashing Stress |
+| S14 | 複数Guide依存Follower      |
+| S15 | 30分長時間試験               |
+| S16 | 決定性試験                  |
+| S17 | Payload Pool Stress    |
+| S18 | Version／Descriptor異常注入 |
+
+---
+
+# 35. 評価指標
+
+## 35.1 性能
 
 * Average Frame Time
 * Median Frame Time
@@ -1698,33 +2020,46 @@ Guideは局所更新するが、Followerを全再構築する。
 * Maximum Frame Time
 * 50ms以上Frame数
 * 100ms以上Frame数
-* GPU Simulation Time
+* Simulation Time
 * Descriptor Time
 * Block Invalidation Time
 * Classification Time
 * Compaction Time
-* Sidecar Allocation Time
+* Payload Allocation Time
 * Follower Reconstruction Time
 * Render Preparation Time
 * Draw Time
 
-## 28.2 更新量
+---
 
-* Dynamic Group数
+## 35.2 Payload
+
+* Dynamic Payload使用数
+* Dynamic Payload使用率
+* Payload Allocation数
+* Payload Retire数
+* Payload再利用数
+* Pool Overflow数
+* Payload Memory
+* Group関連読み書きByte数
+
+---
+
+## 35.3 状態
+
 * StaticReuse Group数
 * StaticTransform Group数
+* Dynamic Group数
 * Repair Group数
 * Invalid Group数
-* Valid Block数
-* Invalidated Block数
-* Block Skip率
-* Sidecar使用数
 * State Transition数
-* Follower再構築点数
-* Render再生成頂点数
-* Full Dynamic Fast Path使用率
+* State Thrashing率
+* Block Skip率
+* Full Dynamic Fallback率
 
-## 28.3 正確性
+---
+
+## 35.4 正確性
 
 * Position RMSE
 * Maximum Position Error
@@ -1739,36 +2074,25 @@ Guideは局所更新するが、Followerを全再構築する。
 * Follower Position Error
 * Render Geometry Error
 
-## 28.4 安定性
+---
 
-* State Thrashing率
-* Watchdog発火数
-* Fallback回数
+## 35.5 安定性
+
 * NaN数
 * Inf数
-* Sidecar Index異常数
-* Cache不整合数
+* Invalid Payload Index数
+* Duplicate Payload数
 * Shared Point未解決数
+* Watchdog発火数
+* Fallback成功率
 * 実行間Hash一致率
-* Long-Run Memory増加量
-
-## 28.5 メモリ
-
-* GPU Dedicated Memory
-* GPU Shared Memory
-* Process Working Set
-* Group Core使用量
-* Dynamic Sidecar使用量
-* Retire List使用量
-* Follower Cache使用量
-* Render Cache使用量
-* Peak Temporary Buffer使用量
+* 長時間Memory増加量
 
 ---
 
-# 29. 60FPS正式判定
+# 36. Formal 60FPS判定
 
-60FPSの合否はFPS表示値ではなくFrame Timeで判定する。
+60FPSは画面表示値ではなくFrame Timeで判定する。
 
 ```text
 Average Frame Time <= 16.6667 ms
@@ -1778,273 +2102,101 @@ Maximum Frame Time <= 50.0 ms
 100 ms以上のFrame = 0
 ```
 
-次を固定する。
+固定条件は以下とする。
 
 * Release x64
 * Full HD
-* 100,000 strands
-* 4,000 Guides
-* 96,000 Followers
-* 128 points / strand
-* 6 Solver iterations
-* 1/60秒固定
-* 同一Asset
-* 同一Camera
-* 同一Seed
-* 同一Scenario
-* 同一Driver条件
-
-VSync、Frame Cap、画面上のFPS表示だけで合否を判断しない。
-
----
-
-# 30. 60FPS達成見込み
-
-現時点では正式実装およびGTX 1660級実機測定が完了していないため、以下は理論的な企画段階の見積もりとする。
-
-## 30.1 現在のMainをそのまま使用する場合
-
-Follower全再構築とRender全更新が残るため、100,000本、128点、6反復、Full HDで安定60FPSを達成できる確率は低い。
-
-推定：
-
-> 10％未満
-
-## 30.2 SG-APSTを正式実装した場合
-
-次をすべて実装したことを前提とする。
-
-* Dynamic Sidecar
-* Incremental Block Invalidation
-* Follower Local Rebuild
-* Persistent Follower Cache
-* Render Dirty Range
-* Cost-Based Full Dynamic Fast Path
-* GPU Resident処理
-* CPU Readback排除
-* 一般的描画最適化
-
-代表的な通常シナリオにおける中央見積もりは次とする。
-
-> 約60％
-
-妥当な範囲：
-
-> 45～70％
-
-## 30.3 シナリオ別見込み
-
-| 条件            | 安定60FPS達成見込み |
-| ------------- | -----------: |
-| 完全静止          |       80～90％ |
-| Root剛体移動中心    |       70～85％ |
-| 弱い風           |       60～75％ |
-| 通常頭部運動        |       55～70％ |
-| 局所衝突          |       50～65％ |
-| 複数Collider    |       30～50％ |
-| 強風            |       20～40％ |
-| ほぼ全動的         |       10～30％ |
-| S01～S18すべてで合格 |       25～35％ |
-
-この確率は研究結果ではなく、設計時点の成功可能性評価である。
-
-論文の結果章では実測値だけを使用する。
-
----
-
-# 31. GTX 1660級評価
-
-GTX 1660級GPUでの数値は現時点では理論換算とする。
-
-実測値として主張しない。
-
-開発機で次をPass別に計測する。
-
-* Compute-bound Pass
-* Memory-bound Pass
-* Group Descriptor
-* Block Invalidation
-* Compaction
-* Sidecar管理
-* Guide Solver
-* Follower Reconstruction
-* Render Preparation
-* Draw
-
-その後、GPU Compute性能、Memory Bandwidth、世代差を用いて理論換算する。
-
-論文では次の位置づけとする。
-
-* 今後の展望
-* 旧世代GPUへの適用可能性
-* 理論性能換算
-* 実機検証計画
-
----
-
-# 32. 実装段階
-
-## Phase 0：Baseline固定
-
 * 100,000 strands
 * 4,000 Guides
 * 96,000 Followers
 * 128 points
-* 6 iterations
-* Full HD
-* 1/60固定
-* Release x64
-* Telemetry固定
+* 6 Solver iterations
+* 1/60秒
+* 同一Asset
+* 同一Camera
+* 同一Seed
+* 同一Scenario
 
-## Phase 1：Fixed Core
-
-* 固定Group Index
-* Parent/Child
-* Owner
-* State
-* Version
-* Dirty Mask
-* Root Binding
-
-## Phase 2：Dynamic Sidecar
-
-* Pool
-* Free List
-* Retire List
-* Epoch
-* Overflow Fallback
-
-## Phase 3：State Machine
-
-* Hysteresis
-* Consecutive Pass
-* Minimum Residence
-* Transition Budget
-
-## Phase 4：Admissibility Descriptor
-
-* Hard Safety
-* Soft Prediction
-* 単位正規化
-* Certificate Age
-* Collision Margin
-
-## Phase 5：Incremental Block Invalidation
-
-* Block AABB
-* Dirty Source
-* Spatial Query
-* Affected Block List
-* Block Skip
-
-## Phase 6：Shared-Point Resolve
-
-* Candidate
-* Stable Reduce
-* Single Writer
-* 決定性試験
-
-## Phase 7：Dynamic Solver統一
-
-* Baselineと同一品質
-* Distance
-* Bend
-* Root
-* Force
-* Collision
-
-## Phase 8：Follower Dependency
-
-* CSR Mapping
-* Support Range
-* Guard Band
-* Dirty Range Union
-
-## Phase 9：Follower Cache
-
-* Cache Reuse
-* Rigid Transform
-* Local Reconstruct
-* Full Reconstruct Fallback
-
-## Phase 10：Render Dirty Range
-
-* Persistent Render Cache
-* Dirty Vertex Update
-* Indirect Draw
-* LOD
-
-## Phase 11：Cost-Based Fast Path
-
-* GPU Pass Timer
-* Cost Prediction
-* Hysteresis切替
-* Full Dynamic Fallback
-
-## Phase 12：正式評価
-
-* B0～B8
-* Proposed Method
-* A1～A15
-* S01～S18
-* Ground Truth
-* Shadow Dynamic
-* 決定性試験
-* 長時間試験
+VSync、Frame Cap、画面表示FPSだけで合否を判定しない。
 
 ---
 
-# 33. 実装完了条件
+# 37. 性能目標
 
-```text
-[ ] Group Coreが固定Indexで保持される
-[ ] StaticとDynamicの間でGroup全体をCopyしない
-[ ] Dynamic専用情報がSidecarへ分離される
-[ ] Static GroupがDynamic専用Payloadを保持しない
-[ ] Sidecarに遅延解放がある
-[ ] Overflow時にBaselineへFallbackできる
-[ ] Hysteresisがある
-[ ] Minimum Residenceがある
-[ ] Transition Budgetがある
-[ ] Hard SafetyとSoft Predictionが分離される
-[ ] Descriptor各項が同一単位へ正規化される
-[ ] Certificate Ageがある
-[ ] Block Certificateが増分無効化される
-[ ] Collider移動で全Blockを無効化しない
-[ ] Block Skipが実際のDispatch省略に使われる
-[ ] Shared Pointの最終Writerが一つである
-[ ] Stable Reduceが実装される
-[ ] Dynamic SolverがBaselineと同品質である
-[ ] Follower Dependencyが事前計算される
-[ ] Guard Bandが参照範囲から導出される
-[ ] Follower全再構築が通常経路から廃止される
-[ ] Follower Dirty Rangeが描画へ伝播する
-[ ] Render Vertexを局所更新できる
-[ ] Root移動を剛体変換として処理する
-[ ] XYZ等差加算を使用しない
-[ ] Fast PathがGPU実測コストで切り替わる
-[ ] WatchdogからBaselineへ退避できる
-[ ] Ground Truth比較がある
-[ ] Shadow Dynamic比較がある
-[ ] False Static率を測定できる
-[ ] Block Skip率を測定できる
-[ ] Sidecar使用量を測定できる
-[ ] Follower再構築点数を測定できる
-[ ] Render再生成頂点数を測定できる
-[ ] 決定性を測定できる
-[ ] B8と比較できる
-[ ] 長時間動作試験を通過する
-```
+## 37.1 研究上の必須目標
+
+* B2よりPayload使用量を削減
+* B3より状態遷移Copy量を削減
+* B5よりFalse Staticまたは状態安定性を改善
+* B8より通常シナリオのEnd-to-End Frame Timeを改善
+* 全動的条件でB1より大幅に悪化しない
+* Payload Leak 0件
+* NaN／Inf 0件
 
 ---
 
-# 34. 主なリスク
+## 37.2 暫定効果量目標
 
-## 34.1 Static割合が低い
+* 通常シナリオでB8よりp95 Frame Timeを15%以上改善
+* Dynamic Ratio 30%以下でGroup関連帯域を20%以上削減
+* 全動的条件でB1に対するp95悪化を5%以内
+* False Static率0.1%以下
+* 重大Collision Penetration 0件
+* 30分試験で継続的Memory増加なし
+* 実行間Hash一致率99.9%以上
+
+これらは研究開始時の目標値であり、保証値ではない。
+
+正式評価開始前に固定する。
+
+---
+
+# 38. GTX 1660級での60FPS見込み
+
+実機測定前の時点では保証しない。
+
+実装完成後の理論的な目安は次のとおりである。
+
+| シナリオ       | 安定60FPS見込み |
+| ---------- | ---------: |
+| 完全静止       |     70～85% |
+| Root剛体移動   |     65～80% |
+| 弱い風        |     50～65% |
+| 通常頭部運動     |     40～55% |
+| 局所衝突       |     35～50% |
+| 複数Collider |     20～40% |
+| 強風         |     10～25% |
+| ほぼ全動的      |      5～20% |
+| 全シナリオ一括合格  |     20～30% |
+
+60FPSへ到達しなくても、B8より有意に高速で、SG-APT固有のPayload削減効果が確認できれば研究的価値は成立する。
+
+---
+
+# 39. リスクと対策
+
+## 39.1 先行研究との重複
 
 ### リスク
 
-強風や多数Colliderでは、大部分がDynamicとなる。
+状態依存PayloadやSparse Payloadに近い方式が、髪以外の粒子、布、流体、剛体分野に存在する可能性がある。
+
+### 対策
+
+* 新規性を髪Segmentへの適用だけで主張しない
+* データ型の操作、不変条件、Payload Lifetimeまで定義する
+* SleepingやActive Setとの差をB2、B3で示す
+* Static／Dynamic Buffer移動との差をB4で示す
+* 最新先行研究を最終提出前に再確認する
+* 同一方式が確認された場合は実装・評価貢献へ位置付け直す
+
+---
+
+## 39.2 Static割合が低い
+
+### リスク
+
+強風や多数ColliderではDynamic Groupが増える。
 
 ### 対策
 
@@ -2052,11 +2204,13 @@ GTX 1660級GPUでの数値は現時点では理論換算とする。
 * Block単位早期判定
 * Proposal経路の自動停止
 
-## 34.2 Descriptor評価が重い
+---
+
+## 39.3 Descriptor評価が重い
 
 ### リスク
 
-Solverを省略しても、毎フレーム全Groupを評価すると高速化にならない。
+全Groupを毎フレーム評価すると高速化にならない。
 
 ### 対策
 
@@ -2065,59 +2219,79 @@ Solverを省略しても、毎フレーム全Groupを評価すると高速化に
 * Descriptor Age
 * Dirty Source限定
 
-## 34.3 Sidecar Pool不足
+---
 
-### 対策
+## 39.4 False Static
 
-* Worst Case容量の評価
-* Overflow Telemetry
-* Baseline Bufferへの退避
-* DynamicからStaticへの遷移停止
+### リスク
 
-## 34.4 State Thrashing
-
-### 対策
-
-* Hysteresis
-* Consecutive Pass
-* Minimum Residence
-* Transition Budget
-
-## 34.5 False Static
+Static判定誤りにより衝突漏れや形状誤差が発生する。
 
 ### 対策
 
 * Hard Safety
 * Collision Margin
 * Shadow Dynamic
-* Boundary Error
-* Descriptor Age
+* Periodic Validation
 * Watchdog
+* ForcedDynamic
 
-## 34.6 Descriptorが保守的すぎる
+---
+
+## 39.5 State Thrashing
 
 ### リスク
 
-ほとんどStatic化されず、管理コストだけが増える。
+StaticとDynamicを毎フレーム往復する。
 
 ### 対策
 
-* 閾値感度分析
-* 誤差項別Telemetry
-* 校正用と評価用データの分離
-* B8比較
+* Hysteresis
+* Minimum Residence
+* Consecutive Pass
+* Transition Budget
 
-## 34.7 Follower依存範囲の過小評価
+---
+
+## 39.6 Payload Pool不足
+
+### 対策
+
+* Worst Case容量評価
+* Overflow Telemetry
+* Baseline Buffer使用
+* Full Dynamic Fallback
+* 遅延再利用
+
+---
+
+## 39.7 Shared Point競合
+
+### 対策
+
+* Candidate生成
+* Stable Reduce
+* Single Writer
+* Atomic到着順の排除
+
+---
+
+## 39.8 Follower全再構築
+
+### リスク
+
+Guideの高速化がFollower処理に隠れる。
 
 ### 対策
 
 * CSR Dependency
-* Support Radius
-* Guard Band導出
+* Guard Band
+* Local Reconstruct
 * Full Reconstruct Fallback
-* Follower Ground Truth比較
 
-## 34.8 描画ボトルネック
+---
+
+## 39.9 描画ボトルネック
 
 ### 対策
 
@@ -2125,205 +2299,401 @@ Solverを省略しても、毎フレーム全Groupを評価すると高速化に
 * Persistent Render Cache
 * Render Dirty Range
 * Indirect Draw
-* LOD
 * Overdraw計測
 
-## 34.9 Root移動による伸長
+---
+
+## 39.10 Root移動による髪の伸長
 
 ### 対策
 
-* Root差分剛体変換
+* 剛体差分Transform
 * Root Local Cache
 * Segment Length Watchdog
 * XYZ等差加算の禁止
 
-## 34.10 Hemisphere Resolveの効果が小さい
+---
 
-### 対策
+# 40. 新規性を安全に主張するための条件
 
-* アブレーション
-* 境界誤差比較
-* 決定性比較
-* 効果が小さい場合は安全機構へ格下げ
+以下を満たすまで、新規性を確定的に「安全」と断定しない。
+
+1. SG-APTが正式に実装されている
+2. B2との比較で単純Sleepingとの差を示している
+3. B3との比較でActive Listとの差を示している
+4. B4との比較でBuffer移動方式との差を示している
+5. B5との比較で単純Core／Payload分離との差を示している
+6. A1でOptional Payload固有の効果を示している
+7. A2で固定Index固有の効果を示している
+8. A8でIncremental Block Invalidationの効果を示している
+9. A10でFollower局所更新の効果を示している
+10. False StaticをGround Truthで評価している
+11. 全動的条件でFallbackが正常に動作している
+12. Payload Pool不足時も安全に継続できる
+13. 長時間試験でLeakがない
+14. 決定性試験を通過している
+15. 最新の髪、粒子、布、流体、剛体、Sparse Simulation研究と比較している
+16. 同一のデータ型仕様を持つ先行方式が確認されていない
+17. 実験結果を過大に一般化していない
 
 ---
 
-# 35. 新規性判定
+# 41. 先行研究と重複した場合のFallback Positioning
 
-## 35.1 現時点
+同一または極めて近いデータ型が既に存在した場合、研究全体を破棄しない。
 
-三択では次の判定とする。
+次の位置付けへ変更する。
 
-> 危ない
+> 高密度GPU Hair System向け状態依存Payload設計の実装、性能評価、および誤差評価。
 
-ただし、単純なStatic/Dynamic切替案よりは大幅に改善されており、安全に近い条件付き候補である。
+その場合の貢献は次のとおりとする。
 
----
+* DirectX 11上での実装
+* 100,000本、128点での評価
+* Guide／Follower／Renderを含むEnd-to-End評価
+* False Static評価
+* Payload Lifetime評価
+* 全動的Fallback評価
+* GTX 1660級環境での実測
 
-## 35.2 危ない理由
-
-* 点・線分・点の表現自体は既存
-* SleepingとCache Reuseは既存
-* Partial UpdateとActive Setは他分野にも存在
-* Guide/FollowerとLODは既存
-* データ型の正式実装が未完成
-* Follower局所再構築が未実装
-* Render Dirty Rangeが未完成
-* B8との比較結果がない
-* Dynamic Sidecarの効果が未実証
-* False Static率が正式評価されていない
-* 最新先行研究との最終照合が未完了
+これにより、新規性判定が変化しても卒業研究としての価値を維持する。
 
 ---
 
-## 35.3 安全へ移行する条件
+# 42. 論文で使用する推奨表現
 
-次をすべて満たした場合、安全判定候補とする。
+## 42.1 研究目的
 
-1. B8より有意なEnd-to-End改善を示す
-2. A1でDynamic Sidecarの効果を示す
-3. A3でIncremental Block Invalidationの効果を示す
-4. A10でFollower局所更新の効果を示す
-5. A11でRender Dirty Rangeの効果を示す
-6. False Static率をGround Truthで評価する
-7. Descriptor Violation率を許容範囲へ抑える
-8. 全動的条件でBaselineより大幅に悪化しない
-9. 100,000本条件で効果を示す
-10. 決定性試験を通過する
-11. 長時間動作試験を通過する
-12. 最新の髪、粒子、布、流体、剛体、Sparse Simulation研究との最終比較を行う
-13. 同一構成の先行方式が存在しないことを確認する
+> 本研究では、髪strand内部を構成するSegment Groupを、固定Indexを持つReusable Coreと、Dynamic状態でのみ有効になるOptional Payloadから構成されるGPU常駐型データとして表現する。各Groupは実行時状態に応じてStatic Reuse、Rigid Transform、Dynamic Solve、Repair、Fallbackの操作を選択する。これにより、Static GroupがDynamic専用情報を保持・参照する必要をなくし、高密度髪システムにおけるPayload使用量とGPU処理量の削減を目指す。
 
 ---
 
-# 36. 論文で使用する推奨表現
+## 42.2 本研究の貢献
 
-## 36.1 研究目的
+> 本研究の主な貢献は、髪Segment Groupに対して、固定Core、Optional Dynamic Payload、状態遷移、Version管理、Payload Lifetime、不変条件およびFallback操作を備えた状態依存型データ表現を定義した点にある。また、単純なSleeping方式、Active List方式、Static／Dynamic Buffer移動方式と比較し、Payload使用量、GPU帯域、状態遷移コスト、False Static率を用いて提案方式を評価する。
 
-> 本研究では、髪strand内部を構成するSegment Groupを、固定Reusable Coreと必要時のみ実体化するDynamic Sidecarからなる状態依存型データとして表現する。各Groupは、経験的に検証された静的再利用許容記述子に基づいてStatic Reuse、Rigid Transform、Dynamic Solve、Repair、Fallbackの処理経路を選択する。さらに、Guide Groupの局所更新範囲をFollower再構築範囲および描画更新範囲まで伝播し、100,000本規模の髪表示におけるEnd-to-End処理量の削減を目指す。
+---
 
-## 36.2 本研究の貢献
+## 42.3 安全な新規性表現
 
-> 本研究の主な貢献は、Segment Groupごとに保持Payloadと実行経路が変化するSegment-Group Adaptive Payload Strand Typeを設計した点にある。Static Groupは最後に確定した方向と長さを固定Coreから再利用し、Dynamic Groupだけが速度、履歴位置、Solver内部値を含むSidecarを保持する。また、GroupおよびBlock単位の静的再利用許容判定と増分無効化を用いて、変化していない領域の判定処理とSolver処理を省略する。さらに、Guideの局所状態をFollowerおよび描画の依存範囲へ伝播することで、SimulationだけでなくEnd-to-Endの局所更新を可能にする。
+> 本研究は、Segment表現、Sleeping、Cache Reuse、Active Set、Guide/Follower、GPU Computeなどの個別技術そのものを新規性として主張するものではない。本研究の検証対象は、これらの処理を支える髪Segment Groupを、固定Coreと状態依存Optional Payloadからなる一つのGPU常駐型データとして定義し、状態に応じて有効Payload、許可操作、Cache条件、Payload LifetimeおよびFallback先を変更する点にある。
 
-## 36.3 安全な新規性表現
+---
 
-> 本研究は、点列・Segment表現、Sleeping、Cache Reuse、Guide/Follower、Dirty Range、GPU Computeなどの既存要素そのものを新規性として主張するものではない。本研究の新規性は、これらをSegment Group単位の固定Core、Optional Dynamic Sidecar、Cache Validity、処理状態、Follower依存範囲、描画依存範囲を持つ一つの状態依存型Strand Data Typeとして統合した点にある。
+# 43. 使用禁止表現
 
-## 36.4 使用しない表現
-
-正式な結果が得られるまで、次の表現を使用しない。
+正式な結果が得られるまで、以下の表現を使用しない。
 
 * 世界初
-* 完全な誤差保証
-* 数学的に安全
-* 必ず60FPS
-* どのGPUでも高速
+* 髪SegmentのStatic／Dynamic切替を初めて実現
+* 完全に安全なStatic判定
+* 数学的に誤差が発生しない
+* 必ず60FPSを達成
+* すべてのGPUで高速
 * すべてのシナリオで高速
-* 従来研究に存在しないことが証明された
-* 静的化しても誤差が発生しない
+* 既存研究に存在しないことが証明された
+* 100,000本すべてを独立に物理計算
+* FollowerもGuideと同品質の物理を持つ
+* GPUメモリを必ず削減
+* 完全な物理保証
 
 ---
 
-# 37. 関連研究の整理方針
+# 44. 論文章構成案
 
-第2章では、次の順序で整理する。
+## 第1章　はじめに
 
-1. 点列、Segment、Rodによる髪表現
-2. PBD、XPBD、Elastic Rod
-3. Guide/Follower、Wisp、Cluster、LOD
-4. GPU Hair Simulation
-5. Dense Physics Hair
-6. Neural Hair Simulation
-7. Hair Compression
-8. Sleeping、Cache Reuse、Partial Update
-9. Particle、Fluid、Cloth、Rigid Bodyの局所更新
-10. 本研究との差分
+1.1 研究背景
+1.2 高密度髪シミュレーションの問題
+1.3 状態ごとに必要データが異なる問題
+1.4 研究目的
+1.5 研究課題
+1.6 本研究の貢献
+1.7 論文構成
 
-本研究との差分は、次のように整理する。
+## 第2章　関連研究
 
-| 既存領域                | 既存の中心       | 本研究との差分                           |
-| ------------------- | ----------- | --------------------------------- |
-| Rod Hair            | 形状と物理モデル    | Segment Groupを実行経路選択単位にする         |
-| Guide/Follower      | 代表毛からの補間    | Guide内部の局所状態をFollower範囲へ伝播        |
-| Sleeping            | 静止対象の停止     | 同一strand内のGroup混在状態               |
-| Cache Reuse         | 過去結果の再利用    | Descriptor、Version、False Static評価 |
-| Active Set          | 計算対象の選択     | 保持Payload自体を状態依存で変化               |
-| Particle Compaction | Active粒子の圧縮 | 髪の連続性とShared Pointを維持             |
-| Dirty Rendering     | 更新範囲の限定     | Guide物理状態から描画範囲まで統合伝播             |
+2.1 髪の点列・Segment表現
+2.2 RodおよびPBD／XPBD
+2.3 Guide／Follower
+2.4 GPU Hair Simulation
+2.5 SleepingとActive Set
+2.6 Cache ReuseとPartial Update
+2.7 Sparse PayloadおよびDynamic Compaction
+2.8 粒子・布・流体・剛体の局所更新
+2.9 既存研究の限界
+2.10 本研究の位置付け
+
+## 第3章　提案データ型
+
+3.1 SG-APT概要
+3.2 Segment Group定義
+3.3 Fixed Core
+3.4 Optional Dynamic Payload
+3.5 Runtime State
+3.6 データ型の操作
+3.7 不変条件
+3.8 VersionとPayload Lifetime
+3.9 Root剛体変換
+3.10 Fallback
+
+## 第4章　GPU実装
+
+4.1 全体構成
+4.2 Buffer Layout
+4.3 Payload Pool
+4.4 State Classification
+4.5 Block Invalidation
+4.6 Dynamic Solver
+4.7 Shared Point Resolve
+4.8 Follower Dependency
+4.9 Render Dirty Range
+4.10 Full Dynamic Fast Path
+4.11 Telemetry
+
+## 第5章　実験
+
+5.1 実験環境
+5.2 固定条件
+5.3 比較対象
+5.4 アブレーション
+5.5 シナリオ
+5.6 評価指標
+5.7 Ground Truth
+5.8 長時間試験
+5.9 決定性試験
+
+## 第6章　結果
+
+6.1 Payload使用量
+6.2 GPU帯域
+6.3 State Transition
+6.4 Simulation性能
+6.5 End-to-End性能
+6.6 False Static
+6.7 Full Dynamic条件
+6.8 GTX 1660級結果
+
+## 第7章　考察
+
+7.1 SG-APT固有の効果
+7.2 Sleeping方式との差
+7.3 Active Listとの差
+7.4 負の高速化
+7.5 誤差と安全性
+7.6 実装上の制約
+7.7 新規性の限界
+7.8 将来課題
+
+## 第8章　結論
 
 ---
 
-# 38. 今後の展望
+# 45. 発表スライド構成案
 
-## 38.1 GTX 1660級実機検証
+1. 研究背景
+2. 100,000本×128点の負荷
+3. 一本の髪内部にStatic／Dynamicが混在する問題
+4. 既存Sleeping方式の限界
+5. 提案SG-APT
+6. Fixed CoreとOptional Payload
+7. 状態遷移
+8. Root移動とCollision
+9. GPU Pipeline
+10. 比較対象
+11. 評価結果
+12. 新規性の位置付け
+13. 結論
 
-同一Asset、同一設定、同一Scenarioで実機測定する。
+発表では詳細な実装一覧より、以下を視覚的に示す。
 
-## 38.2 1024点への拡張
+```text
+従来:
+全Group
+=
+常に同じDynamic Payload
 
-* Hierarchical Block
-* Super Block
-* Hierarchical Descriptor
-* Segment LOD
-* Multi-Resolution Sidecar
+提案:
+Static Group
+=
+Fixed Coreのみ
 
-## 38.3 Descriptor自動校正
-
-Shadow Dynamicの誤差分布から重みと閾値を調整する。
-
-ただし、Hard Safetyは明示的な規則として維持する。
-
-## 38.4 Collision-Aware Prediction
-
-Collider速度、移動方向、Swept Volumeから将来のCollision Marginを予測する。
-
-## 38.5 編集システム統合
-
-一本単位編集、Brush、GizmoをDirty Sourceへ直接接続する。
-
-## 38.6 Asset Pipeline
-
-Maya、Alembic、USDなどから入力されたstrandを等間隔Segment Groupへ変換し、次を事前生成する。
-
-* Rest Length
-* Root Binding
-* Parent/Child
-* Block AABB
-* Follower Dependency
-* Guard Band
-* Asset Version
+Dynamic Group
+=
+Fixed Core + Dynamic Payload
+```
 
 ---
 
-# 39. 結論
+# 46. 実装完了チェックリスト
 
-本研究のテーマは、新しい髪データ型を構築することである。
+```text
+[ ] Fixed Coreが固定Indexで保持される
+[ ] Dynamic Payloadが別Poolへ分離される
+[ ] Static GroupのPayload IndexがInvalidになる
+[ ] Dynamic GroupだけがPayloadを参照する
+[ ] PromoteToDynamicが実装される
+[ ] DemoteToStaticが実装される
+[ ] Static化時に最終形状を保存する
+[ ] Payload解放にEpochまたはFenceを使用する
+[ ] Pool Overflow時にFallbackできる
+[ ] Version不一致時にCacheを拒否する
+[ ] Root移動を剛体変換として処理する
+[ ] Segment番号によるXYZ等差加算を使用しない
+[ ] Hysteresisが実装される
+[ ] Minimum Residenceが実装される
+[ ] Transition Budgetが実装される
+[ ] Hard SafetyとSoft Predictionが分離される
+[ ] Descriptor項が位置誤差単位へ正規化される
+[ ] Descriptor Ageがある
+[ ] Block Descriptorが増分無効化される
+[ ] Root移動で全Groupを無条件Dirtyにしない
+[ ] Block Skipが実際のDispatch省略へ使用される
+[ ] Shared Pointの最終Writerが一つである
+[ ] Stable Reduceが実装される
+[ ] Dynamic SolverがBaselineと同品質である
+[ ] Follower Dependencyが事前計算される
+[ ] Follower局所再構築が実装される
+[ ] Render Dirty Rangeが実装される
+[ ] Full Dynamic Fast PathがGPU実測で切り替わる
+[ ] WatchdogからBaselineへ退避できる
+[ ] Ground Truth比較がある
+[ ] Shadow Dynamic比較がある
+[ ] False Static率を測定できる
+[ ] Dynamic Payload使用量を測定できる
+[ ] Group関連Byte数を測定できる
+[ ] State Transition数を測定できる
+[ ] Follower再構築点数を測定できる
+[ ] Render再生成頂点数を測定できる
+[ ] B2からB8と比較できる
+[ ] A1からA15を実施できる
+[ ] 30分長時間試験を通過する
+[ ] 決定性試験を通過する
+[ ] GTX 1660級実機試験を実施する
+```
 
-提案するSegment-Group Adaptive Payload Strand Typeは、髪を単純な点列として保持するのではなく、strand内部の各Segment Groupを、固定Reusable Coreと必要時のみ実体化するDynamic Sidecarからなる状態依存型データとして扱う。
+---
 
-Static Groupは、最後にDynamic Solverで確定した方向とRest Lengthを再利用する。
+# 47. Go／No-Go判定
 
-Dynamic Groupだけが速度、履歴位置、制約値、衝突値などのDynamic専用Payloadを持つ。
+## Gate 1：データ型成立
 
-Rootまたは頭部が移動する場合は、Rootから毛先へXYZ値を等差的に加算せず、最後に検証された形状へ同一の剛体変換を適用する。
+### Go条件
 
-衝突可能性がある領域はSwept AABBとSpatial Queryによって検出し、影響するGroupまたはBlockだけをDynamicへ戻す。
+* Fixed CoreとOptional Payloadが分離済み
+* 固定Index維持
+* Payload Leakなし
+* Overflow Fallback成功
 
-隣接Groupの共有点は物理的に分割せず、Root側とTip側の候補を生成した後、一つのStable ReduceとApply Passで確定する。
+### No-Go条件
 
-Guide Groupの局所状態は、Follower Dependency Range、Follower Segment Range、Render Vertex Rangeへ伝播する。
+* 状態変更時にGroup全体Copyが必要
+* Static GroupがDynamic Payloadを保持したまま
+* Payload Index不整合が解消できない
 
-これにより、Static領域について次を省略する。
+---
 
-* 物理Solver
-* Follower再構築
-* Render Vertex再生成
-* 詳細Descriptor評価
-* Sidecar保持
+## Gate 2：正確性成立
 
-Dynamic割合が高い場合は、GPU実測コストに基づいてFull Dynamic Fast Pathへ退避する。
+### Go条件
 
-現時点の新規性判定は「危ない」であるが、Fixed Core＋Dynamic Sidecar、Incremental Block Invalidation、Follower局所再構築、Render Dirty Rangeの効果をStrongest Practical Baselineとアブレーションによって実証できれば、安全判定へ移行できる可能性が高い。
+* False Static率を測定可能
+* Segment Length異常なし
+* 重大Collision Penetrationなし
+* NaN／Infなし
 
-本研究の最終目標は、100,000本、128点、Full HDの髪表示において、物理的整合性と局所編集性を維持しながら、変化していない領域の保持Payload、物理計算、Follower生成、描画更新を省略し、固定フレーム予算下で安定したリアルタイム処理を実現することである。
+### No-Go条件
+
+* Static再利用誤差を測定できない
+* Ground Truthが存在しない
+* Dynamic Solver品質がBaselineと異なる
+
+---
+
+## Gate 3：性能成立
+
+### Go条件
+
+* B2よりPayload使用量削減
+* B4より状態遷移Copy量削減
+* 通常シナリオでB8より高速
+* 全動的条件でFallback成功
+
+### No-Go条件
+
+* 管理コストが常にFull Dynamicより大きい
+* Follower全再構築が支配的なまま
+* Render全更新が支配的なまま
+
+---
+
+## Gate 4：論文新規性成立
+
+### Go条件
+
+* B2～B5との差が明確
+* A1、A2でデータ型固有の効果が確認できる
+* 最新先行研究に同一仕様が見つからない
+* 主張範囲がデータ型に限定されている
+
+### No-Go条件
+
+* 新規性が「Segment単位で止める」だけになっている
+* 効果が一般的なLODや描画最適化だけで説明される
+* 同一データ型が既存研究に存在する
+
+No-Goの場合は、実装・評価研究へ位置付け直す。
+
+---
+
+# 48. 最終的な研究上の位置付け
+
+本研究は、新しい物理Solverを提案する研究ではない。
+
+また、Sleeping、Active Set、Cache Reuse、Guide/Follower、GPU Computeを新しく提案する研究でもない。
+
+本研究では、髪のSegment Groupについて、Static状態とDynamic状態で必要なデータが異なることに着目する。
+
+すべてのGroupが常に同一Payloadを持つ方式ではなく、固定CoreとOptional Dynamic Payloadからなるデータ型を使用する。
+
+状態変更時にもGroup本体のIndexを維持し、有効なPayloadと操作だけを変更する。
+
+さらに、Version、Cache、Payload Lifetime、状態遷移、不変条件、Fallbackをデータ型の正式仕様として定義する。
+
+新規性として検証する対象は、次の一点である。
+
+> 固定IndexのSegment Group Coreと状態依存Optional Dynamic Payloadを持ち、実行時状態に応じて有効データ、許可操作、Cache条件、Payload LifetimeおよびFallback先を変更するGPU常駐型髪データ型。
+
+この範囲を超える主張は行わない。
+
+---
+
+# 49. 結論
+
+本研究では、髪の各Segment Groupを、固定CoreとOptional Dynamic Payloadから構成されるGPU常駐型データとして扱うSG-APTを提案する。
+
+Static Groupは最後に検証された局所方向とRest LengthをCoreから再利用し、Dynamic専用Payloadを保持しない。
+
+Dynamic Groupだけが、速度、過去位置、拘束変数、衝突情報などのPayloadを使用する。
+
+状態変更時にGroup本体を別Bufferへ移動させず、固定Indexを維持したままPayloadの割当と有効操作を変更する。
+
+Rootまたは頭部の移動はSegment番号に比例したXYZ加算で処理せず、剛体差分Transformとして処理する。
+
+Collider、外力、編集、Topology変更などが発生した場合は、影響範囲のGroupまたはBlockだけをDynamicへ戻す。
+
+Static／Dynamic境界ではShared Pointを複数Groupが直接書き換えず、候補生成、Stable Reduce、Single Writerによって最終位置を決定する。
+
+Guideの局所変更はFollower Segment RangeおよびRender Vertex Rangeへ伝播する。
+
+Dynamic割合が高い場合は、GPU実測コストに基づいてFull Dynamic Fast Pathへ切り替える。
+
+本研究の評価では、単純なSleeping、Active List、Static／Dynamic Buffer移動、単純Core／Payload分離、Strongest Practical Baselineと比較する。
+
+これにより、性能改善が一般的な部分更新や描画最適化ではなく、状態依存Payload型によるものかを検証する。
+
+本研究では、世界初、完全保証、必ず60FPSといった過大な表現を使用しない。
+
+比較実験、アブレーション、Ground Truth、長時間試験、決定性試験によって確認された範囲だけを、研究上の貢献として報告する。
+
+最終的には、100,000本、128点、Full HDの高密度髪表示において、物理的整合性、局所編集性、異常時復帰性を維持しながら、変化していない領域のDynamic Payload、物理計算、Follower再構築、描画更新を省略し、安定したリアルタイム処理を目指す。
