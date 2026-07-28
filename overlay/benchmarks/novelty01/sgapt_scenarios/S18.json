@@ -1,0 +1,35 @@
+{
+  "scenario": "S18_FarCamera100k",
+  "version": 3,
+  "novelty01DesignScenario": "S18",
+  "description": "version_descriptor_fault_injection",
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": [],
+  "assertions": {
+    "timelineFinalFrameRequired": true
+  }
+}
