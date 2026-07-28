@@ -40,6 +40,16 @@ METRIC_ALIASES: dict[str, tuple[str, ...]] = {
         "n01GroupReadBytes", "groupReadBytes", "group_read_bytes"),
     "groupWriteBytes": (
         "n01GroupWriteBytes", "groupWriteBytes", "group_write_bytes"),
+    "usesSgaptRepresentation": (
+        "n01UsesSgaptRepresentation", "usesSgaptRepresentation"),
+    "independentBaselineFrameCount": (
+        "n01IndependentBaselineFrameCount", "independentBaselineFrameCount"),
+    "payloadAllocatedCount": (
+        "n01PayloadAllocatedCount", "payloadAllocatedCount"),
+    "payloadRetiredCount": (
+        "n01PayloadRetiredCount", "payloadRetiredCount"),
+    "payloadReusedCount": (
+        "n01PayloadReusedCount", "payloadReusedCount"),
 }
 
 
@@ -115,6 +125,7 @@ def extract_rows(matrix: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         row: dict[str, Any] = {
+            "profile": str(matrix.get("profile", "")),
             "caseId": item.get("caseId"),
             "variant": str(item.get("variant", "")),
             "scenario": str(item.get("scenario", "")),
@@ -124,7 +135,7 @@ def extract_rows(matrix: dict[str, Any]) -> list[dict[str, Any]]:
         }
         result = item.get("result") if isinstance(item.get("result"), dict) else {}
         for metric, aliases in METRIC_ALIASES.items():
-            row[metric] = find_number(result, aliases)
+            row[metric] = find_number(item, aliases)
         rows.append(row)
     return rows
 
@@ -173,33 +184,56 @@ def paired_differences(
     return differences
 
 
-def evaluate_gates(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    p_rows = [row for row in rows if row["variant"] == "P"]
-    failures = [row for row in p_rows if not row["ok"]]
+def evaluate_gates(
+        quality_rows: list[dict[str, Any]],
+        performance_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    quality_p_rows = [row for row in quality_rows if row["variant"] == "P"]
+    performance_p_rows = [row for row in performance_rows if row["variant"] == "P"]
+    failures = [row for row in quality_p_rows + performance_p_rows if not row["ok"]]
     false_static = [
         float(row["falseStaticRate"])
-        for row in p_rows if row["ok"] and row.get("falseStaticRate") is not None
+        for row in quality_p_rows
+        if row["ok"] and row.get("falseStaticRate") is not None
     ]
-    p95_differences = paired_differences(rows, "p95FrameMilliseconds")
+    p95_differences = paired_differences(
+        performance_rows, "p95FrameMilliseconds")
+    independent_rows = [
+        row for row in performance_rows
+        if row["variant"] in {"B1", "B8"} and row["ok"]
+    ]
+    independent_uncontaminated = bool(independent_rows) and all(
+        row.get("usesSgaptRepresentation") == 0.0
+        and (row.get("independentBaselineFrameCount") or 0.0) > 0.0
+        and (row.get("payloadActiveCount") or 0.0) == 0.0
+        and (row.get("payloadAllocatedCount") or 0.0) == 0.0
+        and (row.get("payloadRetiredCount") or 0.0) == 0.0
+        and (row.get("payloadReusedCount") or 0.0) == 0.0
+        for row in independent_rows
+    )
     return {
-        "allProposalRunsPassed": not failures and bool(p_rows),
+        "allProposalRunsPassed": (
+            not failures and bool(quality_p_rows) and bool(performance_p_rows)
+        ),
         "falseStaticRateAtMostPointOnePercent": (
             bool(false_static) and max(false_static) <= 0.001
         ),
         "pairedP95ImprovesB8": (
             bool(p95_differences) and statistics.fmean(p95_differences) < 0.0
         ),
+        "independentBaselinesUncontaminated": independent_uncontaminated,
         "evidenceAvailable": {
-            "proposalRuns": len(p_rows),
+            "qualityProposalRuns": len(quality_p_rows),
+            "performanceProposalRuns": len(performance_p_rows),
             "falseStaticSamples": len(false_static),
             "pairedP95Samples": len(p95_differences),
+            "independentBaselineRuns": len(independent_rows),
         },
     }
 
 
 def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
-        "caseId", "variant", "scenario", "repetition", "ok", "error",
+        "profile", "caseId", "variant", "scenario", "repetition", "ok", "error",
         *METRIC_ALIASES.keys(),
     ]
     with path.open("w", encoding="utf-8", newline="") as stream:
@@ -211,6 +245,9 @@ def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--matrix-summary", required=True, type=Path)
+    parser.add_argument(
+        "--performance-matrix-summary", type=Path,
+        help="Ground-truth-free performance matrix. Defaults to --matrix-summary only for compatibility.")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--bootstrap-samples", type=int, default=10000)
     parser.add_argument("--confidence", type=float, default=0.95)
@@ -218,15 +255,27 @@ def main() -> int:
     parser.add_argument("--strict-gates", action="store_true")
     args = parser.parse_args()
 
-    matrix = load_json(args.matrix_summary.resolve())
-    rows = extract_rows(matrix)
+    quality_matrix = load_json(args.matrix_summary.resolve())
+    performance_matrix = (
+        load_json(args.performance_matrix_summary.resolve())
+        if args.performance_matrix_summary is not None
+        else quality_matrix
+    )
+    quality_rows = extract_rows(quality_matrix)
+    performance_rows = extract_rows(performance_matrix)
+    rows = quality_rows + ([] if performance_matrix is quality_matrix else performance_rows)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
     variants = sorted({row["variant"] for row in rows if row["variant"]})
+    performance_metrics = {
+        "averageFrameMilliseconds", "p95FrameMilliseconds",
+        "p99FrameMilliseconds", "maximumFrameMilliseconds",
+    }
     paired: dict[str, Any] = {}
     for metric in METRIC_ALIASES:
-        differences = paired_differences(rows, metric)
+        metric_rows = performance_rows if metric in performance_metrics else quality_rows
+        differences = paired_differences(metric_rows, metric)
         paired[metric] = {
             "definition": "P minus B8; negative favors P",
             "bootstrapMeanDifference": bootstrap_mean_ci(
@@ -239,15 +288,30 @@ def main() -> int:
 
     report = {
         "schema": SCHEMA,
-        "source": str(args.matrix_summary.resolve()),
-        "profile": matrix.get("profile"),
+        "source": {
+            "quality": str(args.matrix_summary.resolve()),
+            "performance": str(
+                args.performance_matrix_summary.resolve()
+                if args.performance_matrix_summary is not None
+                else args.matrix_summary.resolve()),
+        },
+        "profile": {
+            "quality": quality_matrix.get("profile"),
+            "performance": performance_matrix.get("profile"),
+        },
         "failedRunsRetained": True,
         "warmupExcludedByRunner": True,
         "bootstrapSamples": args.bootstrap_samples,
         "confidence": args.confidence,
-        "variants": {variant: summarize_variant(rows, variant) for variant in variants},
+        "variants": {
+            variant: {
+                "quality": summarize_variant(quality_rows, variant),
+                "performance": summarize_variant(performance_rows, variant),
+            }
+            for variant in variants
+        },
         "pairedPMinusB8": paired,
-        "gates": evaluate_gates(rows),
+        "gates": evaluate_gates(quality_rows, performance_rows),
     }
 
     (output / "novelty01_formal_report.json").write_text(

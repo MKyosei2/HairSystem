@@ -246,6 +246,81 @@ def resolve_timeline(case: dict[str, Any], timeline_root: Path, scenario: str) -
     case["scenario_timeline"] = str(path.resolve())
 
 
+def _find_metric(payload: Any, name: str) -> Any | None:
+    if isinstance(payload, Mapping):
+        if name in payload:
+            return payload[name]
+        for value in payload.values():
+            found = _find_metric(value, name)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = _find_metric(value, name)
+            if found is not None:
+                return found
+    return None
+
+
+def _read_jsonl_metric(case_output: Path, name: str) -> Any | None:
+    candidates = sorted(case_output.rglob("*.jsonl"))
+    for path in reversed(candidates):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for raw in reversed(lines):
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            found = _find_metric(row, name)
+            if found is not None:
+                return found
+    return None
+
+
+def validate_independent_baseline_evidence(
+        result: Any, case_output: Path, *, variant: str, dry_run: bool) -> dict[str, Any] | None:
+    if dry_run or variant not in {"B1", "B8"}:
+        return None
+
+    names = (
+        "n01UsesSgaptRepresentation",
+        "n01ExecutionRoute",
+        "n01IndependentBaselineFrameCount",
+        "n01PayloadActiveCount",
+        "n01PayloadAllocatedCount",
+        "n01PayloadRetiredCount",
+        "n01PayloadReusedCount",
+    )
+    observed: dict[str, Any] = {}
+    for name in names:
+        value = _find_metric(result, name)
+        if value is None:
+            value = _read_jsonl_metric(case_output, name)
+        if value is None:
+            raise RuntimeError(
+                f"Independent baseline {variant} is missing fail-closed evidence: {name}")
+        observed[name] = value
+
+    if int(observed["n01UsesSgaptRepresentation"]) != 0:
+        raise RuntimeError(f"{variant} was contaminated by the SG-APT representation")
+    expected_route = 2 if variant == "B1" else 9
+    if int(observed["n01ExecutionRoute"]) != expected_route:
+        raise RuntimeError(
+            f"{variant} execution route mismatch: expected {expected_route}, "
+            f"observed {observed['n01ExecutionRoute']}")
+    if int(observed["n01IndependentBaselineFrameCount"]) <= 0:
+        raise RuntimeError(f"{variant} did not execute its dedicated per-frame route")
+    for name in names[3:]:
+        if int(observed[name]) != 0:
+            raise RuntimeError(f"{variant} illegally touched SG-APT payload state: {name}={observed[name]}")
+    return observed
+
+
 def validate_determinism(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -328,7 +403,7 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                         result = final_run.execute_case(
                             case, viewer, case_output, repo, dry_run=args.dry_run)
                         telemetry_validation = None
-                        if not args.dry_run and variant != "B0":
+                        if not args.dry_run and variant not in {"B0", "B1", "B8"}:
                             telemetry_path = case_output / (
                                 str(case["run_name"]) + "_novelty01.csv")
                             telemetry_validation = preflight(
@@ -337,6 +412,8 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                                 raise RuntimeError(
                                     "Novelty 01 formal telemetry validation failed: " +
                                     json.dumps(telemetry_validation["errors"], ensure_ascii=False))
+                        independent_evidence = validate_independent_baseline_evidence(
+                            result, case_output, variant=variant, dry_run=args.dry_run)
                         results.append({
                             "caseId": case["case_id"],
                             "variant": variant,
@@ -345,6 +422,8 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                             "ok": True,
                             "result": result,
                             "novelty01TelemetryValidation": telemetry_validation,
+                            "independentBaselineRoute": variant in {"B1", "B8"},
+                            "independentBaselineEvidence": independent_evidence,
                         })
                     except Exception as exc:
                         results.append({

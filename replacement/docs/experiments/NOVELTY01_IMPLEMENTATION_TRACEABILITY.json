@@ -4,6 +4,7 @@
     "Not Implemented",
     "Source Present",
     "Connected",
+    "Execution Pending",
     "Build Passed",
     "Shader Passed",
     "Smoke Passed",
@@ -82,7 +83,7 @@
     {
       "id": "N01-008",
       "requirement": "Release x64 build",
-      "status": "Not Implemented",
+      "status": "Execution Pending",
       "evidence": [
         "must run Run_Novelty01_Complete_Verification.bat on Windows"
       ]
@@ -90,7 +91,7 @@
     {
       "id": "N01-009",
       "requirement": "FXC compile all entry points",
-      "status": "Not Implemented",
+      "status": "Execution Pending",
       "evidence": [
         "must run preflight --require-fxc on Windows"
       ]
@@ -98,7 +99,7 @@
     {
       "id": "N01-010",
       "requirement": "30-minute soak",
-      "status": "Not Implemented",
+      "status": "Execution Pending",
       "evidence": [
         "matrix soak profile exists; result not yet recorded"
       ]
@@ -106,9 +107,46 @@
     {
       "id": "N01-011",
       "requirement": "GTX1660 formal run",
-      "status": "Not Implemented",
+      "status": "Execution Pending",
       "evidence": [
         "matrix gtx1660 profile exists; hardware result not yet recorded"
+      ]
+    },
+    {
+      "id": "N01-012",
+      "requirement": "Independent B1 and B8 per-frame routes without SG-APT representation",
+      "status": "Connected",
+      "evidence": [
+        "VariantExecutionContract",
+        "ExecuteNovelty01IndependentBaseline",
+        "n01UsesSgaptRepresentation"
+      ]
+    },
+    {
+      "id": "N01-013",
+      "requirement": "Novelty01 telemetry reaches PerformanceSample, CSV, JSONL and Matrix",
+      "status": "Connected",
+      "evidence": [
+        "11_experiment_env_and_performance_sample.inl",
+        "validate_independent_baseline_evidence"
+      ]
+    },
+    {
+      "id": "N01-014",
+      "requirement": "Separated quality, performance, determinism, soak and GTX1660 orchestration",
+      "status": "Connected",
+      "evidence": [
+        "hairgpu_novelty01_formal_suite.py",
+        "Run_Novelty01_Formal_Matrix_And_Gate.bat"
+      ]
+    },
+    {
+      "id": "N01-015",
+      "requirement": "Fail-closed final merge gate",
+      "status": "Connected",
+      "evidence": [
+        "hairgpu_novelty01_gate.py",
+        "novelty01_merge_gate.json"
       ]
     }
   ]

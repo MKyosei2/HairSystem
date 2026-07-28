@@ -193,3 +193,190 @@ def test_report_and_resource_audit_are_source_complete() -> None:
     ):
         path = ROOT / relative
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+
+def test_variant_execution_contract_has_independent_b1_b8_routes() -> None:
+    header = (ROOT / "include/hairgpu/SegmentGroupAdaptivePayload.h").read_text(
+        encoding="utf-8")
+    runtime = (
+        ROOT /
+        "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "VariantExecutionContract",
+        "ExecutionRoute::IndependentFullDynamicB1",
+        "ExecutionRoute::IndependentStrongestPracticalB8",
+        "kSgaptRepresentationFeatureMask",
+        "VariantContractAcceptsFeatureMask",
+    ):
+        assert marker in header
+    for marker in (
+        "ExecuteNovelty01IndependentBaseline",
+        "N01IsIndependentBaseline",
+        "N01ValidateExecutionContract",
+        "m_novelty01Runtime",
+        "StepSimulation(dt);",
+    ):
+        assert marker in runtime
+
+
+def test_independent_baselines_report_no_sgapt_representation() -> None:
+    runtime = (
+        ROOT /
+        "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
+    ).read_text(encoding="utf-8")
+    telemetry = (ROOT / "include/hairgpu/HairNoveltyTelemetry.h").read_text(
+        encoding="utf-8")
+    assert "n01UsesSgaptRepresentation = 0u" in runtime
+    assert "HairTelemetryAvailability_Novelty01Baseline" in runtime
+    assert "n01IndependentBaselineFrameCount" in runtime
+    assert "n01ExecutionRoute" in telemetry
+    assert "n01UsesSgaptRepresentation" in telemetry
+    assert "n01IndependentBaselineFrameCount" in telemetry
+
+
+def test_matrix_does_not_require_sgapt_csv_for_b1_b8() -> None:
+    source = (ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py").read_text(
+        encoding="utf-8")
+    assert 'variant not in {"B0", "B1", "B8"}' in source
+    assert '"independentBaselineRoute": variant in {"B1", "B8"}' in source
+
+
+def test_final_merge_gate_fails_closed_on_missing_evidence() -> None:
+    source = (ROOT / "tools/final_stage/hairgpu_novelty01_gate.py").read_text(
+        encoding="utf-8")
+    compile(source, "hairgpu_novelty01_gate.py", "exec")
+    for marker in (
+        "E_METRIC_UNAVAILABLE",
+        "E_BASELINE_SGAPT_CONTAMINATION",
+        "E_BASELINE_PAYLOAD_CONTAMINATION",
+        "fxc_entrypoints.json",
+        "release_x64_build.log",
+        "native_self_test.log",
+    ):
+        assert marker in source
+
+
+def test_windows_formal_gate_is_connected() -> None:
+    workflow = (ROOT / ".github/workflows/novelty01-formal-gate.yml").read_text(
+        encoding="utf-8")
+    verification = (
+        ROOT / "tools/final_stage/Run_Novelty01_Complete_Verification.bat"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "windows-2022",
+        "microsoft/setup-msbuild@v2",
+        "Run_Novelty01_Complete_Verification.bat",
+        "actions/upload-artifact@v4",
+    ):
+        assert marker in workflow
+    for marker in (
+        "--require-fxc",
+        "--fxc-json artifacts\\fxc_entrypoints.json",
+        "release_x64_build.log",
+        "native_self_test.log",
+    ):
+        assert marker in verification
+
+
+def test_formal_contract_requires_independent_baseline_proof() -> None:
+    import json
+    contract = json.loads(
+        (ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json").read_text(
+            encoding="utf-8"))
+    for variant in ("B1", "B8"):
+        row = contract["baselines"][variant]
+        assert row["usesSgaptRepresentation"] is False
+        assert row["requiresDedicatedPerFrameRoute"] is True
+        assert "SegmentGroupCoreBuffer" in row["forbiddenRuntimeResources"]
+        assert "OptionalPayloadPool" in row["forbiddenRuntimeResources"]
+    independent = contract["mergeGate"]["independentBaselineRequirements"]
+    assert independent["n01UsesSgaptRepresentationExpected"] == 0
+    assert independent["sgaptPayloadActiveExpected"] == 0
+
+
+def test_novelty01_evidence_reaches_performance_csv_and_jsonl() -> None:
+    header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(
+        encoding="utf-8")
+    exporter = (
+        ROOT /
+        "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl"
+    ).read_text(encoding="utf-8")
+    for field in (
+        "n01ExecutionRoute",
+        "n01UsesSgaptRepresentation",
+        "n01IndependentBaselineFrameCount",
+        "n01PayloadActiveCount",
+        "n01InvalidPayloadIndexCount",
+        "n01DuplicatePayloadOwnerCount",
+    ):
+        assert field in header
+        assert f"sample.{field} = m_noveltyTelemetry.{field};" in exporter
+        assert f'\\"{field}\\"' in exporter
+    assert "delayedTelemetryReadCount,n01ExperimentVariant,n01ExecutionRoute" in exporter
+
+
+def test_matrix_fails_closed_when_independent_baseline_evidence_is_missing() -> None:
+    source = (ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py").read_text(
+        encoding="utf-8")
+    for marker in (
+        "validate_independent_baseline_evidence",
+        "Independent baseline {variant} is missing fail-closed evidence",
+        "n01IndependentBaselineFrameCount",
+        "illegally touched SG-APT payload state",
+        'expected_route = 2 if variant == "B1" else 9',
+    ):
+        assert marker in source
+
+
+def test_formal_suite_separates_quality_performance_determinism_and_soak() -> None:
+    source = (ROOT / "tools/final_stage/hairgpu_novelty01_formal_suite.py").read_text(
+        encoding="utf-8")
+    compile(source, "hairgpu_novelty01_formal_suite.py", "exec")
+    for marker in (
+        '("formal", "all", "all")',
+        '("performance", "B0,B1,B8,P", "all")',
+        '("determinism", "P", "S01,S02,S03,S06,S12,S16,S18")',
+        '("soak", "P", "S15")',
+        '("gtx1660", "B1,B8,P", "all")',
+        "novelty01_performance_matrix_summary.json",
+        "novelty01_determinism_summary.json",
+        "novelty01_soak_summary.json",
+    ):
+        assert marker in source
+
+
+def test_report_uses_ground_truth_free_performance_matrix_for_frame_time() -> None:
+    source = (ROOT / "tools/final_stage/hairgpu_novelty01_report.py").read_text(
+        encoding="utf-8")
+    assert "--performance-matrix-summary" in source
+    assert "performance_metrics" in source
+    assert "metric_rows = performance_rows if metric in performance_metrics" in source
+    assert "independentBaselinesUncontaminated" in source
+
+
+def test_merge_gate_requires_all_runtime_evidence_profiles() -> None:
+    source = (ROOT / "tools/final_stage/hairgpu_novelty01_gate.py").read_text(
+        encoding="utf-8")
+    for marker in (
+        "novelty01_performance_matrix_summary.json",
+        "novelty01_determinism_summary.json",
+        "novelty01_soak_summary.json",
+        "E_DETERMINISM_ISSUES",
+        'required_scenarios={"S15"}',
+        "independentBaselinesUncontaminated",
+    ):
+        assert marker in source
+
+
+def test_soak_memory_gate_is_frozen_and_fail_closed() -> None:
+    import json
+    frozen = json.loads(
+        (ROOT / "docs/sample_assets/novelty01_frozen_parameters.json").read_text(
+            encoding="utf-8"))
+    assert frozen["parameters"]["soakMaximumMemoryGrowthMiB"]["value"] == 32.0
+    gate = (ROOT / "tools/final_stage/hairgpu_novelty01_gate.py").read_text(
+        encoding="utf-8")
+    assert "E_SOAK_MEMORY_UNAVAILABLE" in gate
+    assert "E_SOAK_MEMORY_GROWTH" in gate
+    assert "max(growth_mib) > 32.0" in gate

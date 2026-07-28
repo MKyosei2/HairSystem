@@ -1,0 +1,87 @@
+name: Novelty01 Formal Source Gate
+
+on:
+  push:
+    branches:
+      - Novelty01
+      - feature/novelty01-69-4-complete
+  pull_request:
+    paths:
+      - 'apps/dx11_viewer/**'
+      - 'include/hairgpu/**'
+      - 'tools/final_stage/**'
+      - 'tests/final_stage/**'
+      - 'benchmarks/novelty01/**'
+      - 'docs/experiments/NOVELTY01_*'
+      - 'docs/sample_assets/novelty01_frozen_parameters.json'
+      - '設計書/01_TopNovelty_NewStrandDataType.md'
+      - 'HairSystem.vcxproj'
+      - '.github/workflows/novelty01-formal-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: novelty01-formal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-build-shader-gate:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: '1'
+      HAIRGPU_N01_FORMAL_TELEMETRY: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python test dependency
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Add MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate FXC
+        shell: pwsh
+        run: |
+          $candidates = Get-ChildItem `
+            'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe' `
+            -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
+          if (-not $candidates) {
+            throw 'fxc.exe was not found in the Windows SDK.'
+          }
+          $fxc = $candidates[0].FullName
+          "FXC=$fxc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Split-Path $fxc | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Using FXC: $fxc"
+
+      - name: Verify source, shaders, Release x64, and native self-tests
+        shell: cmd
+        run: tools\final_stage\Run_Novelty01_Complete_Verification.bat
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: novelty01-source-gate-${{ github.sha }}
+          path: |
+            artifacts/novelty01_preflight.json
+            artifacts/fxc_entrypoints.json
+            artifacts/novelty01_resource_audit.json
+            artifacts/novelty01_pytest.log
+            artifacts/release_x64_build.log
+            artifacts/native_self_test.log
+          if-no-files-found: warn
+          retention-days: 30

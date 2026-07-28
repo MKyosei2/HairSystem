@@ -5,7 +5,7 @@
 - Repository: `MKyosei2/HairSystem`
 - Branch source: `Novelty01`
 - Verified source commit: `a0521e258acdbd9d71262172d6d2ba208c338eeb`
-- Integration revision: `69.3-package`
+- Integration revision: `69.4-full-implementation`
 - Proposal: Segment-Group Adaptive Payload Type（SG-APT）
 
 本プロトコルは、ソースが存在することと、実機で合格したことを区別する。`Source Present`または`Connected`を、`Build Passed`、`Formal Passed`、`Hardware Passed`として扱ってはならない。
@@ -23,7 +23,7 @@ benchmarks/novelty01/sgapt_scenarios
 docs/sample_assets/novelty01_frozen_parameters.json
 ```
 
-`overlay/`はリポジトリ内に置かない。配布用適用スクリプトも実行リポジトリへコピーしない。同名ファイルを二系統で管理しない。
+本Versionでは圧縮を後工程へ分離するため、`overlay/`および`replacement/`が残ることを許容する。ただし、Visual Studio Project、Runtime Shader探索、正式Runner、Source Hashがそれらを参照することを禁止する。正式な実行結果は上記Source of Truthだけから生成する。
 
 ## 3. 実装状態
 
@@ -33,6 +33,7 @@ docs/sample_assets/novelty01_frozen_parameters.json
 Not Implemented
 Source Present
 Connected
+Execution Pending
 Build Passed
 Shader Passed
 Smoke Passed
@@ -207,9 +208,12 @@ CoreとPayloadだけの式をEnd-to-End VRAMとして報告しない。
 次を満たすまでMainへMergeしない。
 
 - `#define private`なし
-- `overlay/`なし
+- `HairSystem.vcxproj`、Runtime、正式Runnerから`overlay/`／`replacement/`参照なし
 - Release x64 Build Passed
 - FXC Entry Point全件Passed
+- Novelty01 CounterがPerformanceSample／CSV／JSONL／Matrixへ到達
+- B1／B8で`n01UsesSgaptRepresentation = 0`
+- B1／B8のSG-APT Payload活動 0
 - B0 Regressionなし
 - P Smoke Passed
 - Invalid Payload Index 0

@@ -42,10 +42,13 @@
             switch (variant)
             {
             case ExperimentVariant::B1_OptimizedFullDynamic:
-                mask &= ~(Feature_OptionalPayload |
-                          Feature_GroundTruth |
-                          Feature_ShadowDynamic |
-                          Feature_TransitionBudget);
+                // Dedicated B1 route executes the existing optimized full
+                // solver without allocating or touching SG-APT representation
+                // resources. Keep only common solver/telemetry features.
+                mask =
+                    Feature_BaselineEquivalentSolve |
+                    Feature_ByteTelemetry |
+                    Feature_FormalTelemetry;
                 break;
             case ExperimentVariant::B2_SleepingFlag:
                 mask &= ~(Feature_OptionalPayload |
@@ -131,6 +134,48 @@
                 break;
             }
             return mask;
+        }
+
+
+        hairgpu::novelty01::VariantExecutionContract
+        N01ExecutionContractForVariant(
+            hairgpu::novelty01::ExperimentVariant variant)
+        {
+            return hairgpu::novelty01::GetVariantExecutionContract(variant);
+        }
+
+        bool N01ValidateExecutionContract(
+            const hairgpu::novelty01::VariantExecutionContract& contract,
+            uint64_t featureMask,
+            std::wstring& errorText)
+        {
+            if (!hairgpu::novelty01::VariantContractAcceptsFeatureMask(
+                    contract, featureMask))
+            {
+                std::wstringstream stream;
+                stream << L"Novelty 01 variant contract rejected feature mask 0x"
+                       << std::hex << featureMask
+                       << L" required=0x" << contract.requiredFeatures
+                       << L" forbidden=0x" << contract.forbiddenFeatures;
+                errorText = stream.str();
+                return false;
+            }
+            if (!contract.usesSgaptRepresentation &&
+                (featureMask & hairgpu::novelty01::kSgaptRepresentationFeatureMask) != 0ull)
+            {
+                errorText =
+                    L"An independent baseline attempted to enable SG-APT representation features.";
+                return false;
+            }
+            return true;
+        }
+
+        bool N01IsIndependentBaseline(
+            hairgpu::novelty01::ExperimentVariant variant)
+        {
+            const auto contract = N01ExecutionContractForVariant(variant);
+            return contract.requiresDedicatedPerFrameRoute &&
+                   !contract.usesSgaptRepresentation;
         }
 
         hairgpu::novelty01::ExperimentVariant N01ParseVariant(
@@ -524,6 +569,11 @@
         hairgpu::novelty01::ExperimentVariant variant =
             hairgpu::novelty01::ExperimentVariant::P;
         uint64_t featureMask = hairgpu::novelty01::kAllFeatures;
+        hairgpu::novelty01::VariantExecutionContract executionContract =
+            hairgpu::novelty01::GetVariantExecutionContract(
+                hairgpu::novelty01::ExperimentVariant::P);
+        bool executionContractValidated = false;
+        uint32_t independentBaselineFrameCount = 0u;
         hairgpu::novelty01::FormalAggregate formalAggregate = {};
 
         uint32_t observedSimulationResetVersion = 0u;
@@ -915,6 +965,20 @@
             static_cast<uint32_t>(m_experimentCase.scenarioId));
         runtime->featureMask =
             N01ReadFeatureMaskForVariant(runtime->variant);
+        runtime->executionContract =
+            N01ExecutionContractForVariant(runtime->variant);
+        std::wstring executionContractError;
+        if (!N01ValidateExecutionContract(
+                runtime->executionContract,
+                runtime->featureMask,
+                executionContractError))
+        {
+            SetFatalExperimentFailure(
+                1411u,
+                executionContractError);
+            return false;
+        }
+        runtime->executionContractValidated = true;
         // All formal thresholds are supplied by the frozen parameter contract.
         // The matrix runner exports these environment variables from
         // docs/sample_assets/novelty01_frozen_parameters.json. Interactive runs
@@ -1840,6 +1904,207 @@
         }
     }
 
+
+    void GpuHairViewer::ApplyNovelty01IndependentBaselineScenarioForTick(
+        float dt,
+        uint32_t designScenarioIndex)
+    {
+        const uint32_t scenario = std::min<uint32_t>(designScenarioIndex, 17u);
+        const uint32_t eventStart = std::max<uint32_t>(
+            m_experimentCase.warmupFrames,
+            1u);
+        const float time = static_cast<float>(m_simulationTickIndex) * dt;
+        bool eventApplied = false;
+
+        // Independent baselines receive the same external input classes as P,
+        // but never receive SG-APT-internal payload/version fault injection.
+        // S18 therefore proves that the fault is isolated to the proposed data
+        // representation rather than corrupting shared baseline state.
+        switch (scenario)
+        {
+        case 0u: // S01 complete stillness
+            m_enableScalpMotion = false;
+            m_simConfig.windStrength = 0.0f;
+            break;
+        case 1u: // S02 root translation (canonical timeline owns exact transform)
+        case 2u: // S03 root rotation
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.0f;
+            eventApplied = true;
+            break;
+        case 3u: // S04 weak wind
+            m_enableScalpMotion = false;
+            m_simConfig.windStrength = 0.18f;
+            eventApplied = true;
+            break;
+        case 4u: // S05 normal head motion
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.08f;
+            eventApplied = true;
+            break;
+        case 5u: // S06 local collision
+            m_enableScalpMotion = false;
+            m_simConfig.windStrength = 0.04f;
+            if (!m_colliders.spheres.empty())
+            {
+                hairgpu::SphereCollider& collider = m_colliders.spheres.front();
+                collider.center = m_scalpCenter + hairgpu::Vec3(
+                    0.11f + 0.035f * std::sin(time * 0.9f),
+                    0.02f,
+                    0.0f);
+                ++m_scenarioCollisionCandidateCount;
+                eventApplied = true;
+            }
+            break;
+        case 6u: // S07 multiple colliders
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.12f;
+            for (size_t index = 0u; index < m_colliders.spheres.size(); ++index)
+            {
+                const float phase =
+                    time * (0.55f + 0.11f * static_cast<float>(index));
+                m_colliders.spheres[index].center.x +=
+                    0.0008f * std::sin(phase);
+                m_colliders.spheres[index].center.z +=
+                    0.0008f * std::cos(phase);
+            }
+            eventApplied =
+                !m_colliders.spheres.empty() || !m_colliders.capsules.empty();
+            m_scenarioCollisionCandidateCount += eventApplied ? 1u : 0u;
+            break;
+        case 7u: // S08 single-strand edit invalidation
+            if (m_simulationTickIndex == eventStart)
+            {
+                ++m_editVersion;
+                ++m_scenarioEditInvalidationCount;
+                eventApplied = true;
+            }
+            break;
+        case 8u: // S09 continuous brush edit invalidation
+            if ((m_simulationTickIndex % 8u) == 0u)
+            {
+                ++m_editVersion;
+                ++m_scenarioEditInvalidationCount;
+                eventApplied = true;
+            }
+            break;
+        case 9u: // S10 strong wind
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 1.20f;
+            eventApplied = true;
+            break;
+        case 10u: // S11 all dynamic
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.95f;
+            eventApplied = true;
+            break;
+        case 11u: // S12 static/dynamic boundary stress
+            m_enableScalpMotion = false;
+            m_simConfig.windStrength = 0.36f;
+            eventApplied = true;
+            break;
+        case 12u: // S13 state-thrashing stress
+            m_simConfig.windStrength =
+                ((m_simulationTickIndex / 8u) & 1u) != 0u ? 0.65f : 0.0f;
+            ++m_scenarioStateTransitionCount;
+            eventApplied = true;
+            break;
+        case 13u: // S14 multi-guide follower dependency
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.22f;
+            eventApplied = true;
+            break;
+        case 14u: // S15 30-minute soak
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.15f;
+            eventApplied = true;
+            break;
+        case 15u: // S16 determinism
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.20f;
+            eventApplied = true;
+            break;
+        case 16u: // S17 payload stress; baseline receives equivalent physical load
+            m_enableScalpMotion = true;
+            m_simConfig.windStrength = 0.95f;
+            eventApplied = true;
+            break;
+        case 17u: // S18 SG-APT fault injection is intentionally not applied
+            eventApplied = m_simulationTickIndex == eventStart;
+            break;
+        default:
+            break;
+        }
+
+        if (eventApplied)
+        {
+            ++m_scenarioAppliedEventCount;
+            ++m_noveltyTelemetry.scenarioAppliedEventCount;
+            m_noveltyTelemetry.availabilityMask |=
+                hairgpu::HairTelemetryAvailability_Scenario;
+        }
+    }
+
+    bool GpuHairViewer::ExecuteNovelty01IndependentBaseline(
+        float dt,
+        hairgpu::novelty01::ExperimentVariant variant)
+    {
+        if (!N01IsIndependentBaseline(variant))
+        {
+            return false;
+        }
+
+        const auto contract = N01ExecutionContractForVariant(variant);
+        const uint64_t featureMask = N01ReadFeatureMaskForVariant(variant);
+        std::wstring contractError;
+        if (!N01ValidateExecutionContract(
+                contract,
+                featureMask,
+                contractError))
+        {
+            SetFatalExperimentFailure(1412u, contractError);
+            return true;
+        }
+
+        const uint32_t scenarioIndex = N01ParseDesignScenarioIndex(
+            GetEnvironmentVariableString(L"HAIRGPU_N01_DESIGN_SCENARIO"),
+            static_cast<uint32_t>(m_experimentCase.scenarioId));
+        ApplyNovelty01IndependentBaselineScenarioForTick(dt, scenarioIndex);
+
+        const bool previousActiveSetRuntime = m_enableActiveSetRuntime;
+        const CpuReadbackMode previousReadbackMode = m_cpuReadbackMode;
+
+        // B1 is a full-dynamic GPU-resident route. B8 uses the existing
+        // active-set/tier infrastructure and common render optimizations, but
+        // never creates SG-APT Core/Payload/Descriptor resources.
+        m_enableActiveSetRuntime =
+            variant ==
+                hairgpu::novelty01::ExperimentVariant::B8_StrongestPractical;
+        m_cpuReadbackMode = CpuReadbackMode::Off;
+        if (m_enableActiveSetRuntime)
+        {
+            SyncActiveSetGpuBuffers();
+        }
+
+        StepSimulation(dt);
+
+        m_enableActiveSetRuntime = previousActiveSetRuntime;
+        m_cpuReadbackMode = previousReadbackMode;
+
+        m_noveltyTelemetry.n01ExperimentVariant =
+            static_cast<uint32_t>(variant);
+        m_noveltyTelemetry.n01FeatureMask = featureMask;
+        m_noveltyTelemetry.n01ExecutionRoute =
+            static_cast<uint32_t>(contract.route);
+        m_noveltyTelemetry.n01UsesSgaptRepresentation = 0u;
+        ++m_noveltyTelemetry.n01IndependentBaselineFrameCount;
+        m_noveltyTelemetry.availabilityMask |=
+            hairgpu::HairTelemetryAvailability_Novelty01Baseline;
+        m_noveltyTelemetry.metricAvailabilityMask |=
+            hairgpu::HairTelemetryAvailability_Novelty01Baseline;
+        return true;
+    }
+
     void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
     {
         if (m_experimentCase.methodId !=
@@ -1853,6 +2118,15 @@
         m_noveltyTelemetry.sourceFrameIndex = m_globalFrameIndex;
         if (m_experimentRunStatus == ExperimentRunStatus::Failed)
         {
+            return;
+        }
+
+        const hairgpu::novelty01::ExperimentVariant requestedVariant =
+            N01ParseVariant(
+                GetEnvironmentVariableString(L"HAIRGPU_N01_VARIANT"));
+        if (ExecuteNovelty01IndependentBaseline(dt, requestedVariant))
+        {
+            ++m_simulationTickIndex;
             return;
         }
 
@@ -2726,6 +3000,10 @@
                 hairgpu::novelty01::Counter_CacheInvalidations);
             m_noveltyTelemetry.n01ExperimentVariant =
                 static_cast<uint32_t>(runtime.variant);
+            m_noveltyTelemetry.n01ExecutionRoute =
+                static_cast<uint32_t>(runtime.executionContract.route);
+            m_noveltyTelemetry.n01UsesSgaptRepresentation =
+                runtime.executionContract.usesSgaptRepresentation ? 1u : 0u;
             m_noveltyTelemetry.n01FeatureMask = runtime.featureMask;
             m_noveltyTelemetry.n01PayloadActiveCount = get(
                 hairgpu::novelty01::Counter_PayloadActive);

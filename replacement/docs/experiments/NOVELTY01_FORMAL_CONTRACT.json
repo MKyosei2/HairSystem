@@ -1,8 +1,8 @@
 {
   "schema": "hairgpu-novelty01-formal-contract-v1",
-  "documentRevision": "69.3-package",
+  "documentRevision": "69.4-full-implementation",
   "branch": "Novelty01",
-  "sourceCommit": "a0521e258acdbd9d71262172d6d2ba208c338eeb",
+  "sourceCommit": "Novelty01 HEAD at apply time; anchors validated",
   "sourceOfTruth": {
     "runtime": [
       "apps/dx11_viewer/src",
@@ -14,8 +14,12 @@
       "benchmarks/novelty01/sgapt_scenarios",
       "docs/sample_assets/novelty01_frozen_parameters.json"
     ],
-    "overlayDirectoryAllowed": false,
-    "oldApplyScriptsAllowedInRepository": false
+    "overlayDirectoryAllowed": true,
+    "oldApplyScriptsAllowedInRepository": true,
+    "replacementDirectoryAllowed": true,
+    "distributionCopiesMayRemainUntilCompressionPass": true,
+    "distributionCopiesMustNotBeReferencedByBuild": true,
+    "compressionDeferredByUser": true
   },
   "baselines": {
     "B0": {
@@ -25,15 +29,26 @@
       "description": "Current full dynamic baseline"
     },
     "B1": {
-      "route": "controlled_full_dynamic",
+      "route": "independent_full_dynamic_b1",
       "method": "P",
-      "usesControlledDispatcher": true,
+      "usesControlledDispatcher": false,
       "description": "Optimized full dynamic; common GPU optimizations only",
       "disabled": [
         "OptionalPayload",
         "GroundTruth",
         "ShadowDynamic",
         "TransitionBudget"
+      ],
+      "usesSgaptRepresentation": false,
+      "requiresDedicatedPerFrameRoute": true,
+      "telemetrySource": "legacy_frame_telemetry_plus_n01_baseline_route_fields",
+      "forbiddenRuntimeResources": [
+        "SegmentGroupCoreBuffer",
+        "OptionalPayloadPool",
+        "PayloadOwnerTable",
+        "ReuseDescriptorBuffer",
+        "StaticCacheBuffer",
+        "SgaptCompactionLists"
       ]
     },
     "B2": {
@@ -48,7 +63,8 @@
         "RenderDirtyRange",
         "FullDynamicFastPath",
         "GroundTruth"
-      ]
+      ],
+      "usesControlledBaselineAdapter": true
     },
     "B3": {
       "route": "controlled_active_list",
@@ -60,7 +76,8 @@
         "FollowerDependency",
         "RenderDirtyRange",
         "GroundTruth"
-      ]
+      ],
+      "usesControlledBaselineAdapter": true
     },
     "B4": {
       "route": "controlled_buffer_migration",
@@ -71,7 +88,8 @@
         "OptionalPayload",
         "FixedGroupIndex",
         "GroundTruth"
-      ]
+      ],
+      "usesControlledBaselineAdapter": true
     },
     "B5": {
       "route": "controlled_simple_payload",
@@ -85,7 +103,8 @@
         "IndirectDispatch",
         "BaselineEquivalentSolve",
         "FormalTelemetry"
-      ]
+      ],
+      "usesControlledBaselineAdapter": true
     },
     "B6": {
       "route": "controlled_no_incremental_blocks",
@@ -94,7 +113,8 @@
       "description": "SG-APT but all descriptors evaluated",
       "disabled": [
         "IncrementalBlocks"
-      ]
+      ],
+      "usesControlledBaselineAdapter": true
     },
     "B7": {
       "route": "controlled_guide_local_only",
@@ -104,12 +124,13 @@
       "disabled": [
         "FollowerDependency",
         "RenderDirtyRange"
-      ]
+      ],
+      "usesControlledBaselineAdapter": true
     },
     "B8": {
-      "route": "controlled_strongest_practical",
+      "route": "independent_strongest_practical_b8",
       "method": "P",
-      "usesControlledDispatcher": true,
+      "usesControlledDispatcher": false,
       "description": "Strong common optimizations without SG-APT representation contract",
       "disabled": [
         "OptionalPayload",
@@ -119,6 +140,17 @@
         "TransitionBudget",
         "HardSoftDescriptor",
         "GroundTruth"
+      ],
+      "usesSgaptRepresentation": false,
+      "requiresDedicatedPerFrameRoute": true,
+      "telemetrySource": "legacy_frame_telemetry_plus_n01_baseline_route_fields",
+      "forbiddenRuntimeResources": [
+        "SegmentGroupCoreBuffer",
+        "OptionalPayloadPool",
+        "PayloadOwnerTable",
+        "ReuseDescriptorBuffer",
+        "StaticCacheBuffer",
+        "SgaptCompactionLists"
       ]
     },
     "P": {
@@ -543,5 +575,43 @@
         "finalPositionHash"
       ]
     }
-  }
+  },
+  "mergeGate": {
+    "requiredArtifacts": [
+      "novelty01_preflight.json",
+      "novelty01_resource_audit.json",
+      "novelty01_matrix_summary.json",
+      "novelty01_performance_matrix_summary.json",
+      "novelty01_determinism_summary.json",
+      "novelty01_soak_summary.json",
+      "novelty01_formal_report.json",
+      "novelty01_gtx1660_summary.json",
+      "release_x64_build.log",
+      "fxc_entrypoints.json",
+      "native_self_test.log"
+    ],
+    "hardFailureConditions": {
+      "releaseX64BuildFailed": true,
+      "fxcEntryPointFailureCountGreaterThan": 0,
+      "invalidPayloadIndexGreaterThan": 0,
+      "duplicatePayloadOwnerGreaterThan": 0,
+      "nanOrInfGreaterThan": 0,
+      "fatalFailureGreaterThan": 0,
+      "s17FallbackFailureGreaterThan": 0,
+      "s18RecoveryFailureGreaterThan": 0,
+      "determinismMismatchGreaterThan": 0,
+      "payloadLeakGreaterThan": 0,
+      "missingGtx1660EvidenceWhenClaiming60Fps": true
+    },
+    "independentBaselineRequirements": {
+      "variants": [
+        "B1",
+        "B8"
+      ],
+      "n01UsesSgaptRepresentationExpected": 0,
+      "sgaptPayloadActiveExpected": 0,
+      "sgaptPayloadAllocationExpected": 0
+    }
+  },
+  "revision": "69.4-full-implementation"
 }

@@ -22,7 +22,7 @@ from typing import Iterable
 
 BASE_MAIN_COMMIT = "8d19bb546f3505fe25436d6ffa5b390a9b83897a"
 SOURCE_COMMIT = "a0521e258acdbd9d71262172d6d2ba208c338eeb"
-SCHEMA = "novelty01-preflight-v3"
+SCHEMA = "novelty01-preflight-v4"
 
 REQUIRED_FILES = (
     "include/hairgpu/SegmentGroupAdaptivePayload.h",
@@ -31,6 +31,7 @@ REQUIRED_FILES = (
     "HairSystem.vcxproj",
     "apps/dx11_viewer/src/GpuHairViewer_parts/15_shutdown_and_tail.inl",
     "apps/dx11_viewer/src/GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl",
+    "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl",
     "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
     "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl",
     "apps/dx11_viewer/src/GpuHairViewer.cpp",
@@ -40,6 +41,11 @@ REQUIRED_FILES = (
     "tools/final_stage/hairgpu_novelty01_matrix.py",
     "tools/final_stage/hairgpu_novelty01_report.py",
     "tools/final_stage/hairgpu_novelty01_resource_audit.py",
+    "tools/final_stage/hairgpu_novelty01_gate.py",
+    "tools/final_stage/hairgpu_novelty01_formal_suite.py",
+    "tools/final_stage/Run_Novelty01_Formal_Matrix_And_Gate.bat",
+    "tools/final_stage/Run_Novelty01_Complete_Verification.bat",
+    ".github/workflows/novelty01-formal-gate.yml",
     "tests/final_stage/test_novelty01_complete_contract.py",
     "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json",
     "docs/experiments/NOVELTY01_IMPLEMENTATION_TRACEABILITY.json",
@@ -153,6 +159,11 @@ CHECKLIST = {
     "determinism": ("determinism", "stateSequenceHash", "compactionSequenceHash"),
     "gtx1660": ("GTX1660", "hardware_profile"),
     "design_scenarios": ("ApplyNovelty01DesignScenarioForTick", "N01InjectDesignScenarioCS", "S17 Payload pool stress", "S18 Version/descriptor fault injection"),
+    "independent_baseline_routes": ("ExecuteNovelty01IndependentBaseline", "IndependentFullDynamicB1", "IndependentStrongestPracticalB8", "n01UsesSgaptRepresentation"),
+    "variant_contract_guard": ("VariantExecutionContract", "VariantContractAcceptsFeatureMask", "N01ValidateExecutionContract"),
+    "formal_merge_gate": ("hairgpu_novelty01_gate.py", "novelty01-formal-gate.yml", "fxc_entrypoints.json"),
+    "formal_suite_orchestration": ("hairgpu_novelty01_formal_suite.py", "novelty01_determinism_summary.json", "novelty01_soak_summary.json"),
+    "performance_export_trace": ("sample.n01ExecutionRoute", "n01UsesSgaptRepresentation", "ExportPerformanceJsonl"),
 }
 
 FORBIDDEN_PATTERNS = (
@@ -368,7 +379,7 @@ def validate_formal_contract(root: Path, findings: list[Finding]) -> None:
         "dynamicVelocityThresholdMm", "boundaryErrorThresholdMm",
         "collisionSafetyPaddingMm", "shadowErrorThresholdMm",
         "fullDynamicEnterRatio", "fullDynamicExitRatio",
-        "fullDynamicDecisionFrames"}
+        "fullDynamicDecisionFrames", "soakMaximumMemoryGrowthMiB"}
     missing = required_parameters - set(parameters)
     if missing:
         findings.append(Finding("error", "E_FROZEN_PARAMETERS", "Missing frozen parameters: " + ", ".join(sorted(missing)), str(frozen_path)))
@@ -407,23 +418,38 @@ def validate_formal_contract(root: Path, findings: list[Finding]) -> None:
             findings.append(Finding("error", "E_RUNTIME_CONTRACT_ROUTE", f"Runtime contract marker is missing: {marker}", str(runtime_path)))
     if "HairSegmentGroupAdaptivePayloadRuntime.hlsl" not in project or "SegmentGroupAdaptivePayload.h" not in project:
         findings.append(Finding("error", "E_MSBUILD_REGISTRATION", "Novelty 01 Header/Shader is not registered in MSBuild.", str(project_path)))
-    for marker in ("# 49. Version 69.3 実装統合情報", "# 60. Version 69.3 Merge Gate", "a0521e258acdbd9d71262172d6d2ba208c338eeb"):
+    for marker in ("# 49. Version 69.3 実装統合情報",
+                   "# 60. Version 69.3 Merge Gate",
+                   "# 61. Version 69.4 完全実装追補",
+                   "a0521e258acdbd9d71262172d6d2ba208c338eeb"):
         if marker not in design:
             findings.append(Finding("error", "E_DESIGN_TRACEABILITY", f"Design document marker is missing: {marker}", str(design_path)))
 
+    # Distribution copies are not compiled and are tolerated in 69.4 because
+    # this package intentionally postpones source-file compression. The runtime
+    # source of truth remains apps/, include/, tools/final_stage/, benchmarks/,
+    # tests/, docs/, and 設計書/.
     if (root / "overlay").exists():
-        findings.append(Finding("error", "E_DUPLICATE_OVERLAY", "overlay/ must not remain in the runtime repository.", str(root / "overlay")))
+        findings.append(Finding("warning", "W_DUPLICATE_OVERLAY",
+                                "overlay/ remains as a distribution copy and must not be referenced by MSBuild.",
+                                str(root / "overlay")))
+    if (root / "replacement").exists():
+        findings.append(Finding("warning", "W_DUPLICATE_REPLACEMENT",
+                                "replacement/ remains as a distribution copy and must not be referenced by MSBuild.",
+                                str(root / "replacement")))
     for relative in (
         "tools/apply_novelty01_complete.py",
         "tools/apply_novelty01_sgapt.py",
         "tools/verify_novelty01_sgapt.py"):
         if (root / relative).exists():
-            findings.append(Finding("error", "E_DISTRIBUTION_TOOL_IN_REPO", "Distribution-only apply tool remains in the runtime repository.", relative))
+            findings.append(Finding("warning", "W_DISTRIBUTION_TOOL_IN_REPO",
+                                    "Distribution-only apply tool remains; it is ignored by the runtime build.", relative))
 
     for python_path in (
         matrix_path,
         root / "tools/final_stage/hairgpu_novelty01_report.py",
-        root / "tools/final_stage/hairgpu_novelty01_resource_audit.py"):
+        root / "tools/final_stage/hairgpu_novelty01_resource_audit.py",
+        root / "tools/final_stage/hairgpu_novelty01_gate.py"):
         try:
             compile(read(python_path), str(python_path), "exec")
         except Exception as exc:
@@ -453,23 +479,56 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
             findings.append(Finding("error", "E_CPP_HEADER_COMPILE", result.stdout.strip(), str(source)))
 
 
-def compile_hlsl(root: Path, findings: list[Finding], require_fxc: bool) -> None:
+def compile_hlsl(
+    root: Path,
+    findings: list[Finding],
+    require_fxc: bool,
+) -> dict[str, object]:
     shader = root / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
     fxc = find_fxc()
+    manifest: dict[str, object] = {
+        "schema": "hairgpu-novelty01-fxc-entrypoints-v1",
+        "compiler": fxc or "",
+        "executed": bool(fxc),
+        "entryPointCount": len(ENTRY_POINTS),
+        "failureCount": 0,
+        "passed": False,
+        "entries": [],
+    }
     if not fxc:
         severity = "error" if require_fxc else "warning"
-        findings.append(Finding(severity, "E_FXC_UNAVAILABLE" if require_fxc else "W_FXC_UNAVAILABLE",
-                                "FXC was not found; Windows Shader Model 5 compilation was not executed.", str(shader)))
-        return
+        findings.append(Finding(
+            severity,
+            "E_FXC_UNAVAILABLE" if require_fxc else "W_FXC_UNAVAILABLE",
+            "FXC was not found; Windows Shader Model 5 compilation was not executed.",
+            str(shader)))
+        return manifest
+
+    entries: list[dict[str, object]] = []
+    failure_count = 0
     with tempfile.TemporaryDirectory(prefix="n01_fxc_") as directory:
         for entry, mode in ENTRY_POINTS.items():
             output = Path(directory) / f"{entry}.cso"
             command = [fxc, "/nologo", "/T", "cs_5_0", "/E", entry,
                        "/D", f"N01_BINDING_MODE={mode}", "/Fo", str(output), str(shader)]
             result = run(command)
-            if result.returncode != 0:
-                findings.append(Finding("error", "E_HLSL_COMPILE",
-                                        f"{entry} (mode {mode}) failed:\n{result.stdout}", str(shader)))
+            passed = result.returncode == 0 and output.is_file()
+            entries.append({
+                "entryPoint": entry,
+                "bindingMode": mode,
+                "passed": passed,
+                "returnCode": result.returncode,
+                "diagnostic": result.stdout.strip(),
+            })
+            if not passed:
+                failure_count += 1
+                findings.append(Finding(
+                    "error", "E_HLSL_COMPILE",
+                    f"{entry} (mode {mode}) failed:\n{result.stdout}", str(shader)))
+    manifest["entries"] = entries
+    manifest["failureCount"] = failure_count
+    manifest["passed"] = failure_count == 0 and len(entries) == len(ENTRY_POINTS)
+    return manifest
 
 
 def validate_formal_csv(path: Path, findings: list[Finding]) -> None:
@@ -577,7 +636,7 @@ def preflight(root: Path, require_fxc: bool, telemetry: Path | None) -> dict[str
     validate_formal_contract(root, findings)
     validate_shader_contract(root, findings)
     compile_header(root, findings)
-    compile_hlsl(root, findings, require_fxc)
+    fxc_manifest = compile_hlsl(root, findings, require_fxc)
     if telemetry is not None:
         validate_formal_csv(telemetry, findings)
 
@@ -591,6 +650,7 @@ def preflight(root: Path, require_fxc: bool, telemetry: Path | None) -> dict[str
         "passed": not errors,
         "checklistCount": len(CHECKLIST),
         "shaderEntryPointCount": len(ENTRY_POINTS),
+        "fxcCompilation": fxc_manifest,
         "errors": errors,
         "warnings": warnings,
     }
@@ -605,6 +665,8 @@ def main() -> int:
     parser.add_argument("--telemetry", type=Path,
                         help="Optional Novelty 01 formal telemetry CSV to validate.")
     parser.add_argument("--json", type=Path, help="Write the result JSON here.")
+    parser.add_argument("--fxc-json", type=Path,
+                        help="Write the per-entry-point FXC manifest here.")
     args = parser.parse_args()
     result = preflight(args.repo.resolve(), args.require_fxc,
                        args.telemetry.resolve() if args.telemetry else None)
@@ -613,6 +675,11 @@ def main() -> int:
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(encoded + "\n", encoding="utf-8")
+    if args.fxc_json:
+        args.fxc_json.parent.mkdir(parents=True, exist_ok=True)
+        args.fxc_json.write_text(
+            json.dumps(result["fxcCompilation"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
     return 0 if result["passed"] else 1
 
 

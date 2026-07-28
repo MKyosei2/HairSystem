@@ -142,6 +142,193 @@ namespace hairgpu::novelty01
         A15_NoStableCompaction
     };
 
+
+    // Formal execution route. Baseline code may share the translation unit, but
+    // the route determines which representation and per-frame passes are legal.
+    enum class ExecutionRoute : uint32_t
+    {
+        ProposalSgapt = 0u,
+        LegacyFullDynamicB0,
+        IndependentFullDynamicB1,
+        SleepingFlagB2,
+        ActiveListB3,
+        MigratingBuffersB4,
+        SimpleOptionalPayloadB5,
+        NoIncrementalBlocksB6,
+        GuideLocalOnlyB7,
+        IndependentStrongestPracticalB8,
+        Ablation
+    };
+
+    enum class PayloadPolicy : uint32_t
+    {
+        None = 0u,
+        FullArrayForEveryGroup,
+        OptionalPool,
+        SeparateStaticDynamicBuffers
+    };
+
+    enum class DependencyUpdatePolicy : uint32_t
+    {
+        Full = 0u,
+        ActiveOnly,
+        DirtyRange
+    };
+
+    struct VariantExecutionContract
+    {
+        ExecutionRoute route = ExecutionRoute::ProposalSgapt;
+        PayloadPolicy payloadPolicy = PayloadPolicy::OptionalPool;
+        DependencyUpdatePolicy followerPolicy = DependencyUpdatePolicy::DirtyRange;
+        DependencyUpdatePolicy renderPolicy = DependencyUpdatePolicy::DirtyRange;
+        uint64_t requiredFeatures = 0ull;
+        uint64_t forbiddenFeatures = 0ull;
+        bool usesSgaptRepresentation = true;
+        bool usesSgaptPayloadLifetime = true;
+        bool requiresDedicatedPerFrameRoute = false;
+    };
+
+    static constexpr uint64_t kSgaptRepresentationFeatureMask =
+        Feature_OptionalPayload |
+        Feature_FixedGroupIndex |
+        Feature_PayloadOwnerCheck |
+        Feature_DelayedPayloadReuse |
+        Feature_TransitionBudget |
+        Feature_HardSoftDescriptor;
+
+    constexpr VariantExecutionContract GetVariantExecutionContract(
+        ExperimentVariant variant)
+    {
+        switch (variant)
+        {
+        case ExperimentVariant::B1_OptimizedFullDynamic:
+            return {
+                ExecutionRoute::IndependentFullDynamicB1,
+                PayloadPolicy::FullArrayForEveryGroup,
+                DependencyUpdatePolicy::Full,
+                DependencyUpdatePolicy::Full,
+                Feature_BaselineEquivalentSolve,
+                kSgaptRepresentationFeatureMask | Feature_GroundTruth |
+                    Feature_ShadowDynamic,
+                false,
+                false,
+                true };
+        case ExperimentVariant::B2_SleepingFlag:
+            return {
+                ExecutionRoute::SleepingFlagB2,
+                PayloadPolicy::FullArrayForEveryGroup,
+                DependencyUpdatePolicy::Full,
+                DependencyUpdatePolicy::Full,
+                Feature_BaselineEquivalentSolve,
+                Feature_OptionalPayload | Feature_FollowerDependency |
+                    Feature_RenderDirtyRange | Feature_FullDynamicFastPath,
+                true,
+                false,
+                false };
+        case ExperimentVariant::B3_ActiveList:
+            return {
+                ExecutionRoute::ActiveListB3,
+                PayloadPolicy::FullArrayForEveryGroup,
+                DependencyUpdatePolicy::ActiveOnly,
+                DependencyUpdatePolicy::Full,
+                Feature_BaselineEquivalentSolve,
+                Feature_OptionalPayload | Feature_FollowerDependency |
+                    Feature_RenderDirtyRange,
+                true,
+                false,
+                false };
+        case ExperimentVariant::B4_SeparateStaticDynamicBuffers:
+            return {
+                ExecutionRoute::MigratingBuffersB4,
+                PayloadPolicy::SeparateStaticDynamicBuffers,
+                DependencyUpdatePolicy::DirtyRange,
+                DependencyUpdatePolicy::DirtyRange,
+                Feature_BaselineEquivalentSolve,
+                Feature_OptionalPayload | Feature_FixedGroupIndex,
+                true,
+                false,
+                false };
+        case ExperimentVariant::B5_FixedCoreSimplePayload:
+            return {
+                ExecutionRoute::SimpleOptionalPayloadB5,
+                PayloadPolicy::OptionalPool,
+                DependencyUpdatePolicy::Full,
+                DependencyUpdatePolicy::Full,
+                Feature_OptionalPayload | Feature_FixedGroupIndex |
+                    Feature_BaselineEquivalentSolve,
+                Feature_VersionCheck | Feature_Hysteresis |
+                    Feature_MinimumResidence | Feature_IncrementalBlocks |
+                    Feature_HardSoftDescriptor,
+                true,
+                true,
+                false };
+        case ExperimentVariant::B6_NoBlockInvalidation:
+            return {
+                ExecutionRoute::NoIncrementalBlocksB6,
+                PayloadPolicy::OptionalPool,
+                DependencyUpdatePolicy::DirtyRange,
+                DependencyUpdatePolicy::DirtyRange,
+                Feature_OptionalPayload | Feature_FixedGroupIndex,
+                Feature_IncrementalBlocks,
+                true,
+                true,
+                false };
+        case ExperimentVariant::B7_GuideLocalOnly:
+            return {
+                ExecutionRoute::GuideLocalOnlyB7,
+                PayloadPolicy::OptionalPool,
+                DependencyUpdatePolicy::Full,
+                DependencyUpdatePolicy::Full,
+                Feature_OptionalPayload | Feature_FixedGroupIndex,
+                Feature_FollowerDependency | Feature_RenderDirtyRange,
+                true,
+                true,
+                false };
+        case ExperimentVariant::B8_StrongestPractical:
+            return {
+                ExecutionRoute::IndependentStrongestPracticalB8,
+                PayloadPolicy::FullArrayForEveryGroup,
+                DependencyUpdatePolicy::ActiveOnly,
+                DependencyUpdatePolicy::DirtyRange,
+                Feature_BaselineEquivalentSolve,
+                kSgaptRepresentationFeatureMask | Feature_GroundTruth,
+                false,
+                false,
+                true };
+        case ExperimentVariant::P:
+            return {
+                ExecutionRoute::ProposalSgapt,
+                PayloadPolicy::OptionalPool,
+                DependencyUpdatePolicy::DirtyRange,
+                DependencyUpdatePolicy::DirtyRange,
+                kSgaptRepresentationFeatureMask,
+                0ull,
+                true,
+                true,
+                false };
+        default:
+            return {
+                ExecutionRoute::Ablation,
+                PayloadPolicy::OptionalPool,
+                DependencyUpdatePolicy::DirtyRange,
+                DependencyUpdatePolicy::DirtyRange,
+                0ull,
+                0ull,
+                true,
+                true,
+                false };
+        }
+    }
+
+    constexpr bool VariantContractAcceptsFeatureMask(
+        const VariantExecutionContract& contract,
+        uint64_t featureMask)
+    {
+        return (featureMask & contract.requiredFeatures) ==
+                   contract.requiredFeatures &&
+               (featureMask & contract.forbiddenFeatures) == 0ull;
+    }
+
     enum CounterIndex : uint32_t
     {
         Counter_Dynamic = 0u,

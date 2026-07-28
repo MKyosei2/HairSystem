@@ -216,6 +216,12 @@
       "value": 1,
       "unit": "proposal frames",
       "compileTimeBehavior": "N01WatchdogCS each proposal frame"
+    },
+    "soakMaximumMemoryGrowthMiB": {
+      "value": 32.0,
+      "unit": "MiB over 108000 measured frames",
+      "evaluationOnly": true,
+      "gate": "novelty01_soak_summary.json"
     }
   },
   "hysteresisInvariants": [
