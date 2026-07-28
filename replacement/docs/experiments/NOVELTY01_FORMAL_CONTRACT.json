@@ -1,0 +1,547 @@
+{
+  "schema": "hairgpu-novelty01-formal-contract-v1",
+  "documentRevision": "69.3-package",
+  "branch": "Novelty01",
+  "sourceCommit": "a0521e258acdbd9d71262172d6d2ba208c338eeb",
+  "sourceOfTruth": {
+    "runtime": [
+      "apps/dx11_viewer/src",
+      "apps/dx11_viewer/shaders",
+      "include/hairgpu"
+    ],
+    "experiments": [
+      "tools/final_stage",
+      "benchmarks/novelty01/sgapt_scenarios",
+      "docs/sample_assets/novelty01_frozen_parameters.json"
+    ],
+    "overlayDirectoryAllowed": false,
+    "oldApplyScriptsAllowedInRepository": false
+  },
+  "baselines": {
+    "B0": {
+      "route": "legacy_full_dynamic",
+      "method": "B0",
+      "usesControlledDispatcher": false,
+      "description": "Current full dynamic baseline"
+    },
+    "B1": {
+      "route": "controlled_full_dynamic",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Optimized full dynamic; common GPU optimizations only",
+      "disabled": [
+        "OptionalPayload",
+        "GroundTruth",
+        "ShadowDynamic",
+        "TransitionBudget"
+      ]
+    },
+    "B2": {
+      "route": "controlled_sleeping_flag",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Same payload for every group; solver skip only",
+      "disabled": [
+        "OptionalPayload",
+        "StableCompaction",
+        "FollowerDependency",
+        "RenderDirtyRange",
+        "FullDynamicFastPath",
+        "GroundTruth"
+      ]
+    },
+    "B3": {
+      "route": "controlled_active_list",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Active list while every group retains payload",
+      "disabled": [
+        "OptionalPayload",
+        "FollowerDependency",
+        "RenderDirtyRange",
+        "GroundTruth"
+      ]
+    },
+    "B4": {
+      "route": "controlled_buffer_migration",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Separate static and dynamic buffers with migration bytes",
+      "disabled": [
+        "OptionalPayload",
+        "FixedGroupIndex",
+        "GroundTruth"
+      ]
+    },
+    "B5": {
+      "route": "controlled_simple_payload",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Fixed core plus optional payload with simple threshold only",
+      "enabled": [
+        "OptionalPayload",
+        "FixedGroupIndex",
+        "StableCompaction",
+        "IndirectDispatch",
+        "BaselineEquivalentSolve",
+        "FormalTelemetry"
+      ]
+    },
+    "B6": {
+      "route": "controlled_no_incremental_blocks",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "SG-APT but all descriptors evaluated",
+      "disabled": [
+        "IncrementalBlocks"
+      ]
+    },
+    "B7": {
+      "route": "controlled_guide_local_only",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Guide local update; followers and render update fully",
+      "disabled": [
+        "FollowerDependency",
+        "RenderDirtyRange"
+      ]
+    },
+    "B8": {
+      "route": "controlled_strongest_practical",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "Strong common optimizations without SG-APT representation contract",
+      "disabled": [
+        "OptionalPayload",
+        "FixedGroupIndex",
+        "PayloadOwnerCheck",
+        "DelayedPayloadReuse",
+        "TransitionBudget",
+        "HardSoftDescriptor",
+        "GroundTruth"
+      ]
+    },
+    "P": {
+      "route": "controlled_sgapt",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "description": "All SG-APT features enabled"
+    }
+  },
+  "ablations": {
+    "A1": {
+      "route": "controlled_ablation",
+      "removedFeature": "OptionalDynamicPayload"
+    },
+    "A2": {
+      "route": "controlled_ablation",
+      "removedFeature": "FixedGroupIndex"
+    },
+    "A3": {
+      "route": "controlled_ablation",
+      "removedFeature": "VersionCheck"
+    },
+    "A4": {
+      "route": "controlled_ablation",
+      "removedFeature": "DelayedFree"
+    },
+    "A5": {
+      "route": "controlled_ablation",
+      "removedFeature": "Hysteresis"
+    },
+    "A6": {
+      "route": "controlled_ablation",
+      "removedFeature": "MinimumResidence"
+    },
+    "A7": {
+      "route": "controlled_ablation",
+      "removedFeature": "StaticCache"
+    },
+    "A8": {
+      "route": "controlled_ablation",
+      "removedFeature": "IncrementalBlockInvalidation"
+    },
+    "A9": {
+      "route": "controlled_ablation",
+      "removedFeature": "StableSharedPoint"
+    },
+    "A10": {
+      "route": "controlled_ablation",
+      "removedFeature": "FollowerDependency"
+    },
+    "A11": {
+      "route": "controlled_ablation",
+      "removedFeature": "RenderDirtyRange"
+    },
+    "A12": {
+      "route": "controlled_ablation",
+      "removedFeature": "FullDynamicFastPath"
+    },
+    "A13": {
+      "route": "controlled_ablation",
+      "removedFeature": "ShadowDynamic"
+    },
+    "A14": {
+      "route": "controlled_ablation",
+      "removedFeature": "Watchdog"
+    },
+    "A15": {
+      "route": "controlled_ablation",
+      "removedFeature": "StableCompaction"
+    }
+  },
+  "scenarios": {
+    "S01": {
+      "titleJa": "完全静止",
+      "runtimeScenarioName": "S01_Idle",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S01.json",
+      "designInjection": "complete_stillness",
+      "expectedBehavior": "all groups settle; no forced dirty",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S02": {
+      "titleJa": "Root平行移動",
+      "runtimeScenarioName": "S02_Breathing",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S02.json",
+      "designInjection": "root_translation",
+      "expectedBehavior": "rigid transform without index-scaled displacement",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S03": {
+      "titleJa": "Root回転",
+      "runtimeScenarioName": "S03_Walk",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S03.json",
+      "designInjection": "root_rotation",
+      "expectedBehavior": "root-local cache rotation",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S04": {
+      "titleJa": "弱い風",
+      "runtimeScenarioName": "S04_SuddenStop",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S04.json",
+      "designInjection": "weak_wind",
+      "expectedBehavior": "mixed static and dynamic groups",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S05": {
+      "titleJa": "通常頭部運動",
+      "runtimeScenarioName": "S05_HeadRotation",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S05.json",
+      "designInjection": "normal_head_motion",
+      "expectedBehavior": "normal mixed workload",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S06": {
+      "titleJa": "局所衝突",
+      "runtimeScenarioName": "S06_Teleport",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S06.json",
+      "designInjection": "local_collision",
+      "expectedBehavior": "spatial block invalidation only",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S07": {
+      "titleJa": "複数Collider",
+      "runtimeScenarioName": "S07_ColliderApproach",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S07.json",
+      "designInjection": "multiple_colliders",
+      "expectedBehavior": "multiple swept collider bounds",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S08": {
+      "titleJa": "一本単位編集",
+      "runtimeScenarioName": "S08_StaticDynamicBoundaryContact",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S08.json",
+      "designInjection": "single_strand_edit",
+      "expectedBehavior": "one guide range invalidated",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S09": {
+      "titleJa": "連続Brush編集",
+      "runtimeScenarioName": "S09_StrongWind",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S09.json",
+      "designInjection": "continuous_brush_edit",
+      "expectedBehavior": "moving local edit range",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S10": {
+      "titleJa": "強風",
+      "runtimeScenarioName": "S10_WindStop",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S10.json",
+      "designInjection": "strong_wind",
+      "expectedBehavior": "high dynamic ratio",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S11": {
+      "titleJa": "全Group Dynamic",
+      "runtimeScenarioName": "S11_LocalEdit",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S11.json",
+      "designInjection": "all_dynamic",
+      "expectedBehavior": "force all dynamic and exercise fast path",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S12": {
+      "titleJa": "Static／Dynamic境界Stress",
+      "runtimeScenarioName": "S12_FalseStaticTrap",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S12.json",
+      "designInjection": "boundary_stress",
+      "expectedBehavior": "shared-point and boundary repair",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S13": {
+      "titleJa": "State Thrashing Stress",
+      "runtimeScenarioName": "S13_RepairStorm",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S13.json",
+      "designInjection": "thrashing_stress",
+      "expectedBehavior": "hysteresis and residence evaluation",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S14": {
+      "titleJa": "複数Guide依存Follower",
+      "runtimeScenarioName": "S14_AllDynamic",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S14.json",
+      "designInjection": "multi_guide_follower_dependency",
+      "expectedBehavior": "CSR follower dependency propagation",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S15": {
+      "titleJa": "30分長時間試験",
+      "runtimeScenarioName": "S15_AllStatic",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S15.json",
+      "designInjection": "thirty_minute_soak",
+      "expectedBehavior": "108000 measured frames",
+      "durationFrames": 108000,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S16": {
+      "titleJa": "決定性試験",
+      "runtimeScenarioName": "S16_StateThrashing",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S16.json",
+      "designInjection": "determinism",
+      "expectedBehavior": "three identical-seed repetitions",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S17": {
+      "titleJa": "Payload Pool Stress",
+      "runtimeScenarioName": "S17_CloseCamera100k",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S17.json",
+      "designInjection": "payload_pool_stress",
+      "expectedBehavior": "payload capacity forced to 5 percent",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 5,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    },
+    "S18": {
+      "titleJa": "Version／Descriptor異常注入",
+      "runtimeScenarioName": "S18_FarCamera100k",
+      "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S18.json",
+      "designInjection": "version_descriptor_fault",
+      "expectedBehavior": "controlled invalid owner/version injection",
+      "durationFrames": 7200,
+      "payloadCapacityPercent": 50,
+      "requiredEvidence": [
+        "scenarioAppliedEventCount",
+        "fatalFailure",
+        "nanStateCount",
+        "infiniteStateCount"
+      ]
+    }
+  },
+  "profiles": {
+    "smoke": {
+      "warmupFrames": 120,
+      "measurementFrames": 360,
+      "repetitions": 1,
+      "groundTruth": true
+    },
+    "formal": {
+      "warmupFrames": 600,
+      "measurementFrames": 6000,
+      "repetitions": 3,
+      "groundTruth": true
+    },
+    "performance": {
+      "warmupFrames": 600,
+      "measurementFrames": 6000,
+      "repetitions": 3,
+      "groundTruth": false
+    },
+    "soak": {
+      "warmupFrames": 600,
+      "measurementFrames": 108000,
+      "repetitions": 1,
+      "groundTruth": true,
+      "groundTruthInterval": 300
+    },
+    "determinism": {
+      "warmupFrames": 600,
+      "measurementFrames": 6000,
+      "repetitions": 3,
+      "groundTruth": true
+    },
+    "gtx1660": {
+      "warmupFrames": 600,
+      "measurementFrames": 6000,
+      "repetitions": 3,
+      "groundTruth": false,
+      "adapterRegex": "(?i)(GTX\\s*1660|GeForce\\s*GTX\\s*1660)"
+    }
+  },
+  "statistics": {
+    "warmupExcluded": true,
+    "failedRunsExcluded": false,
+    "failedRunsReportedAsFailureRate": true,
+    "pairedComparison": [
+      "P",
+      "B8"
+    ],
+    "bootstrapConfidenceLevel": 0.95,
+    "bootstrapSamples": 10000,
+    "primaryMetric": "p95FrameMilliseconds",
+    "secondaryMetrics": [
+      "averageFrameMilliseconds",
+      "p99FrameMilliseconds",
+      "positionRmseMm",
+      "falseStaticRate",
+      "payloadActiveCount"
+    ]
+  },
+  "groundTruthContract": {
+    "qualityRun": {
+      "enabled": true,
+      "includedInPerformanceTiming": false,
+      "sameInput": true,
+      "sameSolverSettings": true
+    },
+    "performanceRun": {
+      "enabled": false
+    },
+    "shadowRun": {
+      "sampledStaticGroupsOnly": true,
+      "displayed": false
+    },
+    "determinismRun": {
+      "sameSeed": true,
+      "hashes": [
+        "stateSequenceHash",
+        "compactionSequenceHash",
+        "finalPositionHash"
+      ]
+    }
+  }
+}
