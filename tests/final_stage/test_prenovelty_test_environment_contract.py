@@ -173,6 +173,27 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
             self.assertEqual(environment["HAIRGPU_SETTINGS_JSON"], str(paths["settings"]))
             self.assertEqual(environment["HAIRGPU_SUMMARY_JSON"], str(paths["summary"]))
 
+    def test_environment_variable_reader_preserves_last_character(self) -> None:
+        source = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/00_preamble_helpers_and_phase1_hooks.inl"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "value.resize(\n                        static_cast<size_t>(written));",
+            source,
+        )
+        self.assertIn("capacity = written;", source)
+        self.assertNotIn("(written - 1u)", source)
+
+    def test_viewer_configuration_dialog_uses_detailed_failure_message(self) -> None:
+        source = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/01_window_device_and_ui_setup.inl"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("m_experimentFailureMessage.empty()", source)
+        self.assertIn("detail.c_str()", source)
     def test_viewer_honors_explicit_formal_output_paths(self) -> None:
         source = (
             ROOT

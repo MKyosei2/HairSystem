@@ -643,8 +643,16 @@
         // GPU buffers, and shaders are created.
         if (!LoadExperimentCaseFromEnvironment())
         {
-            ShowStartupDialog(nullptr, L"Hair GPU Viewer Experiment Configuration Failure",
-                L"HAIRGPU_CASE_JSON or experiment environment values are invalid.");
+            const std::wstring detail =
+                m_experimentFailureMessage.empty()
+                    ? L"HAIRGPU_CASE_JSON or experiment environment values are invalid."
+                    : m_experimentFailureMessage;
+
+            ShowStartupDialog(
+                nullptr,
+                L"Hair GPU Viewer Experiment Configuration Failure",
+                detail.c_str());
+
             return false;
         }
         ApplyExperimentConfigBeforeAssetCreation();

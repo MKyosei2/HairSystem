@@ -143,15 +143,45 @@ namespace hairgpu::viewer
 
         std::wstring GetEnvironmentVariableString(const wchar_t* name)
         {
-            const DWORD required = GetEnvironmentVariableW(name, nullptr, 0u);
-            if (required == 0u)
+            DWORD capacity = GetEnvironmentVariableW(name, nullptr, 0u);
+            if (capacity == 0u)
             {
                 return L"";
             }
-            std::wstring value(required, L'\0');
-            const DWORD written = GetEnvironmentVariableW(name, value.data(), required);
-            value.resize((written > 0u) ? (written - 1u) : 0u);
-            return value;
+
+            // GetEnvironmentVariableW returns the number of characters written
+            // excluding the terminating null when the supplied buffer is large
+            // enough. Do not subtract one from that value.
+            //
+            // Retry when the environment value grows between the size query and
+            // the actual read.
+            for (uint32_t attempt = 0u; attempt < 3u; ++attempt)
+            {
+                std::wstring value(capacity, L'\0');
+
+                const DWORD written =
+                    GetEnvironmentVariableW(
+                        name,
+                        value.data(),
+                        capacity);
+
+                if (written == 0u)
+                {
+                    return L"";
+                }
+
+                if (written < capacity)
+                {
+                    value.resize(
+                        static_cast<size_t>(written));
+
+                    return value;
+                }
+
+                capacity = written;
+            }
+
+            return L"";
         }
 
         bool EnvironmentValueIsTrue(const std::wstring& value)
