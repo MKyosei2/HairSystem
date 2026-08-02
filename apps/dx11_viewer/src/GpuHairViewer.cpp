@@ -2,17 +2,16 @@
 // Keep this file as the only compiled translation unit; edit ordered .inl parts below.
 // See README_SOURCE_ORDER.md in the part directory for the reading order.
 //
-// Novelty 01 integration note:
-// The original experiment and single-step methods are retained under Legacy names.
-// Only P_IntegratedSegmentGroup is routed to the complete SG-APT implementation.
+// Novelty 01 integration:
+// - B0-B8 continue to use the latest Main implementation.
+// - Only P_IntegratedSegmentGroup is routed to SG-APT.
+// - The Main runtime-foundation include remains enabled.
+// - RenderDirtyRange is consumed by a persistent render-position cache.
 
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
-// Pre-include every direct dependency of GpuHairViewer.h. The temporary
-// `private` macro below then affects only the viewer class body, never Windows,
-// STL, WRL, or hairgpu dependency headers.
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -41,17 +40,18 @@
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
 
-// Preserve the Version-68 implementations as explicit baselines.
+// Preserve the Main implementations as explicit baselines.
 #define ExecuteExperimentSimulationTick ExecuteExperimentSimulationTickLegacy
 #define StepSingleFrame StepSingleFrameLegacy
 
-// Inject the Novelty 01 declarations into the existing class without replacing
-// the large header and without changing public API or ABI outside this unit.
+// Add Novelty 01 declarations without replacing the large public header.
 #define private \
 public: \
     struct Novelty01RuntimeState; \
+    struct Novelty01RenderCacheState; \
     void ExecuteNovelty01ExperimentTick(float dt); \
     void StepNovelty01SingleFrame(); \
+    void StepNovelty01SingleFrameCore(); \
     void ExecuteNovelty01Complete(float dt); \
     bool EnsureNovelty01Runtime(float dt); \
     void ResetNovelty01RuntimeIfNeeded(); \
@@ -66,7 +66,13 @@ public: \
     void ExecuteNovelty01BuildIndirectArguments(); \
     void ExecuteNovelty01B4MigrationBaseline(); \
     void ApplyNovelty01DesignScenarioForTick(float dt); \
+    bool EnsureNovelty01RenderCache(); \
+    void ConfigureNovelty01FormalTelemetryOutput(); \
+    void UpdateNovelty01RenderCache(); \
+    void ReleaseNovelty01RenderCache(); \
+    void RenderLegacy(); \
     void ShutdownNovelty01Routed(); \
+    void ShutdownNovelty01RoutedCore(); \
 private
 
 #include "GpuHairViewer.h"
@@ -112,29 +118,46 @@ using Microsoft::WRL::ComPtr;
 #include "GpuHairViewer_parts/01_window_device_and_ui_setup.inl"
 
 // Route only the main run loop to the method dispatcher that selects SG-APT
-// for P and the untouched legacy implementation for B0-B8.
+// for P and the untouched Main implementation for B0-B8.
 #define ExecuteExperimentSimulationTick ExecuteNovelty01ExperimentTick
 #define Shutdown ShutdownNovelty01Routed
 #include "GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"
 #undef Shutdown
 #undef ExecuteExperimentSimulationTick
 
-// Compile the original Version-68 functions under explicit Legacy names.
+// Compile the Main simulation functions under explicit Legacy names.
 #define ExecuteExperimentSimulationTick ExecuteExperimentSimulationTickLegacy
 #define StepSingleFrame StepSingleFrameLegacy
 #include "GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"
 #undef StepSingleFrame
 #undef ExecuteExperimentSimulationTick
 
+// Keep the original Novelty source available as Core methods. The wrappers in
+// part 18 add persistent render-cache update and safe output configuration.
+#define StepNovelty01SingleFrame StepNovelty01SingleFrameCore
 #include "GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
-#include "GpuHairViewer_parts/17_novelty01_formal_evidence.inl"
+#undef StepNovelty01SingleFrame
 
-// All later call sites use the routed single-frame method. The legacy method
-// remains available to the routed implementation and to baseline code.
+#define ShutdownNovelty01Routed ShutdownNovelty01RoutedCore
+#include "GpuHairViewer_parts/17_novelty01_formal_evidence.inl"
+#undef ShutdownNovelty01Routed
+
+#include "GpuHairViewer_parts/18_novelty01_render_dirty_range_consumer.inl"
+
+// All later call sites use the routed single-frame method.
 #define StepSingleFrame StepNovelty01SingleFrame
 #include "GpuHairViewer_parts/04_constant_buffers_and_active_set_sync.inl"
+
+// Main's renderer is retained as RenderLegacy. The Novelty wrapper swaps in the
+// persistent render cache only while P is rendered.
+#define Render RenderLegacy
 #include "GpuHairViewer_parts/05_active_set_scoring_and_runtime_update.inl"
 #include "GpuHairViewer_parts/06_render_mesh_and_visibility_recovery.inl"
+#undef Render
+
+// Required by current Main. Never drop this include while integrating Novelty01.
+#include "GpuHairViewer_parts/02a_required_runtime_foundation.inl"
+
 #include "GpuHairViewer_parts/07_draw_path_and_gpu_timing.inl"
 #include "GpuHairViewer_parts/08_ui_state_sync_and_controls.inl"
 #include "GpuHairViewer_parts/09_settings_load_save_and_export.inl"
