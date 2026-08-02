@@ -45,6 +45,71 @@ def patch_packager_document_ending() -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
 
 
+def patch_hlsl_fxc_compatibility() -> None:
+    path = (
+        ROOT
+        / "replacement/apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+    )
+    text = path.read_text(encoding="utf-8")
+
+    # `triangle` is parsed as a reserved primitive token by legacy FXC.
+    triangle_declarations = text.count("const TriangleData triangle")
+    if triangle_declarations < 3:
+        raise RuntimeError(
+            "unexpected TriangleData declaration count: "
+            f"{triangle_declarations}"
+        )
+    text = text.replace("const TriangleData triangle", "const TriangleData triIndices")
+    text = text.replace("triangle.a", "triIndices.a")
+    text = text.replace("triangle.b", "triIndices.b")
+    text = text.replace("triangle.c", "triIndices.c")
+
+    # FXC cannot select a user-defined struct with the conditional operator.
+    payload_old = (
+        "        DynamicPayload payload = extension.payloadIndex < gPayloadCapacity\n"
+        "            ? N01Payloads[extension.payloadIndex]\n"
+        "            : (DynamicPayload)0;"
+    )
+    payload_new = (
+        "        DynamicPayload payload = (DynamicPayload)0;\n"
+        "        if (extension.payloadIndex < gPayloadCapacity)\n"
+        "        {\n"
+        "            payload = N01Payloads[extension.payloadIndex];\n"
+        "        }"
+    )
+    payload_count = text.count(payload_old)
+    if payload_count != 1:
+        raise RuntimeError(
+            "unexpected DynamicPayload conditional count: "
+            f"{payload_count}"
+        )
+    text = text.replace(payload_old, payload_new, 1)
+
+    candidate_old = (
+        "    SharedPointCandidate winner =\n"
+        "        N01FeatureEnabled(N01_FEATURE_STABLE_SHARED_POINT)\n"
+        "        ? (N01CandidateBetter(child, owner) ? child : owner)\n"
+        "        : owner;"
+    )
+    candidate_new = (
+        "    SharedPointCandidate winner = owner;\n"
+        "    if (N01FeatureEnabled(N01_FEATURE_STABLE_SHARED_POINT) &&\n"
+        "        N01CandidateBetter(child, owner))\n"
+        "    {\n"
+        "        winner = child;\n"
+        "    }"
+    )
+    candidate_count = text.count(candidate_old)
+    if candidate_count != 1:
+        raise RuntimeError(
+            "unexpected SharedPointCandidate conditional count: "
+            f"{candidate_count}"
+        )
+    text = text.replace(candidate_old, candidate_new, 1)
+
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     replace_all(
         "files/tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1",
@@ -63,6 +128,7 @@ def main() -> int:
     )
     patch_preflight_entry_map()
     patch_packager_document_ending()
+    patch_hlsl_fxc_compatibility()
     print("Prepared Novelty01 69.10 repair inputs.")
     return 0
 
