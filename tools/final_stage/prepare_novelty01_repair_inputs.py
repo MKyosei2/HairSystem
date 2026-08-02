@@ -15,6 +15,26 @@ def replace_all(relative: str, old: str, new: str) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
 
 
+def patch_preflight_entry_map() -> None:
+    path = ROOT / "files/tools/final_stage/hairgpu_novelty01_preflight.py"
+    text = path.read_text(encoding="utf-8")
+    marker = '    "N01InjectDesignScenarioCS": 12,\n}'
+    replacement = (
+        '    "N01InjectDesignScenarioCS": 12,\n'
+        '    "N01InitializeRenderCacheCS": 13,\n'
+        '    "N01UpdateGuideRenderCacheCS": 13,\n'
+        '    "N01UpdateFollowerRenderCacheCS": 13,\n'
+        '}'
+    )
+    if marker not in text:
+        raise RuntimeError("preflight entry-point map insertion marker missing")
+    text = text.replace(marker, replacement, 1)
+    if "for mode in range(13):" not in text:
+        raise RuntimeError("preflight binding-mode loop marker missing")
+    text = text.replace("for mode in range(13):", "for mode in range(14):", 1)
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     replace_all(
         "files/tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1",
@@ -31,6 +51,7 @@ def main() -> int:
         OLD,
         NEW,
     )
+    patch_preflight_entry_map()
     print("Prepared Novelty01 69.10 repair inputs.")
     return 0
 
