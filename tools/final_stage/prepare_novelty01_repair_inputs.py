@@ -18,8 +18,16 @@ def replace_all(relative: str, old: str, new: str) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
 
 
+def copy_to_files(relative: str) -> None:
+    source = ROOT / relative
+    destination = ROOT / "files" / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
 def patch_hlsl_fxc_compatibility() -> None:
-    path = ROOT / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+    relative = "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+    path = ROOT / relative
     text = path.read_text(encoding="utf-8")
 
     triangle_declarations = text.count("const TriangleData triangle")
@@ -67,9 +75,57 @@ def patch_hlsl_fxc_compatibility() -> None:
     text = text.replace(candidate_old, candidate_new)
 
     path.write_text(text, encoding="utf-8", newline="\n")
-    packaged = ROOT / "files/apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
-    packaged.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, packaged)
+    copy_to_files(relative)
+
+
+def patch_cpp_runtime_compatibility() -> None:
+    relative = (
+        "apps/dx11_viewer/src/GpuHairViewer_parts/"
+        "16_segment_group_adaptive_payload_complete.inl"
+    )
+    path = ROOT / relative
+    text = path.read_text(encoding="utf-8")
+
+    source_old = (
+        "                const std::string source(\n"
+        "                    std::istreambuf_iterator<char>(input),\n"
+        "                    std::istreambuf_iterator<char>());"
+    )
+    source_new = (
+        "                const std::string source{\n"
+        "                    std::istreambuf_iterator<char>(input),\n"
+        "                    std::istreambuf_iterator<char>()};"
+    )
+    if text.count(source_old) != 1:
+        raise RuntimeError("Part16 string-construction compatibility target changed")
+    text = text.replace(source_old, source_new, 1)
+
+    min_old = (
+        "        rootSweptMin -= hairgpu::Vec3("
+        "kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);"
+    )
+    min_new = (
+        "        rootSweptMin = rootSweptMin - hairgpu::Vec3("
+        "kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);"
+    )
+    max_old = (
+        "        rootSweptMax += hairgpu::Vec3("
+        "kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);"
+    )
+    max_new = (
+        "        rootSweptMax = rootSweptMax + hairgpu::Vec3("
+        "kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);"
+    )
+    for old, new, label in (
+        (min_old, min_new, "root swept minimum"),
+        (max_old, max_new, "root swept maximum"),
+    ):
+        if text.count(old) != 1:
+            raise RuntimeError(f"Part16 {label} compatibility target changed")
+        text = text.replace(old, new, 1)
+
+    path.write_text(text, encoding="utf-8", newline="\n")
+    copy_to_files(relative)
 
 
 def patch_formal_contract_input() -> None:
@@ -102,12 +158,17 @@ def patch_packager() -> None:
     if old_ending in text:
         text = text.replace(old_ending, new_ending, 1)
 
-    hlsl_entry = '    "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl",\n'
     cpp_entry = '    "apps/dx11_viewer/src/GpuHairViewer.cpp",\n'
-    if hlsl_entry not in text.split("REPLACEMENT_FILES =", 1)[0]:
-        if cpp_entry not in text:
-            raise RuntimeError("packager FILES_REPLACEMENTS insertion marker missing")
-        text = text.replace(cpp_entry, hlsl_entry + cpp_entry, 1)
+    required_file_entries = (
+        '    "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl",\n',
+        '    "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl",\n',
+    )
+    files_table = text.split("REPLACEMENT_FILES =", 1)[0]
+    for entry in reversed(required_file_entries):
+        if entry not in files_table:
+            if cpp_entry not in text:
+                raise RuntimeError("packager FILES_REPLACEMENTS insertion marker missing")
+            text = text.replace(cpp_entry, entry + cpp_entry, 1)
 
     incompatible = (
         '    "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl",\n',
@@ -127,6 +188,39 @@ def patch_packager() -> None:
         table = table.replace(entry, "", 1)
     text = before + separator + table + close + suffix
 
+    header_start_old = (
+        'HEADER_DECLARATIONS = """\n\n'
+        '        // Novelty 01 SG-APT runtime declarations.\n'
+        '        // Implemented by ordered parts 16-18 and selected only by the formal\n'
+        '        // method/variant dispatcher. These stay private and must not be injected\n'
+        '        // by rewriting the C++ access-control keyword.\n'
+    )
+    header_start_new = (
+        'HEADER_DECLARATIONS = """\n\n'
+        '    public:\n'
+        '        // Opaque Novelty 01 state types are public only so translation-unit\n'
+        '        // helper maps can own them without rewriting C++ access control.\n'
+        '        // All operational methods below remain private.\n'
+    )
+    if header_start_old not in text:
+        raise RuntimeError("packager header access-control start marker missing")
+    text = text.replace(header_start_old, header_start_new, 1)
+
+    header_method_old = (
+        "        struct Novelty01RuntimeState;\n"
+        "        struct Novelty01RenderCacheState;\n"
+        "        void ExecuteNovelty01ExperimentTick(float dt);"
+    )
+    header_method_new = (
+        "        struct Novelty01RuntimeState;\n"
+        "        struct Novelty01RenderCacheState;\n\n"
+        "    private:\n"
+        "        void ExecuteNovelty01ExperimentTick(float dt);"
+    )
+    if header_method_old not in text:
+        raise RuntimeError("packager header private-method marker missing")
+    text = text.replace(header_method_old, header_method_new, 1)
+
     delete_anchor = '    "patches/hairgpu_final_run_formal_asset_binding.patch",\n]'
     delete_replacement = (
         '    "patches/hairgpu_final_run_formal_asset_binding.patch",\n'
@@ -141,7 +235,7 @@ def patch_packager() -> None:
 
     replacements = {
         "- 新世代SG-APT Header/HLSL/Runtime/Evidenceの正式パス昇格":
-            "- 現行69.10 SG-APT Runtimeを維持し、FXC互換修正を正式パスへ適用",
+            "- 現行69.10 SG-APT Runtimeを維持し、C++17/FXC互換修正を正式パスへ適用",
         "- B1/B8独立BaselineとVariant Execution Contract":
             "- B1/B8を既存の独立Method経路へ固定し、PだけをSG-APTへ接続",
         "- B1/B8は`VariantExecutionContract`でSG-APT表現資源を禁止する。":
@@ -150,6 +244,8 @@ def patch_packager() -> None:
             "- B2～B7: PのControlled Route上でFeature Maskを固定し、各Baselineの除外要素を検証する。",
         "- B1/B8は提案表現を共有しない独立Baseline契約で実行する。":
             "- B1/B8は既存の独立Method IDで実行し、SG-APT Runtimeを生成しない。",
+        "- Novelty01宣言は`GpuHairViewer.h`のprivate領域へ正式配置する。":
+            "- Novelty01のOpaque State型をHeaderへ正式宣言し、操作Methodはprivateに保つ。",
     }
     for old, new in replacements.items():
         if old not in text:
@@ -200,6 +296,7 @@ def main() -> int:
         NEW,
     )
     patch_hlsl_fxc_compatibility()
+    patch_cpp_runtime_compatibility()
     patch_formal_contract_input()
     patch_packager()
     print("Prepared Main-compatible Novelty01 69.10 repair inputs.")
