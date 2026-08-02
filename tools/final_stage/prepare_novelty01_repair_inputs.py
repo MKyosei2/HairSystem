@@ -78,12 +78,12 @@ def patch_hlsl_fxc_compatibility() -> None:
         "        }"
     )
     payload_count = text.count(payload_old)
-    if payload_count != 1:
+    if payload_count != 2:
         raise RuntimeError(
             "unexpected DynamicPayload conditional count: "
             f"{payload_count}"
         )
-    text = text.replace(payload_old, payload_new, 1)
+    text = text.replace(payload_old, payload_new)
 
     candidate_old = (
         "    SharedPointCandidate winner =\n"
