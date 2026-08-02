@@ -35,6 +35,16 @@ def patch_preflight_entry_map() -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
+def patch_packager_document_ending() -> None:
+    path = ROOT / "tools/final_stage/build_novelty01_69_10_complete_repair_package.py"
+    text = path.read_text(encoding="utf-8")
+    old = '        dtext = dtext.rstrip() + status + "\\n"'
+    new = '        dtext = dtext.rstrip() + status.rstrip() + "\\n"'
+    if old not in text:
+        raise RuntimeError("packager design-document ending marker missing")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     replace_all(
         "files/tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1",
@@ -52,6 +62,7 @@ def main() -> int:
         NEW,
     )
     patch_preflight_entry_map()
+    patch_packager_document_ending()
     print("Prepared Novelty01 69.10 repair inputs.")
     return 0
 
