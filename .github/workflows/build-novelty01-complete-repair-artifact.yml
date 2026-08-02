@@ -75,7 +75,21 @@ jobs:
             /p:HairGpuStep0ProfileEnabled=false `
             /p:HairGpuFormalBuild=true `
             /fl `
-            /flp:logfile=artifacts/novelty01_69_10_complete_repair/release_x64_build.log;verbosity=normal
+            '/flp:logfile=artifacts/novelty01_69_10_complete_repair/release_x64_build.log;verbosity=normal'
+
+      - name: Native self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test 2>&1 |
+            Tee-Object -FilePath artifacts/novelty01_69_10_complete_repair/native_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Shader self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test 2>&1 |
+            Tee-Object -FilePath artifacts/novelty01_69_10_complete_repair/shader_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload complete repair package
         if: always()
@@ -94,3 +108,5 @@ jobs:
             artifacts/novelty01_69_10_complete_repair/novelty01_preflight_linux.json
             artifacts/novelty01_69_10_complete_repair/novelty01_preflight_windows.json
             artifacts/novelty01_69_10_complete_repair/release_x64_build.log
+            artifacts/novelty01_69_10_complete_repair/native_self_test.log
+            artifacts/novelty01_69_10_complete_repair/shader_self_test.log
