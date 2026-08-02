@@ -614,8 +614,6 @@
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> atomicCompactCS;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> injectDesignScenarioCS;
 
-
-
         struct FormalTelemetryRow
         {
             uint32_t frame = 0u;
@@ -750,8 +748,6 @@
             }
             catch (...)
             {
-                // Destructors must not throw. Missing files are detected by the
-                // strict Python post-run validator and invalidate the run.
             }
         }
 
@@ -1079,8 +1075,6 @@
         if ((runtime->featureMask &
              hairgpu::novelty01::Feature_OptionalPayload) == 0u)
         {
-            // B2/B3/B8 and A1 retain a full payload array so the comparison
-            // isolates state-dependent payload storage from solver skipping.
             payloadPercent = 100u;
         }
         runtime->payloadCapacity = std::max<uint32_t>(
@@ -1533,8 +1527,6 @@
         return true;
     }
 
-
-
     void GpuHairViewer::ApplyNovelty01DesignScenarioForTick(float dt)
     {
         const N01RuntimePointer runtimePointer = N01FindRuntime(this);
@@ -1557,33 +1549,33 @@
 
         switch (scenario)
         {
-        case 0u: // S01 Complete stillness
+        case 0u:
             m_enableScalpMotion = false;
             m_simConfig.windStrength = 0.0f;
             break;
-        case 1u: // S02 Root translation
+        case 1u:
             m_enableScalpMotion = false;
             m_simConfig.windStrength = 0.0f;
             runtime.scenarioRootTranslation.x = 0.06f * std::sin(time * 1.1f);
             eventApplied = true;
             break;
-        case 2u: // S03 Root rotation
+        case 2u:
             m_enableScalpMotion = false;
             m_simConfig.windStrength = 0.0f;
             runtime.scenarioRootYawRadians = 0.55f * std::sin(time * 0.85f);
             eventApplied = true;
             break;
-        case 3u: // S04 Weak wind
+        case 3u:
             m_enableScalpMotion = false;
             m_simConfig.windStrength = 0.18f;
             eventApplied = true;
             break;
-        case 4u: // S05 Normal head motion
+        case 4u:
             m_enableScalpMotion = true;
             m_simConfig.windStrength = 0.08f;
             eventApplied = true;
             break;
-        case 5u: // S06 Local collision
+        case 5u:
             m_enableScalpMotion = false;
             m_simConfig.windStrength = 0.04f;
             if (!m_colliders.spheres.empty())
@@ -1597,7 +1589,7 @@
                 ++m_scenarioCollisionCandidateCount;
             }
             break;
-        case 6u: // S07 Multiple colliders
+        case 6u:
             m_enableScalpMotion = true;
             m_simConfig.windStrength = 0.12f;
             for (size_t index = 0u; index < m_colliders.spheres.size(); ++index)
@@ -1609,7 +1601,7 @@
             eventApplied = !m_colliders.spheres.empty() || !m_colliders.capsules.empty();
             m_scenarioCollisionCandidateCount += eventApplied ? 1u : 0u;
             break;
-        case 7u: // S08 Single-strand edit
+        case 7u:
             if (m_simulationTickIndex == eventStart)
             {
                 runtime.scenarioFlags |= 1u;
@@ -1620,7 +1612,7 @@
                 ++m_scenarioEditInvalidationCount;
             }
             break;
-        case 8u: // S09 Continuous brush edit
+        case 8u:
             runtime.scenarioFlags |= 2u;
             runtime.scenarioTargetGroup = std::min<uint32_t>(
                 ((m_simulationTickIndex / 8u) % std::max(m_asset.guideStrandCount, 1u)) *
@@ -1629,39 +1621,39 @@
             eventApplied = true;
             ++m_scenarioEditInvalidationCount;
             break;
-        case 9u: // S10 Strong wind
+        case 9u:
             m_enableScalpMotion = true;
             m_simConfig.windStrength = 1.20f;
             eventApplied = true;
             break;
-        case 10u: // S11 All groups dynamic
+        case 10u:
             runtime.scenarioFlags = 0u;
             eventApplied = true;
             break;
-        case 11u: // S12 Static/dynamic boundary stress
+        case 11u:
             runtime.scenarioFlags |= 4u;
             runtime.scenarioTargetGroup = std::min<uint32_t>(
                 2000u * (m_asset.particlesPerStrand - 1u) + 62u,
                 std::max<uint32_t>(runtime.groupCount, 2u) - 2u);
             eventApplied = true;
             break;
-        case 12u: // S13 State thrashing stress
+        case 12u:
             runtime.scenarioFlags |= 8u;
             m_simConfig.windStrength = ((m_simulationTickIndex / 8u) & 1u) != 0u
                 ? 0.65f : 0.0f;
             eventApplied = true;
             ++m_scenarioStateTransitionCount;
             break;
-        case 13u: // S14 Multi-guide follower dependency
+        case 13u:
             runtime.scenarioFlags |= 16u;
             eventApplied = true;
             break;
-        case 14u: // S15 30-minute soak
+        case 14u:
             m_enableScalpMotion = true;
             m_simConfig.windStrength = 0.15f;
             eventApplied = true;
             break;
-        case 15u: // S16 Determinism
+        case 15u:
             m_enableScalpMotion = true;
             m_simConfig.windStrength = 0.20f;
             eventApplied = true;
@@ -2519,9 +2511,6 @@
                     m_noveltyTelemetry.directionCacheMemoryMb /
                     m_noveltyTelemetry.fullPositionMemoryMb
                 : 0.0f;
-            // Shadow samples are an online watchdog, not formal ground truth.
-            // The FalseStaticGroundTruth availability bit remains unset until
-            // the separate B0/reference comparison pipeline supplies evidence.
             const uint32_t shadowSamples = get(
                 hairgpu::novelty01::Counter_ShadowSamples);
             m_noveltyTelemetry.predictiveWakeEvaluatedCount = shadowSamples;
@@ -2956,8 +2945,6 @@
             m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
         };
 
-        // Build exact per-guide support ranges before physics. This is the
-        // execution mask consumed by the baseline-equivalent guide solver.
         ExecuteNovelty01DirtyRangePropagation();
 
         BeginGpuPassTiming(GpuPassId::DynamicSolve);
@@ -3124,9 +3111,6 @@
 
         BeginGpuPassTiming(GpuPassId::FollowerReconstruction);
 
-        // Same-frame Guide -> Follower -> Render range propagation.
-        // The pass writes exact segment/point ranges and the active follower
-        // flags consumed by the stable scan below.
         ExecuteNovelty01DirtyRangePropagation();
 
         N01Constants followerConstants = constants;
@@ -3267,9 +3251,6 @@
         runtime.payloadReadIndex = nextPayloadIndex;
         runtime.forceAllFollowers = false;
 
-        // Ground truth must be compared after the proposal output and the new
-        // payload generation are final, but before the delayed readback copy.
-        // This guarantees that frame N never reports stale frame N-1 metrics.
         if (runtime.formalGroundTruthValidThisFrame)
         {
             CompareNovelty01GroundTruth();

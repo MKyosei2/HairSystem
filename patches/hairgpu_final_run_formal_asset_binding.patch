@@ -1,0 +1,27 @@
+--- a/tools/final_stage/hairgpu_final_run.py
++++ b/tools/final_stage/hairgpu_final_run.py
+@@
+-    shader_hash = sha256_tree([shader_root], base_path=repo_root) if shader_root and shader_root.exists() else ""
++    shader_hash = sha256_tree([shader_root], base_path=repo_root) if shader_root and shader_root.exists() else ""
++    resolved_members = asset_manifest.get("_resolvedMembers", {})
++    if not isinstance(resolved_members, Mapping):
++        raise FormalRunError(
++            "Frozen asset manifest does not contain resolved bundle members.",
++            EXIT_CONFIGURATION_FAILURE,
++        )
++    formal_asset_path = str(resolved_members.get("sourceAssetPath", "")).strip()
++    if not formal_asset_path:
++        raise FormalRunError(
++            "Frozen asset source path is unavailable.",
++            EXIT_CONFIGURATION_FAILURE,
++        )
++    formal_asset_sha256 = str(asset_manifest.get("sourceAssetSha256", "")).strip().lower()
++    formal_topology_sha256 = str(asset_manifest.get("generatedTopologySha256", "")).strip().lower()
++    generator_settings_sha256 = str(asset_manifest.get("generatorSettingsSha256", "")).strip().lower()
+@@
+         "HAIRGPU_ASSET_SHA256": asset_manifest.get("sourceAssetSha256", ""),
++        "HAIRGPU_FORMAL_ASSET_PATH": formal_asset_path,
++        "HAIRGPU_FORMAL_ASSET_SHA256": formal_asset_sha256,
++        "HAIRGPU_FORMAL_TOPOLOGY_SHA256": formal_topology_sha256,
++        "HAIRGPU_GENERATOR_SETTINGS_SHA256": generator_settings_sha256,
+         "HAIRGPU_BUILD_CONFIGURATION": case.get("build_configuration", "Release"),

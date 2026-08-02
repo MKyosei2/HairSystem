@@ -1205,7 +1205,6 @@ void N01DescribeClassifyCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         !dynamicThresholdExceeded &&
         cacheValid)
     {
-        // Hysteresis: remain static inside the wider dynamic threshold.
         candidateState =
             extension.rootTransformVersion != gRootTransformVersion
             ? N01_STATE_STATIC_TRANSFORM
@@ -1214,8 +1213,6 @@ void N01DescribeClassifyCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     if (gExperimentVariant == 4u)
     {
-        // B5 isolates Fixed Core + Optional Payload with only a simple
-        // velocity threshold; no version/hysteresis/block prediction is used.
         if (!finite)
         {
             candidateState = N01_STATE_REPAIR;
@@ -1397,7 +1394,6 @@ void N01ApplyTransitionsFinalFlagsCS(
     {
         N01CounterAdd(N01_COUNTER_STATIC_TRANSFORM, 1u);
     }
-
     N01Cores[groupIndex] = core;
     N01Extensions[groupIndex] = extension;
 
@@ -2156,7 +2152,6 @@ uint N01DynamicPayloadIndex(uint compactedIndex, uint groupIndex)
         ? compactedIndex
         : groupIndex;
 }
-
 
 bool N01GuideRangeValid(uint guideIndex, out uint segmentBegin, out uint segmentEnd)
 {
@@ -3250,7 +3245,6 @@ float3 N01EvaluateRoot(uint strandIndex, bool previousFrame)
         c * binding.barycentric.z;
 }
 
-
 float3 N01EvaluateRootNormal(uint strandIndex, bool previousFrame)
 {
     const RootBindingData binding = N01RootBindings[strandIndex];
@@ -3303,9 +3297,6 @@ void N01RootBindCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float3 currentRoot =
         N01EvaluateLiftedRoot(strandIndex, false);
 
-    // Match the current B0 root constraint: the bound root is kinematic and
-    // owns both current and previous values for this solver step. Static cache
-    // rigid transforms still use N01PreviousScalp independently.
     N01Positions[rootPoint] =
         float4(currentRoot, 1.0f);
     N01PreviousPositions[rootPoint] =
@@ -3832,7 +3823,6 @@ void N01ValidatePayloadOwnersCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     if ((core.flags & N01_CORE_PAYLOAD_VALID) == 0u)
     {
-        // Allocation happens after stable compaction. This is not yet an error.
         return;
     }
 
@@ -4538,8 +4528,6 @@ void N01AtomicCompactCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
 #endif // mode 11
 
-
-
 #if N01_BINDING_MODE == 12
 
 RWStructuredBuffer<float4> N01ScenarioPositions : register(u0);
@@ -4597,13 +4585,11 @@ void N01InjectDesignScenarioCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    // S08: one-strand edit at the exact target group.
     if ((gScenarioFlags & 1u) != 0u && groupIndex == gScenarioTargetGroup)
     {
         N01ForceScenarioDynamic(groupIndex, N01_DIRTY_EDIT, float3(0.018f, 0.0f, 0.0f));
     }
 
-    // S09: continuous brush edits a compact 32-group interval.
     if ((gScenarioFlags & 2u) != 0u &&
         groupIndex >= gScenarioTargetGroup &&
         groupIndex < min(gScenarioTargetGroup + 32u, gGroupCount))
@@ -4615,7 +4601,6 @@ void N01InjectDesignScenarioCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             float3(0.0015f * sin(phase), 0.0008f * cos(phase), 0.0f));
     }
 
-    // S12: force an adjacent Static/Dynamic boundary with a finite mismatch.
     if ((gScenarioFlags & 4u) != 0u)
     {
         if (groupIndex == gScenarioTargetGroup)
@@ -4632,7 +4617,6 @@ void N01InjectDesignScenarioCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
     }
 
-    // S13: selected groups alternate candidates to stress hysteresis/residence.
     if ((gScenarioFlags & 8u) != 0u && (groupIndex & 255u) == 0u)
     {
         SegmentGroupCore core = N01ScenarioCores[groupIndex];
@@ -4644,8 +4628,6 @@ void N01InjectDesignScenarioCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         N01ScenarioCores[groupIndex] = core;
     }
 
-    // S14: many guides become locally dirty while their followers share the
-    // dependency propagation path. Four interleaved guide families are used.
     if ((gScenarioFlags & 16u) != 0u)
     {
         const SegmentGroupCore core = N01ScenarioCores[groupIndex];
@@ -4656,8 +4638,6 @@ void N01InjectDesignScenarioCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         }
     }
 
-    // S18: corrupt one version, descriptor and payload index. The runtime must
-    // reject it, enter Repair/ForcedDynamic and keep all indexes in bounds.
     if ((gScenarioFlags & 32u) != 0u && groupIndex == gScenarioTargetGroup)
     {
         SegmentGroupCore core = N01ScenarioCores[groupIndex];

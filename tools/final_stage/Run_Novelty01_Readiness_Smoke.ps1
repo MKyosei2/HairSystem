@@ -22,6 +22,7 @@ function Invoke-NativeChecked {
     Write-Host "============================================================"
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = 999
     try {
         & $FilePath @Arguments 2>&1 |
             ForEach-Object { Write-Host $_ }
@@ -118,6 +119,9 @@ $Readiness = Join-Path `
 $Preflight = Join-Path `
     $Repo `
     "tools\final_stage\hairgpu_novelty01_preflight.py"
+$FormalAssetPatcher = Join-Path `
+    $Repo `
+    "tools\final_stage\apply_formal_asset_binding_patch.py"
 $TestsDir = Join-Path $Repo "tests\final_stage"
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $Output = Join-Path $Repo "out\novelty01_readiness_smoke_$Stamp"
@@ -131,6 +135,7 @@ try {
         $Solution,
         $Readiness,
         $Preflight,
+        $FormalAssetPatcher,
         (Join-Path $Repo "apps\dx11_viewer\src\GpuHairViewer_parts\18_novelty01_render_dirty_range_consumer.inl"),
         (Join-Path $Repo "apps\dx11_viewer\shaders\HairNovelty01RenderDirtyCache.hlsl")
     )) {
@@ -154,11 +159,14 @@ try {
         "apps/dx11_viewer/shaders/HairNovelty01RenderDirtyCache.hlsl",
         "include/hairgpu/SegmentGroupAdaptivePayload.h",
         "tools/final_stage/hairgpu_novelty01_preflight.py",
+        "tools/final_stage/apply_formal_asset_binding_patch.py",
+        "tools/final_stage/hairgpu_final_run.py",
         "tools/final_stage/hairgpu_novelty01_matrix.py",
         "tools/final_stage/hairgpu_novelty01_readiness_smoke.py",
         "tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1",
         "tests/final_stage/test_novelty01_complete_contract.py",
         "tests/final_stage/test_novelty01_runtime_contract.py",
+        "tests/final_stage/test_novelty01_formal_asset_binding_contract.py",
         "docs/experiments/NOVELTY01_MAIN_INTEGRATION_CHECKLIST.md"
     )
 
@@ -190,12 +198,23 @@ try {
     Write-Host "Steps  : syntax -> tests -> preflight -> rebuild -> self-tests -> P/S01 120+600"
     Write-Host "============================================================"
 
+    Invoke-NativeChecked `
+        -FilePath $Python.FilePath `
+        -Arguments (@($Python.Prefix) + @(
+            $FormalAssetPatcher,
+            "--repo", $Repo,
+            "--backup-dir", (Join-Path $Output "runner_backup")
+        )) `
+        -Label "Apply/verify formal asset binding"
+
     $compileTargets = @(
         (Join-Path $Repo "tools\final_stage\hairgpu_novelty01_matrix.py"),
         $Readiness,
         $Preflight,
+        $FormalAssetPatcher,
         (Join-Path $Repo "tests\final_stage\test_novelty01_complete_contract.py"),
-        (Join-Path $Repo "tests\final_stage\test_novelty01_runtime_contract.py")
+        (Join-Path $Repo "tests\final_stage\test_novelty01_runtime_contract.py"),
+        (Join-Path $Repo "tests\final_stage\test_novelty01_formal_asset_binding_contract.py")
     )
     foreach ($target in $compileTargets) {
         Invoke-NativeChecked `
@@ -207,6 +226,7 @@ try {
     foreach ($pattern in @(
         "test_novelty01_complete_contract.py",
         "test_novelty01_runtime_contract.py",
+        "test_novelty01_formal_asset_binding_contract.py",
         "test_prenovelty_test_environment_contract.py"
     )) {
         Invoke-NativeChecked `

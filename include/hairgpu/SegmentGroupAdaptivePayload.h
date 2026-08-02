@@ -305,7 +305,7 @@ namespace hairgpu::novelty01
 
         uint32_t retireEpoch = 0u;
         uint32_t safeReuseEpoch = 0u;
-        uint32_t state = 0u; // 0 Free, 1 Active, 2 Retired, 3 SafeToReuse
+        uint32_t state = 0u;
         uint32_t reserved = 0u;
     };
 

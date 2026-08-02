@@ -38,9 +38,6 @@
             nullptr,
             runtime.counters.uav.Get()
         };
-        // t0/u0 and t1/u1 cannot be simultaneously bound on D3D11. The
-        // validation shader writes only on a violation; bind the UAV view and
-        // let the shader read through the RW resource aliases.
         srvs[0] = nullptr;
         srvs[1] = nullptr;
         m_context->CSSetShaderResources(0u, 5u, srvs);
@@ -128,7 +125,6 @@
         ID3D11Buffer* cb = runtime.constantBuffer.Get();
         m_context->CSSetConstantBuffers(0u, 1u, &cb);
 
-        // Clear guide ranges.
         {
             ID3D11UnorderedAccessView* uavs[5] =
             {
@@ -146,7 +142,6 @@
             N01UnbindCompute(m_context.Get());
         }
 
-        // Build exact guide segment ranges.
         {
             ID3D11Buffer* localCb = runtime.constantBuffer.Get();
             m_context->CSSetConstantBuffers(0u, 1u, &localCb);
@@ -165,7 +160,6 @@
                 runtime.followerFlags.uav.Get(),
                 runtime.counters.uav.Get()
             };
-            // The shader reads cores and atomically updates only range UAVs.
             srvs[2] = nullptr;
             m_context->CSSetShaderResources(0u, 4u, srvs);
             m_context->CSSetUnorderedAccessViews(0u, 5u, uavs, nullptr);
@@ -176,7 +170,6 @@
             N01UnbindCompute(m_context.Get());
         }
 
-        // Propagate guide ranges to follower and render point ranges.
         {
             ID3D11Buffer* localCb = runtime.constantBuffer.Get();
             m_context->CSSetConstantBuffers(0u, 1u, &localCb);
@@ -204,7 +197,6 @@
             N01UnbindCompute(m_context.Get());
         }
 
-        // Count dirty guide ranges after propagation.
         {
             ID3D11Buffer* localCb = runtime.constantBuffer.Get();
             m_context->CSSetConstantBuffers(0u, 1u, &localCb);
@@ -361,10 +353,6 @@
         m_currentBufferIndex = savedCurrentIndex;
         m_enableActiveSetRuntime = false;
 
-        // This invokes the exact Version-68 B0 solver and therefore preserves
-        // the same integration, root binding, XPBD distance/bend constraints,
-        // support/SDF/external collision, self-collision, stability guard,
-        // follower reconstruction, timestep, precision, and solver order.
         StepSimulation(dt);
         runtime.groundTruthOutputBufferIndex = m_currentBufferIndex;
 
@@ -471,8 +459,6 @@
         N01UnbindCompute(m_context.Get());
     }
 
-
-
     void GpuHairViewer::ShutdownNovelty01Routed()
     {
         const N01RuntimePointer runtime = N01FindRuntime(this);
@@ -534,8 +520,4 @@
         row.followerErrorMm = runtime.formalAggregate.followerPositionErrorMm;
         row.renderErrorMm = runtime.formalAggregate.renderGeometryErrorMm;
         runtime.formalTelemetryRows.push_back(row);
-
-        // Formal evidence stays in memory during measured frames. The runtime
-        // destructor writes CSV/JSONL/Summary after the viewer loop and GPU
-        // timing have ended, so telemetry I/O cannot inflate frame-time results.
     }
