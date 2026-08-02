@@ -25,7 +25,7 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             ROOT / "tools/final_stage/hairgpu_novelty01_preflight.py",
         )
         self.assertGreaterEqual(len(module.CHECKLIST), 47)
-        self.assertGreaterEqual(len(module.ENTRY_POINTS), 50)
+        self.assertEqual(len(module.ENTRY_POINTS), 50)
         self.assertEqual(
             set(module.RENDER_CACHE_ENTRY_POINTS),
             {"N01CopyGuideRenderCacheCS", "N01CopyFollowerRenderCacheCS"},
@@ -97,13 +97,22 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             ROOT
             / "apps/dx11_viewer/src/GpuHairViewer_parts/17_novelty01_formal_evidence.inl"
         ).read_text(encoding="utf-8")
+        matrix = (
+            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py"
+        ).read_text(encoding="utf-8")
+        contract = (
+            ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json"
+        ).read_text(encoding="utf-8")
         shader = (
             ROOT / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
         ).read_text(encoding="utf-8")
         self.assertIn("ExperimentMethodId::P_IntegratedSegmentGroup", runtime)
-        self.assertIn("ExecuteNovelty01IndependentBaseline", runtime)
-        self.assertIn("ExecuteExperimentSimulationTick(dt);", runtime)
-        self.assertIn("StepSimulation(dt);", runtime)
+        self.assertIn("ExecuteExperimentSimulationTickLegacy(dt);", runtime)
+        self.assertIn('baseline_contract.get("method", "P")', matrix)
+        self.assertIn('"B1"', contract)
+        self.assertIn('"method": "B1"', contract)
+        self.assertIn('"B8"', contract)
+        self.assertIn('"method": "B8"', contract)
         self.assertIn("StepSimulation(dt);", evidence)
         self.assertIn("groundTruthPositions", evidence)
         self.assertIn("N01CompareGroundTruthCS", shader)
