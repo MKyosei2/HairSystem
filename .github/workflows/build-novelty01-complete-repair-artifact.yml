@@ -32,6 +32,10 @@ jobs:
         shell: bash
         run: git checkout -B Novelty01
 
+      - name: Prepare 69.10 repair inputs
+        shell: bash
+        run: python tools/final_stage/prepare_novelty01_repair_inputs.py
+
       - name: Build repaired files and source snapshot
         shell: bash
         run: python tools/final_stage/build_novelty01_69_10_complete_repair_package.py
