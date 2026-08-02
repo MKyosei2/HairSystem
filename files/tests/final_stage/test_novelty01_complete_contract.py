@@ -88,7 +88,7 @@ class Novelty01CompleteContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, header)
 
-    def test_proposal_only_route_and_ground_truth_solver(self) -> None:
+    def test_proposal_and_independent_baseline_routes(self) -> None:
         runtime = (
             ROOT
             / "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
@@ -101,7 +101,9 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             ROOT / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
         ).read_text(encoding="utf-8")
         self.assertIn("ExperimentMethodId::P_IntegratedSegmentGroup", runtime)
-        self.assertIn("ExecuteExperimentSimulationTickLegacy(dt);", runtime)
+        self.assertIn("ExecuteNovelty01IndependentBaseline", runtime)
+        self.assertIn("ExecuteExperimentSimulationTick(dt);", runtime)
+        self.assertIn("StepSimulation(dt);", runtime)
         self.assertIn("StepSimulation(dt);", evidence)
         self.assertIn("groundTruthPositions", evidence)
         self.assertIn("N01CompareGroundTruthCS", shader)
