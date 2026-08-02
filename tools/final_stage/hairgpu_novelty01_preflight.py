@@ -20,8 +20,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 BASE_COMMIT = "8bf5c77bc7826575cecfa1943f842642d1538a6c"
-NOVELTY_SOURCE_COMMIT = "0ffe7a6cf05d2055678e388de70effa7d883b967"
-SCHEMA = "novelty01-preflight-v3"
+NOVELTY_SOURCE_COMMIT = "4ad791c6d110bc3eea7b658fcffb84b1fbc32580"
+SCHEMA = "novelty01-preflight-v4"
 
 REQUIRED_FILES = (
     "include/hairgpu/SegmentGroupAdaptivePayload.h",
@@ -32,13 +32,22 @@ REQUIRED_FILES = (
     "apps/dx11_viewer/src/GpuHairViewer_parts/17_novelty01_formal_evidence.inl",
     "apps/dx11_viewer/src/GpuHairViewer_parts/18_novelty01_render_dirty_range_consumer.inl",
     "tools/final_stage/hairgpu_novelty01_preflight.py",
-    "tools/final_stage/apply_formal_asset_binding_patch.py",
     "tools/final_stage/hairgpu_final_run.py",
     "tools/final_stage/hairgpu_novelty01_matrix.py",
     "tools/final_stage/hairgpu_novelty01_readiness_smoke.py",
     "tests/final_stage/test_novelty01_complete_contract.py",
     "tests/final_stage/test_novelty01_runtime_contract.py",
     "tests/final_stage/test_novelty01_formal_asset_binding_contract.py",
+)
+
+RENDER_CACHE_ENTRY_POINTS = (
+    "N01CopyGuideRenderCacheCS",
+    "N01CopyFollowerRenderCacheCS",
+)
+
+OBSOLETE_FILES = (
+    "tools/final_stage/apply_formal_asset_binding_patch.py",
+    "patches/hairgpu_final_run_formal_asset_binding.patch",
 )
 
 ENTRY_POINTS = {
@@ -134,6 +143,9 @@ CHECKLIST = {
         "Counter_RenderRegeneratedVertices",
         "N01CopyFollowerRenderCacheCS",
         "runtime->renderDirtyRanges.srv.Get()",
+        "linearPointIndex / gParticlesPerStrand",
+        "N01DispatchGroups(followerPointCount, 256u)",
+        "D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION",
     ),
     "measured_fast_path": ("proposalMillisecondsEwma", "fullDynamicMillisecondsEwma", "Feature_FullDynamicFastPath"),
     "watchdog_fallback": ("N01WatchdogCS", "N01_CORE_BASELINE_FALLBACK"),
@@ -201,11 +213,64 @@ def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
     )
 
 
+def _program_files_x86() -> Path | None:
+    value = os.environ.get("ProgramFiles(x86)") or os.environ.get("ProgramFiles")
+    return Path(value) if value else None
+
+
+def find_vswhere() -> Path | None:
+    explicit = os.environ.get("VSWHERE")
+    if explicit and Path(explicit).is_file():
+        return Path(explicit)
+    root = _program_files_x86()
+    if root is None:
+        return None
+    candidate = root / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    return candidate if candidate.is_file() else None
+
+
+def find_vsdevcmd() -> Path | None:
+    vswhere = find_vswhere()
+    if vswhere is None:
+        return None
+    query = run([
+        str(vswhere),
+        "-latest",
+        "-products",
+        "*",
+        "-requires",
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "-property",
+        "installationPath",
+    ])
+    if query.returncode != 0 or not query.stdout.strip():
+        return None
+    installation = Path(query.stdout.strip().splitlines()[-1].strip())
+    candidate = installation / "Common7" / "Tools" / "VsDevCmd.bat"
+    return candidate if candidate.is_file() else None
+
+
 def find_fxc() -> str | None:
     explicit = os.environ.get("FXC")
     if explicit and Path(explicit).is_file():
-        return explicit
-    return shutil.which("fxc.exe") or shutil.which("fxc")
+        return str(Path(explicit))
+    direct = shutil.which("fxc.exe") or shutil.which("fxc")
+    if direct:
+        return direct
+    if os.name != "nt":
+        return None
+    root = _program_files_x86()
+    if root is None:
+        return None
+    kits = root / "Windows Kits" / "10" / "bin"
+    if not kits.is_dir():
+        return None
+    candidates = sorted(
+        kits.glob("*/x64/fxc.exe"),
+        key=lambda item: item.parent.parent.name,
+        reverse=True,
+    )
+    return str(candidates[0]) if candidates else None
 
 
 def validate_shader_contract(root: Path, findings: list[Finding]) -> None:
@@ -390,10 +455,140 @@ def validate_shader_contract(root: Path, findings: list[Finding]) -> None:
         ))
 
 
+
+def validate_render_cache_contract(root: Path, findings: list[Finding]) -> None:
+    shader_path = (
+        root
+        / "apps/dx11_viewer/shaders/HairNovelty01RenderDirtyCache.hlsl"
+    )
+    consumer_path = (
+        root
+        / "apps/dx11_viewer/src/GpuHairViewer_parts"
+        / "18_novelty01_render_dirty_range_consumer.inl"
+    )
+    if not shader_path.is_file() or not consumer_path.is_file():
+        return
+
+    shader = read(shader_path)
+    consumer = read(consumer_path)
+    actual_entries = set(
+        re.findall(r"\bvoid\s+(N01[A-Za-z0-9_]+CS)\s*\(", shader)
+    )
+    expected_entries = set(RENDER_CACHE_ENTRY_POINTS)
+    if actual_entries != expected_entries:
+        findings.append(Finding(
+            "error",
+            "E_RENDER_CACHE_ENTRYPOINT_MAP",
+            "Render-cache entry-point mismatch. Missing: "
+            + ", ".join(sorted(expected_entries - actual_entries))
+            + "; unknown: "
+            + ", ".join(sorted(actual_entries - expected_entries)),
+            str(shader_path),
+        ))
+
+    required_shader_markers = (
+        "[numthreads(256, 1, 1)]",
+        "SV_DispatchThreadID",
+        "linearPointIndex / gParticlesPerStrand",
+        "gFollowerCount * gParticlesPerStrand",
+    )
+    for marker in required_shader_markers:
+        if marker not in shader:
+            findings.append(Finding(
+                "error",
+                "E_RENDER_CACHE_FLATTENED_DISPATCH",
+                f"Render-cache shader marker is missing: {marker}",
+                str(shader_path),
+            ))
+
+    required_consumer_markers = (
+        "followerPointCount64",
+        "N01DispatchGroups(followerPointCount, 256u)",
+        "D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION",
+        "followerDispatchGroups",
+    )
+    for marker in required_consumer_markers:
+        if marker not in consumer:
+            findings.append(Finding(
+                "error",
+                "E_RENDER_CACHE_DISPATCH_GUARD",
+                f"Render-cache consumer marker is missing: {marker}",
+                str(consumer_path),
+            ))
+
+    forbidden = (
+        "m_context->Dispatch(\n            m_asset.followerStrandCount",
+        "const uint followerIndex = groupId.x;",
+    )
+    for marker in forbidden:
+        if marker in consumer or marker in shader:
+            findings.append(Finding(
+                "error",
+                "E_RENDER_CACHE_96000_GROUP_DISPATCH",
+                "The 96,000-follower one-group-per-follower path is forbidden.",
+                str(consumer_path),
+            ))
+
+    follower_count = 4000 * 24
+    particles_per_strand = 128
+    thread_count = 256
+    groups = (
+        follower_count * particles_per_strand + thread_count - 1
+    ) // thread_count
+    if groups > 65535:
+        findings.append(Finding(
+            "error",
+            "E_RENDER_CACHE_FORMAL_DISPATCH_LIMIT",
+            "Formal 100k render-cache dispatch exceeds D3D11 limits.",
+            str(consumer_path),
+        ))
+
+
+def validate_formal_runner_contract(
+    root: Path,
+    findings: list[Finding],
+) -> None:
+    runner_path = root / "tools/final_stage/hairgpu_final_run.py"
+    if not runner_path.is_file():
+        return
+    source = read(runner_path)
+    required = (
+        'asset_manifest.get("_resolvedMembers", {})',
+        '"HAIRGPU_FORMAL_ASSET_PATH": formal_asset_path',
+        '"HAIRGPU_FORMAL_ASSET_SHA256": formal_asset_sha256',
+        '"HAIRGPU_FORMAL_TOPOLOGY_SHA256": formal_topology_sha256',
+        '"HAIRGPU_GENERATOR_SETTINGS_SHA256": generator_settings_sha256',
+        "SHA256_RE.fullmatch",
+    )
+    for marker in required:
+        if marker not in source:
+            findings.append(Finding(
+                "error",
+                "E_FORMAL_RUNNER_ASSET_BINDING",
+                f"Direct formal-runner binding is missing: {marker}",
+                str(runner_path),
+            ))
+    if "apply_formal_asset_binding_patch" in source:
+        findings.append(Finding(
+            "error",
+            "E_FORMAL_RUNNER_RUNTIME_PATCH",
+            "The formal runner must not patch itself at runtime.",
+            str(runner_path),
+        ))
+
 def compile_header(root: Path, findings: list[Finding]) -> None:
-    compiler = shutil.which("cl.exe") or shutil.which("clang++") or shutil.which("g++")
-    if not compiler:
-        findings.append(Finding("error", "E_CPP_COMPILER", "No C++ compiler was found."))
+    direct_compiler = (
+        shutil.which("cl.exe")
+        or shutil.which("clang++")
+        or shutil.which("g++")
+    )
+    vsdevcmd = find_vsdevcmd() if os.name == "nt" else None
+    if not direct_compiler and vsdevcmd is None:
+        findings.append(Finding(
+            "error",
+            "E_CPP_COMPILER",
+            "No C++ compiler or Visual Studio developer environment was found.",
+        ))
         return
 
     with tempfile.TemporaryDirectory(prefix="n01_header_") as directory:
@@ -405,9 +600,10 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
             "return c.groupCount == 0u ? 0 : 1; }\n",
             encoding="utf-8",
         )
-        if Path(compiler).name.lower() == "cl.exe":
+
+        if direct_compiler and Path(direct_compiler).name.lower() == "cl.exe":
             command = [
-                compiler,
+                direct_compiler,
                 "/nologo",
                 "/std:c++17",
                 "/W4",
@@ -416,9 +612,9 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 str(source),
                 f"/Fe:{output}",
             ]
-        else:
+        elif direct_compiler:
             command = [
-                compiler,
+                direct_compiler,
                 "-std=c++17",
                 "-Wall",
                 "-Wextra",
@@ -428,6 +624,29 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 "-o",
                 str(output),
             ]
+        else:
+            cl_arguments = [
+                "cl.exe",
+                "/nologo",
+                "/std:c++17",
+                "/W4",
+                "/WX",
+                f"/I{root / 'include'}",
+                str(source),
+                f"/Fe:{output}",
+            ]
+            command_line = subprocess.list2cmdline(cl_arguments)
+            command = [
+                "cmd.exe",
+                "/d",
+                "/s",
+                "/c",
+                (
+                    f'call "{vsdevcmd}" -no_logo -arch=x64 '
+                    f'-host_arch=x64 >nul && {command_line}'
+                ),
+            ]
+
         result = run(command)
         if result.returncode != 0:
             findings.append(Finding(
@@ -437,9 +656,17 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 str(source),
             ))
 
-
 def compile_hlsl(root: Path, findings: list[Finding], require_fxc: bool) -> None:
-    shader = root / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+    main_shader = (
+        root
+        / "apps/dx11_viewer/shaders"
+        / "HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+    )
+    render_shader = (
+        root
+        / "apps/dx11_viewer/shaders"
+        / "HairNovelty01RenderDirtyCache.hlsl"
+    )
     fxc = find_fxc()
     if not fxc:
         severity = "error" if require_fxc else "warning"
@@ -447,7 +674,7 @@ def compile_hlsl(root: Path, findings: list[Finding], require_fxc: bool) -> None
             severity,
             "E_FXC_UNAVAILABLE" if require_fxc else "W_FXC_UNAVAILABLE",
             "FXC was not found; Windows Shader Model 5 compilation was not executed.",
-            str(shader),
+            str(main_shader),
         ))
         return
 
@@ -465,7 +692,7 @@ def compile_hlsl(root: Path, findings: list[Finding], require_fxc: bool) -> None
                 f"N01_BINDING_MODE={mode}",
                 "/Fo",
                 str(output),
-                str(shader),
+                str(main_shader),
             ]
             result = run(command)
             if result.returncode != 0:
@@ -473,9 +700,30 @@ def compile_hlsl(root: Path, findings: list[Finding], require_fxc: bool) -> None
                     "error",
                     "E_HLSL_COMPILE",
                     f"{entry} (mode {mode}) failed:\n{result.stdout}",
-                    str(shader),
+                    str(main_shader),
                 ))
 
+        for entry in RENDER_CACHE_ENTRY_POINTS:
+            output = Path(directory) / f"{entry}.cso"
+            command = [
+                fxc,
+                "/nologo",
+                "/T",
+                "cs_5_0",
+                "/E",
+                entry,
+                "/Fo",
+                str(output),
+                str(render_shader),
+            ]
+            result = run(command)
+            if result.returncode != 0:
+                findings.append(Finding(
+                    "error",
+                    "E_RENDER_CACHE_HLSL_COMPILE",
+                    f"{entry} failed:\n{result.stdout}",
+                    str(render_shader),
+                ))
 
 def validate_formal_csv(path: Path, findings: list[Finding]) -> None:
     if not path.is_file():
@@ -537,8 +785,21 @@ def preflight(root: Path, require_fxc: bool, telemetry: Path | None) -> dict[str
                 "Required source file is missing.",
                 relative,
             ))
-        elif relative != "tools/final_stage/hairgpu_novelty01_preflight.py" and not relative.startswith("tests/"):
+        elif (
+            relative != "tools/final_stage/hairgpu_novelty01_preflight.py"
+            and not relative.startswith("tests/")
+        ):
             all_text_parts.append(read(path))
+
+    for relative in OBSOLETE_FILES:
+        path = root / relative
+        if path.exists():
+            findings.append(Finding(
+                "error",
+                "E_OBSOLETE_RUNTIME_PATCH",
+                "Obsolete runtime patch artifact must be removed.",
+                relative,
+            ))
 
     all_text = "\n".join(all_text_parts)
 
@@ -607,6 +868,8 @@ def preflight(root: Path, require_fxc: bool, telemetry: Path | None) -> dict[str
             ))
 
     validate_shader_contract(root, findings)
+    validate_render_cache_contract(root, findings)
+    validate_formal_runner_contract(root, findings)
     compile_header(root, findings)
     compile_hlsl(root, findings, require_fxc)
     if telemetry is not None:
@@ -622,6 +885,10 @@ def preflight(root: Path, require_fxc: bool, telemetry: Path | None) -> dict[str
         "passed": not errors,
         "checklistCount": len(CHECKLIST),
         "shaderEntryPointCount": len(ENTRY_POINTS),
+        "renderCacheShaderEntryPointCount": len(
+            RENDER_CACHE_ENTRY_POINTS
+        ),
+        "formalFollowerRenderDispatchGroups": 48000,
         "errors": errors,
         "warnings": warnings,
     }

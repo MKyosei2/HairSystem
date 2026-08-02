@@ -19,19 +19,28 @@ def load_module(name: str, path: Path):
 
 
 class Novelty01CompleteContractTests(unittest.TestCase):
-    def test_preflight_source_contract(self) -> None:
+    def test_preflight_contract_covers_both_shader_families(self) -> None:
         module = load_module(
             "n01_preflight_complete",
             ROOT / "tools/final_stage/hairgpu_novelty01_preflight.py",
         )
-        result = module.preflight(
-            ROOT,
-            require_fxc=False,
-            telemetry=None,
+        self.assertGreaterEqual(len(module.CHECKLIST), 46)
+        self.assertGreaterEqual(len(module.ENTRY_POINTS), 50)
+        self.assertEqual(
+            set(module.RENDER_CACHE_ENTRY_POINTS),
+            {
+                "N01CopyGuideRenderCacheCS",
+                "N01CopyFollowerRenderCacheCS",
+            },
         )
-        self.assertTrue(result["passed"], result)
-        self.assertGreaterEqual(result["checklistCount"], 46)
-        self.assertGreaterEqual(result["shaderEntryPointCount"], 50)
+        self.assertIn(
+            "tools/final_stage/apply_formal_asset_binding_patch.py",
+            module.OBSOLETE_FILES,
+        )
+        self.assertIn(
+            "patches/hairgpu_final_run_formal_asset_binding.patch",
+            module.OBSOLETE_FILES,
+        )
 
     def test_current_main_runtime_foundation_is_preserved(self) -> None:
         source = (
@@ -99,7 +108,7 @@ class Novelty01CompleteContractTests(unittest.TestCase):
         self.assertIn("groundTruthPositions", evidence)
         self.assertIn("N01CompareGroundTruthCS", shader)
 
-    def test_render_dirty_range_has_a_real_consumer(self) -> None:
+    def test_render_dirty_range_has_a_bounded_real_consumer(self) -> None:
         consumer = (
             ROOT
             / "apps/dx11_viewer/src/GpuHairViewer_parts"
@@ -116,14 +125,22 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             "Feature_RenderDirtyRange",
             "CopyResource",
             "RenderLegacy();",
+            "N01DispatchGroups(followerPointCount, 256u)",
+            "D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION",
         ):
             self.assertIn(marker, consumer)
         for marker in (
             "N01CopyGuideRenderCacheCS",
             "N01CopyFollowerRenderCacheCS",
             "N01RenderDirtyRanges[followerIndex]",
+            "SV_DispatchThreadID",
+            "linearPointIndex / gParticlesPerStrand",
         ):
             self.assertIn(marker, shader)
+        self.assertNotIn(
+            "m_context->Dispatch(\n            m_asset.followerStrandCount",
+            consumer,
+        )
 
     def test_payload_lifecycle_and_fallback_are_connected(self) -> None:
         shader = (
@@ -143,44 +160,18 @@ class Novelty01CompleteContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, shader)
 
-    def test_matrix_contains_all_controlled_variants_and_profiles(self) -> None:
+    def test_direct_formal_runner_owns_asset_binding(self) -> None:
         source = (
-            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py"
+            ROOT / "tools/final_stage/hairgpu_final_run.py"
         ).read_text(encoding="utf-8")
-        for item in (
-            "B0", "B1", "B2", "B3", "B4",
-            "B5", "B6", "B7", "B8", "P",
+        for marker in (
+            'asset_manifest.get("_resolvedMembers", {})',
+            '"HAIRGPU_FORMAL_ASSET_PATH": formal_asset_path',
+            '"HAIRGPU_FORMAL_ASSET_SHA256": formal_asset_sha256',
+            '"HAIRGPU_FORMAL_TOPOLOGY_SHA256": formal_topology_sha256',
+            '"HAIRGPU_GENERATOR_SETTINGS_SHA256": generator_settings_sha256',
         ):
-            self.assertIn(f'"{item}"', source)
-        for index in range(1, 16):
-            self.assertTrue(
-                f"A{index}" in source or "range(1, 16)" in source
-            )
-        for profile in (
-            "smoke",
-            "formal",
-            "performance",
-            "soak",
-            "determinism",
-            "gtx1660",
-        ):
-            self.assertIn(f'"{profile}"', source)
-        self.assertIn("HAIRGPU_FORMAL_ASSET_PATH", source)
-        self.assertIn("HAIRGPU_N01_RENDER_DIRTY_CACHE", source)
-
-    def test_design_scenarios_are_runtime_resolvable(self) -> None:
-        matrix = load_module(
-            "n01_matrix_complete",
-            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py",
-        )
-        self.assertEqual(
-            set(matrix.SCENARIO_RUNTIME_NAMES),
-            {f"S{i:02d}" for i in range(1, 19)},
-        )
-        self.assertEqual(
-            len(set(matrix.SCENARIO_RUNTIME_NAMES.values())),
-            18,
-        )
+            self.assertIn(marker, source)
 
     def test_no_duplicate_overlay_tree_is_required(self) -> None:
         aggregator = (

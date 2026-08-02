@@ -35,18 +35,24 @@ void N01CopyGuideRenderCacheCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         N01RenderSourcePositions[pointIndex];
 }
 
-[numthreads(128, 1, 1)]
+[numthreads(256, 1, 1)]
 void N01CopyFollowerRenderCacheCS(
-    uint3 groupId : SV_GroupID,
-    uint3 groupThreadId : SV_GroupThreadID)
+    uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    const uint followerIndex = groupId.x;
-    const uint localPointIndex = groupThreadId.x;
-    if (followerIndex >= gFollowerCount ||
-        localPointIndex >= gParticlesPerStrand)
+    const uint totalFollowerPointCount =
+        gFollowerCount * gParticlesPerStrand;
+    const uint linearPointIndex = dispatchThreadId.x;
+    if (linearPointIndex >= totalFollowerPointCount ||
+        gParticlesPerStrand == 0u)
     {
         return;
     }
+
+    const uint followerIndex =
+        linearPointIndex / gParticlesPerStrand;
+    const uint localPointIndex =
+        linearPointIndex -
+        followerIndex * gParticlesPerStrand;
 
     const RenderDirtyRange range = N01RenderDirtyRanges[followerIndex];
     const uint expectedStrandIndex = gGuideCount + followerIndex;

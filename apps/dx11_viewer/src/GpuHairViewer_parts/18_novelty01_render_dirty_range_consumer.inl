@@ -438,10 +438,42 @@
             cache->copyFollowersCS.Get(),
             nullptr,
             0u);
-        m_context->Dispatch(
-            m_asset.followerStrandCount,
-            1u,
-            1u);
+
+        const uint64_t followerPointCount64 =
+            static_cast<uint64_t>(m_asset.followerStrandCount) *
+            static_cast<uint64_t>(m_asset.particlesPerStrand);
+        if (followerPointCount64 >
+            static_cast<uint64_t>((std::numeric_limits<UINT>::max)()))
+        {
+            N01UnbindCompute(m_context.Get());
+            SetFatalExperimentFailure(
+                1413u,
+                L"Novelty 01 follower render-cache point count exceeds UINT.");
+            return;
+        }
+
+        const uint32_t followerPointCount =
+            static_cast<uint32_t>(followerPointCount64);
+        const uint32_t followerDispatchGroups =
+            N01DispatchGroups(followerPointCount, 256u);
+        if (followerDispatchGroups >
+            D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+        {
+            N01UnbindCompute(m_context.Get());
+            SetFatalExperimentFailure(
+                1414u,
+                L"Novelty 01 follower render-cache dispatch exceeds the "
+                L"Direct3D 11 per-dimension thread-group limit.");
+            return;
+        }
+
+        if (followerDispatchGroups > 0u)
+        {
+            m_context->Dispatch(
+                followerDispatchGroups,
+                1u,
+                1u);
+        }
         N01UnbindCompute(m_context.Get());
         cache->initialized = true;
     }

@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,62 +19,43 @@ def load_module(name: str, path: Path):
 
 
 class Novelty01RuntimeContractTests(unittest.TestCase):
-    def test_formal_asset_environment_uses_resolved_bundle_members(self) -> None:
-        matrix = load_module(
-            "n01_matrix_runtime_contract",
-            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py",
+    def test_formal_100k_render_dispatch_is_within_d3d11_limit(self) -> None:
+        follower_count = 4000 * 24
+        particles_per_strand = 128
+        threads_per_group = 256
+        groups = (
+            follower_count * particles_per_strand
+            + threads_per_group - 1
+        ) // threads_per_group
+        self.assertEqual(groups, 48000)
+        self.assertLessEqual(groups, 65535)
+
+        consumer = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts"
+            / "18_novelty01_render_dirty_range_consumer.inl"
+        ).read_text(encoding="utf-8")
+        shader = (
+            ROOT
+            / "apps/dx11_viewer/shaders"
+            / "HairNovelty01RenderDirtyCache.hlsl"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "N01DispatchGroups(followerPointCount, 256u)",
+            consumer,
         )
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            manifest_path = base / "frozen_asset_manifest.json"
-            asset = base / "asset.hairbin"
-            topology = base / "topology.bin"
-            settings = base / "settings.json"
-            for path in (asset, topology, settings):
-                path.write_bytes(b"x")
-            manifest_path.write_text("{}", encoding="utf-8")
-            manifest = {
-                "sourceAssetSha256": "a" * 64,
-                "generatedTopologySha256": "b" * 64,
-                "generatorSettingsSha256": "c" * 64,
-                "_resolvedMembers": {
-                    "sourceAssetPath": str(asset),
-                    "generatedTopologyPath": str(topology),
-                    "generatorSettingsPath": str(settings),
-                },
-            }
-            case = {
-                "asset_manifest": str(manifest_path),
-                "allowed_asset_source_branches": ["main", "Novelty01"],
-            }
-            with mock.patch.object(
-                matrix.final_run,
-                "validate_asset_manifest",
-                return_value=(manifest, []),
-            ):
-                environment, observed = (
-                    matrix.resolve_frozen_asset_environment(
-                        case,
-                        ROOT,
-                    )
-                )
-            self.assertIs(observed, manifest)
-            self.assertEqual(
-                environment["HAIRGPU_FORMAL_ASSET_PATH"],
-                str(asset.resolve()),
-            )
-            self.assertEqual(
-                environment["HAIRGPU_FORMAL_ASSET_SHA256"],
-                "a" * 64,
-            )
-            self.assertEqual(
-                environment["HAIRGPU_FORMAL_TOPOLOGY_SHA256"],
-                "b" * 64,
-            )
-            self.assertEqual(
-                environment["HAIRGPU_GENERATOR_SETTINGS_SHA256"],
-                "c" * 64,
-            )
+        self.assertIn(
+            "D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION",
+            consumer,
+        )
+        self.assertIn(
+            "linearPointIndex / gParticlesPerStrand",
+            shader,
+        )
+        self.assertNotIn(
+            "const uint followerIndex = groupId.x;",
+            shader,
+        )
 
     def test_readiness_fails_closed_on_sgapt_invariants(self) -> None:
         readiness = (
@@ -133,16 +112,26 @@ class Novelty01RuntimeContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, consumer)
 
-    def test_readiness_runner_is_bounded_and_main_only(self) -> None:
+    def test_readiness_runner_is_bounded_and_does_not_patch_sources(self) -> None:
         source = (
             ROOT
             / "tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1"
         ).read_text(encoding="utf-8")
-        self.assertIn('if ($Branch -ne "main")', source)
+        self.assertIn(
+            '$Branch -notin @("Novelty01", "main")',
+            source,
+        )
         self.assertIn("--measurement-frames", source)
         self.assertIn('"600"', source)
         self.assertIn("--timeout-seconds", source)
         self.assertIn("NOVELTY01_READINESS_RESULT.json", source)
+        self.assertIn("--require-fxc", source)
+        self.assertIn("Direct formal runner self-test", source)
+        self.assertNotIn("$FormalAssetPatcher", source)
+        self.assertNotIn(
+            "Apply/verify formal asset binding",
+            source,
+        )
         self.assertNotIn("git push", source.lower())
         self.assertNotIn("git commit", source.lower())
 

@@ -119,9 +119,9 @@ $Readiness = Join-Path `
 $Preflight = Join-Path `
     $Repo `
     "tools\final_stage\hairgpu_novelty01_preflight.py"
-$FormalAssetPatcher = Join-Path `
+$FinalRunner = Join-Path `
     $Repo `
-    "tools\final_stage\apply_formal_asset_binding_patch.py"
+    "tools\final_stage\hairgpu_final_run.py"
 $TestsDir = Join-Path $Repo "tests\final_stage"
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $Output = Join-Path $Repo "out\novelty01_readiness_smoke_$Stamp"
@@ -135,7 +135,7 @@ try {
         $Solution,
         $Readiness,
         $Preflight,
-        $FormalAssetPatcher,
+        $FinalRunner,
         (Join-Path $Repo "apps\dx11_viewer\src\GpuHairViewer_parts\18_novelty01_render_dirty_range_consumer.inl"),
         (Join-Path $Repo "apps\dx11_viewer\shaders\HairNovelty01RenderDirtyCache.hlsl")
     )) {
@@ -146,8 +146,8 @@ try {
 
     Set-Location -LiteralPath $Repo
     $Branch = (& git.exe -C $Repo branch --show-current | Out-String).Trim()
-    if ($Branch -ne "main") {
-        throw "main branch is required. Current=$Branch"
+    if ($Branch -notin @("Novelty01", "main")) {
+        throw "Novelty01 or main branch is required. Current=$Branch"
     }
 
     $Allowed = @(
@@ -159,8 +159,9 @@ try {
         "apps/dx11_viewer/shaders/HairNovelty01RenderDirtyCache.hlsl",
         "include/hairgpu/SegmentGroupAdaptivePayload.h",
         "tools/final_stage/hairgpu_novelty01_preflight.py",
-        "tools/final_stage/apply_formal_asset_binding_patch.py",
         "tools/final_stage/hairgpu_final_run.py",
+        "tools/final_stage/apply_formal_asset_binding_patch.py",
+        "patches/hairgpu_final_run_formal_asset_binding.patch",
         "tools/final_stage/hairgpu_novelty01_matrix.py",
         "tools/final_stage/hairgpu_novelty01_readiness_smoke.py",
         "tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1",
@@ -195,23 +196,14 @@ try {
     Write-Host "============================================================"
     Write-Host "Branch : $Branch"
     Write-Host "Output : $Output"
-    Write-Host "Steps  : syntax -> tests -> preflight -> rebuild -> self-tests -> P/S01 120+600"
+    Write-Host "Steps  : syntax -> runner self-test -> tests -> preflight -> rebuild -> Viewer self-tests -> P/S01 120+600"
     Write-Host "============================================================"
-
-    Invoke-NativeChecked `
-        -FilePath $Python.FilePath `
-        -Arguments (@($Python.Prefix) + @(
-            $FormalAssetPatcher,
-            "--repo", $Repo,
-            "--backup-dir", (Join-Path $Output "runner_backup")
-        )) `
-        -Label "Apply/verify formal asset binding"
 
     $compileTargets = @(
         (Join-Path $Repo "tools\final_stage\hairgpu_novelty01_matrix.py"),
         $Readiness,
         $Preflight,
-        $FormalAssetPatcher,
+        $FinalRunner,
         (Join-Path $Repo "tests\final_stage\test_novelty01_complete_contract.py"),
         (Join-Path $Repo "tests\final_stage\test_novelty01_runtime_contract.py"),
         (Join-Path $Repo "tests\final_stage\test_novelty01_formal_asset_binding_contract.py")
@@ -222,6 +214,14 @@ try {
             -Arguments (@($Python.Prefix) + @("-m", "py_compile", $target)) `
             -Label "Python syntax: $([IO.Path]::GetFileName($target))"
     }
+
+    Invoke-NativeChecked `
+        -FilePath $Python.FilePath `
+        -Arguments (@($Python.Prefix) + @(
+            $FinalRunner,
+            "--self-test"
+        )) `
+        -Label "Direct formal runner self-test"
 
     foreach ($pattern in @(
         "test_novelty01_complete_contract.py",
@@ -245,6 +245,7 @@ try {
         -Arguments (@($Python.Prefix) + @(
             $Preflight,
             "--repo", $Repo,
+            "--require-fxc",
             "--json", (Join-Path $Output "novelty01_preflight.json")
         )) `
         -Label "Novelty01 strict source preflight"
