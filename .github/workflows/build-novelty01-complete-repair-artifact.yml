@@ -11,8 +11,8 @@ permissions:
 
 jobs:
   build-repair-artifact:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    runs-on: windows-2022
+    timeout-minutes: 90
     env:
       PYTHONUTF8: "1"
       PYTHONHASHSEED: "0"
@@ -28,23 +28,61 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Add MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate FXC
+        shell: pwsh
+        run: |
+          $candidates = Get-ChildItem `
+            'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe' `
+            -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
+          if (-not $candidates) { throw 'fxc.exe was not found.' }
+          $fxc = $candidates[0].FullName
+          "FXC=$fxc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Split-Path $fxc | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Use formal branch identity locally
-        shell: bash
+        shell: pwsh
         run: git checkout -B Novelty01
 
       - name: Prepare 69.10 repair inputs
-        shell: bash
+        shell: pwsh
         run: python tools/final_stage/prepare_novelty01_repair_inputs.py
 
       - name: Build repaired files and source snapshot
-        shell: bash
+        shell: pwsh
         run: python tools/final_stage/build_novelty01_69_10_complete_repair_package.py
 
+      - name: Strict Windows source and shader preflight
+        shell: pwsh
+        run: |
+          python tools/final_stage/hairgpu_novelty01_preflight.py `
+            --repo . `
+            --require-fxc `
+            --json artifacts/novelty01_69_10_complete_repair/novelty01_preflight_windows.json
+
+      - name: Release x64 formal rebuild
+        shell: pwsh
+        run: |
+          msbuild HairSystem.sln `
+            /m `
+            /t:Rebuild `
+            /nologo `
+            /verbosity:minimal `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:HairGpuStep0ProfileEnabled=false `
+            /p:HairGpuFormalBuild=true `
+            /fl `
+            /flp:logfile=artifacts/novelty01_69_10_complete_repair/release_x64_build.log;verbosity=normal
+
       - name: Upload complete repair package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: HairSystem-Novelty01-69-10-CompleteRepair
-          if-no-files-found: error
+          name: HairSystem-Novelty01-69-10-CompleteRepair-Windows
+          if-no-files-found: warn
           retention-days: 7
           compression-level: 0
           path: |
@@ -54,3 +92,5 @@ jobs:
             artifacts/novelty01_69_10_complete_repair/HairSystem_Novelty01_69_10_RepairedSourceSnapshot.sha256.txt
             artifacts/novelty01_69_10_complete_repair/BUILD_SUMMARY.json
             artifacts/novelty01_69_10_complete_repair/novelty01_preflight_linux.json
+            artifacts/novelty01_69_10_complete_repair/novelty01_preflight_windows.json
+            artifacts/novelty01_69_10_complete_repair/release_x64_build.log
