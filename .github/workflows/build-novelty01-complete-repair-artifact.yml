@@ -1,0 +1,52 @@
+name: Build Novelty01 Complete Repair Artifact
+
+on:
+  pull_request:
+    branches:
+      - Novelty01
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-repair-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+    steps:
+      - name: Checkout complete source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Use formal branch identity locally
+        shell: bash
+        run: git checkout -B Novelty01
+
+      - name: Build repaired files and source snapshot
+        shell: bash
+        run: python tools/final_stage/build_novelty01_69_10_complete_repair_package.py
+
+      - name: Upload complete repair package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Novelty01-69-10-CompleteRepair
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          path: |
+            artifacts/novelty01_69_10_complete_repair/HairSystem_Novelty01_69_10_CompleteRepair.zip
+            artifacts/novelty01_69_10_complete_repair/HairSystem_Novelty01_69_10_CompleteRepair.sha256.txt
+            artifacts/novelty01_69_10_complete_repair/HairSystem_Novelty01_69_10_RepairedSourceSnapshot.zip
+            artifacts/novelty01_69_10_complete_repair/HairSystem_Novelty01_69_10_RepairedSourceSnapshot.sha256.txt
+            artifacts/novelty01_69_10_complete_repair/BUILD_SUMMARY.json
+            artifacts/novelty01_69_10_complete_repair/novelty01_preflight_linux.json
