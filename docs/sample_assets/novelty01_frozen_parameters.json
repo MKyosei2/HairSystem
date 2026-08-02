@@ -1,0 +1,233 @@
+{
+  "schema": "hairgpu-novelty01-frozen-parameters-v1",
+  "status": "frozen-for-formal-evaluation",
+  "branch": "Novelty01",
+  "baseMainCommit": "8bf5c77bc7826575cecfa1943f842642d1538a6c",
+  "sourceCommit": "4f4c6210d7be40a0b5d522789d2684ade86d3de9",
+  "freezeRevision": "69.10-complete-repair",
+  "calibrationPolicy": {
+    "calibrationDataSeparateFromFormalEvaluation": true,
+    "formalResultsMustNotChangeThresholds": true,
+    "changeRequiresNewFreezeRevision": true
+  },
+  "fixedWorkload": {
+    "displayStrands": 100000,
+    "guides": 4000,
+    "followers": 96000,
+    "followersPerGuide": 24,
+    "pointsPerStrand": 128,
+    "segmentsPerStrand": 127,
+    "guideGroups": 508000,
+    "solverIterations": 6,
+    "fixedTimeStepSeconds": 0.016666666666666666,
+    "width": 1920,
+    "height": 1080,
+    "vsync": false,
+    "releaseX64": true
+  },
+  "parameters": {
+    "groupsPerBlock": {
+      "value": 32,
+      "unit": "groups",
+      "env": "HAIRGPU_N01_GROUPS_PER_BLOCK",
+      "allowed": [
+        16,
+        32,
+        64
+      ]
+    },
+    "payloadCapacityPercent": {
+      "value": 50,
+      "unit": "percent",
+      "env": "HAIRGPU_N01_PAYLOAD_PERCENT",
+      "allowedRange": [
+        5,
+        100
+      ]
+    },
+    "payloadGenerationCount": {
+      "value": 4,
+      "unit": "generations",
+      "compileTime": true
+    },
+    "payloadRetireDelayFrames": {
+      "value": 4,
+      "unit": "frames",
+      "env": "HAIRGPU_N01_PAYLOAD_RETIRE_DELAY_FRAMES",
+      "allowedRange": [
+        4,
+        64
+      ]
+    },
+    "descriptorMaximumAge": {
+      "value": 64,
+      "unit": "frames",
+      "env": "HAIRGPU_N01_DESCRIPTOR_MAX_AGE",
+      "allowedRange": [
+        1,
+        4096
+      ]
+    },
+    "minimumResidenceFrames": {
+      "value": 12,
+      "unit": "frames",
+      "env": "HAIRGPU_N01_MIN_RESIDENCE_FRAMES",
+      "allowedRange": [
+        0,
+        4096
+      ]
+    },
+    "consecutiveStaticFrames": {
+      "value": 8,
+      "unit": "frames",
+      "env": "HAIRGPU_N01_CONSECUTIVE_STATIC_FRAMES",
+      "allowedRange": [
+        1,
+        4096
+      ]
+    },
+    "staticTransitionBudget": {
+      "value": 32768,
+      "unit": "groups/frame",
+      "env": "HAIRGPU_N01_TRANSITION_BUDGET",
+      "allowedRange": [
+        1,
+        508000
+      ]
+    },
+    "staticPositionThresholdMm": {
+      "value": 0.1,
+      "unit": "mm",
+      "env": "HAIRGPU_N01_STATIC_POSITION_MM",
+      "allowedRange": [
+        0.001,
+        100
+      ]
+    },
+    "dynamicPositionThresholdMm": {
+      "value": 0.2,
+      "unit": "mm",
+      "env": "HAIRGPU_N01_DYNAMIC_POSITION_MM",
+      "allowedRange": [
+        0.001,
+        100
+      ]
+    },
+    "staticVelocityThresholdMm": {
+      "value": 0.1,
+      "unit": "mm/frame",
+      "env": "HAIRGPU_N01_STATIC_VELOCITY_MM",
+      "allowedRange": [
+        0.001,
+        100
+      ]
+    },
+    "dynamicVelocityThresholdMm": {
+      "value": 0.2,
+      "unit": "mm/frame",
+      "env": "HAIRGPU_N01_DYNAMIC_VELOCITY_MM",
+      "allowedRange": [
+        0.001,
+        100
+      ]
+    },
+    "lengthErrorThresholdRatio": {
+      "value": 0.02,
+      "unit": "ratio",
+      "env": "HAIRGPU_N01_LENGTH_ERROR_RATIO",
+      "allowedRange": [
+        1e-05,
+        1
+      ]
+    },
+    "boundaryErrorThresholdMm": {
+      "value": 2.0,
+      "unit": "mm",
+      "env": "HAIRGPU_N01_BOUNDARY_ERROR_MM",
+      "allowedRange": [
+        0.001,
+        100
+      ]
+    },
+    "collisionSafetyPaddingMm": {
+      "value": 2.0,
+      "unit": "mm",
+      "env": "HAIRGPU_N01_COLLISION_PADDING_MM",
+      "allowedRange": [
+        0,
+        100
+      ]
+    },
+    "shadowErrorThresholdMm": {
+      "value": 0.5,
+      "unit": "mm",
+      "env": "HAIRGPU_N01_SHADOW_ERROR_MM",
+      "allowedRange": [
+        0.001,
+        100
+      ]
+    },
+    "fullDynamicEnterRatio": {
+      "value": 0.7,
+      "unit": "ratio",
+      "env": "HAIRGPU_N01_FULL_DYNAMIC_ENTER_RATIO",
+      "allowedRange": [
+        0,
+        1
+      ]
+    },
+    "fullDynamicExitRatio": {
+      "value": 0.55,
+      "unit": "ratio",
+      "env": "HAIRGPU_N01_FULL_DYNAMIC_EXIT_RATIO",
+      "allowedRange": [
+        0,
+        1
+      ]
+    },
+    "fullDynamicDecisionFrames": {
+      "value": 8,
+      "unit": "frames",
+      "env": "HAIRGPU_N01_FULL_DYNAMIC_DECISION_FRAMES",
+      "allowedRange": [
+        1,
+        600
+      ]
+    },
+    "groundTruthIntervalFrames": {
+      "value": 1,
+      "unit": "frames",
+      "env": "HAIRGPU_N01_GROUND_TRUTH_INTERVAL",
+      "profileOverride": {
+        "soak": 300
+      }
+    },
+    "shadowSamplingPeriod": {
+      "value": 64,
+      "unit": "groups/frame phase",
+      "compileTimeBehavior": "groupIndex & 63"
+    },
+    "followerGuardBand": {
+      "value": 1,
+      "unit": "segments",
+      "compileTimeBehavior": "FollowerDirtyRange.guardBand"
+    },
+    "watchdogCadence": {
+      "value": 1,
+      "unit": "proposal frames",
+      "compileTimeBehavior": "N01WatchdogCS each proposal frame"
+    },
+    "soakMaximumMemoryGrowthMiB": {
+      "value": 32.0,
+      "unit": "MiB over 108000 measured frames",
+      "evaluationOnly": true,
+      "gate": "novelty01_soak_summary.json"
+    }
+  },
+  "hysteresisInvariants": [
+    "dynamicPositionThresholdMm > staticPositionThresholdMm",
+    "dynamicVelocityThresholdMm > staticVelocityThresholdMm",
+    "fullDynamicEnterRatio > fullDynamicExitRatio",
+    "payloadRetireDelayFrames >= payloadGenerationCount"
+  ]
+}

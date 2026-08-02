@@ -1,5 +1,5 @@
 {
-  "manifestVersion": "novelty01-100k-v1.4",
+  "manifestVersion": "novelty01-100k-v1.6",
   "freezeStatus": "TEMPLATE_REQUIRES_LOCAL_FREEZE",
   "assetFormatVersion": "hairbin-v1",
   "sourceAssetPath": "REPLACE_WITH_ABSOLUTE_FROZEN_ASSET_PATH",
@@ -10,7 +10,7 @@
   "generatorSettingsPath": "REPLACE_WITH_ABSOLUTE_GENERATOR_SETTINGS_PATH",
   "generatorSettingsSha256": "REPLACE_WITH_64_HEX_SHA256",
   "sourceCommitSha": "REPLACE_WITH_40_HEX_COMMIT_SHA",
-  "sourceBranch": "Novelty",
+  "sourceBranch": "Novelty01",
   "generation": {
     "displayStrandCount": 100000,
     "primaryGuideStrandCount": 4000,
@@ -21,7 +21,8 @@
     "renderHeight": 1080,
     "fixedTimeStepSeconds": 0.016666666666666666,
     "vsync": false,
-    "presentSyncInterval": 0
+    "presentSyncInterval": 0,
+    "groupsPerBlock": 32
   },
   "evidenceGate": {
     "rejectWhenFreezeStatusIsNot": "FROZEN",

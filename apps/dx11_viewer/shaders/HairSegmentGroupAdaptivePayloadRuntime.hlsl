@@ -1627,21 +1627,21 @@ void N01GetRootFrame(
     out float3 normal)
 {
     const RootBindingData binding = N01RootBindings[strandIndex];
-    const TriangleData triangle =
+    const TriangleData triIndices =
         N01ScalpTriangles[binding.triangleIndex];
 
     const float3 a =
         previousFrame
-        ? N01PreviousScalp[triangle.a].xyz
-        : N01CurrentScalp[triangle.a].xyz;
+        ? N01PreviousScalp[triIndices.a].xyz
+        : N01CurrentScalp[triIndices.a].xyz;
     const float3 b =
         previousFrame
-        ? N01PreviousScalp[triangle.b].xyz
-        : N01CurrentScalp[triangle.b].xyz;
+        ? N01PreviousScalp[triIndices.b].xyz
+        : N01CurrentScalp[triIndices.b].xyz;
     const float3 c =
         previousFrame
-        ? N01PreviousScalp[triangle.c].xyz
-        : N01CurrentScalp[triangle.c].xyz;
+        ? N01PreviousScalp[triIndices.c].xyz
+        : N01CurrentScalp[triIndices.c].xyz;
 
     root =
         a * binding.barycentric.x +
@@ -2453,9 +2453,11 @@ void N01DistanceDynamicGuidesCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             ? delta / currentLength
             : N01SafeNormalize(rest1 - rest0, float3(0.0f, -1.0f, 0.0f));
         const CoreExtension extension = N01Extensions[groupIndex];
-        DynamicPayload payload = extension.payloadIndex < gPayloadCapacity
-            ? N01Payloads[extension.payloadIndex]
-            : (DynamicPayload)0;
+        DynamicPayload payload = (DynamicPayload)0;
+        if (extension.payloadIndex < gPayloadCapacity)
+        {
+            payload = N01Payloads[extension.payloadIndex];
+        }
         const float constraint = currentLength - targetLength;
         const float w0 = localIndex == 1u ? 0.0f : 1.0f;
         const float w1 = 1.0f;
@@ -2520,9 +2522,11 @@ void N01BendDynamicGuidesCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             : N01SafeNormalize(restC - restA, float3(0.0f, -1.0f, 0.0f));
         const uint payloadGroup = N01GroupIsDynamic(leftGroup) ? leftGroup : rightGroup;
         const CoreExtension extension = N01Extensions[payloadGroup];
-        DynamicPayload payload = extension.payloadIndex < gPayloadCapacity
-            ? N01Payloads[extension.payloadIndex]
-            : (DynamicPayload)0;
+        DynamicPayload payload = (DynamicPayload)0;
+        if (extension.payloadIndex < gPayloadCapacity)
+        {
+            payload = N01Payloads[extension.payloadIndex];
+        }
         const float constraint = currentChord - targetChord;
         const float wA = i == 1u ? 0.0f : 1.0f;
         const float wC = 1.0f;
@@ -3225,20 +3229,20 @@ float3 N01EvaluateRoot(uint strandIndex, bool previousFrame)
 {
     const RootBindingData binding =
         N01RootBindings[strandIndex];
-    const TriangleData triangle =
+    const TriangleData triIndices =
         N01ScalpTriangles[binding.triangleIndex];
     const float3 a =
         previousFrame
-        ? N01PreviousScalp[triangle.a].xyz
-        : N01CurrentScalp[triangle.a].xyz;
+        ? N01PreviousScalp[triIndices.a].xyz
+        : N01CurrentScalp[triIndices.a].xyz;
     const float3 b =
         previousFrame
-        ? N01PreviousScalp[triangle.b].xyz
-        : N01CurrentScalp[triangle.b].xyz;
+        ? N01PreviousScalp[triIndices.b].xyz
+        : N01CurrentScalp[triIndices.b].xyz;
     const float3 c =
         previousFrame
-        ? N01PreviousScalp[triangle.c].xyz
-        : N01CurrentScalp[triangle.c].xyz;
+        ? N01PreviousScalp[triIndices.c].xyz
+        : N01CurrentScalp[triIndices.c].xyz;
     return
         a * binding.barycentric.x +
         b * binding.barycentric.y +
@@ -3248,16 +3252,16 @@ float3 N01EvaluateRoot(uint strandIndex, bool previousFrame)
 float3 N01EvaluateRootNormal(uint strandIndex, bool previousFrame)
 {
     const RootBindingData binding = N01RootBindings[strandIndex];
-    const TriangleData triangle = N01ScalpTriangles[binding.triangleIndex];
+    const TriangleData triIndices = N01ScalpTriangles[binding.triangleIndex];
     const float3 a = previousFrame
-        ? N01PreviousScalp[triangle.a].xyz
-        : N01CurrentScalp[triangle.a].xyz;
+        ? N01PreviousScalp[triIndices.a].xyz
+        : N01CurrentScalp[triIndices.a].xyz;
     const float3 b = previousFrame
-        ? N01PreviousScalp[triangle.b].xyz
-        : N01CurrentScalp[triangle.b].xyz;
+        ? N01PreviousScalp[triIndices.b].xyz
+        : N01CurrentScalp[triIndices.b].xyz;
     const float3 c = previousFrame
-        ? N01PreviousScalp[triangle.c].xyz
-        : N01CurrentScalp[triangle.c].xyz;
+        ? N01PreviousScalp[triIndices.c].xyz
+        : N01CurrentScalp[triIndices.c].xyz;
     return N01SafeNormalize(cross(b - a, c - a), float3(0.0f, 1.0f, 0.0f));
 }
 
@@ -3740,10 +3744,12 @@ void N01ResolveSharedPointsCS(
             N01Candidates[core.childGroupIndex * 2u + 1u];
     }
 
-    SharedPointCandidate winner =
-        N01FeatureEnabled(N01_FEATURE_STABLE_SHARED_POINT)
-        ? (N01CandidateBetter(child, owner) ? child : owner)
-        : owner;
+    SharedPointCandidate winner = owner;
+    if (N01FeatureEnabled(N01_FEATURE_STABLE_SHARED_POINT) &&
+        N01CandidateBetter(child, owner))
+    {
+        winner = child;
+    }
 
     if (owner.valid != 0u &&
         child.valid != 0u &&

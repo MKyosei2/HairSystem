@@ -4,18 +4,14 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$RequiredSourceBaseline = "4f4c6210d7be40a0b5d522789d2684ade86d3de9"
 
 function Invoke-NativeChecked {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$FilePath,
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyCollection()]
-        [string[]]$Arguments,
-        [Parameter(Mandatory = $true)]
-        [string]$Label
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Label
     )
-
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "[RUN] $Label"
@@ -24,8 +20,7 @@ function Invoke-NativeChecked {
     $ErrorActionPreference = "Continue"
     $exitCode = 999
     try {
-        & $FilePath @Arguments 2>&1 |
-            ForEach-Object { Write-Host $_ }
+        & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -39,20 +34,15 @@ function Invoke-NativeChecked {
 
 function Invoke-GuiChecked {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$FilePath,
-        [Parameter(Mandatory = $true)]
-        [string[]]$Arguments,
-        [Parameter(Mandatory = $true)]
-        [string]$Label,
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Label,
         [int]$TimeoutSeconds = 180
     )
-
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "[RUN] $Label"
     Write-Host "============================================================"
-
     $process = Start-Process `
         -FilePath $FilePath `
         -ArgumentList $Arguments `
@@ -75,7 +65,6 @@ function Get-MSBuildPath {
     if ($null -ne $direct) {
         return $direct.Source
     }
-
     $vswhere = Join-Path `
         ${env:ProgramFiles(x86)} `
         "Microsoft Visual Studio\Installer\vswhere.exe"
@@ -98,30 +87,18 @@ function Get-MSBuildPath {
 function Get-PythonCommand {
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($null -ne $py) {
-        return [PSCustomObject]@{
-            FilePath = $py.Source
-            Prefix = @("-3")
-        }
+        return [PSCustomObject]@{ FilePath = $py.Source; Prefix = @("-3") }
     }
     $python = Get-Command python.exe -ErrorAction Stop
-    return [PSCustomObject]@{
-        FilePath = $python.Source
-        Prefix = @()
-    }
+    return [PSCustomObject]@{ FilePath = $python.Source; Prefix = @() }
 }
 
 $Repo = [IO.Path]::GetFullPath($Repo)
 $Solution = Join-Path $Repo "HairSystem.sln"
 $Viewer = Join-Path $Repo "bin\Release\HairSystem\HairSystem.exe"
-$Readiness = Join-Path `
-    $Repo `
-    "tools\final_stage\hairgpu_novelty01_readiness_smoke.py"
-$Preflight = Join-Path `
-    $Repo `
-    "tools\final_stage\hairgpu_novelty01_preflight.py"
-$FinalRunner = Join-Path `
-    $Repo `
-    "tools\final_stage\hairgpu_final_run.py"
+$Readiness = Join-Path $Repo "tools\final_stage\hairgpu_novelty01_readiness_smoke.py"
+$Preflight = Join-Path $Repo "tools\final_stage\hairgpu_novelty01_preflight.py"
+$FinalRunner = Join-Path $Repo "tools\final_stage\hairgpu_final_run.py"
 $TestsDir = Join-Path $Repo "tests\final_stage"
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $Output = Join-Path $Repo "out\novelty01_readiness_smoke_$Stamp"
@@ -136,8 +113,11 @@ try {
         $Readiness,
         $Preflight,
         $FinalRunner,
+        (Join-Path $Repo "apps\dx11_viewer\src\GpuHairViewer.h"),
+        (Join-Path $Repo "apps\dx11_viewer\src\GpuHairViewer.cpp"),
         (Join-Path $Repo "apps\dx11_viewer\src\GpuHairViewer_parts\18_novelty01_render_dirty_range_consumer.inl"),
-        (Join-Path $Repo "apps\dx11_viewer\shaders\HairNovelty01RenderDirtyCache.hlsl")
+        (Join-Path $Repo "apps\dx11_viewer\shaders\HairNovelty01RenderDirtyCache.hlsl"),
+        (Join-Path $Repo ".github\workflows\novelty01-formal-gate.yml")
     )) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
             throw "Required file is missing: $required"
@@ -149,8 +129,32 @@ try {
     if ($Branch -notin @("Novelty01", "main")) {
         throw "Novelty01 or main branch is required. Current=$Branch"
     }
+    $Head = (& git.exe -C $Repo rev-parse HEAD | Out-String).Trim()
+    & git.exe -C $Repo merge-base --is-ancestor $RequiredSourceBaseline HEAD
+    if ($LASTEXITCODE -ne 0) {
+        throw "HEAD is not descended from Novelty01 69.10 baseline $RequiredSourceBaseline. HEAD=$Head"
+    }
+
+    foreach ($obsolete in @(
+        "overlay",
+        "replacement",
+        "tools\apply_novelty01_69_3_complete.py",
+        "tools\apply_novelty01_69_4_complete.py",
+        "tools\apply_novelty01_complete.py",
+        "tools\apply_novelty01_sgapt.py",
+        "tools\final_stage\apply_formal_asset_binding_patch.py",
+        "patches\hairgpu_final_run_formal_asset_binding.patch"
+    )) {
+        $path = Join-Path $Repo $obsolete
+        if (Test-Path -LiteralPath $path) {
+            throw "Obsolete duplicate/patch artifact remains: $obsolete"
+        }
+    }
 
     $Allowed = @(
+        ".github/workflows/windows-build-test.yml",
+        ".github/workflows/novelty01-formal-gate.yml",
+        "apps/dx11_viewer/src/GpuHairViewer.h",
         "apps/dx11_viewer/src/GpuHairViewer.cpp",
         "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl",
         "apps/dx11_viewer/src/GpuHairViewer_parts/17_novelty01_formal_evidence.inl",
@@ -160,8 +164,6 @@ try {
         "include/hairgpu/SegmentGroupAdaptivePayload.h",
         "tools/final_stage/hairgpu_novelty01_preflight.py",
         "tools/final_stage/hairgpu_final_run.py",
-        "tools/final_stage/apply_formal_asset_binding_patch.py",
-        "patches/hairgpu_final_run_formal_asset_binding.patch",
         "tools/final_stage/hairgpu_novelty01_matrix.py",
         "tools/final_stage/hairgpu_novelty01_readiness_smoke.py",
         "tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1",
@@ -173,10 +175,11 @@ try {
 
     $Unexpected = @()
     foreach ($line in @(git.exe -C $Repo status --porcelain --untracked-files=all)) {
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
-        }
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $path = $line.Substring(3).Trim().Replace("\", "/")
+        if ($path.Contains(" -> ")) {
+            $path = ($path -split " -> ")[-1]
+        }
         if ($path -notin $Allowed -and -not $path.StartsWith("out/")) {
             $Unexpected += $line
         }
@@ -184,7 +187,7 @@ try {
     if ($Unexpected.Count -gt 0) {
         Write-Host "Unexpected worktree changes:"
         $Unexpected | ForEach-Object { Write-Host $_ }
-        throw "Verification requires only the Novelty01 package changes."
+        throw "Verification requires only the Novelty01 repair/integration changes."
     }
 
     $Python = Get-PythonCommand
@@ -194,9 +197,11 @@ try {
     Write-Host "============================================================"
     Write-Host "HairSystem Novelty01 Readiness Verification"
     Write-Host "============================================================"
-    Write-Host "Branch : $Branch"
-    Write-Host "Output : $Output"
-    Write-Host "Steps  : syntax -> runner self-test -> tests -> preflight -> rebuild -> Viewer self-tests -> P/S01 120+600"
+    Write-Host "Branch        : $Branch"
+    Write-Host "HEAD          : $Head"
+    Write-Host "SourceBaseline: $RequiredSourceBaseline"
+    Write-Host "Output        : $Output"
+    Write-Host "Steps         : syntax -> runner self-test -> tests -> preflight -> rebuild -> Viewer self-tests -> P/S01 120+600"
     Write-Host "============================================================"
 
     $compileTargets = @(
@@ -217,10 +222,7 @@ try {
 
     Invoke-NativeChecked `
         -FilePath $Python.FilePath `
-        -Arguments (@($Python.Prefix) + @(
-            $FinalRunner,
-            "--self-test"
-        )) `
+        -Arguments (@($Python.Prefix) + @($FinalRunner, "--self-test")) `
         -Label "Direct formal runner self-test"
 
     foreach ($pattern in @(
@@ -269,15 +271,8 @@ try {
         throw "Release Viewer was not generated: $Viewer"
     }
 
-    Invoke-GuiChecked `
-        -FilePath $Viewer `
-        -Arguments @("--native-self-test") `
-        -Label "native self-test"
-
-    Invoke-GuiChecked `
-        -FilePath $Viewer `
-        -Arguments @("--shader-self-test") `
-        -Label "baseline shader self-test"
+    Invoke-GuiChecked -FilePath $Viewer -Arguments @("--native-self-test") -Label "native self-test"
+    Invoke-GuiChecked -FilePath $Viewer -Arguments @("--shader-self-test") -Label "baseline shader self-test"
 
     Invoke-NativeChecked `
         -FilePath $Python.FilePath `

@@ -40,44 +40,12 @@
 #include "hairgpu/RenderData.h"
 #include "hairgpu/Types.h"
 
-// Preserve the Main implementations as explicit baselines.
+// Preserve the Main implementations as explicit baselines while the public
+// class declaration is read. Novelty 01 declarations are now part of the real
+// header; no access-control macro rewriting is used.
 #define ExecuteExperimentSimulationTick ExecuteExperimentSimulationTickLegacy
 #define StepSingleFrame StepSingleFrameLegacy
-
-// Add Novelty 01 declarations without replacing the large public header.
-#define private \
-public: \
-    struct Novelty01RuntimeState; \
-    struct Novelty01RenderCacheState; \
-    void ExecuteNovelty01ExperimentTick(float dt); \
-    void StepNovelty01SingleFrame(); \
-    void StepNovelty01SingleFrameCore(); \
-    void ExecuteNovelty01Complete(float dt); \
-    bool EnsureNovelty01Runtime(float dt); \
-    void ResetNovelty01RuntimeIfNeeded(); \
-    void RunNovelty01PartialSimulation(float dt); \
-    bool RunNovelty01GroundTruth(float dt); \
-    void CompareNovelty01GroundTruth(); \
-    void WriteNovelty01FormalTelemetry(); \
-    void ValidateNovelty01FormalInvariants(); \
-    void ExecuteNovelty01PreClassificationValidation(); \
-    void ExecuteNovelty01PostCompactionLifecycle(); \
-    void ExecuteNovelty01DirtyRangePropagation(); \
-    void ExecuteNovelty01BuildIndirectArguments(); \
-    void ExecuteNovelty01B4MigrationBaseline(); \
-    void ApplyNovelty01DesignScenarioForTick(float dt); \
-    bool EnsureNovelty01RenderCache(); \
-    void ConfigureNovelty01FormalTelemetryOutput(); \
-    void UpdateNovelty01RenderCache(); \
-    void ReleaseNovelty01RenderCache(); \
-    void RenderLegacy(); \
-    void ShutdownNovelty01Routed(); \
-    void ShutdownNovelty01RoutedCore(); \
-private
-
 #include "GpuHairViewer.h"
-
-#undef private
 #undef StepSingleFrame
 #undef ExecuteExperimentSimulationTick
 

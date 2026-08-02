@@ -244,9 +244,11 @@ def main() -> int:
 
     branch = b0.git_value(repo, "branch", "--show-current")
     commit = b0.git_value(repo, "rev-parse", "HEAD")
-    if branch != "main":
+    allowed_branches = {"Novelty01", "main"}
+    if branch not in allowed_branches:
         raise NoveltyReadinessError(
-            f"main branch required: observed={branch}"
+            "Novelty01 or main branch required: "
+            f"observed={branch}"
         )
 
     b0.stop_stale_viewer()

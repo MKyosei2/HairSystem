@@ -24,28 +24,22 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             "n01_preflight_complete",
             ROOT / "tools/final_stage/hairgpu_novelty01_preflight.py",
         )
-        self.assertGreaterEqual(len(module.CHECKLIST), 46)
-        self.assertGreaterEqual(len(module.ENTRY_POINTS), 50)
+        self.assertGreaterEqual(len(module.CHECKLIST), 47)
+        self.assertEqual(len(module.ENTRY_POINTS), 50)
         self.assertEqual(
             set(module.RENDER_CACHE_ENTRY_POINTS),
-            {
-                "N01CopyGuideRenderCacheCS",
-                "N01CopyFollowerRenderCacheCS",
-            },
+            {"N01CopyGuideRenderCacheCS", "N01CopyFollowerRenderCacheCS"},
         )
-        self.assertIn(
+        for obsolete in (
+            "overlay",
+            "replacement",
             "tools/final_stage/apply_formal_asset_binding_patch.py",
-            module.OBSOLETE_FILES,
-        )
-        self.assertIn(
             "patches/hairgpu_final_run_formal_asset_binding.patch",
-            module.OBSOLETE_FILES,
-        )
+        ):
+            self.assertIn(obsolete, module.OBSOLETE_PATHS)
 
     def test_current_main_runtime_foundation_is_preserved(self) -> None:
-        source = (
-            ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp"
-        ).read_text(encoding="utf-8")
+        source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp").read_text(encoding="utf-8")
         for marker in (
             "02a_required_runtime_foundation.inl",
             "16_segment_group_adaptive_payload_complete.inl",
@@ -56,10 +50,24 @@ class Novelty01CompleteContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_formal_header_integration_replaces_private_macro_hack(self) -> None:
+        source = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(encoding="utf-8")
+        self.assertNotIn("#define private", source)
+        self.assertNotIn("#undef private", source)
+        self.assertIn('#include "GpuHairViewer.h"', source)
+        for marker in (
+            "struct Novelty01RuntimeState;",
+            "struct Novelty01RenderCacheState;",
+            "void ExecuteNovelty01ExperimentTick(float dt);",
+            "void StepNovelty01SingleFrame();",
+            "void RenderLegacy();",
+            "void ShutdownNovelty01Routed();",
+        ):
+            self.assertIn(marker, header)
+
     def test_sgapt_layout_and_feature_contract(self) -> None:
-        header = (
-            ROOT / "include/hairgpu/SegmentGroupAdaptivePayload.h"
-        ).read_text(encoding="utf-8")
+        header = (ROOT / "include/hairgpu/SegmentGroupAdaptivePayload.h").read_text(encoding="utf-8")
         for marker in (
             "struct alignas(16) SegmentGroupCore",
             "struct alignas(16) CoreExtension",
@@ -80,30 +88,31 @@ class Novelty01CompleteContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, header)
 
-    def test_proposal_only_route_and_ground_truth_solver(self) -> None:
+    def test_proposal_and_independent_baseline_routes(self) -> None:
         runtime = (
             ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts"
-            / "16_segment_group_adaptive_payload_complete.inl"
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
         ).read_text(encoding="utf-8")
         evidence = (
             ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts"
-            / "17_novelty01_formal_evidence.inl"
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/17_novelty01_formal_evidence.inl"
+        ).read_text(encoding="utf-8")
+        matrix = (
+            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py"
+        ).read_text(encoding="utf-8")
+        contract = (
+            ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json"
         ).read_text(encoding="utf-8")
         shader = (
-            ROOT
-            / "apps/dx11_viewer/shaders"
-            / "HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+            ROOT / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            "ExperimentMethodId::P_IntegratedSegmentGroup",
-            runtime,
-        )
-        self.assertIn(
-            "ExecuteExperimentSimulationTickLegacy(dt);",
-            runtime,
-        )
+        self.assertIn("ExperimentMethodId::P_IntegratedSegmentGroup", runtime)
+        self.assertIn("ExecuteExperimentSimulationTickLegacy(dt);", runtime)
+        self.assertIn('baseline_contract.get("method", "P")', matrix)
+        self.assertIn('"B1"', contract)
+        self.assertIn('"method": "B1"', contract)
+        self.assertIn('"B8"', contract)
+        self.assertIn('"method": "B8"', contract)
         self.assertIn("StepSimulation(dt);", evidence)
         self.assertIn("groundTruthPositions", evidence)
         self.assertIn("N01CompareGroundTruthCS", shader)
@@ -111,13 +120,10 @@ class Novelty01CompleteContractTests(unittest.TestCase):
     def test_render_dirty_range_has_a_bounded_real_consumer(self) -> None:
         consumer = (
             ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts"
-            / "18_novelty01_render_dirty_range_consumer.inl"
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/18_novelty01_render_dirty_range_consumer.inl"
         ).read_text(encoding="utf-8")
         shader = (
-            ROOT
-            / "apps/dx11_viewer/shaders"
-            / "HairNovelty01RenderDirtyCache.hlsl"
+            ROOT / "apps/dx11_viewer/shaders/HairNovelty01RenderDirtyCache.hlsl"
         ).read_text(encoding="utf-8")
         for marker in (
             "runtime->renderDirtyRanges.srv.Get()",
@@ -144,9 +150,7 @@ class Novelty01CompleteContractTests(unittest.TestCase):
 
     def test_payload_lifecycle_and_fallback_are_connected(self) -> None:
         shader = (
-            ROOT
-            / "apps/dx11_viewer/shaders"
-            / "HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+            ROOT / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
         ).read_text(encoding="utf-8")
         for marker in (
             "N01ValidatePayloadOwnersCS",
@@ -161,9 +165,7 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             self.assertIn(marker, shader)
 
     def test_direct_formal_runner_owns_asset_binding(self) -> None:
-        source = (
-            ROOT / "tools/final_stage/hairgpu_final_run.py"
-        ).read_text(encoding="utf-8")
+        source = (ROOT / "tools/final_stage/hairgpu_final_run.py").read_text(encoding="utf-8")
         for marker in (
             'asset_manifest.get("_resolvedMembers", {})',
             '"HAIRGPU_FORMAL_ASSET_PATH": formal_asset_path',
@@ -172,13 +174,38 @@ class Novelty01CompleteContractTests(unittest.TestCase):
             '"HAIRGPU_GENERATOR_SETTINGS_SHA256": generator_settings_sha256',
         ):
             self.assertIn(marker, source)
+        self.assertNotIn("apply_formal_asset_binding_patch", source)
 
-    def test_no_duplicate_overlay_tree_is_required(self) -> None:
-        aggregator = (
-            ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("overlay/", aggregator)
-        self.assertNotIn("replacement/", aggregator)
+    def test_workflows_are_real_root_workflows_without_runtime_patchers(self) -> None:
+        for relative in (
+            ".github/workflows/windows-build-test.yml",
+            ".github/workflows/novelty01-formal-gate.yml",
+        ):
+            path = ROOT / relative
+            self.assertTrue(path.is_file(), relative)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("actions/checkout@v4", text)
+            self.assertIn("fetch-depth: 0", text)
+            for forbidden in (
+                "path.write_text(text",
+                "apply_viewer_dedup.py",
+                "replacement/",
+                "overlay/",
+            ):
+                self.assertNotIn(forbidden, text)
+
+    def test_duplicate_package_trees_and_obsolete_patchers_are_removed(self) -> None:
+        for relative in (
+            "overlay",
+            "replacement",
+            "tools/apply_novelty01_69_3_complete.py",
+            "tools/apply_novelty01_69_4_complete.py",
+            "tools/apply_novelty01_complete.py",
+            "tools/apply_novelty01_sgapt.py",
+            "tools/final_stage/apply_formal_asset_binding_patch.py",
+            "patches/hairgpu_final_run_formal_asset_binding.patch",
+        ):
+            self.assertFalse((ROOT / relative).exists(), relative)
 
 
 if __name__ == "__main__":

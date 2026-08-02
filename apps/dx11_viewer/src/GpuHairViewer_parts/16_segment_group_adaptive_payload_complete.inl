@@ -358,9 +358,9 @@
                 {
                     continue;
                 }
-                const std::string source(
+                const std::string source{
                     std::istreambuf_iterator<char>(input),
-                    std::istreambuf_iterator<char>());
+                    std::istreambuf_iterator<char>()};
                 const std::string sourceName = candidate.string();
                 byteCode.Reset();
                 errors.Reset();
@@ -2241,8 +2241,8 @@
             rootSweptMax = hairgpu::Vec3(-1.0e9f, -1.0e9f, -1.0e9f);
         }
         constexpr float kRootSweptPadding = 0.020f;
-        rootSweptMin -= hairgpu::Vec3(kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);
-        rootSweptMax += hairgpu::Vec3(kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);
+        rootSweptMin = rootSweptMin - hairgpu::Vec3(kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);
+        rootSweptMax = rootSweptMax + hairgpu::Vec3(kRootSweptPadding, kRootSweptPadding, kRootSweptPadding);
         constants.sweptRootBoundsMin[0] = rootSweptMin.x;
         constants.sweptRootBoundsMin[1] = rootSweptMin.y;
         constants.sweptRootBoundsMin[2] = rootSweptMin.z;
