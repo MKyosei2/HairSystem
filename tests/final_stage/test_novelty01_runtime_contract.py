@@ -94,7 +94,11 @@ class Novelty01RuntimeContractTests(unittest.TestCase):
         source = (
             ROOT / "tools/final_stage/Run_Novelty01_Readiness_Smoke.ps1"
         ).read_text(encoding="utf-8")
-        self.assertIn('$Branch -notin @("Novelty01", "main")', source)
+        self.assertIn(
+            '$BranchAllowed = ($Branch -in @("Novelty01", "main")) -or $Branch.StartsWith("integration/novelty01-safe")',
+            source,
+        )
+        self.assertIn("if (-not $BranchAllowed)", source)
         self.assertIn("--measurement-frames", source)
         self.assertIn('"600"', source)
         self.assertIn("--timeout-seconds", source)
