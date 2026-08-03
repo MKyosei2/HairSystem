@@ -544,9 +544,6 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
     with tempfile.TemporaryDirectory(prefix="n01_header_") as directory:
         working_directory = Path(directory)
         source = working_directory / "test.cpp"
-        output = working_directory / (
-            "test.exe" if os.name == "nt" else "test"
-        )
         source.write_text(
             '#include "hairgpu/SegmentGroupAdaptivePayload.h"\n'
             "int main(){ "
@@ -567,8 +564,9 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 "/W4",
                 "/WX",
                 f"/I{root / 'include'}",
+                "/c",
                 str(source),
-                f"/Fe:{output}",
+                f"/Fo{working_directory / 'test.obj'}",
             ]
             result = run(command)
         elif direct_compiler:
@@ -579,9 +577,10 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 "-Wextra",
                 "-Werror",
                 f"-I{root / 'include'}",
+                "-c",
                 str(source),
                 "-o",
-                str(output),
+                str(working_directory / "test.o"),
             ]
             result = run(command)
         else:
@@ -596,7 +595,38 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 )
                 return
 
-            query = run([
+            install_query = run([
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ])
+            install_lines = [
+                line.strip().strip('"')
+                for line in install_query.stdout.splitlines()
+                if line.strip()
+            ]
+            installation = (
+                Path(install_lines[-1])
+                if install_query.returncode == 0 and install_lines
+                else None
+            )
+            if installation is None or not installation.is_dir():
+                findings.append(
+                    Finding(
+                        "error",
+                        "E_CPP_COMPILER",
+                        "Visual Studio C++ installation could not be resolved.\n"
+                        + install_query.stdout.strip(),
+                    )
+                )
+                return
+
+            msbuild_query = run([
                 str(vswhere),
                 "-latest",
                 "-products",
@@ -608,7 +638,7 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
             ])
             msbuild_candidates = [
                 Path(line.strip().strip('"'))
-                for line in query.stdout.splitlines()
+                for line in msbuild_query.stdout.splitlines()
                 if line.strip()
             ]
             msbuild = next(
@@ -619,13 +649,71 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 ),
                 None,
             )
-            if query.returncode != 0 or msbuild is None:
+            if msbuild_query.returncode != 0 or msbuild is None:
                 findings.append(
                     Finding(
                         "error",
                         "E_CPP_COMPILER",
                         "MSBuild.exe could not be resolved through vswhere.\n"
-                        + query.stdout.strip(),
+                        + msbuild_query.stdout.strip(),
+                    )
+                )
+                return
+
+            toolset_candidates = sorted(
+                (
+                    path
+                    for path in (
+                        installation
+                        / "MSBuild"
+                        / "Microsoft"
+                        / "VC"
+                    ).glob(
+                        "*/Platforms/x64/PlatformToolsets/v*"
+                    )
+                    if path.is_dir()
+                    and re.fullmatch(r"v[0-9]+", path.name)
+                ),
+                key=lambda path: int(path.name[1:]),
+                reverse=True,
+            )
+
+            platform_toolset = (
+                toolset_candidates[0].name
+                if toolset_candidates
+                else ""
+            )
+
+            if not platform_toolset:
+                version_file = (
+                    installation
+                    / "VC"
+                    / "Auxiliary"
+                    / "Build"
+                    / "Microsoft.VCToolsVersion.default.txt"
+                )
+                if version_file.is_file():
+                    version_text = version_file.read_text(
+                        encoding="utf-8-sig"
+                    ).strip()
+                    version_match = re.match(
+                        r"^([0-9]+)\.([0-9]+)",
+                        version_text,
+                    )
+                    if version_match:
+                        major = int(version_match.group(1))
+                        minor = int(version_match.group(2))
+                        platform_toolset = (
+                            f"v{major}{minor // 10}"
+                        )
+
+            if not platform_toolset:
+                findings.append(
+                    Finding(
+                        "error",
+                        "E_CPP_TOOLSET",
+                        "No installed MSVC PlatformToolset could be resolved.",
+                        str(installation),
                     )
                 )
                 return
@@ -656,8 +744,11 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
   <PropertyGroup
       Condition="'$(Configuration)|$(Platform)'=='Release|x64'"
       Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>"""
+                + platform_toolset
+                + """</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
@@ -671,9 +762,6 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 + include_path
                 + """;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-    </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="test.cpp" />
@@ -683,6 +771,7 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
 """,
                 encoding="utf-8",
             )
+
             command = [
                 str(msbuild),
                 str(project),
@@ -691,15 +780,22 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
                 "/verbosity:minimal",
                 "/p:Configuration=Release",
                 "/p:Platform=x64",
+                f"/p:PlatformToolset={platform_toolset}",
             ]
             result = run(command, cwd=working_directory)
 
         if result.returncode != 0:
+            message = result.stdout.strip()
+            if "platform_toolset" in locals():
+                message += (
+                    "\nDetected PlatformToolset="
+                    + platform_toolset
+                )
             findings.append(
                 Finding(
                     "error",
                     "E_CPP_HEADER_COMPILE",
-                    result.stdout.strip(),
+                    message,
                     str(source),
                 )
             )
