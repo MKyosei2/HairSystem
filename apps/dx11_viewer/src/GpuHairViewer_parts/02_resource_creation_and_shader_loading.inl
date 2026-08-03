@@ -110,6 +110,7 @@
                 GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_CAPTURE_FRAMES"),
                 1800u), 1u)
             : 0u;
+        uint32_t localDebugCapturedFrameCount = 0u;
         // Normal interactive title statistics begin only after resources, the
         // first presents, and driver lazy initialization have settled. Formal
         // and local-debug evidence keep their existing explicit warm-up rules.
@@ -127,6 +128,12 @@
         uint64_t cadenceWindowSimulationTicks = 0ull;
         if (localDebugCaptureEnabled)
         {
+            // A debugger capture owns an isolated sample set. Reusing interactive
+            // history makes the capture bound depend on data from before this run.
+            m_performanceSamples.clear();
+            m_performanceSamples.reserve(
+                static_cast<size_t>(localDebugCaptureFrames));
+
             std::wstring runName =
                 GetEnvironmentVariableString(L"HAIRGPU_LOCAL_DEBUG_RUN_NAME");
             if (runName.empty())
@@ -433,7 +440,7 @@
             const bool localDebugCaptureCurrentFrame =
                 localDebugCaptureEnabled &&
                 m_globalFrameIndex >= localDebugWarmupFrames &&
-                m_performanceSamples.size() < static_cast<size_t>(localDebugCaptureFrames);
+                localDebugCapturedFrameCount < localDebugCaptureFrames;
             const bool captureCurrentFrame =
                 ShouldCaptureCurrentFrame() || localDebugCaptureCurrentFrame;
             if (captureCurrentFrame)
@@ -452,14 +459,33 @@
             {
                 sample.measuredFrameIndex = m_measuredFrameIndex++;
                 m_performanceSamples.push_back(sample);
-                if (m_performanceSamples.size() > 12000)
+                if (localDebugCaptureCurrentFrame)
                 {
-                    m_performanceSamples.erase(m_performanceSamples.begin(), m_performanceSamples.begin() + static_cast<std::ptrdiff_t>(m_performanceSamples.size() - 12000));
+                    ++localDebugCapturedFrameCount;
+                }
+
+                // Interactive history is trimmed in batches. Never move the large
+                // PerformanceSample array while a bounded debugger capture is active.
+                if (!localDebugCaptureEnabled &&
+                    m_performanceSamples.size() > 12000u)
+                {
+                    constexpr size_t kInteractiveSampleCapacity = 12000u;
+                    constexpr size_t kInteractiveTrimBatch = 1024u;
+                    const size_t sampleCount = m_performanceSamples.size();
+                    const size_t excess =
+                        sampleCount - kInteractiveSampleCapacity;
+                    const size_t eraseCount = std::min(
+                        sampleCount,
+                        std::max(excess, kInteractiveTrimBatch));
+                    m_performanceSamples.erase(
+                        m_performanceSamples.begin(),
+                        m_performanceSamples.begin() +
+                            static_cast<std::ptrdiff_t>(eraseCount));
                 }
             }
             ++m_globalFrameIndex;
             if (localDebugCaptureEnabled &&
-                m_performanceSamples.size() >= static_cast<size_t>(localDebugCaptureFrames))
+                localDebugCapturedFrameCount >= localDebugCaptureFrames)
             {
                 m_running = false;
             }

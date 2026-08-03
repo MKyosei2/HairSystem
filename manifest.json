@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "hairsystem-full-replacement-package-v1",
+  "packageType": "full-replacement-files",
+  "repository": "MKyosei2/HairSystem",
+  "branch": "main",
+  "baseCommit": "902d9908f1c3059003f363d3063c4d0d4dcd8e61",
+  "baseSourceBlobSha": "2dc39d13e13f3e7f99c1d44c96bbb342bd794124",
+  "generatedAt": "2026-07-31T21:56:00+09:00",
+  "containsPatch": false,
+  "containsApplyScript": false,
+  "changes": [
+    "Clear and reserve the local-debug PerformanceSample vector at capture start.",
+    "Count bounded local-debug capture frames with a dedicated counter.",
+    "Disable front erase during local-debug capture.",
+    "Batch interactive history trimming to avoid repeated large memmoves.",
+    "Add a regression contract test for the local-debug vector lifecycle."
+  ],
+  "files": [
+    {
+      "path": "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl",
+      "sizeBytes": 80376,
+      "sha256": "0e295e5ae75ae579e6da7ae1dcbfed07c74ee40b469f15018d05ae2d99ab8334",
+      "replacementMode": "full-file"
+    },
+    {
+      "path": "tests/final_stage/test_local_debug_capture_vector_contract.py",
+      "sizeBytes": 2866,
+      "sha256": "70af3d96d37dfbcd9c8991620bdb650523b2e194da1c98c351b28d124c0548d8",
+      "replacementMode": "full-file"
+    },
+    {
+      "path": "README.md",
+      "sizeBytes": 2166,
+      "sha256": "bc22e92e705970ae6938b0bf0e28030e8af2cb49ef79b27e636a972ae2378ee7",
+      "replacementMode": "full-file"
+    }
+  ],
+  "validation": {
+    "baseBlobReconstructionMatched": true,
+    "baseBlobShaObserved": "2dc39d13e13f3e7f99c1d44c96bbb342bd794124",
+    "pythonContractTestsPassed": 5,
+    "windowsReleaseX64BuildExecuted": false,
+    "gpuRuntimeExecuted": false
+  }
+}
