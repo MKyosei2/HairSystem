@@ -533,37 +533,174 @@ def validate_formal_runner_contract(root: Path, findings: list[Finding]) -> None
 
 
 def compile_header(root: Path, findings: list[Finding]) -> None:
-    direct_compiler = shutil.which("cl.exe") or shutil.which("clang++") or shutil.which("g++")
-    vsdevcmd = find_vsdevcmd() if os.name == "nt" else None
-    if not direct_compiler and vsdevcmd is None:
-        findings.append(Finding("error", "E_CPP_COMPILER", "No C++ compiler or Visual Studio developer environment was found."))
-        return
+    direct_compiler = (
+        shutil.which("cl.exe")
+        or shutil.which("clang++")
+        or shutil.which("g++")
+    )
+
     with tempfile.TemporaryDirectory(prefix="n01_header_") as directory:
         working_directory = Path(directory)
         source = working_directory / "test.cpp"
-        output = working_directory / ("test.exe" if os.name == "nt" else "test")
-        source.write_text('#include "hairgpu/SegmentGroupAdaptivePayload.h"\\nint main(){ hairgpu::novelty01::RuntimeConstants c{}; return c.groupCount == 0u ? 0 : 1; }\\n', encoding="utf-8")
-        command_cwd: Path | None = None
-        if direct_compiler and Path(direct_compiler).name.lower() == "cl.exe":
-            command = [direct_compiler, "/nologo", "/std:c++17", "/W4", "/WX", f"/I{root / 'include'}", str(source), f"/Fe:{output}"]
+        output = working_directory / (
+            "test.exe" if os.name == "nt" else "test"
+        )
+        source.write_text(
+            '#include "hairgpu/SegmentGroupAdaptivePayload.h"\n'
+            "int main(){ "
+            "hairgpu::novelty01::RuntimeConstants c{}; "
+            "return c.groupCount == 0u ? 0 : 1; "
+            "}\n",
+            encoding="utf-8",
+        )
+
+        if (
+            direct_compiler
+            and Path(direct_compiler).name.lower() == "cl.exe"
+        ):
+            command = [
+                direct_compiler,
+                "/nologo",
+                "/std:c++17",
+                "/W4",
+                "/WX",
+                f"/I{root / 'include'}",
+                str(source),
+                f"/Fe:{output}",
+            ]
+            result = run(command)
         elif direct_compiler:
-            command = [direct_compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", f"-I{root / 'include'}", str(source), "-o", str(output)]
+            command = [
+                direct_compiler,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                f"-I{root / 'include'}",
+                str(source),
+                "-o",
+                str(output),
+            ]
+            result = run(command)
         else:
-            cl_arguments = ["cl.exe", "/nologo", "/std:c++17", "/W4", "/WX", f"/I{root / 'include'}", str(source), f"/Fe:{output}"]
-            command_script = working_directory / "compile_header.cmd"
-            command_script.write_bytes(
+            vswhere = find_vswhere()
+            if vswhere is None:
+                findings.append(
+                    Finding(
+                        "error",
+                        "E_CPP_COMPILER",
+                        "No direct C++ compiler or vswhere.exe was found.",
+                    )
+                )
+                return
+
+            query = run([
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.Component.MSBuild",
+                "-find",
+                r"MSBuild\**\Bin\MSBuild.exe",
+            ])
+            msbuild_candidates = [
+                Path(line.strip().strip('"'))
+                for line in query.stdout.splitlines()
+                if line.strip()
+            ]
+            msbuild = next(
                 (
-                    "@echo off\\r\\n"
-                    f'call "{vsdevcmd}" -no_logo -arch=x64 -host_arch=x64 >nul\\r\\n'
-                    "if errorlevel 1 exit /b %errorlevel%\\r\\n"
-                    f"{subprocess.list2cmdline(cl_arguments)}\\r\\n"
-                ).encode("utf-8")
+                    candidate
+                    for candidate in msbuild_candidates
+                    if candidate.is_file()
+                ),
+                None,
             )
-            command = ["cmd.exe", "/d", "/s", "/c", command_script.name]
-            command_cwd = working_directory
-        result = run(command, cwd=command_cwd)
+            if query.returncode != 0 or msbuild is None:
+                findings.append(
+                    Finding(
+                        "error",
+                        "E_CPP_COMPILER",
+                        "MSBuild.exe could not be resolved through vswhere.\n"
+                        + query.stdout.strip(),
+                    )
+                )
+                return
+
+            include_path = (
+                str(root / "include")
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            project = working_directory / "HeaderProbe.vcxproj"
+            project.write_text(
+                """<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A6653D5D-A5C8-4F38-92CC-7B95B6A41131}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>N01HeaderProbe</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />
+  <PropertyGroup
+      Condition="'$(Configuration)|$(Platform)'=='Release|x64'"
+      Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup
+      Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalIncludeDirectories>"""
+                + include_path
+                + """;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="test.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
+</Project>
+""",
+                encoding="utf-8",
+            )
+            command = [
+                str(msbuild),
+                str(project),
+                "/nologo",
+                "/m:1",
+                "/verbosity:minimal",
+                "/p:Configuration=Release",
+                "/p:Platform=x64",
+            ]
+            result = run(command, cwd=working_directory)
+
         if result.returncode != 0:
-            findings.append(Finding("error", "E_CPP_HEADER_COMPILE", result.stdout.strip(), str(source)))
+            findings.append(
+                Finding(
+                    "error",
+                    "E_CPP_HEADER_COMPILE",
+                    result.stdout.strip(),
+                    str(source),
+                )
+            )
 
 
 def compile_hlsl(root: Path, findings: list[Finding], require_fxc: bool) -> None:
