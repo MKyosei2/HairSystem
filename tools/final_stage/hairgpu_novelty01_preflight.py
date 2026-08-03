@@ -539,17 +539,29 @@ def compile_header(root: Path, findings: list[Finding]) -> None:
         findings.append(Finding("error", "E_CPP_COMPILER", "No C++ compiler or Visual Studio developer environment was found."))
         return
     with tempfile.TemporaryDirectory(prefix="n01_header_") as directory:
-        source = Path(directory) / "test.cpp"
-        output = Path(directory) / ("test.exe" if os.name == "nt" else "test")
-        source.write_text('#include "hairgpu/SegmentGroupAdaptivePayload.h"\nint main(){ hairgpu::novelty01::RuntimeConstants c{}; return c.groupCount == 0u ? 0 : 1; }\n', encoding="utf-8")
+        working_directory = Path(directory)
+        source = working_directory / "test.cpp"
+        output = working_directory / ("test.exe" if os.name == "nt" else "test")
+        source.write_text('#include "hairgpu/SegmentGroupAdaptivePayload.h"\\nint main(){ hairgpu::novelty01::RuntimeConstants c{}; return c.groupCount == 0u ? 0 : 1; }\\n', encoding="utf-8")
+        command_cwd: Path | None = None
         if direct_compiler and Path(direct_compiler).name.lower() == "cl.exe":
             command = [direct_compiler, "/nologo", "/std:c++17", "/W4", "/WX", f"/I{root / 'include'}", str(source), f"/Fe:{output}"]
         elif direct_compiler:
             command = [direct_compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", f"-I{root / 'include'}", str(source), "-o", str(output)]
         else:
             cl_arguments = ["cl.exe", "/nologo", "/std:c++17", "/W4", "/WX", f"/I{root / 'include'}", str(source), f"/Fe:{output}"]
-            command = ["cmd.exe", "/d", "/s", "/c", f'call "{vsdevcmd}" -no_logo -arch=x64 -host_arch=x64 >nul && {subprocess.list2cmdline(cl_arguments)}']
-        result = run(command)
+            command_script = working_directory / "compile_header.cmd"
+            command_script.write_bytes(
+                (
+                    "@echo off\\r\\n"
+                    f'call "{vsdevcmd}" -no_logo -arch=x64 -host_arch=x64 >nul\\r\\n'
+                    "if errorlevel 1 exit /b %errorlevel%\\r\\n"
+                    f"{subprocess.list2cmdline(cl_arguments)}\\r\\n"
+                ).encode("utf-8")
+            )
+            command = ["cmd.exe", "/d", "/s", "/c", command_script.name]
+            command_cwd = working_directory
+        result = run(command, cwd=command_cwd)
         if result.returncode != 0:
             findings.append(Finding("error", "E_CPP_HEADER_COMPILE", result.stdout.strip(), str(source)))
 
