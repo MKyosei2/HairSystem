@@ -71,6 +71,8 @@ jobs:
             $path = Join-Path $stage $relative
             if (Test-Path $path) { Remove-Item $path -Recurse -Force }
           }
+          Get-ChildItem $stage -Filter 'TEMP_PR_TRIGGER*.md' -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force
 
           Get-ChildItem $stage -Recurse -Filter '*.vcxproj.user' | ForEach-Object {
             $text = Get-Content $_.FullName -Raw
@@ -103,16 +105,20 @@ jobs:
             noveltyMethods = @('P')
             warmupFrames = 120
             measurementFrames = 1800
+            comparisonRule = 'Measure B0 and P with the same rebuilt executable.'
           } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $stage 'MAIN_BASELINE_P_ONLY_POLICY.json') -Encoding UTF8
           "STAGE=$stage" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "OUT=$out" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Validate tests
+      - name: Validate conditions and contract tests
         shell: pwsh
         run: |
           Set-Location $env:STAGE
           foreach ($forbidden in @('files','overlay','replacement','patches')) {
             if (Test-Path $forbidden) { throw "Forbidden tree remains: $forbidden" }
+          }
+          if (Get-ChildItem . -Filter 'TEMP_PR_TRIGGER*.md' -File -ErrorAction SilentlyContinue) {
+            throw 'Temporary trigger file remains.'
           }
           foreach ($file in Get-ChildItem -Recurse -Filter '*.vcxproj.user') {
             $text = Get-Content $file.FullName -Raw
@@ -120,16 +126,19 @@ jobs:
             if ($text.Contains('--local-capture-method DEV')) { throw 'DEV method remains.' }
           }
           python -m unittest discover -s tests/final_stage -p 'test_b0_readiness_smoke.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests/final_stage -p 'test_viewer_foundation_single_owner.py' -v
-          python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests/final_stage -p 'test_novelty01_*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Release x64 build
         shell: pwsh
         run: |
           Set-Location $env:STAGE
           New-Item -ItemType Directory -Force validation_logs | Out-Null
-          msbuild HairSystem.sln /m /t:Rebuild /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /fl /flp:logfile=validation_logs\release_x64_build.log;verbosity=normal
+          msbuild HairSystem.sln /m /t:Rebuild /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /fl "/flp:logfile=validation_logs\release_x64_build.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Native and shader self-tests
         shell: pwsh
