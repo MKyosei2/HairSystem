@@ -98,7 +98,7 @@ jobs:
             /p:HairGpuStep0ProfileEnabled=false `
             /p:HairGpuFormalBuild=true `
             /fl `
-            /flp:logfile=artifacts/release_x64_build.log;verbosity=normal
+            "/flp:logfile=artifacts/release_x64_build.log;verbosity=normal"
 
       - name: Native self-test
         shell: pwsh
