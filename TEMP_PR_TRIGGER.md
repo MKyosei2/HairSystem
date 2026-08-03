@@ -1,0 +1,1 @@
+Temporary file used only to trigger the Main-baseline P-only package validation workflow. It is excluded from the generated source ZIP.
