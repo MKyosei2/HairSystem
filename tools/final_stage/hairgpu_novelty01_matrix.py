@@ -157,6 +157,65 @@ def load_frozen_environment(repo: Path) -> dict[str, str]:
     return environment_values
 
 
+
+
+def materialize_case_template(
+        suite_template: Mapping[str, Any],
+        template_path: Path) -> dict[str, Any]:
+    defaults = suite_template.get("run_defaults")
+    source = suite_template.get("source")
+    if not isinstance(defaults, Mapping):
+        raise ValueError(
+            "Suite template does not contain a run_defaults mapping")
+    if not isinstance(source, Mapping):
+        raise ValueError(
+            "Suite template does not contain a source mapping")
+
+    case_template = dict(defaults)
+    template_directory = template_path.parent.resolve()
+
+    manifest_override = os.environ.get(
+        "HAIRGPU_FROZEN_ASSET_MANIFEST", "").strip()
+    manifest_value = (
+        manifest_override
+        if manifest_override
+        else str(source.get("asset_manifest", "")).strip()
+    )
+    if not manifest_value:
+        raise ValueError(
+            "Frozen asset manifest is not configured for the matrix")
+
+    manifest_path = Path(manifest_value)
+    if not manifest_path.is_absolute():
+        manifest_path = template_directory / manifest_path
+    manifest_path = manifest_path.resolve()
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"Frozen asset manifest is missing: {manifest_path}")
+
+    shader_value = str(source.get("shader_root", "")).strip()
+    if not shader_value:
+        raise ValueError("Shader root is not configured for the matrix")
+    shader_root = Path(shader_value)
+    if not shader_root.is_absolute():
+        shader_root = template_directory / shader_root
+    shader_root = shader_root.resolve()
+    if not shader_root.is_dir():
+        raise FileNotFoundError(
+            f"Shader root is missing: {shader_root}")
+
+    case_template["asset_manifest"] = str(manifest_path)
+    case_template["shader_root"] = str(shader_root)
+    case_template["timeline_repeat"] = True
+    case_template["hardware_profile_strict"] = False
+    case_template["allowed_asset_source_branches"] = [
+        "Novelty01",
+        "Novelty",
+        "main",
+    ]
+    return case_template
+
+
 def validate_contract(contract: Mapping[str, Any]) -> None:
     baselines = contract.get("baselines")
     scenarios = contract.get("scenarios")
@@ -358,7 +417,12 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
     if not preflight_result["passed"]:
         raise RuntimeError("Novelty 01 source preflight failed.")
 
-    template = load_json(args.template.resolve())
+    template_path = args.template.resolve()
+    suite_template = load_json(template_path)
+    template = materialize_case_template(
+        suite_template,
+        template_path,
+    )
     contract = load_formal_contract(repo)
     validate_contract(contract)
     frozen_environment = load_frozen_environment(repo)
@@ -426,16 +490,26 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                             "independentBaselineEvidence": independent_evidence,
                         })
                     except Exception as exc:
-                        results.append({
+                        failure = {
                             "caseId": case["case_id"],
                             "variant": variant,
                             "scenario": scenario,
                             "repetition": repetition,
                             "ok": False,
                             "error": str(exc),
-                        })
+                        }
+                        formal_issues = getattr(exc, "issues", None)
+                        if formal_issues:
+                            failure["issues"] = formal_issues
+                        results.append(failure)
                         if not args.continue_on_error:
-                            raise
+                            detail = str(exc)
+                            if formal_issues:
+                                detail += ": " + json.dumps(
+                                    formal_issues,
+                                    ensure_ascii=False,
+                                )
+                            raise RuntimeError(detail) from exc
 
     determinism_issues = validate_determinism(results) if args.profile == "determinism" else []
     payload = {
