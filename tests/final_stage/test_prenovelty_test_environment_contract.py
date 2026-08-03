@@ -150,8 +150,24 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
             viewer.write_bytes(b"viewer")
             timeline = root / "timeline.json"
             timeline.write_text("{}", encoding="utf-8")
+
+            source_asset = root / "frozen_asset.bin"
+            source_asset.write_bytes(b"frozen-asset")
+            asset_manifest = {
+                "_resolvedMembers": {
+                    "sourceAssetPath": str(source_asset.resolve()),
+                },
+                "sourceAssetSha256": "0" * 64,
+                "generatedTopologySha256": "1" * 64,
+                "generatorSettingsSha256": "2" * 64,
+            }
+
             manifest = root / "manifest.json"
-            manifest.write_text("{}", encoding="utf-8")
+            manifest.write_text(
+                json.dumps(asset_manifest),
+                encoding="utf-8",
+            )
+
             output = root / "out"
             paths = final_run.output_paths(output, "formal_case")
             case = final_run.normalize_case({
@@ -164,14 +180,49 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
                 "asset_manifest": str(manifest),
             })
             environment = final_run._build_environment(
-                case, paths, root, viewer, {}
+                case,
+                paths,
+                root,
+                viewer,
+                asset_manifest,
             )
-            self.assertEqual(environment["HAIRGPU_CASE_JSON"], str(paths["case"]))
+            self.assertEqual(
+                environment["HAIRGPU_CASE_JSON"],
+                str(paths["case"]),
+            )
             self.assertEqual(environment["HAIRGPU_AUTO_TELEMETRY"], "1")
-            self.assertEqual(environment["HAIRGPU_TELEMETRY_CSV"], str(paths["frames"]))
-            self.assertEqual(environment["HAIRGPU_TELEMETRY_JSONL"], str(paths["jsonl"]))
-            self.assertEqual(environment["HAIRGPU_SETTINGS_JSON"], str(paths["settings"]))
-            self.assertEqual(environment["HAIRGPU_SUMMARY_JSON"], str(paths["summary"]))
+            self.assertEqual(
+                environment["HAIRGPU_TELEMETRY_CSV"],
+                str(paths["frames"]),
+            )
+            self.assertEqual(
+                environment["HAIRGPU_TELEMETRY_JSONL"],
+                str(paths["jsonl"]),
+            )
+            self.assertEqual(
+                environment["HAIRGPU_SETTINGS_JSON"],
+                str(paths["settings"]),
+            )
+            self.assertEqual(
+                environment["HAIRGPU_SUMMARY_JSON"],
+                str(paths["summary"]),
+            )
+            self.assertEqual(
+                environment["HAIRGPU_FORMAL_ASSET_PATH"],
+                str(source_asset.resolve()),
+            )
+            self.assertEqual(
+                environment["HAIRGPU_FORMAL_ASSET_SHA256"],
+                "0" * 64,
+            )
+            self.assertEqual(
+                environment["HAIRGPU_FORMAL_TOPOLOGY_SHA256"],
+                "1" * 64,
+            )
+            self.assertEqual(
+                environment["HAIRGPU_GENERATOR_SETTINGS_SHA256"],
+                "2" * 64,
+            )
 
     def test_environment_variable_reader_preserves_last_character(self) -> None:
         source = (
