@@ -1,0 +1,200 @@
+name: Build Main-Baseline P-Only Package
+
+on:
+  push:
+    branches:
+      - artifact/novelty01-main-baseline-p-only-20260804
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Add MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Verify Main ancestry and P-only routing
+        shell: pwsh
+        run: |
+          git fetch origin main Novelty01
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'HEAD does not contain the current Main baseline.' }
+
+          $cpp = Get-Content 'apps/dx11_viewer/src/GpuHairViewer.cpp' -Raw
+          $required = @(
+            'ExecuteExperimentSimulationTickLegacy',
+            'ExecuteNovelty01ExperimentTick',
+            '16_segment_group_adaptive_payload_complete.inl',
+            '17_novelty01_formal_evidence.inl',
+            '18_novelty01_render_dirty_range_consumer.inl',
+            '02a_required_runtime_foundation.inl'
+          )
+          foreach ($token in $required) {
+            if (-not $cpp.Contains($token)) { throw "Missing integration token: $token" }
+          }
+          if ($cpp.Contains('#define private')) { throw 'Unsafe #define private integration remains.' }
+
+      - name: Create cleaned source tree
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD 'artifact_stage\HairSystem_Novelty01_MainBaseline_POnly'
+          $archive = Join-Path $PWD 'artifact_stage\tracked.zip'
+          New-Item -ItemType Directory -Force (Split-Path $stage -Parent) | Out-Null
+          git archive --format=zip --output=$archive HEAD
+          Expand-Archive -Path $archive -DestinationPath $stage -Force
+
+          $remove = @(
+            'files',
+            'overlay',
+            'replacement',
+            'patches',
+            'tools\repair_novelty01_premerge.py',
+            'tools\apply_novelty01_69_3_complete.py',
+            'tools\apply_novelty01_69_4_complete.py',
+            'tools\apply_novelty01_complete.py',
+            'tools\apply_novelty01_sgapt.py',
+            'tools\verify_novelty01_sgapt.py',
+            'tools\final_stage\apply_formal_asset_binding_patch.py',
+            '.github\workflows\build-main-baseline-p-only-package.yml'
+          )
+          foreach ($relative in $remove) {
+            $path = Join-Path $stage $relative
+            if (Test-Path $path) { Remove-Item $path -Recurse -Force }
+          }
+
+          # Restore the exact Main local-capture conditions used before Novelty01.
+          Get-ChildItem $stage -Recurse -Filter '*.vcxproj.user' | ForEach-Object {
+            $text = Get-Content $_.FullName -Raw
+            $text = $text.Replace(
+              '--local-capture --local-capture-warmup 10 --local-capture-frames 120 --local-capture-method DEV',
+              '--local-capture --local-capture-warmup 120 --local-capture-frames 1800')
+            $text = $text -replace '(?m)^\s*<DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>\r?\n?', ''
+            [IO.File]::WriteAllText($_.FullName, $text, [Text.UTF8Encoding]::new($false))
+          }
+
+          @'
+          # Main baseline + P-only integration
+
+          This source snapshot preserves the Main experiment path and conditions.
+
+          - Main commit contained: 8bf5c77bc7826575cecfa1943f842642d1538a6c
+          - Novelty01 source commit: 31712688d8d5ce2e3a91d4fc01e1e29bb5c08f5a
+          - B0-B8 continue through the Main/legacy implementation.
+          - Only P uses the SG-APT Novelty01 path.
+          - Main local-capture defaults are restored to warm-up 120 and measurement 1800.
+          - `results/committed/local_debug/latest_run.json` is the Main-side version.
+          - Duplicate `files/`, `overlay/`, and `replacement/` trees are excluded.
+
+          For the formal comparison, rebuild once and measure B0 and P using the same executable.
+          '@ | Set-Content (Join-Path $stage 'MAIN_BASELINE_P_ONLY_README.md') -Encoding UTF8
+
+          $policy = [ordered]@{
+            schema = 'hairsystem-main-baseline-p-only-v1'
+            repository = 'MKyosei2/HairSystem'
+            mainBaselineCommit = '8bf5c77bc7826575cecfa1943f842642d1538a6c'
+            noveltySourceCommit = '31712688d8d5ce2e3a91d4fc01e1e29bb5c08f5a'
+            baselineMethods = @('B0','B1','B2','B3','B4','B5','B6','B7','B8')
+            noveltyMethods = @('P')
+            localCaptureWarmupFrames = 120
+            localCaptureMeasurementFrames = 1800
+            conditionsPolicy = 'Main preserved; only method P changes execution path.'
+          }
+          $policy | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $stage 'MAIN_BASELINE_P_ONLY_POLICY.json') -Encoding UTF8
+
+          "STAGE=$stage" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Validate cleaned tree and tests
+        shell: pwsh
+        run: |
+          Set-Location $env:STAGE
+          foreach ($forbidden in @('files','overlay','replacement','patches')) {
+            if (Test-Path $forbidden) { throw "Forbidden duplicate tree remains: $forbidden" }
+          }
+
+          $userFiles = Get-ChildItem -Recurse -Filter '*.vcxproj.user'
+          foreach ($file in $userFiles) {
+            $text = Get-Content $file.FullName -Raw
+            if (-not $text.Contains('--local-capture-warmup 120 --local-capture-frames 1800')) {
+              throw "Main capture condition not restored in $($file.FullName)"
+            }
+            if ($text.Contains('--local-capture-method DEV')) {
+              throw "DEV capture method remains in $($file.FullName)"
+            }
+          }
+
+          python -m unittest discover -s tests/final_stage -p 'test_b0_readiness_smoke.py' -v
+          python -m unittest discover -s tests/final_stage -p 'test_viewer_foundation_single_owner.py' -v
+          python -m unittest discover -s tests/final_stage -p 'test_prenovelty_test_environment_contract.py' -v
+          python -m unittest discover -s tests/final_stage -p 'test_novelty01_*.py' -v
+
+      - name: Release x64 build
+        shell: pwsh
+        run: |
+          Set-Location $env:STAGE
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          msbuild HairSystem.sln /m /t:Rebuild /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 /p:HairGpuStep0ProfileEnabled=false /p:HairGpuFormalBuild=true /fl /flp:logfile=artifacts\release_x64_build.log;verbosity=normal
+
+      - name: Native and shader self-tests
+        shell: pwsh
+        run: |
+          Set-Location $env:STAGE
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test 2>&1 | Tee-Object artifacts\native_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test 2>&1 | Tee-Object artifacts\shader_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Remove build outputs and create checksums
+        shell: pwsh
+        run: |
+          Set-Location $env:STAGE
+          foreach ($dir in @('bin','bin-int','obj','obj-int','.vs','artifacts')) {
+            if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+          }
+
+          $root = (Get-Location).Path
+          $entries = Get-ChildItem -Recurse -File | Sort-Object FullName | ForEach-Object {
+            [ordered]@{
+              path = $_.FullName.Substring($root.Length + 1).Replace('\','/')
+              sizeBytes = $_.Length
+              sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          $manifest = [ordered]@{
+            schema = 'hairsystem-main-baseline-p-only-manifest-v1'
+            sourceCommit = '31712688d8d5ce2e3a91d4fc01e1e29bb5c08f5a'
+            mainBaselineCommit = '8bf5c77bc7826575cecfa1943f842642d1538a6c'
+            fileCount = @($entries).Count
+            files = @($entries)
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content 'SOURCE_MANIFEST.json' -Encoding UTF8
+
+          $zip = Join-Path (Split-Path $env:STAGE -Parent) 'HairSystem_Novelty01_MainBaseline_POnly_FullSource.zip'
+          Compress-Archive -Path (Join-Path $env:STAGE '*') -DestinationPath $zip -CompressionLevel Optimal -Force
+          "PACKAGE_ZIP=$zip" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Novelty01-MainBaseline-POnly
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ env.PACKAGE_ZIP }}
