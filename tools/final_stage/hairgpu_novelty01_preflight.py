@@ -226,6 +226,8 @@ def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
             command,
             cwd=cwd,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
