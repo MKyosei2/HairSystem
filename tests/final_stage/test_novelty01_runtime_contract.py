@@ -130,5 +130,53 @@ class Novelty01RuntimeContractTests(unittest.TestCase):
         self.assertNotIn('NOVELTY_SOURCE_COMMIT = "4ad791c6', source)
 
 
+
+    def test_payload_owner_lifecycle_has_no_counter_alias_or_stale_list_dependency(
+        self,
+    ) -> None:
+        lifecycle = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/17_novelty01_formal_evidence.inl"
+        ).read_text(encoding="utf-8")
+        shader = (
+            ROOT
+            / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+        ).read_text(encoding="utf-8")
+
+        pre_begin = lifecycle.index(
+            "void GpuHairViewer::ExecuteNovelty01PreClassificationValidation()"
+        )
+        post_begin = lifecycle.index(
+            "void GpuHairViewer::ExecuteNovelty01PostCompactionLifecycle()"
+        )
+        next_begin = lifecycle.index(
+            "void GpuHairViewer::ExecuteNovelty01DirtyRangePropagation()"
+        )
+        pre_body = lifecycle[pre_begin:post_begin]
+        post_body = lifecycle[post_begin:next_begin]
+
+        self.assertNotIn("runtime.counters.srv.Get()", pre_body)
+        self.assertNotIn("runtime.counters.srv.Get()", post_body)
+
+        writer_begin = shader.index("void N01WritePayloadOwnersCS")
+        writer_end = shader.index("void N01RetirePayloadOwnersCS")
+        writer = shader[writer_begin:writer_end]
+
+        self.assertIn(
+            "const uint groupIndex = dispatchThreadId.x;",
+            writer,
+        )
+        self.assertIn(
+            "const uint targetPayloadIndex = extension.payloadIndex;",
+            writer,
+        )
+        self.assertIn("const bool dynamicState", writer)
+        self.assertIn("const bool payloadValid", writer)
+        self.assertNotIn(
+            "N01LifecycleCountersIn[N01_COUNTER_DYNAMIC]",
+            writer,
+        )
+        self.assertNotIn("N01LifecycleDynamicList[", writer)
+
 if __name__ == "__main__":
     unittest.main()

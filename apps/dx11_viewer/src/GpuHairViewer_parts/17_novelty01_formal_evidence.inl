@@ -28,8 +28,8 @@
             runtime.cores.srv.Get(),
             runtime.extensions.srv.Get(),
             runtime.payloadOwners[runtime.payloadReadIndex].srv.Get(),
-            runtime.dynamicList.srv.Get(),
-            runtime.counters.srv.Get()
+            nullptr,
+            nullptr
         };
         ID3D11UnorderedAccessView* uavs[4] =
         {
@@ -79,8 +79,8 @@
                 nullptr,
                 nullptr,
                 runtime.payloadOwners[oldGeneration].srv.Get(),
-                runtime.dynamicList.srv.Get(),
-                runtime.counters.srv.Get()
+                nullptr,
+                nullptr
             };
             ID3D11UnorderedAccessView* uavs[4] =
             {

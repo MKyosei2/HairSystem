@@ -3876,40 +3876,35 @@ void N01ValidatePayloadOwnersCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void N01WritePayloadOwnersCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    const uint compactedIndex = dispatchThreadId.x;
-    const uint dynamicCount =
-        N01LifecycleCountersIn[N01_COUNTER_DYNAMIC];
-    if (compactedIndex >= dynamicCount ||
-        compactedIndex >= gPayloadCapacity)
+    const uint groupIndex = dispatchThreadId.x;
+    if (groupIndex >= gGroupCount)
     {
         return;
     }
 
-    const uint groupIndex =
-        N01LifecycleDynamicList[compactedIndex];
     SegmentGroupCore core = N01LifecycleCoresOut[groupIndex];
     CoreExtension extension =
         N01LifecycleExtensionsOut[groupIndex];
-    const uint targetPayloadIndex =
-        N01FeatureEnabled(N01_FEATURE_OPTIONAL_PAYLOAD)
-        ? compactedIndex
-        : groupIndex;
-    if (targetPayloadIndex >= gPayloadCapacity)
+
+    const bool dynamicState =
+        core.state == N01_STATE_DYNAMIC ||
+        core.state == N01_STATE_FORCED_DYNAMIC;
+    const bool payloadValid =
+        (core.flags & N01_CORE_PAYLOAD_VALID) != 0u &&
+        extension.payloadIndex != N01_INVALID &&
+        extension.payloadIndex < gPayloadCapacity;
+
+    if (!dynamicState || !payloadValid)
     {
-        core.flags |= N01_CORE_BASELINE_FALLBACK;
-        core.flags &= ~N01_CORE_PAYLOAD_VALID;
-        extension.payloadIndex = N01_INVALID;
-        N01LifecycleCoresOut[groupIndex] = core;
-        N01LifecycleExtensionsOut[groupIndex] = extension;
-        N01LifecycleCounter(N01_COUNTER_PAYLOAD_OVERFLOW, 1u);
-        N01LifecycleCounter(N01_COUNTER_FALLBACK, 1u);
         return;
     }
+
+    const uint targetPayloadIndex = extension.payloadIndex;
 
     PayloadOwner newOwner = (PayloadOwner)0;
     newOwner.groupIndex = groupIndex;
     newOwner.payloadVersion = extension.payloadVersion;
-    newOwner.generation = gPayloadGeneration;
+    newOwner.generation = extension.payloadGeneration;
     newOwner.allocationEpoch = gFrameIndex;
     newOwner.retireEpoch = 0u;
     newOwner.safeReuseEpoch =
@@ -3928,7 +3923,9 @@ void N01WritePayloadOwnersCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         core.flags &= ~N01_CORE_PAYLOAD_VALID;
         core.dirtyFlags |= N01_DIRTY_PAYLOAD;
         extension.payloadIndex = N01_INVALID;
-        N01LifecycleCounter(N01_COUNTER_DUPLICATE_PAYLOAD_OWNER, 1u);
+        N01LifecycleCounter(
+            N01_COUNTER_DUPLICATE_PAYLOAD_OWNER,
+            1u);
         N01LifecycleCounter(N01_COUNTER_FALLBACK, 1u);
     }
     else
@@ -3937,14 +3934,17 @@ void N01WritePayloadOwnersCS(uint3 dispatchThreadId : SV_DispatchThreadID)
             (oldSlot.state == 2u &&
              gFrameIndex >= oldSlot.safeReuseEpoch))
         {
-            N01LifecycleCounter(N01_COUNTER_PAYLOAD_REUSED, 1u);
+            N01LifecycleCounter(
+                N01_COUNTER_PAYLOAD_REUSED,
+                1u);
         }
         else
         {
-            N01LifecycleCounter(N01_COUNTER_PAYLOAD_ALLOCATED, 1u);
+            N01LifecycleCounter(
+                N01_COUNTER_PAYLOAD_ALLOCATED,
+                1u);
         }
-        extension.payloadIndex = targetPayloadIndex;
-        extension.payloadGeneration = gPayloadGeneration;
+
         core.flags |= N01_CORE_PAYLOAD_VALID;
         core.flags &= ~N01_CORE_BASELINE_FALLBACK;
         N01NewPayloadOwners[targetPayloadIndex] = newOwner;
