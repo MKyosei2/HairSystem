@@ -2697,3 +2697,14 @@ Dynamic割合が高い場合は、GPU実測コストに基づいてFull Dynamic 
 比較実験、アブレーション、Ground Truth、長時間試験、決定性試験によって確認された範囲だけを、研究上の貢献として報告する。
 
 最終的には、100,000本、128点、Full HDの高密度髪表示において、物理的整合性、局所編集性、異常時復帰性を維持しながら、変化していない領域のDynamic Payload、物理計算、Follower再構築、描画更新を省略し、安定したリアルタイム処理を目指す。
+
+---
+
+## 実装基準追記：Novelty01 69.10完全修復
+
+- 実装基準Commit：`4f4c6210d7be40a0b5d522789d2684ade86d3de9`
+- Fixed Core、Optional Dynamic Payload、Payload Owner/Lifetime、Stable Compaction、Shared Point single-writer、Follower/Render Dirty Rangeを正式Runtimeへ接続する。
+- B1/B8は既存の独立Method IDで実行し、SG-APT Runtimeを生成しない。
+- `files/`、`overlay/`、`replacement/`および旧Patcher/Apply Scriptは正式実装に含めない。
+- 正式な実装対応表は`設計書/01A_SGAPT_Implementation_Contract_and_Evidence.md`、実験契約は`docs/experiments/NOVELTY01_FORMAL_CONTRACT.json`をSource of Truthとする。
+- 本追記は実装経路の定義であり、60 FPS、品質、安全性、新規性を実験前に保証するものではない。

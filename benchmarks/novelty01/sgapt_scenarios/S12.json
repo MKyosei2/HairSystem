@@ -1,0 +1,48 @@
+{
+  "scenario": "S12_FalseStaticTrap",
+  "version": 3,
+  "novelty01DesignScenario": "S12",
+  "description": "static_dynamic_boundary_stress",
+  "durationFrames": 7200,
+  "fixedTimeStepSeconds": 0.016666666666666666,
+  "seedDriven": true,
+  "rootMotion": {
+    "type": "constant",
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationEulerDegrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "wind": {
+    "type": "constant",
+    "vector": [
+      0,
+      0,
+      0
+    ]
+  },
+  "colliders": [],
+  "events": [],
+  "assertions": {
+    "timelineFinalFrameRequired": true
+  },
+  "schema": "hairgpu-novelty01-canonical-scenario-v1",
+  "canonical": true,
+  "titleJa": "Static／Dynamic境界Stress",
+  "designInjection": "boundary_stress",
+  "expectedBehavior": "shared-point and boundary repair",
+  "payloadCapacityPercent": 50,
+  "requiredEvidence": [
+    "scenarioAppliedEventCount",
+    "fatalFailure",
+    "nanStateCount",
+    "infiniteStateCount"
+  ],
+  "forbiddenConfoundingEvents": true
+}
