@@ -1,0 +1,271 @@
+name: Build Novelty01 Owner-Fixed Full Source
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-novelty01-owner-fixed-full-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-verify-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: '1'
+      PYTHONHASHSEED: '0'
+
+    steps:
+      - name: Checkout Main-based branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Add MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate FXC
+        shell: pwsh
+        run: |
+          $candidates = Get-ChildItem `
+            'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe' `
+            -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
+          if (-not $candidates) {
+            throw 'fxc.exe was not found in the Windows SDK.'
+          }
+          $fxc = $candidates[0].FullName
+          "FXC=$fxc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Split-Path $fxc | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Apply payload-owner generation repair
+        shell: pwsh
+        run: |
+          @'
+          from __future__ import annotations
+
+          import re
+          from pathlib import Path
+
+          root = Path.cwd()
+          shader_path = root / 'apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl'
+          test_path = root / 'tests/final_stage/test_novelty01_runtime_contract.py'
+
+          shader = shader_path.read_text(encoding='utf-8')
+          pattern = re.compile(
+              r'(?P<indent>^[ \t]*)const\s+PayloadOwner\s+oldSlot\s*=\s*\n'
+              r'(?P=indent)[ \t]+N01OldPayloadOwners\[targetPayloadIndex\];\s*\n'
+              r'(?P=indent)if\s*\(oldSlot\.state\s*==\s*1u\s*&&\s*\n'
+              r'(?P=indent)[ \t]+oldSlot\.groupIndex\s*!=\s*groupIndex\s*&&\s*\n'
+              r'(?P=indent)[ \t]+gFrameIndex\s*<\s*oldSlot\.safeReuseEpoch\)',
+              re.MULTILINE,
+          )
+          matches = list(pattern.finditer(shader))
+          if len(matches) != 1:
+              raise SystemExit(f'Expected exactly one old payload-owner block, found {len(matches)}')
+
+          indent = matches[0].group('indent')
+          replacement = f'''{indent}const PayloadOwner oldSlot =
+{indent}    N01OldPayloadOwners[targetPayloadIndex];
+
+{indent}// Payload indices are reused across ping-pong generations. A live owner
+{indent}// from the previous generation is not a duplicate unless it still claims
+{indent}// this same slot in the generation currently being written.
+{indent}bool oldOwnerStillClaimsTarget = false;
+{indent}if (oldSlot.state == 1u &&
+{indent}    oldSlot.groupIndex < gGroupCount)
+{indent}{{
+{indent}    const SegmentGroupCore oldOwnerCore =
+{indent}        N01LifecycleCoresOut[oldSlot.groupIndex];
+{indent}    const CoreExtension oldOwnerExtension =
+{indent}        N01LifecycleExtensionsOut[oldSlot.groupIndex];
+{indent}    const bool oldOwnerDynamic =
+{indent}        oldOwnerCore.state == N01_STATE_DYNAMIC ||
+{indent}        oldOwnerCore.state == N01_STATE_FORCED_DYNAMIC;
+{indent}    oldOwnerStillClaimsTarget =
+{indent}        oldOwnerDynamic &&
+{indent}        (oldOwnerCore.flags & N01_CORE_PAYLOAD_VALID) != 0u &&
+{indent}        oldOwnerExtension.payloadIndex == targetPayloadIndex &&
+{indent}        oldOwnerExtension.payloadGeneration == newOwner.generation;
+{indent}}}
+
+{indent}if (oldOwnerStillClaimsTarget &&
+{indent}    oldSlot.groupIndex != groupIndex)'''
+
+          shader = pattern.sub(replacement, shader, count=1)
+          shader_path.write_text(shader, encoding='utf-8', newline='\n')
+
+          tests = test_path.read_text(encoding='utf-8')
+          marker = '    def test_payload_owner_duplicate_detection_uses_current_generation_claim('
+          if marker not in tests:
+              insertion = '''
+
+    def test_payload_owner_duplicate_detection_uses_current_generation_claim(
+        self,
+    ) -> None:
+        shader = (
+            ROOT
+            / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+        ).read_text(encoding="utf-8")
+
+        writer_begin = shader.index("void N01WritePayloadOwnersCS")
+        writer_end = shader.index("void N01RetirePayloadOwnersCS")
+        writer = shader[writer_begin:writer_end]
+
+        for required in (
+            "bool oldOwnerStillClaimsTarget = false;",
+            "oldOwnerExtension.payloadIndex == targetPayloadIndex",
+            "oldOwnerExtension.payloadGeneration == newOwner.generation",
+            "if (oldOwnerStillClaimsTarget &&",
+            "N01_COUNTER_DUPLICATE_PAYLOAD_OWNER",
+        ):
+            self.assertIn(required, writer)
+
+        self.assertNotIn(
+            "if (oldSlot.state == 1u &&\\n"
+            "        oldSlot.groupIndex != groupIndex &&\\n"
+            "        gFrameIndex < oldSlot.safeReuseEpoch)",
+            writer,
+        )
+'''
+              main_marker = '\nif __name__ == "__main__":\n'
+              if main_marker not in tests:
+                  raise SystemExit('Could not find unittest main marker')
+              tests = tests.replace(main_marker, insertion + main_marker, 1)
+              test_path.write_text(tests, encoding='utf-8', newline='\n')
+
+          print('Applied payload-owner generation repair and regression contract.')
+          '@ | Set-Content -LiteralPath apply_owner_fix.py -Encoding utf8
+          python apply_owner_fix.py
+          Remove-Item apply_owner_fix.py -Force
+          git diff --check
+          git diff -- apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl tests/final_stage/test_novelty01_runtime_contract.py | Out-File artifacts_owner_fix.diff -Encoding utf8
+
+      - name: Validate Python and Novelty01 contract tests
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_novelty01_preflight.py
+          python -m py_compile tools/final_stage/hairgpu_novelty01_readiness_smoke.py
+          python -m py_compile tools/final_stage/hairgpu_novelty01_matrix.py
+          python -m py_compile tools/final_stage/hairgpu_final_run.py
+          python tools/final_stage/hairgpu_final_run.py --self-test
+          python -m unittest discover -s tests/final_stage -p 'test_novelty01_*.py' -v
+
+      - name: Validate C++ header and all Novelty01 shaders
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          python tools/final_stage/hairgpu_novelty01_preflight.py `
+            --repo . `
+            --require-fxc `
+            --json artifacts/novelty01_preflight.json
+
+      - name: Release x64 formal rebuild
+        shell: pwsh
+        run: |
+          msbuild HairSystem.sln `
+            /m `
+            /t:Rebuild `
+            /nologo `
+            /verbosity:minimal `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:HairGpuStep0ProfileEnabled=false `
+            /p:HairGpuFormalBuild=true `
+            /fl `
+            "/flp:logfile=artifacts/release_x64_build.log;verbosity=normal"
+
+      - name: Native self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test 2>&1 |
+            Tee-Object -FilePath artifacts/native_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Shader self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test 2>&1 |
+            Tee-Object -FilePath artifacts/shader_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build corrected full-source ZIP
+        shell: pwsh
+        run: |
+          @'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import subprocess
+          import zipfile
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path.cwd()
+          output = root / 'HairSystem_Novelty01_OwnerFixed_FullSource.zip'
+          tracked = subprocess.check_output(['git', 'ls-files', '-z']).split(b'\0')
+          files = [Path(item.decode('utf-8')) for item in tracked if item]
+
+          verification = {
+              'schema': 'hairsystem-novelty01-owner-fixed-full-source-v1',
+              'createdAt': datetime.now(timezone.utc).isoformat(),
+              'baseMainCommit': '197f3a9df7f59917ac73ad3a72d8880172f40ea1',
+              'repair': 'Payload-owner duplicate detection now requires a current-generation claim of the same slot.',
+              'modifiedFiles': [
+                  'apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl',
+                  'tests/final_stage/test_novelty01_runtime_contract.py',
+              ],
+              'validation': {
+                  'novelty01UnitTests': 'PASS',
+                  'preflightAndFxc': 'PASS',
+                  'releaseX64Build': 'PASS',
+                  'nativeSelfTest': 'PASS',
+                  'shaderSelfTest': 'PASS',
+                  'physicalGpuReadiness': 'NOT_RUN_IN_GITHUB_ACTIONS',
+              },
+          }
+          verification_bytes = (json.dumps(verification, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+
+          with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for relative in files:
+                  source = root / relative
+                  if source.is_file():
+                      archive.write(source, relative.as_posix())
+              archive.writestr('NOVELTY01_OWNER_FIX_VERIFICATION.json', verification_bytes)
+              archive.write(root / 'artifacts_owner_fix.diff', 'NOVELTY01_OWNER_FIX.diff')
+
+          digest = hashlib.sha256(output.read_bytes()).hexdigest()
+          manifest = {
+              'zip': output.name,
+              'sha256': digest,
+              'sizeBytes': output.stat().st_size,
+              'entryCount': len(zipfile.ZipFile(output).namelist()),
+          }
+          (root / 'HairSystem_Novelty01_OwnerFixed_FullSource.manifest.json').write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          '@ | Set-Content -LiteralPath package_full_source.py -Encoding utf8
+          python package_full_source.py
+          Remove-Item package_full_source.py -Force
+
+      - name: Upload corrected full-source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Novelty01-OwnerFixed-FullSource-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            HairSystem_Novelty01_OwnerFixed_FullSource.zip
+            HairSystem_Novelty01_OwnerFixed_FullSource.manifest.json
