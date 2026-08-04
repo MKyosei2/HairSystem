@@ -1,0 +1,150 @@
+name: Artifact Novelty01 Owner-Fixed Full Source
+
+on:
+  pull_request:
+    branches:
+      - artifact/novelty01-owner-fixed-zip-base-20260804
+
+permissions:
+  contents: read
+
+jobs:
+  patch-verify-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+
+    steps:
+      - name: Checkout artifact PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Add MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate FXC
+        shell: pwsh
+        run: |
+          $candidates = Get-ChildItem `
+            'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe' `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending
+          if (-not $candidates) {
+            throw 'fxc.exe was not found in the Windows SDK.'
+          }
+          $fxc = $candidates[0].FullName
+          "FXC=$fxc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Split-Path -Parent $fxc | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Using FXC: $fxc"
+
+      - name: Apply source repair
+        shell: pwsh
+        run: |
+          python tools/artifact_generation/build_novelty01_owner_fixed_full_source.py --patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Commit temporary repaired source in runner
+        shell: pwsh
+        run: |
+          git config user.name 'HairSystem Artifact Builder'
+          git config user.email 'artifact-builder@users.noreply.github.com'
+          git add -- `
+            apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl `
+            tests/final_stage/test_novelty01_runtime_contract.py
+          git commit -m 'Temporary validated Novelty01 owner repair'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dirty = @(git status --porcelain --untracked-files=all)
+          if ($dirty.Count -gt 0) {
+            $dirty | ForEach-Object { Write-Host $_ }
+            throw 'Runner worktree is not clean after temporary repair commit.'
+          }
+
+      - name: Validate Python and Novelty01 contracts
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_novelty01_preflight.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m py_compile tools/final_stage/hairgpu_novelty01_readiness_smoke.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m py_compile tests/final_stage/test_novelty01_runtime_contract.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/final_stage/hairgpu_final_run.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests/final_stage -p 'test_novelty01_*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Strict source and shader preflight
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          python tools/final_stage/hairgpu_novelty01_preflight.py `
+            --repo . `
+            --require-fxc `
+            --require-clean-git `
+            --json artifacts/novelty01_preflight.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Release x64 formal rebuild
+        shell: pwsh
+        run: |
+          msbuild HairSystem.sln `
+            /m `
+            /t:Rebuild `
+            /nologo `
+            /verbosity:minimal `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:HairGpuStep0ProfileEnabled=false `
+            /p:HairGpuFormalBuild=true `
+            /fl `
+            "/flp:logfile=artifacts/release_x64_build.log;verbosity=normal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Native self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --native-self-test 2>&1 |
+            Tee-Object -FilePath artifacts/native_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Shader self-test
+        shell: pwsh
+        run: |
+          & .\bin\Release\HairSystem\HairSystem.exe --shader-self-test 2>&1 |
+            Tee-Object -FilePath artifacts/shader_self_test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and verify corrected full-source ZIP
+        shell: pwsh
+        run: |
+          python tools/artifact_generation/build_novelty01_owner_fixed_full_source.py `
+            --package `
+            --main-sha 197f3a9df7f59917ac73ad3a72d8880172f40ea1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload corrected full-source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem-Novelty01-OwnerFixed-FullSource
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            HairSystem_Novelty01_OwnerFixed_FullSource.zip
+            HairSystem_Novelty01_OwnerFixed_FullSource.manifest.json
+            NOVELTY01_OWNER_FIX.diff
+            artifacts/novelty01_preflight.json
+            artifacts/release_x64_build.log
+            artifacts/native_self_test.log
+            artifacts/shader_self_test.log
