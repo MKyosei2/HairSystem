@@ -65,6 +65,8 @@ jobs:
             tests/final_stage/test_novelty01_runtime_contract.py
           git commit -m 'Temporary validated Novelty01 owner repair'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git switch -c integration/novelty01-safe-artifact-runner
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $dirty = @(git status --porcelain --untracked-files=all)
           if ($dirty.Count -gt 0) {
             $dirty | ForEach-Object { Write-Host $_ }
