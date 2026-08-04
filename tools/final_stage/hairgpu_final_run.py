@@ -1169,6 +1169,72 @@ def _build_environment(case: Mapping[str, Any], paths: Mapping[str, Path], repo_
     timeline_hash = sha256_file(timeline_path) if timeline_path and timeline_path.is_file() else ""
     manifest_hash = sha256_file(manifest_path) if manifest_path and manifest_path.is_file() else ""
     shader_hash = sha256_tree([shader_root], base_path=repo_root) if shader_root and shader_root.exists() else ""
+
+    resolved_members = asset_manifest.get("_resolvedMembers", {})
+    if not isinstance(resolved_members, Mapping):
+        raise FormalRunError(
+            "Frozen asset manifest does not contain resolved bundle members.",
+            EXIT_CONFIGURATION_FAILURE,
+            [issue(
+                "E_FORMAL_ASSET_RESOLVED_MEMBERS",
+                "Validated _resolvedMembers mapping is required.",
+                expected="mapping",
+                observed=type(resolved_members).__name__,
+            )],
+        )
+    formal_asset_path = str(
+        resolved_members.get("sourceAssetPath", "")
+    ).strip()
+    if not formal_asset_path:
+        raise FormalRunError(
+            "Frozen asset source path is unavailable.",
+            EXIT_CONFIGURATION_FAILURE,
+            [issue(
+                "E_FORMAL_ASSET_PATH",
+                "Resolved sourceAssetPath is required.",
+                expected="non-empty absolute path",
+                observed=formal_asset_path,
+            )],
+        )
+    formal_asset = Path(formal_asset_path)
+    if not formal_asset.is_absolute() or not formal_asset.is_file():
+        raise FormalRunError(
+            "Resolved frozen asset file is missing.",
+            EXIT_CONFIGURATION_FAILURE,
+            [issue(
+                "E_FORMAL_ASSET_FILE",
+                "Resolved frozen asset must be an existing absolute file.",
+                expected="existing absolute file",
+                observed=formal_asset_path,
+            )],
+        )
+
+    formal_asset_sha256 = str(
+        asset_manifest.get("sourceAssetSha256", "")
+    ).strip().lower()
+    formal_topology_sha256 = str(
+        asset_manifest.get("generatedTopologySha256", "")
+    ).strip().lower()
+    generator_settings_sha256 = str(
+        asset_manifest.get("generatorSettingsSha256", "")
+    ).strip().lower()
+    for contract_name, contract_value in (
+        ("sourceAssetSha256", formal_asset_sha256),
+        ("generatedTopologySha256", formal_topology_sha256),
+        ("generatorSettingsSha256", generator_settings_sha256),
+    ):
+        if not SHA256_RE.fullmatch(contract_value):
+            raise FormalRunError(
+                f"Frozen asset identity is invalid: {contract_name}",
+                EXIT_CONFIGURATION_FAILURE,
+                [issue(
+                    "E_FORMAL_ASSET_HASH",
+                    f"{contract_name} must be a SHA-256 value.",
+                    expected="64 hexadecimal characters",
+                    observed=contract_value,
+                )],
+            )
+
     values = {
         "HAIRGPU_EXPERIMENT_MODE": 1,
         "HAIRGPU_CASE_JSON": str(paths["case"]),
@@ -1214,6 +1280,10 @@ def _build_environment(case: Mapping[str, Any], paths: Mapping[str, Path], repo_
         "HAIRGPU_EXECUTABLE_SHA256": sha256_file(viewer_exe),
         "HAIRGPU_ASSET_FROZEN": 1,
         "HAIRGPU_ASSET_SHA256": asset_manifest.get("sourceAssetSha256", ""),
+        "HAIRGPU_FORMAL_ASSET_PATH": formal_asset_path,
+        "HAIRGPU_FORMAL_ASSET_SHA256": formal_asset_sha256,
+        "HAIRGPU_FORMAL_TOPOLOGY_SHA256": formal_topology_sha256,
+        "HAIRGPU_GENERATOR_SETTINGS_SHA256": generator_settings_sha256,
         "HAIRGPU_BUILD_CONFIGURATION": case.get("build_configuration", "Release"),
         "HAIRGPU_PLATFORM": case.get("platform", "x64"),
         "HAIRGPU_HARDWARE_PROFILE": case.get("hardware_profile", ""),

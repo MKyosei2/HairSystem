@@ -153,7 +153,7 @@ def _manifest_generation_from_suite(payload: dict[str, Any]) -> dict[str, Any]:
         "followersPerGuide": int(defaults.get("followers_per_guide", 24)),
         "particlesPerGuide": int(defaults.get("particles_per_guide", 128)),
         "solverIterations": int(defaults.get("solver_iterations", 6)),
-        "groupsPerBlock": int(contract.get("required_groups_per_block", 8)),
+        "groupsPerBlock": int(contract.get("required_groups_per_block", 32)),
     }
 
 
@@ -178,7 +178,7 @@ def validate_generator_settings(path: Path) -> dict[str, Any]:
         "displayStrandCount": 100000,
         "particlesPerStrand": 128,
         "solverIterations": 6,
-        "groupsPerBlock": 8,
+        "groupsPerBlock": 32,
         "maskSourceMode": "Procedural",
         "editStackApplied": False,
     }
@@ -341,8 +341,8 @@ def main() -> int:
     dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
     if not COMMIT_PATTERN.fullmatch(head):
         raise SystemExit("Cannot resolve a valid Git HEAD commit.")
-    if branch != "Novelty":
-        raise SystemExit(f"Asset freezing requires branch Novelty, observed: {branch or '<detached>'}")
+    if branch != "Novelty01":
+        raise SystemExit(f"Asset freezing requires branch Novelty01, observed: {branch or '<detached>'}")
     if dirty and not args.allow_dirty_worktree:
         raise SystemExit("Git worktree is dirty. Commit changes before freezing formal evidence.")
 
@@ -382,7 +382,7 @@ def main() -> int:
             "followersPerGuide": 24,
             "particlesPerGuide": 128,
             "solverIterations": 6,
-            "groupsPerBlock": 8,
+            "groupsPerBlock": 32,
         }
         mismatches = {
             key: (expected_value, generation.get(key))

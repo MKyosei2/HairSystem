@@ -163,8 +163,18 @@ class PrenoveltyTestEnvironmentContractTests(unittest.TestCase):
                 "scenario_timeline": str(timeline),
                 "asset_manifest": str(manifest),
             })
+            frozen_asset = root / "frozen_asset.hairbin"
+            frozen_asset.write_bytes(b"synthetic frozen asset")
+            frozen_manifest = {
+                "_resolvedMembers": {
+                    "sourceAssetPath": str(frozen_asset.resolve()),
+                },
+                "sourceAssetSha256": final_run.sha256_file(frozen_asset),
+                "generatedTopologySha256": "0" * 64,
+                "generatorSettingsSha256": "1" * 64,
+            }
             environment = final_run._build_environment(
-                case, paths, root, viewer, {}
+                case, paths, root, viewer, frozen_manifest
             )
             self.assertEqual(environment["HAIRGPU_CASE_JSON"], str(paths["case"]))
             self.assertEqual(environment["HAIRGPU_AUTO_TELEMETRY"], "1")

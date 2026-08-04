@@ -59,6 +59,40 @@ namespace hairgpu::viewer
 
         struct StrandEditSnapshot;
 
+    public:
+        // Opaque Novelty 01 state types are public only so translation-unit
+        // helper maps can own them without rewriting C++ access control.
+        // All operational methods below remain private.
+        struct Novelty01RuntimeState;
+        struct Novelty01RenderCacheState;
+
+    private:
+        void ExecuteNovelty01ExperimentTick(float dt);
+        void StepNovelty01SingleFrame();
+        void StepNovelty01SingleFrameCore();
+        void ExecuteNovelty01Complete(float dt);
+        bool EnsureNovelty01Runtime(float dt);
+        void ResetNovelty01RuntimeIfNeeded();
+        void RunNovelty01PartialSimulation(float dt);
+        bool RunNovelty01GroundTruth(float dt);
+        void CompareNovelty01GroundTruth();
+        void WriteNovelty01FormalTelemetry();
+        void ValidateNovelty01FormalInvariants();
+        void ExecuteNovelty01PreClassificationValidation();
+        void ExecuteNovelty01PostCompactionLifecycle();
+        void ExecuteNovelty01DirtyRangePropagation();
+        void ExecuteNovelty01BuildIndirectArguments();
+        void ExecuteNovelty01B4MigrationBaseline();
+        void ApplyNovelty01DesignScenarioForTick(float dt);
+        bool EnsureNovelty01RenderCache();
+        void ConfigureNovelty01FormalTelemetryOutput();
+        void UpdateNovelty01RenderCache();
+        void ReleaseNovelty01RenderCache();
+        void RenderLegacy();
+        void ShutdownNovelty01Routed();
+        void ShutdownNovelty01RoutedCore();
+
+
         struct GpuParticle
         {
             float x, y, z, w;
