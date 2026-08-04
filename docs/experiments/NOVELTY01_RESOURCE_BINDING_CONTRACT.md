@@ -70,6 +70,7 @@ Entry Points: `N01CarryNonOptionalPayloadsCS`, `N01RemapPayloadCS`, `N01ApplySta
 | SRV | t8 | `N01ScalpTriangles` | `StructuredBuffer<TriangleData>` |
 | SRV | t9 | `N01RootBindings` | `StructuredBuffer<RootBindingData>` |
 | SRV | t10 | `N01OldPayloads` | `StructuredBuffer<DynamicPayload>` |
+| SRV | t11 | `N01OldPayloadOwnersForRemap` | `StructuredBuffer<PayloadOwner>` |
 | UAV | u0 | `N01Cores` | `RWStructuredBuffer<SegmentGroupCore>` |
 | UAV | u1 | `N01Extensions` | `RWStructuredBuffer<CoreExtension>` |
 | UAV | u2 | `N01Caches` | `RWStructuredBuffer<StaticCache>` |

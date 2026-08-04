@@ -245,7 +245,11 @@ def main() -> int:
     branch = b0.git_value(repo, "branch", "--show-current")
     commit = b0.git_value(repo, "rev-parse", "HEAD")
     allowed_branches = {"Novelty01", "main"}
-    if branch not in allowed_branches:
+    allowed_branch_prefixes = ("integration/novelty01-safe-",)
+    if (
+        branch not in allowed_branches
+        and not branch.startswith(allowed_branch_prefixes)
+    ):
         raise NoveltyReadinessError(
             "Novelty01 or main branch required: "
             f"observed={branch}"

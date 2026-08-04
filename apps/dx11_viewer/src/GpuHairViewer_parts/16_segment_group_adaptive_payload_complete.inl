@@ -2836,7 +2836,7 @@
         const auto bindMode2 = [&](uint32_t oldPayloadIndex,
                                    uint32_t newPayloadIndex)
         {
-            ID3D11ShaderResourceView* srvs[11] =
+            ID3D11ShaderResourceView* srvs[12] =
             {
                 runtime.dynamicList.srv.Get(),
                 runtime.staticList.srv.Get(),
@@ -2848,7 +2848,8 @@
                 runtime.previousScalp.srv.Get(),
                 m_scalpTrianglesBuffer.srv.Get(),
                 m_rootBindingsBuffer.srv.Get(),
-                runtime.payloads[oldPayloadIndex].srv.Get()
+                runtime.payloads[oldPayloadIndex].srv.Get(),
+                runtime.payloadOwners[oldPayloadIndex].srv.Get()
             };
             ID3D11UnorderedAccessView* uavs[8] =
             {
@@ -2861,7 +2862,7 @@
                 m_previousPositions[m_currentBufferIndex].uav.Get(),
                 runtime.counters.uav.Get()
             };
-            m_context->CSSetShaderResources(0u, 11u, srvs);
+            m_context->CSSetShaderResources(0u, 12u, srvs);
             m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
         };
 

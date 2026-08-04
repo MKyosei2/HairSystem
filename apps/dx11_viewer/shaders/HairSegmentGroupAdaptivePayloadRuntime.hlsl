@@ -1602,6 +1602,7 @@ StructuredBuffer<float4> N01PreviousScalp : register(t7);
 StructuredBuffer<TriangleData> N01ScalpTriangles : register(t8);
 StructuredBuffer<RootBindingData> N01RootBindings : register(t9);
 StructuredBuffer<DynamicPayload> N01OldPayloads : register(t10);
+StructuredBuffer<PayloadOwner> N01OldPayloadOwnersForRemap : register(t11);
 
 RWStructuredBuffer<SegmentGroupCore> N01Cores : register(u0);
 RWStructuredBuffer<CoreExtension> N01Extensions : register(u1);
@@ -1706,10 +1707,11 @@ void N01RemapPayloadCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint groupIndex = N01DynamicListIn[compactedIndex];
     SegmentGroupCore core = N01Cores[groupIndex];
     CoreExtension extension = N01Extensions[groupIndex];
-    const uint targetPayloadIndex =
-        N01FeatureEnabled(N01_FEATURE_OPTIONAL_PAYLOAD)
-        ? compactedIndex
-        : groupIndex;
+    // The compaction rank changes whenever another group enters or leaves
+    // the dynamic list. It therefore cannot be used as a persistent payload
+    // identity. A payload slot is permanently associated with the same
+    // Segment Group while the optional pool is smaller than groupCount.
+    const uint targetPayloadIndex = groupIndex;
 
     if (targetPayloadIndex >= gPayloadCapacity)
     {
@@ -1719,6 +1721,51 @@ void N01RemapPayloadCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         core.flags |= N01_CORE_BASELINE_FALLBACK;
         N01Cores[groupIndex] = core;
         N01Extensions[groupIndex] = extension;
+        N01CounterAdd(N01_COUNTER_FALLBACK, 1u);
+        return;
+    }
+
+    // Ownership must be accepted before N01NewPayloads is modified. This
+    // preserves Delayed Reuse and prevents a rejected claimant from
+    // overwriting a payload that can still be read by an older generation.
+    const PayloadOwner oldOwner =
+        N01OldPayloadOwnersForRemap[targetPayloadIndex];
+
+    const bool ownerFree =
+        oldOwner.state == 0u;
+
+    const bool ownerReusable =
+        oldOwner.state == 3u ||
+        (oldOwner.state == 2u &&
+         gFrameIndex >= oldOwner.safeReuseEpoch);
+
+    const bool sameActiveOwner =
+        oldOwner.state == 1u &&
+        oldOwner.groupIndex == groupIndex &&
+        oldOwner.generation == extension.payloadGeneration &&
+        oldOwner.payloadVersion == extension.payloadVersion;
+
+    if (!ownerFree && !ownerReusable && !sameActiveOwner)
+    {
+        const bool duplicateOwner =
+            oldOwner.state == 1u &&
+            oldOwner.groupIndex != groupIndex;
+
+        extension.payloadIndex = N01_INVALID;
+        core.flags &= ~N01_CORE_PAYLOAD_VALID;
+        core.flags |= N01_CORE_BASELINE_FALLBACK;
+        core.dirtyFlags |= N01_DIRTY_PAYLOAD;
+
+        N01Cores[groupIndex] = core;
+        N01Extensions[groupIndex] = extension;
+
+        if (duplicateOwner)
+        {
+            N01CounterAdd(
+                N01_COUNTER_DUPLICATE_PAYLOAD_OWNER,
+                1u);
+        }
+
         N01CounterAdd(N01_COUNTER_FALLBACK, 1u);
         return;
     }
@@ -2148,9 +2195,9 @@ bool N01GroupIsDynamic(uint groupIndex)
 
 uint N01DynamicPayloadIndex(uint compactedIndex, uint groupIndex)
 {
-    return N01FeatureEnabled(N01_FEATURE_OPTIONAL_PAYLOAD)
-        ? compactedIndex
-        : groupIndex;
+    // compactedIndex is transient and must never identify persistent payload
+    // state. The parameter remains in the signature for existing call sites.
+    return groupIndex;
 }
 
 bool N01GuideRangeValid(uint guideIndex, out uint segmentBegin, out uint segmentEnd)
@@ -3814,14 +3861,34 @@ void N01ValidatePayloadOwnersCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     if (!expectsPayload)
     {
-        if ((core.flags & N01_CORE_PAYLOAD_VALID) != 0u ||
-            extension.payloadIndex != N01_INVALID)
+        const bool hasPayloadReference =
+            (core.flags & N01_CORE_PAYLOAD_VALID) != 0u ||
+            extension.payloadIndex != N01_INVALID;
+
+        if (hasPayloadReference)
         {
+            // Repair and Invalid are explicit lifecycle states. A group that
+            // entered either state may still reference the payload owned by
+            // its immediately preceding Dynamic state. Clearing that
+            // reference here is the expected retirement path, not a
+            // descriptor invariant failure.
+            const bool expectedLifecycleRetirement =
+                core.state == N01_STATE_REPAIR ||
+                core.state == N01_STATE_INVALID;
+
             core.flags &= ~N01_CORE_PAYLOAD_VALID;
             extension.payloadIndex = N01_INVALID;
+            extension.lastPayloadRetireFrame = gFrameIndex;
             core.dirtyFlags |= N01_DIRTY_PAYLOAD;
-            N01LifecycleCounter(N01_COUNTER_DESCRIPTOR_VIOLATION, 1u);
+
+            if (!expectedLifecycleRetirement)
+            {
+                N01LifecycleCounter(
+                    N01_COUNTER_DESCRIPTOR_VIOLATION,
+                    1u);
+            }
         }
+
         N01LifecycleCoresOut[groupIndex] = core;
         N01LifecycleExtensionsOut[groupIndex] = extension;
         return;

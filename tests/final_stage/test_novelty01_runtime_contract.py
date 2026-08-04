@@ -182,5 +182,158 @@ class Novelty01RuntimeContractTests(unittest.TestCase):
         )
         self.assertNotIn("N01LifecycleDynamicList[", writer)
 
+    def test_optional_payload_uses_stable_slots_and_checks_owner_before_write(
+        self,
+    ) -> None:
+        shader = (
+            ROOT
+            / "apps/dx11_viewer/shaders/HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+        ).read_text(encoding="utf-8")
+
+        runtime = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
+        ).read_text(encoding="utf-8")
+
+        remap_begin = shader.index("void N01RemapPayloadCS")
+        remap_end = shader.index(
+            "void N01ApplyStaticCS",
+            remap_begin,
+        )
+        remap = shader[remap_begin:remap_end]
+
+        self.assertIn(
+            "const uint targetPayloadIndex = groupIndex;",
+            remap,
+        )
+        self.assertNotIn(
+            "? compactedIndex",
+            remap,
+        )
+        self.assertIn(
+            "N01OldPayloadOwnersForRemap[targetPayloadIndex]",
+            remap,
+        )
+        self.assertIn(
+            "if (!ownerFree && !ownerReusable && !sameActiveOwner)",
+            remap,
+        )
+        self.assertIn(
+            "N01_COUNTER_DUPLICATE_PAYLOAD_OWNER",
+            remap,
+        )
+        self.assertLess(
+            remap.index(
+                "N01OldPayloadOwnersForRemap[targetPayloadIndex]"
+            ),
+            remap.index(
+                "N01NewPayloads[targetPayloadIndex] = payload;"
+            ),
+        )
+
+        helper_begin = shader.index(
+            "uint N01DynamicPayloadIndex"
+        )
+        helper_end = shader.index(
+            "bool N01GuideRangeValid",
+            helper_begin,
+        )
+        helper = shader[helper_begin:helper_end]
+
+        self.assertIn(
+            "return groupIndex;",
+            helper,
+        )
+        self.assertNotIn(
+            "? compactedIndex",
+            helper,
+        )
+
+        bind_begin = runtime.index(
+            "const auto bindMode2 ="
+        )
+        bind_end = runtime.index(
+            "updateConstants(0u, 0u, 0u);",
+            bind_begin,
+        )
+        binding = runtime[bind_begin:bind_end]
+
+        self.assertIn(
+            "ID3D11ShaderResourceView* srvs[12]",
+            binding,
+        )
+        self.assertIn(
+            "runtime.payloadOwners[oldPayloadIndex].srv.Get()",
+            binding,
+        )
+        self.assertIn(
+            "CSSetShaderResources(0u, 12u, srvs)",
+            binding,
+        )
+
+
+    def test_python_readiness_accepts_safe_integration_branches(
+        self,
+    ) -> None:
+        readiness = (
+            ROOT
+            / "tools/final_stage/hairgpu_novelty01_readiness_smoke.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'allowed_branch_prefixes = ("integration/novelty01-safe-",)',
+            readiness,
+        )
+        self.assertIn(
+            "branch.startswith(allowed_branch_prefixes)",
+            readiness,
+        )
+
+
+    def test_repair_and_invalid_payload_retirement_is_not_a_descriptor_violation(
+        self,
+    ) -> None:
+        shader = (
+            ROOT
+            / "apps/dx11_viewer/shaders/"
+            / "HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+        ).read_text(encoding="utf-8")
+
+        begin = shader.index(
+            "void N01ValidatePayloadOwnersCS"
+        )
+        end = shader.index(
+            "void N01WritePayloadOwnersCS",
+            begin,
+        )
+        lifecycle = shader[begin:end]
+
+        self.assertIn(
+            "const bool expectedLifecycleRetirement",
+            lifecycle,
+        )
+        self.assertIn(
+            "core.state == N01_STATE_REPAIR",
+            lifecycle,
+        )
+        self.assertIn(
+            "core.state == N01_STATE_INVALID",
+            lifecycle,
+        )
+        self.assertIn(
+            "extension.lastPayloadRetireFrame = gFrameIndex;",
+            lifecycle,
+        )
+        self.assertIn(
+            """if (!expectedLifecycleRetirement)
+            {
+                N01LifecycleCounter(
+                    N01_COUNTER_DESCRIPTOR_VIOLATION,
+                    1u);
+            }""",
+            lifecycle,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
