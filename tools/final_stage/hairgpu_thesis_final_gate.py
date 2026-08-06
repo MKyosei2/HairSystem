@@ -15,6 +15,7 @@ REQUIRED_STAGES = {
     "Performance",
     "Determinism",
     "Soak",
+    "Report",
     "VerifyBranches",
 }
 REQUIRED_MATRIX_PROFILES = {"smoke", "pilot", "formal", "performance", "determinism", "soak"}
@@ -81,8 +82,17 @@ def main() -> int:
         issues.append({"code": "E_BRANCH", "observed": session_manifest.get("branch")})
     if session_manifest.get("sameBinary") is not True or session_manifest.get("sameCommit") is not True:
         issues.append({"code": "E_COMPARISON_IDENTITY"})
-    if session_manifest.get("seedAlgorithm") != "sha256-scenario-input-v1":
+    if session_manifest.get("seedAlgorithm") != "sha256-scenario-physical-input-v2":
         issues.append({"code": "E_SEED_ALGORITHM", "observed": session_manifest.get("seedAlgorithm")})
+
+    viewer_path_value = str(session_manifest.get("viewerPath", ""))
+    viewer_path = Path(viewer_path_value) if viewer_path_value else None
+    if viewer_path is None or not viewer_path.is_file():
+        issues.append({"code": "E_VIEWER_MISSING", "path": viewer_path_value})
+    else:
+        observed_viewer_hash = sha256_file(viewer_path)
+        if observed_viewer_hash != str(session_manifest.get("viewerSha256", "")).lower():
+            issues.append({"code": "E_VIEWER_HASH"})
 
     asset_manifest_path = session / "asset" / "frozen_asset_manifest.json"
     if not asset_manifest_path.is_file():
@@ -112,7 +122,7 @@ def main() -> int:
         if observed_manifest_hash != str(session_manifest.get("assetManifestSha256", "")).lower():
             issues.append({"code": "E_ASSET_MANIFEST_HASH"})
 
-    branch_result_path = session / "integrity" / "remote_branch_integrity_result.json"
+    branch_result_path = session / "integrity" / "branch_integrity_result.json"
     if not branch_result_path.is_file():
         issues.append({"code": "E_BRANCH_RESULT_MISSING"})
     else:
@@ -171,6 +181,11 @@ def main() -> int:
                     "code": "E_SCENARIO_INPUT_HASH_MISSING",
                     "caseId": row.get("caseId"),
                 })
+            if not row.get("physicalScenarioInputSha256"):
+                issues.append({
+                    "code": "E_PHYSICAL_INPUT_HASH_MISSING",
+                    "caseId": row.get("caseId"),
+                })
 
     missing_profiles = sorted(REQUIRED_MATRIX_PROFILES - profiles_seen)
     if missing_profiles:
@@ -189,7 +204,11 @@ def main() -> int:
         report = read_json(report_path)
         mismatched_pairs = [
             row for row in report.get("pairedRows", [])
-            if isinstance(row, dict) and row.get("scenarioInputHashMatch") is not True
+            if isinstance(row, dict)
+            and (
+                row.get("scenarioInputHashMatch") is not True
+                or row.get("physicalScenarioInputHashMatch") is not True
+            )
         ]
         if mismatched_pairs:
             issues.append({"code": "E_PAIRED_INPUT_MISMATCH", "count": len(mismatched_pairs)})
@@ -197,7 +216,7 @@ def main() -> int:
             issues.append({"code": "E_NO_PAIRED_RESULTS"})
 
     result = {
-        "schema": "hairgpu-thesis-final-gate-v1",
+        "schema": "hairgpu-thesis-final-gate-v2",
         "status": "PASS" if not issues else "FAIL",
         "sessionId": session_manifest.get("sessionId"),
         "formalCommit": formal_commit,

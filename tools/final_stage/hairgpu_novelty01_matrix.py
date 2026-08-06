@@ -12,6 +12,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -337,7 +338,7 @@ def build_case(
     return case
 
 
-SEED_INPUT_ALGORITHM = "sha256-scenario-input-v1"
+SEED_INPUT_ALGORITHM = "sha256-scenario-physical-input-v2"
 
 
 def _canonical_json_bytes(payload: Any) -> bytes:
@@ -405,7 +406,23 @@ def build_seeded_events(
         first_measurement + max(int(measurement_frames) - 2, 1),
     ))
     span = max(final_frame - first_measurement, 1)
-    jitter = int(_seed_unit(seed, scenario, "frame-jitter") * min(span, 17))
+
+    # Use a deterministic bijective seed slot for the common formal seed set.
+    # Hash-only frame jitter can collide and make two nominal seeds exercise the
+    # same physical stimulus.  The coprime step guarantees distinct offsets for
+    # seeds 1..N while the scenario bias keeps schedules decorrelated.
+    slot_count = max(1, min(span + 1, 257))
+    step = next(
+        candidate
+        for candidate in (97, 89, 83, 79, 73, 71, 67, 61, 59, 53, 47, 43, 41, 37, 31, 29, 23, 19, 17, 13, 11, 7, 5, 3, 1)
+        if math.gcd(candidate, slot_count) == 1
+    )
+    scenario_bias = int.from_bytes(
+        hashlib.sha256(f"{scenario}|seed-frame-bias".encode("utf-8")).digest()[:4],
+        "big",
+        signed=False,
+    ) % slot_count
+    jitter = (scenario_bias + (int(seed) - 1) * step) % slot_count
     start = min(first_measurement + jitter, final_frame)
     quarter = min(first_measurement + span // 4 + jitter // 2, final_frame)
     middle = min(first_measurement + span // 2 + jitter // 3, final_frame)
@@ -415,6 +432,7 @@ def build_seeded_events(
     phase = _seed_signed(seed, scenario, "phase")
     x = 0.10 + 0.025 * amp
     y = 0.02 + 0.010 * phase
+    collider_y = 1.62 + 0.010 * phase
     z = 0.06 * _seed_signed(seed, scenario, "z")
     wind = 1.05 + 0.20 * _seed_unit(seed, scenario, "wind")
     camera_near = 0.32 + 0.06 * _seed_unit(seed, scenario, "camera-near")
@@ -447,13 +465,13 @@ def build_seeded_events(
         events = [_event("seed-teleport", start, "teleport_root", [0.28 + 0.08 * amp, y, z])]
     elif scenario == "S07":
         events = [
-            _event("seed-collider-near", start, "set_collider_transform", [x, y, z], target_index=0),
-            _event("seed-collider-closer", middle, "set_collider_transform", [x * 0.55, y, z * 0.40], target_index=0),
+            _event("seed-collider-near", start, "set_collider_transform", [x, collider_y, z], target_index=0),
+            _event("seed-collider-closer", middle, "set_collider_transform", [x * 0.55, collider_y, z * 0.40], target_index=0),
         ]
     elif scenario == "S08":
         events = [
-            _event("seed-boundary-collider", start, "set_collider_transform", [x * 0.80, y, z], target_index=0),
-            _event("seed-boundary-edit", middle, "inject_local_edit", target_index=int(_seed_unit(seed, scenario, "target") * 3999)),
+            _event("seed-boundary-collider", start, "set_collider_transform", [x * 0.80, collider_y, z], target_index=0),
+            _event("seed-boundary-edit", middle, "inject_local_edit"),
         ]
     elif scenario == "S09":
         events = [_event("seed-strong-wind", start, "set_wind", wind)]
@@ -464,12 +482,12 @@ def build_seeded_events(
         ]
     elif scenario == "S11":
         events = [
-            _event("seed-edit-a", start, "inject_local_edit", target_index=int(_seed_unit(seed, scenario, "edit-a") * 3999)),
-            _event("seed-edit-b", three_quarter, "inject_local_edit", target_index=int(_seed_unit(seed, scenario, "edit-b") * 3999)),
+            _event("seed-edit-a", start, "inject_local_edit"),
+            _event("seed-edit-b", three_quarter, "inject_local_edit"),
         ]
     elif scenario == "S12":
         events = [
-            _event("seed-trap-collider", start, "set_collider_transform", [x * 0.70, y, z], target_index=0),
+            _event("seed-trap-collider", start, "set_collider_transform", [x * 0.70, collider_y, z], target_index=0),
             _event("seed-trap-wind", quarter, "set_wind", 0.18 + 0.04 * amp),
             _event("seed-trap-stop", middle, "set_wind", 0.0),
         ]
@@ -541,15 +559,19 @@ def materialize_seeded_timeline(
         "repetitionIndependent": True,
     }
 
+    physical_input_bytes = _canonical_json_bytes(payload["events"])
+    physical_input_sha256 = hashlib.sha256(physical_input_bytes).hexdigest()
     seed_material = {
         "algorithm": SEED_INPUT_ALGORITHM,
         "seed": int(seed),
         "scenario": scenario,
+        "physicalInputSha256": physical_input_sha256,
         "events": payload["events"],
     }
     payload["seedInput"]["seedMaterialSha256"] = hashlib.sha256(
         _canonical_json_bytes(seed_material)
     ).hexdigest()
+    payload["seedInput"]["physicalInputSha256"] = physical_input_sha256
     encoded = _canonical_json_bytes(payload)
 
     input_directory = case_output / "input"
@@ -561,6 +583,7 @@ def materialize_seeded_timeline(
     case["scenario_timeline"] = str(timeline_path.resolve())
     case["seed_algorithm"] = SEED_INPUT_ALGORITHM
     case["scenario_input_sha256"] = observed
+    case["physical_scenario_input_sha256"] = physical_input_sha256
     manifest = {
         "schema": "hairgpu-seeded-scenario-input-v1",
         "algorithm": SEED_INPUT_ALGORITHM,
@@ -568,6 +591,7 @@ def materialize_seeded_timeline(
         "seed": int(seed),
         "timelinePath": str(timeline_path.resolve()),
         "timelineSha256": observed,
+        "physicalInputSha256": physical_input_sha256,
         "canonicalSourcePath": str(source_path.resolve()),
         "canonicalSourceSha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
         "methodIndependent": True,
@@ -828,26 +852,55 @@ def validate_scenario_input_parity(
     results: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
-    grouped: dict[tuple[str, int, int], set[str]] = {}
+    grouped: dict[tuple[str, int, int], dict[str, set[str]]] = {}
     for row in results:
-        digest = str(row.get("scenarioInputSha256", ""))
-        if not digest:
-            issues.append({"caseId": row.get("caseId"), "issue": "missingScenarioInputSha256"})
-            continue
         key = (
             str(row.get("scenario")),
             int(row.get("seed", 0)),
             int(row.get("repetition", 0)),
         )
-        grouped.setdefault(key, set()).add(digest)
+        bucket = grouped.setdefault(
+            key,
+            {"timeline": set(), "physical": set(), "variants": set()},
+        )
+        timeline_digest = str(row.get("scenarioInputSha256", ""))
+        physical_digest = str(row.get("physicalScenarioInputSha256", ""))
+        variant = str(row.get("variant", ""))
+        if not timeline_digest:
+            issues.append({"caseId": row.get("caseId"), "issue": "missingScenarioInputSha256"})
+        else:
+            bucket["timeline"].add(timeline_digest)
+        if not physical_digest:
+            issues.append({"caseId": row.get("caseId"), "issue": "missingPhysicalScenarioInputSha256"})
+        else:
+            bucket["physical"].add(physical_digest)
+        if variant:
+            bucket["variants"].add(variant)
+
     for key, values in grouped.items():
-        if len(values) != 1:
+        if values["variants"] != {"B0", "P"}:
             issues.append({
                 "scenario": key[0],
                 "seed": key[1],
                 "repetition": key[2],
-                "issue": "methodInputMismatch",
-                "hashes": sorted(values),
+                "issue": "methodPairIncomplete",
+                "variants": sorted(values["variants"]),
+            })
+        if len(values["timeline"]) != 1:
+            issues.append({
+                "scenario": key[0],
+                "seed": key[1],
+                "repetition": key[2],
+                "issue": "methodTimelineInputMismatch",
+                "hashes": sorted(values["timeline"]),
+            })
+        if len(values["physical"]) != 1:
+            issues.append({
+                "scenario": key[0],
+                "seed": key[1],
+                "repetition": key[2],
+                "issue": "methodPhysicalInputMismatch",
+                "hashes": sorted(values["physical"]),
             })
     return issues
 
@@ -862,7 +915,7 @@ def validate_seed_variation(
     for row in results:
         scenario = str(row.get("scenario"))
         seed = int(row.get("seed", 0))
-        digest = str(row.get("scenarioInputSha256", ""))
+        digest = str(row.get("physicalScenarioInputSha256", ""))
         grouped.setdefault(scenario, {}).setdefault(seed, set()).add(digest)
     for scenario, by_seed in grouped.items():
         representatives: list[str] = []
@@ -872,7 +925,7 @@ def validate_seed_variation(
                 issues.append({
                     "scenario": scenario,
                     "seed": int(seed),
-                    "issue": "seedInputNotStable",
+                    "issue": "physicalSeedInputNotStable",
                     "hashes": sorted(values),
                 })
             else:
@@ -880,7 +933,7 @@ def validate_seed_variation(
         if len(representatives) == len(seeds) and len(set(representatives)) != len(seeds):
             issues.append({
                 "scenario": scenario,
-                "issue": "differentSeedsProducedIdenticalInput",
+                "issue": "differentSeedsProducedIdenticalPhysicalInput",
                 "hashes": representatives,
             })
     return issues
@@ -970,6 +1023,9 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 "HAIRGPU_N01_DESIGN_SCENARIO": scenario,
                 "HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS": "1",
                 "HAIRGPU_SCENARIO_INPUT_SHA256": str(scenario_input["timelineSha256"]),
+                "HAIRGPU_SCENARIO_PHYSICAL_INPUT_SHA256": str(
+                    scenario_input["physicalInputSha256"]
+                ),
                 "HAIRGPU_N01_SEED": str(seed),
                 "HAIRGPU_RANDOM_SEED": str(seed),
             }
@@ -1009,6 +1065,7 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                         "seed": seed,
                         "repetition": repetition,
                         "scenarioInputSha256": scenario_input["timelineSha256"],
+                        "physicalScenarioInputSha256": scenario_input["physicalInputSha256"],
                         "seedAlgorithm": SEED_INPUT_ALGORITHM,
                         "ok": True,
                         "result": result,
@@ -1026,6 +1083,7 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                     "seed": seed,
                     "repetition": repetition,
                     "scenarioInputSha256": scenario_input["timelineSha256"],
+                    "physicalScenarioInputSha256": scenario_input["physicalInputSha256"],
                     "seedAlgorithm": SEED_INPUT_ALGORITHM,
                     "ok": False,
                     "error": str(exc),
@@ -1048,7 +1106,7 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
     input_parity_issues = validate_scenario_input_parity(results)
     seed_variation_issues = validate_seed_variation(results, seeds)
     payload = {
-        "schema": "novelty01-matrix-v4",
+        "schema": "novelty01-matrix-v5",
         "profile": args.profile,
         "variants": variants,
         "scenarios": scenarios,
@@ -1065,6 +1123,7 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
             and not seed_variation_issues
         ),
         "seedInputAlgorithm": SEED_INPUT_ALGORITHM,
+        "physicalInputHashRequired": True,
         "scenarioInputParityIssues": input_parity_issues,
         "seedVariationIssues": seed_variation_issues,
         "determinismIssues": determinism_issues,

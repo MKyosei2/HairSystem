@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -20,7 +21,7 @@ def load_matrix_module():
     sys.modules["hairgpu_novelty01_preflight"] = preflight_stub
 
     path = ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py"
-    spec = importlib.util.spec_from_file_location("thesis_n01_matrix_v2", path)
+    spec = importlib.util.spec_from_file_location("thesis_n01_matrix_v3", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot load module: {path}")
     module = importlib.util.module_from_spec(spec)
@@ -28,12 +29,20 @@ def load_matrix_module():
     return module
 
 
-class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
+class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
     def test_canonical_100k_asset_uses_32_groups_per_block(self) -> None:
         app = (ROOT / "apps/dx11_viewer/src/AppMain.cpp").read_text(encoding="utf-8")
         self.assertIn("constexpr uint32_t kGroupsPerBlock = 32u;", app)
         self.assertIn('TextContainsKeyValue(text, "groupsPerBlock", "32")', app)
         self.assertNotIn("constexpr uint32_t kGroupsPerBlock = 8u;", app)
+
+        template = json.loads(
+            (ROOT / "docs/sample_assets/novelty01_100k_asset_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(template["generation"]["groupsPerBlock"], 32)
+        self.assertEqual(template["sourceBranch"], "main")
 
     def test_formal_contract_locks_single_binary_seeded_session_design(self) -> None:
         contract = json.loads(
@@ -41,15 +50,24 @@ class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual(contract["documentRevision"], "main-single-binary-b0-p-formal-v2")
+        self.assertEqual(contract["documentRevision"], "main-single-binary-b0-p-formal-v3")
         self.assertEqual(contract["branch"], "main")
+        self.assertEqual(
+            contract["sourceCommit"],
+            "c90737a74152dacc399d89e82cb06d273840e19d",
+        )
+        self.assertEqual(contract["sourceCommitRole"], "minimumSupportedAncestor")
         design = contract["comparisonDesign"]
         self.assertEqual(design["primaryMethods"], ["B0", "P"])
         self.assertTrue(design["sameBinary"])
         self.assertTrue(design["sameCommit"])
         self.assertTrue(design["methodIndependentScenarioInputs"])
         self.assertTrue(design["requireScenarioInputHashParity"])
-        self.assertEqual(design["seedInputAlgorithm"], "sha256-scenario-input-v1")
+        self.assertTrue(design["requirePhysicalInputHashParity"])
+        self.assertEqual(
+            design["seedInputAlgorithm"],
+            "sha256-scenario-physical-input-v2",
+        )
         self.assertTrue(design["sessionIsolation"])
         self.assertTrue(design["exactCommitAndTreeLock"])
         self.assertFalse(contract["baselines"]["B0"]["usesSgaptRepresentation"])
@@ -68,41 +86,93 @@ class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
         )
         return_position = source.index("return;", flag_position)
         self.assertLess(return_position, scenario_position)
+        self.assertIn("timelineOwnsExternalInputs", source)
+        self.assertIn("std::numeric_limits<uint32_t>::max()", source)
 
-    def test_seeded_inputs_are_deterministic_method_independent_and_nonempty(self) -> None:
+    def test_common_timeline_root_values_reach_both_simulation_routes(self) -> None:
+        header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(
+            encoding="utf-8"
+        )
+        simulation = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"
+        ).read_text(encoding="utf-8")
+        telemetry = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            "m_formalScenarioRootTranslation",
+            "m_formalScenarioRootRotationRadians",
+        ):
+            self.assertIn(marker, header)
+            self.assertIn(marker, simulation)
+            self.assertIn(marker, telemetry)
+        self.assertIn("kDegreesToRadians", telemetry)
+        self.assertIn("event.value[0] * kDegreesToRadians", telemetry)
+        self.assertIn("rotatedZ + m_scalpCenter + m_formalScenarioRootTranslation", simulation)
+        self.assertIn("A reset must not inherit the previous case", simulation)
+        self.assertNotIn(
+            "case ScenarioEventType::SetRootTranslation:\n"
+            "            case ScenarioEventType::SetRootRotation:\n"
+            "                m_enableScalpMotion = true;",
+            telemetry,
+        )
+        root_start = telemetry.index("case ScenarioEventType::SetRootTranslation:")
+        root_end = telemetry.index("case ScenarioEventType::SetColliderTransform:", root_start)
+        root_block = telemetry[root_start:root_end]
+        self.assertEqual(root_block.count("m_enableScalpMotion = false;"), 3)
+        self.assertNotIn("m_enableScalpMotion = true;", root_block)
+
+    def test_seeded_physical_inputs_are_deterministic_and_unique_for_all_seeds(self) -> None:
         matrix = load_matrix_module()
-        hashes: dict[str, tuple[bytes, bytes]] = {}
+        self.assertEqual(
+            matrix.SEED_INPUT_ALGORITHM,
+            "sha256-scenario-physical-input-v2",
+        )
         for scenario in matrix.SCENARIOS:
-            first = matrix.build_seeded_events(
-                scenario=scenario,
-                seed=1,
-                warmup_frames=120,
-                measurement_frames=360,
-                duration_frames=7200,
-            )
-            repeated = matrix.build_seeded_events(
-                scenario=scenario,
-                seed=1,
-                warmup_frames=120,
-                measurement_frames=360,
-                duration_frames=7200,
-            )
-            second_seed = matrix.build_seeded_events(
-                scenario=scenario,
-                seed=2,
-                warmup_frames=120,
-                measurement_frames=360,
-                duration_frames=7200,
-            )
-            self.assertTrue(first, scenario)
-            self.assertEqual(first, repeated, scenario)
-            first_bytes = matrix._canonical_json_bytes(first)
-            second_bytes = matrix._canonical_json_bytes(second_seed)
-            self.assertNotEqual(first_bytes, second_bytes, scenario)
-            hashes[scenario] = (first_bytes, second_bytes)
-        self.assertEqual(len(hashes), 18)
+            hashes: list[str] = []
+            for seed in (1, 2, 3, 4, 5):
+                first = matrix.build_seeded_events(
+                    scenario=scenario,
+                    seed=seed,
+                    warmup_frames=120,
+                    measurement_frames=360,
+                    duration_frames=7200,
+                )
+                repeated = matrix.build_seeded_events(
+                    scenario=scenario,
+                    seed=seed,
+                    warmup_frames=120,
+                    measurement_frames=360,
+                    duration_frames=7200,
+                )
+                self.assertTrue(first, scenario)
+                self.assertEqual(first, repeated, scenario)
+                hashes.append(
+                    hashlib.sha256(matrix._canonical_json_bytes(first)).hexdigest()
+                )
+            self.assertEqual(len(set(hashes)), 5, scenario)
 
-    def test_materialized_timeline_hash_is_stable_for_b0_and_p_pair(self) -> None:
+        for scenario in ("S07", "S08", "S12"):
+            events = matrix.build_seeded_events(
+                scenario=scenario,
+                seed=1,
+                warmup_frames=120,
+                measurement_frames=360,
+                duration_frames=7200,
+            )
+            collider_events = [
+                event for event in events
+                if event.get("type") == "set_collider_transform"
+            ]
+            self.assertTrue(collider_events, scenario)
+            self.assertTrue(
+                all(float(event["value"][1]) > 1.0 for event in collider_events),
+                scenario,
+            )
+
+    def test_materialized_timeline_hashes_are_stable_for_b0_and_p_pair(self) -> None:
         matrix = load_matrix_module()
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -131,7 +201,16 @@ class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
                 case_p, timeline_root, "S09", 5, base / "P"
             )
             self.assertEqual(b0["timelineSha256"], proposal["timelineSha256"])
-            self.assertEqual(case_b0["scenario_input_sha256"], case_p["scenario_input_sha256"])
+            self.assertEqual(
+                b0["physicalInputSha256"], proposal["physicalInputSha256"]
+            )
+            self.assertEqual(
+                case_b0["scenario_input_sha256"], case_p["scenario_input_sha256"]
+            )
+            self.assertEqual(
+                case_b0["physical_scenario_input_sha256"],
+                case_p["physical_scenario_input_sha256"],
+            )
 
     def test_counterbalanced_plan_reverses_method_order(self) -> None:
         matrix = load_matrix_module()
@@ -175,18 +254,40 @@ class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
                     invalid, output, variant="B0", dry_run=False
                 )
 
-    def test_input_parity_rejects_method_hash_mismatch(self) -> None:
+    def test_input_parity_rejects_timeline_physical_and_pair_mismatch(self) -> None:
         matrix = load_matrix_module()
         valid = [
-            {"caseId": "b0", "scenario": "S01", "seed": 1, "repetition": 0, "scenarioInputSha256": "a" * 64},
-            {"caseId": "p", "scenario": "S01", "seed": 1, "repetition": 0, "scenarioInputSha256": "a" * 64},
+            {
+                "caseId": "b0",
+                "variant": "B0",
+                "scenario": "S01",
+                "seed": 1,
+                "repetition": 0,
+                "scenarioInputSha256": "a" * 64,
+                "physicalScenarioInputSha256": "c" * 64,
+            },
+            {
+                "caseId": "p",
+                "variant": "P",
+                "scenario": "S01",
+                "seed": 1,
+                "repetition": 0,
+                "scenarioInputSha256": "a" * 64,
+                "physicalScenarioInputSha256": "c" * 64,
+            },
         ]
         self.assertEqual(matrix.validate_scenario_input_parity(valid), [])
-        invalid = [dict(valid[0]), dict(valid[1])]
-        invalid[1]["scenarioInputSha256"] = "b" * 64
-        self.assertTrue(matrix.validate_scenario_input_parity(invalid))
 
-    def test_runner_is_session_isolated_and_never_mutates_git(self) -> None:
+        physical_mismatch = [dict(valid[0]), dict(valid[1])]
+        physical_mismatch[1]["physicalScenarioInputSha256"] = "d" * 64
+        issues = matrix.validate_scenario_input_parity(physical_mismatch)
+        self.assertTrue(any(row["issue"] == "methodPhysicalInputMismatch" for row in issues))
+
+        incomplete = [dict(valid[0])]
+        issues = matrix.validate_scenario_input_parity(incomplete)
+        self.assertTrue(any(row["issue"] == "methodPairIncomplete" for row in issues))
+
+    def test_runner_is_ordered_session_isolated_and_never_mutates_git(self) -> None:
         source = (
             ROOT / "tools/final_stage/Run_Thesis_B0_P_Formal.ps1"
         ).read_text(encoding="utf-8")
@@ -196,9 +297,17 @@ class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
         ):
             self.assertIn(f'"{stage}"', source)
         for marker in (
-            "formal_session.json", "CURRENT_SESSION.txt", "sourceTreeSha",
-            "Assert-NewOutputDirectory", "remote_branches_before.txt",
-            "hairgpu_thesis_report.py", "hairgpu_thesis_final_gate.py",
+            "formal_session.json",
+            "CURRENT_SESSION.txt",
+            "sourceTreeSha",
+            "Assert-NewOutputDirectory",
+            "Assert-CompletedStages",
+            "Invoke-StaticContractChecks",
+            "Verify frozen asset bytes and manifest",
+            "local_branches_before.txt",
+            "hairgpu_thesis_report.py",
+            "hairgpu_thesis_final_gate.py",
+            "sha256-scenario-physical-input-v2",
         ):
             self.assertIn(marker, source)
         lowered = source.lower()
@@ -207,16 +316,30 @@ class ThesisFormalExperimentContractV2Tests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, lowered)
         self.assertNotIn('"--force"', source)
-        self.assertNotIn('"asset", "environment"', source)
+        self.assertNotIn("Refresh thesis statistical report", source)
 
-    def test_report_and_final_gate_are_present(self) -> None:
+    def test_report_and_final_gate_require_physical_hashes(self) -> None:
+        report_path = ROOT / "tools/final_stage/hairgpu_thesis_report.py"
+        gate_path = ROOT / "tools/final_stage/hairgpu_thesis_final_gate.py"
+        report_source = report_path.read_text(encoding="utf-8")
+        gate_source = gate_path.read_text(encoding="utf-8")
+        compile(report_source, str(report_path), "exec")
+        compile(gate_source, str(gate_path), "exec")
+        self.assertIn("physicalScenarioInputHashMatch", report_source)
+        self.assertIn("physicalScenarioInputSha256", gate_source)
+        self.assertIn("E_VIEWER_HASH", gate_source)
+
+    def test_repository_contains_no_unapplied_formal_patch_artifacts(self) -> None:
         for relative in (
-            "tools/final_stage/hairgpu_thesis_report.py",
-            "tools/final_stage/hairgpu_thesis_final_gate.py",
+            "Apply_ThesisFormalFix.ps1",
+            "Apply_ThesisFormalFix_v2.ps1",
+            "patches/thesis_formal_main.patch",
+            "patches/thesis_formal_v2.patch",
+            "patches/CXX_EXISTING_FILES.patch",
+            "patches/MANUAL_PATCH_NOTES.md",
+            "patches/MANUAL_PATCH_SUMMARY.md",
         ):
-            path = ROOT / relative
-            self.assertTrue(path.is_file(), relative)
-            compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            self.assertFalse((ROOT / relative).exists(), relative)
 
 
 if __name__ == "__main__":

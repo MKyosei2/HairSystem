@@ -158,6 +158,9 @@ def main() -> int:
                 "runOrder": int(result.get("runOrder", -1)),
                 "ok": bool(result.get("ok")),
                 "scenarioInputSha256": str(result.get("scenarioInputSha256", "")),
+                "physicalScenarioInputSha256": str(
+                    result.get("physicalScenarioInputSha256", "")
+                ),
             }
             for metric, metric_values in metrics.items():
                 row[metric] = summarize(
@@ -202,13 +205,24 @@ def main() -> int:
             continue
         b0 = variants["B0"]
         proposal = variants["P"]
-        input_match = b0["scenarioInputSha256"] == proposal["scenarioInputSha256"]
+        input_match = (
+            bool(b0["scenarioInputSha256"])
+            and b0["scenarioInputSha256"] == proposal["scenarioInputSha256"]
+        )
+        physical_input_match = (
+            bool(b0["physicalScenarioInputSha256"])
+            and b0["physicalScenarioInputSha256"]
+            == proposal["physicalScenarioInputSha256"]
+        )
         pair: dict[str, Any] = {
             "profile": key[0],
             "scenario": key[1],
             "seed": key[2],
             "repetition": key[3],
             "scenarioInputHashMatch": input_match,
+            "physicalScenarioInputHashMatch": physical_input_match,
+            "scenarioInputSha256": b0["scenarioInputSha256"],
+            "physicalScenarioInputSha256": b0["physicalScenarioInputSha256"],
         }
         for metric in ("frameMilliseconds", "gpuHairMilliseconds"):
             b0_metric = b0[metric]
@@ -225,7 +239,7 @@ def main() -> int:
         paired_rows.append(pair)
 
     report = {
-        "schema": "hairgpu-thesis-statistical-report-v1",
+        "schema": "hairgpu-thesis-statistical-report-v2",
         "sessionId": session_manifest.get("sessionId"),
         "formalCommit": session_manifest.get("formalCommit"),
         "frameBudgetMilliseconds": FRAME_BUDGET_MS,
@@ -257,6 +271,8 @@ def main() -> int:
     ) as handle:
         fieldnames = [
             "profile", "scenario", "seed", "repetition", "scenarioInputHashMatch",
+            "physicalScenarioInputHashMatch", "scenarioInputSha256",
+            "physicalScenarioInputSha256",
             "frameMillisecondsB0Median", "frameMillisecondsPMedian",
             "frameMillisecondsDeltaMs", "frameMillisecondsImprovementRate",
             "gpuHairMillisecondsB0Median", "gpuHairMillisecondsPMedian",
