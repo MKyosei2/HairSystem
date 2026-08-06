@@ -123,7 +123,9 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         )
         self.assertNotIn(
             "m_scalpCenter = m_scalpCenter + Vec3",
-            source[source.index("void GpuHairViewer::ApplyScenarioTimelineFrame("):],
+            source[source.index(
+                "void hairgpu::viewer::GpuHairViewer::ApplyScenarioTimelineFrame("
+            ):],
         )
 
     def test_seeded_physical_inputs_are_deterministic_and_unique_for_all_seeds(self) -> None:
