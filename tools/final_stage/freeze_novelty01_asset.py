@@ -19,6 +19,8 @@ GENERATOR_SETTINGS_SCHEMA = "novelty01-generator-settings-v1"
 CANONICAL_ASSET_NAME = "novelty01_100k.hairbin"
 CANONICAL_TOPOLOGY_NAME = "novelty01_100k_topology.bin"
 CANONICAL_SETTINGS_NAME = "generator_settings.json"
+FORMAL_BRANCH = "main"
+FORMAL_GROUPS_PER_BLOCK = 32
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -123,7 +125,9 @@ def replace_directory_atomic(temporary: Path, destination: Path, force: bool) ->
             shutil.rmtree(backup)
 
 
-def run_checked(command: Iterable[str], *, cwd: Path, timeout: int = 600) -> subprocess.CompletedProcess[str]:
+def run_checked(
+    command: Iterable[str], *, cwd: Path, timeout: int = 600
+) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         list(command),
         cwd=cwd,
@@ -153,7 +157,9 @@ def _manifest_generation_from_suite(payload: dict[str, Any]) -> dict[str, Any]:
         "followersPerGuide": int(defaults.get("followers_per_guide", 24)),
         "particlesPerGuide": int(defaults.get("particles_per_guide", 128)),
         "solverIterations": int(defaults.get("solver_iterations", 6)),
-        "groupsPerBlock": int(contract.get("required_groups_per_block", 32)),
+        "groupsPerBlock": int(
+            contract.get("required_groups_per_block", FORMAL_GROUPS_PER_BLOCK)
+        ),
     }
 
 
@@ -178,7 +184,7 @@ def validate_generator_settings(path: Path) -> dict[str, Any]:
         "displayStrandCount": 100000,
         "particlesPerStrand": 128,
         "solverIterations": 6,
-        "groupsPerBlock": 32,
+        "groupsPerBlock": FORMAL_GROUPS_PER_BLOCK,
         "maskSourceMode": "Procedural",
         "editStackApplied": False,
     }
@@ -214,10 +220,19 @@ def verify_bundle(bundle_dir: Path, viewer_exe: Path | None = None) -> dict[str,
     manifest = read_json(manifest_path)
     if manifest.get("manifestVersion") != MANIFEST_VERSION:
         raise SystemExit(
-            f"Manifest version mismatch: expected {MANIFEST_VERSION}, observed {manifest.get('manifestVersion')}"
+            f"Manifest version mismatch: expected {MANIFEST_VERSION}, "
+            f"observed {manifest.get('manifestVersion')}"
         )
     if manifest.get("freezeStatus") != "FROZEN":
         raise SystemExit("Frozen manifest freezeStatus must be FROZEN.")
+    if manifest.get("sourceBranch") != FORMAL_BRANCH:
+        raise SystemExit(
+            f"Frozen manifest sourceBranch must be {FORMAL_BRANCH!r}, "
+            f"observed {manifest.get('sourceBranch')!r}."
+        )
+    source_commit = str(manifest.get("sourceCommitSha", ""))
+    if not COMMIT_PATTERN.fullmatch(source_commit):
+        raise SystemExit("Frozen manifest sourceCommitSha must be a 40-character SHA.")
 
     entries = manifest.get("bundleFiles")
     if not isinstance(entries, list) or len(entries) != 3:
@@ -271,7 +286,9 @@ def verify_bundle(bundle_dir: Path, viewer_exe: Path | None = None) -> dict[str,
     return manifest
 
 
-def export_source_with_viewer(viewer_exe: Path, source_dir: Path) -> tuple[Path, Path, Path]:
+def export_source_with_viewer(
+    viewer_exe: Path, source_dir: Path
+) -> tuple[Path, Path, Path]:
     viewer_exe = viewer_exe.resolve()
     if not viewer_exe.is_file():
         raise SystemExit(f"Viewer executable is missing: {viewer_exe}")
@@ -302,7 +319,10 @@ def export_source_with_viewer(viewer_exe: Path, source_dir: Path) -> tuple[Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate, freeze and verify the portable Novelty01 canonical 100k asset bundle."
+        description=(
+            "Generate, freeze and verify the portable Novelty01 canonical 100k "
+            "asset bundle from the formal main branch."
+        )
     )
     parser.add_argument("--template-manifest", "--manifest", dest="template_manifest")
     parser.add_argument("--output-manifest")
@@ -315,6 +335,7 @@ def main() -> int:
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--operator")
     parser.add_argument("--repo-root")
+    parser.add_argument("--required-branch", default=FORMAL_BRANCH)
     parser.add_argument("--allow-dirty-worktree", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -333,16 +354,25 @@ def main() -> int:
     template_path = Path(args.template_manifest).resolve()
     if not template_path.is_file():
         raise SystemExit(f"Missing template manifest/config: {template_path}")
-    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(template_path.parent)
+    repo_root = (
+        Path(args.repo_root).resolve()
+        if args.repo_root
+        else find_repo_root(template_path.parent)
+    )
     if repo_root is None:
         raise SystemExit("Cannot locate the Git repository root.")
+
     head = git_value(repo_root, "rev-parse", "HEAD")
     branch = git_value(repo_root, "branch", "--show-current")
     dirty = git_value(repo_root, "status", "--porcelain", "--untracked-files=normal")
     if not COMMIT_PATTERN.fullmatch(head):
         raise SystemExit("Cannot resolve a valid Git HEAD commit.")
-    if branch != "Novelty01":
-        raise SystemExit(f"Asset freezing requires branch Novelty01, observed: {branch or '<detached>'}")
+    required_branch = str(args.required_branch).strip() or FORMAL_BRANCH
+    if branch != required_branch:
+        raise SystemExit(
+            f"Asset freezing requires branch {required_branch!r}, "
+            f"observed: {branch or '<detached>'}"
+        )
     if dirty and not args.allow_dirty_worktree:
         raise SystemExit("Git worktree is dirty. Commit changes before freezing formal evidence.")
 
@@ -351,7 +381,9 @@ def main() -> int:
         if args.generate_source:
             if viewer_exe is None:
                 raise SystemExit("--viewer-exe is required with --generate-source.")
-            temporary_source = tempfile.TemporaryDirectory(prefix="novelty01_frozen_source_")
+            temporary_source = tempfile.TemporaryDirectory(
+                prefix="novelty01_frozen_source_"
+            )
             asset_path, topology_path, settings_path = export_source_with_viewer(
                 viewer_exe, Path(temporary_source.name)
             )
@@ -382,7 +414,7 @@ def main() -> int:
             "followersPerGuide": 24,
             "particlesPerGuide": 128,
             "solverIterations": 6,
-            "groupsPerBlock": 32,
+            "groupsPerBlock": FORMAL_GROUPS_PER_BLOCK,
         }
         mismatches = {
             key: (expected_value, generation.get(key))
@@ -431,6 +463,8 @@ def main() -> int:
                 "assetSourceCommitSha": head.lower(),
                 "sourceCommitSha": head.lower(),
                 "sourceBranch": branch,
+                "sourceRefType": "branch",
+                "sourceCommitPolicy": "exact-runtime-head-recorded",
                 "assetFormatVersion": 1,
                 "topologyFormatVersion": 1,
                 "minimumCompatibleRuntimeVersion": 5,
@@ -438,7 +472,7 @@ def main() -> int:
                 "topologyInternalValidation": "PASS",
                 "roundTripValidation": "PASS",
                 "freezeTool": "tools/final_stage/freeze_novelty01_asset.py",
-                "freezeToolVersion": "3.0-viewer-canonical-export",
+                "freezeToolVersion": "4.0-main-formal-100k",
             }
         )
         payload.setdefault("evidenceGate", {}).update(
@@ -456,6 +490,7 @@ def main() -> int:
                 "rejectAbsoluteBundlePaths": True,
                 "rejectBundlePathTraversal": True,
                 "requireRoundTripValidation": True,
+                "requireMainBranchAtFreeze": required_branch == FORMAL_BRANCH,
             }
         )
         atomic_write_json(temporary / "frozen_asset_manifest.json", payload)

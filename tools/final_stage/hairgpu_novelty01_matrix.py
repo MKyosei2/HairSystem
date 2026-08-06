@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Run the complete Novelty 01 comparison and ablation matrix serially.
+"""Run the Novelty 01 comparison and ablation matrix serially.
 
+This revision adds publication-grade seed replication, counterbalanced B0/P
+ordering, seed-aware case IDs, and fail-closed baseline contamination checks.
 The existing strict final runner remains the owner of frozen-asset validation,
-process memory sampling, output integrity, and quality gates. This module adds
-SG-APT variants, formal ground truth, soak, determinism, and GTX 1660 profiles.
+process memory sampling, output integrity, and quality gates.
 """
 
 import argparse
@@ -14,7 +15,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -28,13 +29,12 @@ ABLATIONS = tuple(f"A{i}" for i in range(1, 16))
 PROPOSAL = ("P",)
 ALL_VARIANTS = BASELINES + PROPOSAL + ABLATIONS
 SCENARIOS = tuple(f"S{i:02d}" for i in range(1, 19))
+SCHEDULES = ("grouped", "counterbalanced")
 
 FORMAL_CONTRACT_RELATIVE = Path("docs/experiments/NOVELTY01_FORMAL_CONTRACT.json")
 FROZEN_PARAMETERS_RELATIVE = Path("docs/sample_assets/novelty01_frozen_parameters.json")
 CANONICAL_SCENARIO_ROOT_RELATIVE = Path("benchmarks/novelty01/sgapt_scenarios")
 
-# Compatibility names accepted by the existing Viewer scenario parser. The
-# research meaning is owned by novelty01DesignScenario and the canonical Sxx JSON.
 SCENARIO_RUNTIME_NAMES = {
     "S01": "S01_Idle",
     "S02": "S02_Breathing",
@@ -69,6 +69,7 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "measurement_mode": "quality",
         "ground_truth": True,
         "repetitions": 1,
+        "default_seeds": (1,),
     },
     "formal": {
         "warmup_frames": 600,
@@ -76,6 +77,7 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "measurement_mode": "quality",
         "ground_truth": True,
         "repetitions": 3,
+        "default_seeds": (1, 2, 3, 4, 5),
     },
     "performance": {
         "warmup_frames": 600,
@@ -83,6 +85,7 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "measurement_mode": "performance",
         "ground_truth": False,
         "repetitions": 3,
+        "default_seeds": (1, 2, 3, 4, 5),
     },
     "soak": {
         "warmup_frames": 600,
@@ -92,6 +95,7 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "ground_truth_interval": 300,
         "timeout_seconds": 3600,
         "repetitions": 1,
+        "default_seeds": (1,),
     },
     "determinism": {
         "warmup_frames": 600,
@@ -99,6 +103,7 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "measurement_mode": "determinism",
         "ground_truth": True,
         "repetitions": 3,
+        "default_seeds": (1,),
     },
     "gtx1660": {
         "warmup_frames": 600,
@@ -109,8 +114,10 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "required_adapter_name_regex": "(?i)(GTX\\s*1660|GeForce\\s*GTX\\s*1660)",
         "maximum_dxgi_local_usage_mib": 6144.0,
         "repetitions": 3,
+        "default_seeds": (1, 2, 3, 4, 5),
     },
 }
+
 
 @contextlib.contextmanager
 def environment(overrides: Mapping[str, str]):
@@ -157,41 +164,34 @@ def load_frozen_environment(repo: Path) -> dict[str, str]:
     return environment_values
 
 
-
-
 def materialize_case_template(
-        suite_template: Mapping[str, Any],
-        template_path: Path) -> dict[str, Any]:
+    suite_template: Mapping[str, Any], template_path: Path
+) -> dict[str, Any]:
     defaults = suite_template.get("run_defaults")
     source = suite_template.get("source")
     if not isinstance(defaults, Mapping):
-        raise ValueError(
-            "Suite template does not contain a run_defaults mapping")
+        raise ValueError("Suite template does not contain a run_defaults mapping")
     if not isinstance(source, Mapping):
-        raise ValueError(
-            "Suite template does not contain a source mapping")
+        raise ValueError("Suite template does not contain a source mapping")
 
     case_template = dict(defaults)
     template_directory = template_path.parent.resolve()
 
-    manifest_override = os.environ.get(
-        "HAIRGPU_FROZEN_ASSET_MANIFEST", "").strip()
+    manifest_override = os.environ.get("HAIRGPU_FROZEN_ASSET_MANIFEST", "").strip()
     manifest_value = (
         manifest_override
         if manifest_override
         else str(source.get("asset_manifest", "")).strip()
     )
     if not manifest_value:
-        raise ValueError(
-            "Frozen asset manifest is not configured for the matrix")
+        raise ValueError("Frozen asset manifest is not configured for the matrix")
 
     manifest_path = Path(manifest_value)
     if not manifest_path.is_absolute():
         manifest_path = template_directory / manifest_path
     manifest_path = manifest_path.resolve()
     if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"Frozen asset manifest is missing: {manifest_path}")
+        raise FileNotFoundError(f"Frozen asset manifest is missing: {manifest_path}")
 
     shader_value = str(source.get("shader_root", "")).strip()
     if not shader_value:
@@ -201,18 +201,13 @@ def materialize_case_template(
         shader_root = template_directory / shader_root
     shader_root = shader_root.resolve()
     if not shader_root.is_dir():
-        raise FileNotFoundError(
-            f"Shader root is missing: {shader_root}")
+        raise FileNotFoundError(f"Shader root is missing: {shader_root}")
 
     case_template["asset_manifest"] = str(manifest_path)
     case_template["shader_root"] = str(shader_root)
     case_template["timeline_repeat"] = True
     case_template["hardware_profile_strict"] = False
-    case_template["allowed_asset_source_branches"] = [
-        "Novelty01",
-        "Novelty",
-        "main",
-    ]
+    case_template["allowed_asset_source_branches"] = ["main"]
     return case_template
 
 
@@ -240,36 +235,70 @@ def parse_csv_values(raw: str, allowed: Iterable[str]) -> list[str]:
             continue
         if key not in allowed_set:
             raise ValueError(f"Unknown value: {token}")
-        result.append(allowed_set[key])
+        value = allowed_set[key]
+        if value not in result:
+            result.append(value)
+    if not result:
+        raise ValueError("At least one value is required")
     return result
 
 
+def parse_positive_int_csv(raw: str | None, defaults: Sequence[int]) -> list[int]:
+    if raw is None or not raw.strip():
+        values = list(defaults)
+    else:
+        values = []
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                value = int(token, 10)
+            except ValueError as exc:
+                raise ValueError(f"Invalid integer value: {token}") from exc
+            if value <= 0 or value > 0x7FFFFFFF:
+                raise ValueError(f"Seed must be in 1..2147483647: {value}")
+            if value not in values:
+                values.append(value)
+    if not values:
+        raise ValueError("At least one seed is required")
+    return values
+
+
 def scenario_id(value: str) -> str:
-    # Preserve the exact Sxx code in caseId while allowing the template to own
-    # its canonical descriptive scenario string/timeline path.
     return value.upper()
 
 
-def build_case(template: Mapping[str, Any], *, variant: str, scenario: str,
-               repetition: int, profile: str,
-               contract: Mapping[str, Any]) -> dict[str, Any]:
+def build_case(
+    template: Mapping[str, Any],
+    *,
+    variant: str,
+    scenario: str,
+    seed: int,
+    repetition: int,
+    profile: str,
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
     settings = PROFILE_SETTINGS[profile]
     case = dict(template)
     scenario_code = scenario_id(scenario)
-    case["case_id"] = f"N01_{profile}_{variant}_{scenario_code}_r{repetition:02d}"
+    case["case_id"] = (
+        f"N01_{profile}_{variant}_{scenario_code}_seed{seed:03d}_r{repetition + 1:02d}"
+    )
     case["run_name"] = case["case_id"]
     baseline_contract = contract["baselines"].get(variant)
     if baseline_contract is None:
         baseline_contract = contract.get("ablations", {}).get(variant, {"method": "P"})
     scenario_contract = contract["scenarios"][scenario_code]
-    # B0 is the untouched legacy route. B1-B8/P/A1-A15 use the controlled
-    # Proposal dispatcher with a specific representation contract.
+
     case["method"] = str(baseline_contract.get("method", "P"))
     case["variant"] = case["method"]
     case["novelty01_variant"] = variant
     case["scenario"] = str(scenario_contract["runtimeScenarioName"])
     case["novelty01_design_scenario"] = scenario_code
     case["scenario_timeline"] = str(scenario_contract["timelinePath"])
+    case["seed"] = seed
+    case["random_seed"] = seed
     case["repetition_index"] = repetition
     case["warmup_frames"] = int(settings["warmup_frames"])
     case["measurement_frames"] = int(settings["measurement_frames"])
@@ -285,13 +314,17 @@ def build_case(template: Mapping[str, Any], *, variant: str, scenario: str,
     case["vsync"] = False
     case["present_sync_interval"] = 0
     case["real_measurement_required"] = True
-    case["timeout_seconds"] = int(settings.get("timeout_seconds", case.get("timeout_seconds", 1800)))
+    case["timeout_seconds"] = int(
+        settings.get("timeout_seconds", case.get("timeout_seconds", 1800))
+    )
     if settings.get("hardware_profile"):
         case["hardware_profile"] = settings["hardware_profile"]
     if settings.get("required_adapter_name_regex"):
         case["required_adapter_name_regex"] = settings["required_adapter_name_regex"]
     if settings.get("maximum_dxgi_local_usage_mib") is not None:
-        case["maximum_dxgi_local_usage_mib"] = settings["maximum_dxgi_local_usage_mib"]
+        case["maximum_dxgi_local_usage_mib"] = settings[
+            "maximum_dxgi_local_usage_mib"
+        ]
     return case
 
 
@@ -341,28 +374,78 @@ def _read_jsonl_metric(case_output: Path, name: str) -> Any | None:
     return None
 
 
+def _metric(result: Any, case_output: Path, name: str) -> Any | None:
+    value = _find_metric(result, name)
+    return _read_jsonl_metric(case_output, name) if value is None else value
+
+
 def validate_independent_baseline_evidence(
-        result: Any, case_output: Path, *, variant: str, dry_run: bool) -> dict[str, Any] | None:
-    if dry_run or variant not in {"B1", "B8"}:
+    result: Any,
+    case_output: Path,
+    *,
+    variant: str,
+    dry_run: bool,
+) -> dict[str, Any] | None:
+    """Reject baseline runs that touch SG-APT state.
+
+    B1/B8 expose dedicated Novelty01 baseline telemetry and remain strictly
+    fail-closed. B0 is the legacy route: it must not emit a Novelty01 telemetry
+    file, and any available SG-APT counters must be zero. The strict final
+    runner separately validates requested/applied/observed B0 method parity.
+    """
+    if dry_run or variant not in {"B0", "B1", "B8"}:
         return None
 
-    names = (
-        "n01UsesSgaptRepresentation",
-        "n01ExecutionRoute",
-        "n01IndependentBaselineFrameCount",
+    payload_names = (
         "n01PayloadActiveCount",
         "n01PayloadAllocatedCount",
         "n01PayloadRetiredCount",
         "n01PayloadReusedCount",
     )
-    observed: dict[str, Any] = {}
+
+    if variant == "B0":
+        novelty_files = sorted(case_output.rglob("*_novelty01.csv"))
+        if novelty_files:
+            raise RuntimeError(
+                "B0 emitted SG-APT telemetry and is contaminated: "
+                + ", ".join(str(path) for path in novelty_files)
+            )
+        observed: dict[str, Any] = {
+            "method": "B0",
+            "novelty01TelemetryFiles": 0,
+            "runtimePayloadTelemetryAvailable": False,
+        }
+        uses_representation = _metric(
+            result, case_output, "n01UsesSgaptRepresentation"
+        )
+        if uses_representation is not None:
+            observed["runtimePayloadTelemetryAvailable"] = True
+            observed["n01UsesSgaptRepresentation"] = uses_representation
+            if int(uses_representation) != 0:
+                raise RuntimeError("B0 was contaminated by the SG-APT representation")
+        for name in payload_names:
+            value = _metric(result, case_output, name)
+            if value is None:
+                continue
+            observed["runtimePayloadTelemetryAvailable"] = True
+            observed[name] = value
+            if int(value) != 0:
+                raise RuntimeError(f"B0 illegally touched SG-APT payload state: {name}={value}")
+        return observed
+
+    names = (
+        "n01UsesSgaptRepresentation",
+        "n01ExecutionRoute",
+        "n01IndependentBaselineFrameCount",
+        *payload_names,
+    )
+    observed = {}
     for name in names:
-        value = _find_metric(result, name)
-        if value is None:
-            value = _read_jsonl_metric(case_output, name)
+        value = _metric(result, case_output, name)
         if value is None:
             raise RuntimeError(
-                f"Independent baseline {variant} is missing fail-closed evidence: {name}")
+                f"Independent baseline {variant} is missing fail-closed evidence: {name}"
+            )
         observed[name] = value
 
     if int(observed["n01UsesSgaptRepresentation"]) != 0:
@@ -371,22 +454,30 @@ def validate_independent_baseline_evidence(
     if int(observed["n01ExecutionRoute"]) != expected_route:
         raise RuntimeError(
             f"{variant} execution route mismatch: expected {expected_route}, "
-            f"observed {observed['n01ExecutionRoute']}")
+            f"observed {observed['n01ExecutionRoute']}"
+        )
     if int(observed["n01IndependentBaselineFrameCount"]) <= 0:
         raise RuntimeError(f"{variant} did not execute its dedicated per-frame route")
-    for name in names[3:]:
+    for name in payload_names:
         if int(observed[name]) != 0:
-            raise RuntimeError(f"{variant} illegally touched SG-APT payload state: {name}={observed[name]}")
+            raise RuntimeError(
+                f"{variant} illegally touched SG-APT payload state: {name}={observed[name]}"
+            )
     return observed
 
 
 def validate_determinism(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in results:
         if not row.get("ok"):
             continue
-        grouped.setdefault((str(row["variant"]), str(row["scenario"])), []).append(row)
+        key = (
+            str(row["variant"]),
+            str(row["scenario"]),
+            int(row["seed"]),
+        )
+        grouped.setdefault(key, []).append(row)
     for key, rows in grouped.items():
         for field in DETERMINISM_FIELDS:
             values: list[Any] = []
@@ -397,11 +488,45 @@ def validate_determinism(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if value is not None:
                     values.append(value)
             if len(values) > 1 and len({str(value) for value in values}) != 1:
-                issues.append({
-                    "variant": key[0], "scenario": key[1],
-                    "field": field, "values": values,
-                })
+                issues.append(
+                    {
+                        "variant": key[0],
+                        "scenario": key[1],
+                        "seed": key[2],
+                        "field": field,
+                        "values": values,
+                    }
+                )
     return issues
+
+
+def ordered_variants(
+    variants: Sequence[str], *, schedule: str, block_index: int
+) -> list[str]:
+    order = list(variants)
+    if schedule == "counterbalanced" and block_index % 2 == 1:
+        order.reverse()
+    return order
+
+
+def iter_run_plan(
+    *,
+    variants: Sequence[str],
+    scenarios: Sequence[str],
+    seeds: Sequence[int],
+    repetitions: int,
+    schedule: str,
+) -> Iterator[tuple[int, str, int, int, str]]:
+    run_order = 0
+    for scenario_index, scenario in enumerate(scenarios):
+        for seed_index, seed in enumerate(seeds):
+            for repetition in range(repetitions):
+                block_index = scenario_index + seed_index + repetition
+                for variant in ordered_variants(
+                    variants, schedule=schedule, block_index=block_index
+                ):
+                    yield run_order, scenario, seed, repetition, variant
+                    run_order += 1
 
 
 def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
@@ -413,111 +538,153 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
     preflight_result = preflight(repo, require_fxc=args.require_fxc, telemetry=None)
     (output / "novelty01_preflight.json").write_text(
         json.dumps(preflight_result, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     if not preflight_result["passed"]:
         raise RuntimeError("Novelty 01 source preflight failed.")
 
     template_path = args.template.resolve()
     suite_template = load_json(template_path)
-    template = materialize_case_template(
-        suite_template,
-        template_path,
-    )
+    template = materialize_case_template(suite_template, template_path)
     contract = load_formal_contract(repo)
     validate_contract(contract)
     frozen_environment = load_frozen_environment(repo)
+
     if args.timeline_root is None:
         default_timeline_root = repo / CANONICAL_SCENARIO_ROOT_RELATIVE
-        args.timeline_root = default_timeline_root if default_timeline_root.is_dir() else None
+        args.timeline_root = (
+            default_timeline_root if default_timeline_root.is_dir() else None
+        )
     if args.timeline_root is None:
         raise FileNotFoundError("Canonical Novelty 01 scenario root is missing")
+
     variants = parse_csv_values(args.variants, ALL_VARIANTS)
     scenarios = parse_csv_values(args.scenarios, SCENARIOS)
     repetitions = args.repetitions or int(PROFILE_SETTINGS[args.profile]["repetitions"])
+    if repetitions <= 0:
+        raise ValueError("--repetitions must be greater than zero")
+    seeds = parse_positive_int_csv(
+        args.seeds, PROFILE_SETTINGS[args.profile]["default_seeds"]
+    )
+    schedule = str(args.schedule)
 
     results: list[dict[str, Any]] = []
     started = time.time()
-    for variant in variants:
-        for scenario in scenarios:
-            for repetition in range(repetitions):
-                case = build_case(
-                    template, variant=variant, scenario=scenario,
-                    repetition=repetition, profile=args.profile,
-                    contract=contract)
-                if args.timeline_root:
-                    resolve_timeline(case, args.timeline_root.resolve(), scenario)
-                case_output = output / case["case_id"]
-                settings = PROFILE_SETTINGS[args.profile]
-                env = dict(frozen_environment)
-                env.update({
-                    "HAIRGPU_N01_VARIANT": "P" if variant == "B0" else variant,
-                    "HAIRGPU_N01_GROUND_TRUTH": "1"
-                        if settings.get("ground_truth") and variant not in {"B0", "B1"}
-                        else "0",
-                    "HAIRGPU_N01_GROUND_TRUTH_INTERVAL": str(settings.get("ground_truth_interval", 1)),
-                    "HAIRGPU_N01_FORMAL_TELEMETRY": "1",
-                    "HAIRGPU_N01_TELEMETRY_DIR": str(case_output),
-                    # S17 intentionally drives pool overflow. Other scenarios use
-                    # the frozen default capacity so comparisons remain controlled.
-                    "HAIRGPU_N01_PAYLOAD_PERCENT": "5" if scenario == "S17" else "50",
-                    "HAIRGPU_N01_DESIGN_SCENARIO": scenario,
-                })
-                with environment(env):
-                    try:
-                        result = final_run.execute_case(
-                            case, viewer, case_output, repo, dry_run=args.dry_run)
-                        telemetry_validation = None
-                        if not args.dry_run and variant not in {"B0", "B1", "B8"}:
-                            telemetry_path = case_output / (
-                                str(case["run_name"]) + "_novelty01.csv")
-                            telemetry_validation = preflight(
-                                repo, require_fxc=False, telemetry=telemetry_path)
-                            if not telemetry_validation["passed"]:
-                                raise RuntimeError(
-                                    "Novelty 01 formal telemetry validation failed: " +
-                                    json.dumps(telemetry_validation["errors"], ensure_ascii=False))
-                        independent_evidence = validate_independent_baseline_evidence(
-                            result, case_output, variant=variant, dry_run=args.dry_run)
-                        results.append({
-                            "caseId": case["case_id"],
-                            "variant": variant,
-                            "scenario": scenario,
-                            "repetition": repetition,
-                            "ok": True,
-                            "result": result,
-                            "novelty01TelemetryValidation": telemetry_validation,
-                            "independentBaselineRoute": variant in {"B1", "B8"},
-                            "independentBaselineEvidence": independent_evidence,
-                        })
-                    except Exception as exc:
-                        failure = {
-                            "caseId": case["case_id"],
-                            "variant": variant,
-                            "scenario": scenario,
-                            "repetition": repetition,
-                            "ok": False,
-                            "error": str(exc),
-                        }
-                        formal_issues = getattr(exc, "issues", None)
-                        if formal_issues:
-                            failure["issues"] = formal_issues
-                        results.append(failure)
-                        if not args.continue_on_error:
-                            detail = str(exc)
-                            if formal_issues:
-                                detail += ": " + json.dumps(
-                                    formal_issues,
-                                    ensure_ascii=False,
-                                )
-                            raise RuntimeError(detail) from exc
+    for run_order, scenario, seed, repetition, variant in iter_run_plan(
+        variants=variants,
+        scenarios=scenarios,
+        seeds=seeds,
+        repetitions=repetitions,
+        schedule=schedule,
+    ):
+        case = build_case(
+            template,
+            variant=variant,
+            scenario=scenario,
+            seed=seed,
+            repetition=repetition,
+            profile=args.profile,
+            contract=contract,
+        )
+        resolve_timeline(case, args.timeline_root.resolve(), scenario)
+        case_output = output / case["case_id"]
+        settings = PROFILE_SETTINGS[args.profile]
+        env = dict(frozen_environment)
+        env.update(
+            {
+                "HAIRGPU_N01_VARIANT": "P" if variant == "B0" else variant,
+                "HAIRGPU_N01_GROUND_TRUTH": (
+                    "1"
+                    if settings.get("ground_truth") and variant not in {"B0", "B1"}
+                    else "0"
+                ),
+                "HAIRGPU_N01_GROUND_TRUTH_INTERVAL": str(
+                    settings.get("ground_truth_interval", 1)
+                ),
+                "HAIRGPU_N01_FORMAL_TELEMETRY": "1",
+                "HAIRGPU_N01_TELEMETRY_DIR": str(case_output),
+                "HAIRGPU_N01_PAYLOAD_PERCENT": "5" if scenario == "S17" else "50",
+                "HAIRGPU_N01_DESIGN_SCENARIO": scenario,
+                "HAIRGPU_N01_SEED": str(seed),
+                "HAIRGPU_RANDOM_SEED": str(seed),
+            }
+        )
+        with environment(env):
+            try:
+                result = final_run.execute_case(
+                    case, viewer, case_output, repo, dry_run=args.dry_run
+                )
+                telemetry_validation = None
+                if not args.dry_run and variant not in {"B0", "B1", "B8"}:
+                    telemetry_path = case_output / (
+                        str(case["run_name"]) + "_novelty01.csv"
+                    )
+                    telemetry_validation = preflight(
+                        repo, require_fxc=False, telemetry=telemetry_path
+                    )
+                    if not telemetry_validation["passed"]:
+                        raise RuntimeError(
+                            "Novelty 01 formal telemetry validation failed: "
+                            + json.dumps(
+                                telemetry_validation["errors"], ensure_ascii=False
+                            )
+                        )
+                independent_evidence = validate_independent_baseline_evidence(
+                    result,
+                    case_output,
+                    variant=variant,
+                    dry_run=args.dry_run,
+                )
+                results.append(
+                    {
+                        "caseId": case["case_id"],
+                        "runOrder": run_order,
+                        "variant": variant,
+                        "scenario": scenario,
+                        "seed": seed,
+                        "repetition": repetition,
+                        "ok": True,
+                        "result": result,
+                        "novelty01TelemetryValidation": telemetry_validation,
+                        "independentBaselineRoute": variant in {"B0", "B1", "B8"},
+                        "independentBaselineEvidence": independent_evidence,
+                    }
+                )
+            except Exception as exc:
+                failure = {
+                    "caseId": case["case_id"],
+                    "runOrder": run_order,
+                    "variant": variant,
+                    "scenario": scenario,
+                    "seed": seed,
+                    "repetition": repetition,
+                    "ok": False,
+                    "error": str(exc),
+                }
+                formal_issues = getattr(exc, "issues", None)
+                if formal_issues:
+                    failure["issues"] = formal_issues
+                results.append(failure)
+                if not args.continue_on_error:
+                    detail = str(exc)
+                    if formal_issues:
+                        detail += ": " + json.dumps(
+                            formal_issues, ensure_ascii=False
+                        )
+                    raise RuntimeError(detail) from exc
 
-    determinism_issues = validate_determinism(results) if args.profile == "determinism" else []
+    determinism_issues = (
+        validate_determinism(results) if args.profile == "determinism" else []
+    )
     payload = {
-        "schema": "novelty01-matrix-v2",
+        "schema": "novelty01-matrix-v3",
         "profile": args.profile,
         "variants": variants,
         "scenarios": scenarios,
+        "seeds": seeds,
         "repetitions": repetitions,
+        "schedule": schedule,
+        "runCount": len(results),
         "dryRun": args.dry_run,
         "elapsedSeconds": time.time() - started,
         "passed": all(item["ok"] for item in results) and not determinism_issues,
@@ -526,7 +693,8 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
     }
     (output / "novelty01_matrix_summary.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     return payload
 
 
@@ -534,15 +702,32 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--viewer", type=Path, required=True)
-    parser.add_argument("--template", type=Path, required=True,
-                        help="Existing frozen formal case JSON used as the base.")
-    parser.add_argument("--timeline-root", type=Path,
-                        help="Directory containing S01*.json through S18*.json.")
+    parser.add_argument(
+        "--template",
+        type=Path,
+        required=True,
+        help="Existing frozen formal case JSON used as the base.",
+    )
+    parser.add_argument(
+        "--timeline-root",
+        type=Path,
+        help="Directory containing S01.json through S18.json.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", choices=tuple(PROFILE_SETTINGS), default="smoke")
     parser.add_argument("--variants", default="all")
     parser.add_argument("--scenarios", default="all")
+    parser.add_argument(
+        "--seeds",
+        help="Comma-separated positive integer seeds. Formal defaults to 1,2,3,4,5.",
+    )
     parser.add_argument("--repetitions", type=int)
+    parser.add_argument(
+        "--schedule",
+        choices=SCHEDULES,
+        default="counterbalanced",
+        help="Counterbalanced reverses method order across adjacent blocks.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--require-fxc", action="store_true")
@@ -552,7 +737,10 @@ def main() -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if payload["passed"] else 1
     except Exception as exc:
-        print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
+        print(
+            json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         return 2
 
 

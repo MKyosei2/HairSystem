@@ -1,0 +1,76 @@
+diff --git a/apps/dx11_viewer/src/AppMain.cpp b/apps/dx11_viewer/src/AppMain.cpp
+index 29db6ca..6f15626 100644
+--- a/apps/dx11_viewer/src/AppMain.cpp
++++ b/apps/dx11_viewer/src/AppMain.cpp
+@@ -5,7 +5,7 @@ namespace
+     constexpr uint32_t kDisplayStrandCount = 100000u;
+     constexpr uint32_t kParticlesPerStrand = 128u;
+     constexpr uint32_t kSolverIterations = 6u;
+-    constexpr uint32_t kGroupsPerBlock = 8u;
++    constexpr uint32_t kGroupsPerBlock = 32u;
+     constexpr uint32_t kGroupsPerGuide = kParticlesPerStrand - 1u;
+ 
+         if (!TextContainsKeyValue(text, "schemaVersion", "\"novelty01-generator-settings-v1\"") ||
+@@ -14,7 +14,7 @@ namespace
+             !TextContainsKeyValue(text, "displayStrandCount", "100000") ||
+             !TextContainsKeyValue(text, "particlesPerStrand", "128") ||
+             !TextContainsKeyValue(text, "solverIterations", "6") ||
+-            !TextContainsKeyValue(text, "groupsPerBlock", "8") ||
++            !TextContainsKeyValue(text, "groupsPerBlock", "32") ||
+             !TextContainsKeyValue(text, "maskSourceMode", "\"Procedural\"") ||
+             !TextContainsKeyValue(text, "editStackApplied", "false"))
+         {
+diff --git a/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json b/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json
+index 7f10314..937c16b 100644
+--- a/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json
++++ b/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json
+@@ -1,8 +1,27 @@
+ {
+   "schema": "hairgpu-novelty01-formal-contract-v1",
+-  "documentRevision": "69.10-complete-repair",
+-  "branch": "Novelty01",
++  "documentRevision": "main-single-binary-b0-p-formal-v1",
++  "branch": "main",
+   "sourceCommit": "4f4c6210d7be40a0b5d522789d2684ade86d3de9",
++  "sourceCommitRole": "minimumSupportedAncestor",
++  "sourceCommitPolicy": "runtime-head-recorded-in-experiment-manifest",
++  "comparisonDesign": {
++    "primaryMethods": [
++      "B0",
++      "P"
++    ],
++    "sameBinary": true,
++    "sameCommit": true,
++    "schedule": "counterbalanced",
++    "seeds": [
++      1,
++      2,
++      3,
++      4,
++      5
++    ],
++    "repetitions": 3
++  },
+   "sourceOfTruth": {
+     "runtime": [
+       "apps/dx11_viewer/src",
+@@ -18,7 +37,18 @@
+       "route": "legacy_full_dynamic",
+       "method": "B0",
+       "usesControlledDispatcher": false,
+-      "description": "Current full dynamic baseline"
++      "description": "Current full dynamic baseline",
++      "usesSgaptRepresentation": false,
++      "requiresDedicatedPerFrameRoute": true,
++      "evidencePolicy": "legacy-route-no-novelty-telemetry-and-zero-when-available",
++      "forbiddenRuntimeResources": [
++        "SegmentGroupCoreBuffer",
++        "OptionalPayloadPool",
++        "PayloadOwnerTable",
++        "ReuseDescriptorBuffer",
++        "StaticCacheBuffer",
++        "SgaptCompactionLists"
++      ]
+     },
+     "B1": {
+       "route": "independent_full_dynamic_b1",
