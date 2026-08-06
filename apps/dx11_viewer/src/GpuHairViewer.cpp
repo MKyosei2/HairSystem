@@ -186,7 +186,15 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 #include "GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"
 #undef ApplyScenarioTimelineFrame
 
-namespace
+
+#include "GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl"
+#include "GpuHairViewer_parts/12_strand_pick_gizmo_and_brush_edit.inl"
+#include "GpuHairViewer_parts/13_edit_stack_inline_layers_and_masks.inl"
+#include "GpuHairViewer_parts/14_scalp_overlay_and_window_messages.inl"
+#include "GpuHairViewer_parts/15_shutdown_and_tail.inl"
+#undef StepSingleFrame
+
+void hairgpu::viewer::GpuHairViewer::ApplyScenarioTimelineFrame(uint32_t frameIndex)
 {
     struct FormalScenarioRootState
     {
@@ -197,22 +205,10 @@ namespace
         hairgpu::Vec3 rotationRadians = { 0.0f, 0.0f, 0.0f };
     };
 
-    std::unordered_map<GpuHairViewer*, FormalScenarioRootState>&
-        FormalScenarioRootStates()
-    {
-        static std::unordered_map<GpuHairViewer*, FormalScenarioRootState>
-            states;
-        return states;
-    }
-}
-
-// The existing event parser remains the source of truth for all non-root
-// inputs. This wrapper additionally consumes the root event values themselves
-// and rewrites the CPU rest-scalp source before either B0 or P updates the scalp
-// buffer. The same absolute transform is therefore used by both methods.
-void GpuHairViewer::ApplyScenarioTimelineFrame(uint32_t frameIndex)
-{
-    FormalScenarioRootState& state = FormalScenarioRootStates()[this];
+    static std::unordered_map<
+        hairgpu::viewer::GpuHairViewer*,
+        FormalScenarioRootState> states;
+    FormalScenarioRootState& state = states[this];
 
     if (frameIndex == 0u && state.initialized &&
         state.baseScalpPositions.size() == m_restScalpParticles.size())
@@ -356,10 +352,3 @@ void GpuHairViewer::ApplyScenarioTimelineFrame(uint32_t frameIndex)
 
     m_forceAllSegmentGroupsDirty = true;
 }
-
-#include "GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl"
-#include "GpuHairViewer_parts/12_strand_pick_gizmo_and_brush_edit.inl"
-#include "GpuHairViewer_parts/13_edit_stack_inline_layers_and_masks.inl"
-#include "GpuHairViewer_parts/14_scalp_overlay_and_window_messages.inl"
-#include "GpuHairViewer_parts/15_shutdown_and_tail.inl"
-#undef StepSingleFrame
