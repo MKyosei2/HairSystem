@@ -10,6 +10,7 @@ process memory sampling, output integrity, and quality gates.
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import sys
@@ -70,6 +71,14 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "ground_truth": True,
         "repetitions": 1,
         "default_seeds": (1,),
+    },
+    "pilot": {
+        "warmup_frames": 300,
+        "measurement_frames": 1800,
+        "measurement_mode": "quality",
+        "ground_truth": True,
+        "repetitions": 2,
+        "default_seeds": (1, 2),
     },
     "formal": {
         "warmup_frames": 600,
@@ -328,14 +337,247 @@ def build_case(
     return case
 
 
-def resolve_timeline(case: dict[str, Any], timeline_root: Path, scenario: str) -> None:
-    path = timeline_root / f"{scenario}.json"
-    if not path.is_file():
-        raise FileNotFoundError(f"Canonical Novelty 01 timeline is missing: {path}")
-    payload = load_json(path)
+SEED_INPUT_ALGORITHM = "sha256-scenario-input-v1"
+
+
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _seed_unit(seed: int, scenario: str, salt: str) -> float:
+    digest = hashlib.sha256(
+        f"{SEED_INPUT_ALGORITHM}|{seed}|{scenario}|{salt}".encode("utf-8")
+    ).digest()
+    integer = int.from_bytes(digest[:8], "big", signed=False)
+    return integer / float((1 << 64) - 1)
+
+
+def _seed_signed(seed: int, scenario: str, salt: str) -> float:
+    return _seed_unit(seed, scenario, salt) * 2.0 - 1.0
+
+
+def _event(
+    event_id: str,
+    frame: int,
+    event_type: str,
+    value: float | Sequence[float] | None = None,
+    *,
+    target_index: int | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": event_id,
+        "frame": int(frame),
+        "type": event_type,
+    }
+    if value is not None:
+        row["value"] = list(value) if isinstance(value, (list, tuple)) else value
+    if target_index is not None:
+        row["targetIndex"] = int(target_index)
+    return row
+
+
+def build_seeded_events(
+    *,
+    scenario: str,
+    seed: int,
+    warmup_frames: int,
+    measurement_frames: int,
+    duration_frames: int,
+) -> list[dict[str, Any]]:
+    """Create deterministic external inputs shared byte-for-byte by B0 and P.
+
+    Repetitions deliberately reuse the same input for a given scenario/seed.
+    Only execution noise changes across repetitions. Method identity never enters
+    this function, so the before/after pair receives the exact same stimulus.
+    """
+    first_measurement = max(int(warmup_frames), 1)
+    final_frame = max(first_measurement, min(
+        int(duration_frames) - 2,
+        first_measurement + max(int(measurement_frames) - 2, 1),
+    ))
+    span = max(final_frame - first_measurement, 1)
+    jitter = int(_seed_unit(seed, scenario, "frame-jitter") * min(span, 17))
+    start = min(first_measurement + jitter, final_frame)
+    quarter = min(first_measurement + span // 4 + jitter // 2, final_frame)
+    middle = min(first_measurement + span // 2 + jitter // 3, final_frame)
+    three_quarter = min(first_measurement + (span * 3) // 4, final_frame)
+
+    amp = _seed_signed(seed, scenario, "amplitude")
+    phase = _seed_signed(seed, scenario, "phase")
+    x = 0.10 + 0.025 * amp
+    y = 0.02 + 0.010 * phase
+    z = 0.06 * _seed_signed(seed, scenario, "z")
+    wind = 1.05 + 0.20 * _seed_unit(seed, scenario, "wind")
+    camera_near = 0.32 + 0.06 * _seed_unit(seed, scenario, "camera-near")
+    camera_far = 3.80 + 0.45 * _seed_unit(seed, scenario, "camera-far")
+
+    events: list[dict[str, Any]]
+    if scenario == "S01":
+        events = [_event("seed-static", start, "force_all_static")]
+    elif scenario == "S02":
+        events = [
+            _event("seed-breathe-a", start, "set_root_translation", [x * 0.25, y, 0.0]),
+            _event("seed-breathe-b", middle, "set_root_translation", [-x * 0.20, -y, 0.0]),
+        ]
+    elif scenario == "S03":
+        events = [
+            _event("seed-walk-a", start, "set_root_rotation", [0.0, 14.0 + 4.0 * amp, 0.0]),
+            _event("seed-walk-b", middle, "set_root_rotation", [0.0, -12.0 + 3.0 * phase, 0.0]),
+        ]
+    elif scenario == "S04":
+        events = [
+            _event("seed-stop-move", start, "set_root_translation", [x, 0.0, z]),
+            _event("seed-stop", middle, "set_root_translation", [0.0, 0.0, 0.0]),
+        ]
+    elif scenario == "S05":
+        events = [
+            _event("seed-head-left", start, "set_root_rotation", [0.0, 24.0 + 5.0 * amp, 0.0]),
+            _event("seed-head-right", middle, "set_root_rotation", [0.0, -24.0 + 5.0 * phase, 0.0]),
+        ]
+    elif scenario == "S06":
+        events = [_event("seed-teleport", start, "teleport_root", [0.28 + 0.08 * amp, y, z])]
+    elif scenario == "S07":
+        events = [
+            _event("seed-collider-near", start, "set_collider_transform", [x, y, z], target_index=0),
+            _event("seed-collider-closer", middle, "set_collider_transform", [x * 0.55, y, z * 0.40], target_index=0),
+        ]
+    elif scenario == "S08":
+        events = [
+            _event("seed-boundary-collider", start, "set_collider_transform", [x * 0.80, y, z], target_index=0),
+            _event("seed-boundary-edit", middle, "inject_local_edit", target_index=int(_seed_unit(seed, scenario, "target") * 3999)),
+        ]
+    elif scenario == "S09":
+        events = [_event("seed-strong-wind", start, "set_wind", wind)]
+    elif scenario == "S10":
+        events = [
+            _event("seed-wind-on", start, "set_wind", wind),
+            _event("seed-wind-off", middle, "set_wind", 0.0),
+        ]
+    elif scenario == "S11":
+        events = [
+            _event("seed-edit-a", start, "inject_local_edit", target_index=int(_seed_unit(seed, scenario, "edit-a") * 3999)),
+            _event("seed-edit-b", three_quarter, "inject_local_edit", target_index=int(_seed_unit(seed, scenario, "edit-b") * 3999)),
+        ]
+    elif scenario == "S12":
+        events = [
+            _event("seed-trap-collider", start, "set_collider_transform", [x * 0.70, y, z], target_index=0),
+            _event("seed-trap-wind", quarter, "set_wind", 0.18 + 0.04 * amp),
+            _event("seed-trap-stop", middle, "set_wind", 0.0),
+        ]
+    elif scenario == "S13":
+        events = [
+            _event("seed-repair-a", start, "inject_repair_storm"),
+            _event("seed-repair-b", middle, "inject_repair_storm"),
+            _event("seed-repair-c", three_quarter, "inject_repair_storm"),
+        ]
+    elif scenario == "S14":
+        events = [_event("seed-all-dynamic", start, "force_all_dynamic")]
+    elif scenario == "S15":
+        events = [_event("seed-all-static", start, "force_all_static")]
+    elif scenario == "S16":
+        events = [
+            _event("seed-thrash-d1", start, "force_all_dynamic"),
+            _event("seed-thrash-s1", quarter, "force_all_static"),
+            _event("seed-thrash-d2", middle, "force_all_dynamic"),
+            _event("seed-thrash-s2", three_quarter, "force_all_static"),
+        ]
+    elif scenario == "S17":
+        events = [
+            _event("seed-camera-near", start, "set_camera_distance", camera_near),
+            _event("seed-pool-dynamic", quarter, "force_all_dynamic"),
+        ]
+    elif scenario == "S18":
+        events = [_event("seed-camera-far", start, "set_camera_distance", camera_far)]
+    else:
+        raise ValueError(f"Unknown Novelty01 scenario: {scenario}")
+
+    events.sort(key=lambda row: (int(row["frame"]), str(row["id"])))
+    return events
+
+
+def materialize_seeded_timeline(
+    case: dict[str, Any],
+    timeline_root: Path,
+    scenario: str,
+    seed: int,
+    case_output: Path,
+) -> dict[str, Any]:
+    source_path = timeline_root / f"{scenario}.json"
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Canonical Novelty 01 timeline is missing: {source_path}")
+    payload = load_json(source_path)
     if payload.get("novelty01DesignScenario") != scenario:
-        raise ValueError(f"Timeline design-scenario mismatch: {path}")
-    case["scenario_timeline"] = str(path.resolve())
+        raise ValueError(f"Timeline design-scenario mismatch: {source_path}")
+
+    minimum_duration = (
+        int(case["warmup_frames"]) + int(case["measurement_frames"]) + 60
+    )
+    payload["durationFrames"] = max(int(payload.get("durationFrames", 0)), minimum_duration)
+    payload["events"] = build_seeded_events(
+        scenario=scenario,
+        seed=seed,
+        warmup_frames=int(case["warmup_frames"]),
+        measurement_frames=int(case["measurement_frames"]),
+        duration_frames=int(payload["durationFrames"]),
+    )
+    payload["seedDriven"] = True
+    payload["generatedFromCanonical"] = (
+        CANONICAL_SCENARIO_ROOT_RELATIVE / f"{scenario}.json"
+    ).as_posix()
+    payload["seedInput"] = {
+        "algorithm": SEED_INPUT_ALGORITHM,
+        "seed": int(seed),
+        "scenario": scenario,
+        "methodIndependent": True,
+        "repetitionIndependent": True,
+    }
+
+    seed_material = {
+        "algorithm": SEED_INPUT_ALGORITHM,
+        "seed": int(seed),
+        "scenario": scenario,
+        "events": payload["events"],
+    }
+    payload["seedInput"]["seedMaterialSha256"] = hashlib.sha256(
+        _canonical_json_bytes(seed_material)
+    ).hexdigest()
+    encoded = _canonical_json_bytes(payload)
+
+    input_directory = case_output / "input"
+    input_directory.mkdir(parents=True, exist_ok=True)
+    timeline_path = input_directory / "seeded_timeline.json"
+    timeline_path.write_bytes(encoded)
+    observed = hashlib.sha256(encoded).hexdigest()
+
+    case["scenario_timeline"] = str(timeline_path.resolve())
+    case["seed_algorithm"] = SEED_INPUT_ALGORITHM
+    case["scenario_input_sha256"] = observed
+    manifest = {
+        "schema": "hairgpu-seeded-scenario-input-v1",
+        "algorithm": SEED_INPUT_ALGORITHM,
+        "scenario": scenario,
+        "seed": int(seed),
+        "timelinePath": str(timeline_path.resolve()),
+        "timelineSha256": observed,
+        "canonicalSourcePath": str(source_path.resolve()),
+        "canonicalSourceSha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+        "methodIndependent": True,
+        "repetitionIndependent": True,
+    }
+    (input_directory / "scenario_input_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
 
 
 def _find_metric(payload: Any, name: str) -> Any | None:
@@ -351,6 +593,19 @@ def _find_metric(payload: Any, name: str) -> Any | None:
             found = _find_metric(value, name)
             if found is not None:
                 return found
+    return None
+
+
+def _read_json_metric(case_output: Path, name: str) -> Any | None:
+    candidates = sorted(case_output.rglob("*.json"))
+    for path in reversed(candidates):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError, UnicodeError):
+            continue
+        found = _find_metric(payload, name)
+        if found is not None:
+            return found
     return None
 
 
@@ -376,7 +631,11 @@ def _read_jsonl_metric(case_output: Path, name: str) -> Any | None:
 
 def _metric(result: Any, case_output: Path, name: str) -> Any | None:
     value = _find_metric(result, name)
-    return _read_jsonl_metric(case_output, name) if value is None else value
+    if value is None:
+        value = _read_json_metric(case_output, name)
+    if value is None:
+        value = _read_jsonl_metric(case_output, name)
+    return value
 
 
 def validate_independent_baseline_evidence(
@@ -415,6 +674,42 @@ def validate_independent_baseline_evidence(
             "novelty01TelemetryFiles": 0,
             "runtimePayloadTelemetryAvailable": False,
         }
+        required_method_values = {
+            "requestedMethodCode": "B0",
+            "appliedMethodCode": "B0",
+            "observedMethodCode": "B0",
+        }
+        for name, expected in required_method_values.items():
+            value = _metric(result, case_output, name)
+            if value is None:
+                raise RuntimeError(f"B0 is missing fail-closed method evidence: {name}")
+            observed[name] = value
+            if str(value) != expected:
+                raise RuntimeError(
+                    f"B0 method evidence mismatch: {name} expected={expected} observed={value}"
+                )
+
+        required_flag_values = {
+            "enableNoNoveltyBaseline": True,
+            "enableSegmentGroupIntegratedState": False,
+            "enableSegmentGroupSleep": False,
+            "enableStaticCache": False,
+        }
+        for name, expected in required_flag_values.items():
+            value = _metric(result, case_output, name)
+            if value is None:
+                raise RuntimeError(f"B0 is missing fail-closed flag evidence: {name}")
+            normalized = (
+                value if isinstance(value, bool)
+                else str(value).strip().lower() in {"1", "true", "yes", "on"}
+            )
+            observed[name] = normalized
+            if normalized is not expected:
+                raise RuntimeError(
+                    f"B0 flag evidence mismatch: {name} expected={expected} observed={value}"
+                )
+        observed["baselineContractComplete"] = True
+
         uses_representation = _metric(
             result, case_output, "n01UsesSgaptRepresentation"
         )
@@ -529,6 +824,68 @@ def iter_run_plan(
                     run_order += 1
 
 
+def validate_scenario_input_parity(
+    results: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    grouped: dict[tuple[str, int, int], set[str]] = {}
+    for row in results:
+        digest = str(row.get("scenarioInputSha256", ""))
+        if not digest:
+            issues.append({"caseId": row.get("caseId"), "issue": "missingScenarioInputSha256"})
+            continue
+        key = (
+            str(row.get("scenario")),
+            int(row.get("seed", 0)),
+            int(row.get("repetition", 0)),
+        )
+        grouped.setdefault(key, set()).add(digest)
+    for key, values in grouped.items():
+        if len(values) != 1:
+            issues.append({
+                "scenario": key[0],
+                "seed": key[1],
+                "repetition": key[2],
+                "issue": "methodInputMismatch",
+                "hashes": sorted(values),
+            })
+    return issues
+
+
+def validate_seed_variation(
+    results: Sequence[Mapping[str, Any]], seeds: Sequence[int]
+) -> list[dict[str, Any]]:
+    if len(seeds) <= 1:
+        return []
+    issues: list[dict[str, Any]] = []
+    grouped: dict[str, dict[int, set[str]]] = {}
+    for row in results:
+        scenario = str(row.get("scenario"))
+        seed = int(row.get("seed", 0))
+        digest = str(row.get("scenarioInputSha256", ""))
+        grouped.setdefault(scenario, {}).setdefault(seed, set()).add(digest)
+    for scenario, by_seed in grouped.items():
+        representatives: list[str] = []
+        for seed in seeds:
+            values = {value for value in by_seed.get(int(seed), set()) if value}
+            if len(values) != 1:
+                issues.append({
+                    "scenario": scenario,
+                    "seed": int(seed),
+                    "issue": "seedInputNotStable",
+                    "hashes": sorted(values),
+                })
+            else:
+                representatives.append(next(iter(values)))
+        if len(representatives) == len(seeds) and len(set(representatives)) != len(seeds):
+            issues.append({
+                "scenario": scenario,
+                "issue": "differentSeedsProducedIdenticalInput",
+                "hashes": representatives,
+            })
+    return issues
+
+
 def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
     repo = args.repo.resolve()
     viewer = args.viewer.resolve()
@@ -586,8 +943,14 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
             profile=args.profile,
             contract=contract,
         )
-        resolve_timeline(case, args.timeline_root.resolve(), scenario)
         case_output = output / case["case_id"]
+        scenario_input = materialize_seeded_timeline(
+            case,
+            args.timeline_root.resolve(),
+            scenario,
+            seed,
+            case_output,
+        )
         settings = PROFILE_SETTINGS[args.profile]
         env = dict(frozen_environment)
         env.update(
@@ -605,6 +968,8 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 "HAIRGPU_N01_TELEMETRY_DIR": str(case_output),
                 "HAIRGPU_N01_PAYLOAD_PERCENT": "5" if scenario == "S17" else "50",
                 "HAIRGPU_N01_DESIGN_SCENARIO": scenario,
+                "HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS": "1",
+                "HAIRGPU_SCENARIO_INPUT_SHA256": str(scenario_input["timelineSha256"]),
                 "HAIRGPU_N01_SEED": str(seed),
                 "HAIRGPU_RANDOM_SEED": str(seed),
             }
@@ -643,6 +1008,8 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                         "scenario": scenario,
                         "seed": seed,
                         "repetition": repetition,
+                        "scenarioInputSha256": scenario_input["timelineSha256"],
+                        "seedAlgorithm": SEED_INPUT_ALGORITHM,
                         "ok": True,
                         "result": result,
                         "novelty01TelemetryValidation": telemetry_validation,
@@ -658,6 +1025,8 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
                     "scenario": scenario,
                     "seed": seed,
                     "repetition": repetition,
+                    "scenarioInputSha256": scenario_input["timelineSha256"],
+                    "seedAlgorithm": SEED_INPUT_ALGORITHM,
                     "ok": False,
                     "error": str(exc),
                 }
@@ -676,8 +1045,10 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
     determinism_issues = (
         validate_determinism(results) if args.profile == "determinism" else []
     )
+    input_parity_issues = validate_scenario_input_parity(results)
+    seed_variation_issues = validate_seed_variation(results, seeds)
     payload = {
-        "schema": "novelty01-matrix-v3",
+        "schema": "novelty01-matrix-v4",
         "profile": args.profile,
         "variants": variants,
         "scenarios": scenarios,
@@ -687,7 +1058,15 @@ def execute_matrix(args: argparse.Namespace) -> dict[str, Any]:
         "runCount": len(results),
         "dryRun": args.dry_run,
         "elapsedSeconds": time.time() - started,
-        "passed": all(item["ok"] for item in results) and not determinism_issues,
+        "passed": (
+            all(item["ok"] for item in results)
+            and not determinism_issues
+            and not input_parity_issues
+            and not seed_variation_issues
+        ),
+        "seedInputAlgorithm": SEED_INPUT_ALGORITHM,
+        "scenarioInputParityIssues": input_parity_issues,
+        "seedVariationIssues": seed_variation_issues,
         "determinismIssues": determinism_issues,
         "results": results,
     }

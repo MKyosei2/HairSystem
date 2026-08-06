@@ -1,21 +1,43 @@
 param(
-    [ValidateSet("Prepare", "Asset", "Smoke", "Quality", "Performance", "VerifyBranches")]
+    [ValidateSet(
+        "Prepare",
+        "Asset",
+        "Smoke",
+        "Pilot",
+        "Quality",
+        "Performance",
+        "Determinism",
+        "Soak",
+        "Report",
+        "VerifyBranches",
+        "FinalGate",
+        "Archive"
+    )]
     [string]$Stage = "Prepare",
     [string]$Repo = "C:\Users\kyose\source\repos\HairSystem",
     [string]$OutputRoot = "C:\HairSystemFormalResults",
+    [string]$SessionId = "",
     [string]$Operator = "kyose",
     [string]$Seeds = "1,2,3,4,5",
+    [ValidateRange(1, 100)]
     [int]$Repetitions = 3
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$Repo = [IO.Path]::GetFullPath($Repo)
+$OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
+$SessionsRoot = Join-Path $OutputRoot "sessions"
+$CurrentSessionPointer = Join-Path $OutputRoot "CURRENT_SESSION.txt"
+$ExpectedRemotePattern = "MKyosei2/HairSystem"
+
 function Invoke-NativeChecked {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][string]$Label
+        [Parameter(Mandatory = $true)][string]$Label,
+        [string]$WorkingDirectory = ""
     )
 
     Write-Host ""
@@ -23,17 +45,22 @@ function Invoke-NativeChecked {
     Write-Host "[RUN] $Label"
     Write-Host "============================================================"
 
+    $previousLocation = Get-Location
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
+        if ($WorkingDirectory) {
+            Set-Location -LiteralPath $WorkingDirectory
+        }
         & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_ }
-        $code = $LASTEXITCODE
+        $exitCode = $LASTEXITCODE
     }
     finally {
+        Set-Location -LiteralPath $previousLocation
         $ErrorActionPreference = $oldPreference
     }
-    if ($code -ne 0) {
-        throw "$Label failed. ExitCode=$code"
+    if ($exitCode -ne 0) {
+        throw "$Label failed. ExitCode=$exitCode"
     }
 }
 
@@ -69,25 +96,38 @@ function Get-MSBuildPath {
     return ([string]$found[0]).Trim()
 }
 
-function Ensure-OutputTree {
-    $folders = @(
-        $OutputRoot,
-        (Join-Path $OutputRoot "assets"),
-        (Join-Path $OutputRoot "assets\novelty01_100k"),
-        (Join-Path $OutputRoot "environment"),
-        (Join-Path $OutputRoot "integrity"),
-        (Join-Path $OutputRoot "logs"),
-        (Join-Path $OutputRoot "smoke"),
-        (Join-Path $OutputRoot "pilot"),
-        (Join-Path $OutputRoot "formal_quality"),
-        (Join-Path $OutputRoot "formal_performance"),
-        (Join-Path $OutputRoot "determinism"),
-        (Join-Path $OutputRoot "long_run"),
-        (Join-Path $OutputRoot "comparison"),
-        (Join-Path $OutputRoot "temporary")
+function Read-JsonFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "JSON file is missing: $Path"
+    }
+    return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+
+function Write-JsonFile {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Path
     )
-    foreach ($folder in $folders) {
-        New-Item -ItemType Directory -Path $folder -Force | Out-Null
+    $parent = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $temporary = "$Path.tmp.$PID"
+    $Value | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $temporary -Encoding UTF8
+    Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
+function Set-ObjectProperty {
+    param(
+        [Parameter(Mandatory = $true)]$Object,
+        [Parameter(Mandatory = $true)][string]$Name,
+        $Value
+    )
+    if ($Object.PSObject.Properties.Name -contains $Name) {
+        $Object.$Name = $Value
+    }
+    else {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
     }
 }
 
@@ -100,17 +140,22 @@ function Get-RepositoryIdentity {
         throw "Not a Git worktree: $Repo"
     }
     $branch = (& git.exe -C $Repo branch --show-current | Out-String).Trim()
-    $head = (& git.exe -C $Repo rev-parse HEAD | Out-String).Trim()
+    $head = (& git.exe -C $Repo rev-parse HEAD | Out-String).Trim().ToLowerInvariant()
+    $tree = (& git.exe -C $Repo rev-parse "HEAD^{tree}" | Out-String).Trim().ToLowerInvariant()
     $origin = (& git.exe -C $Repo remote get-url origin | Out-String).Trim()
     if ($branch -ne "main") {
         throw "Formal experiment requires the existing main branch. Current=$branch"
     }
-    if ($origin -notmatch "MKyosei2/HairSystem") {
+    if ($origin -notmatch $ExpectedRemotePattern) {
         throw "Unexpected Git remote: $origin"
+    }
+    if ($head -notmatch "^[0-9a-f]{40}$") {
+        throw "Could not resolve a valid 40-character HEAD SHA."
     }
     return [PSCustomObject]@{
         Branch = $branch
         Head = $head
+        Tree = $tree
         Origin = $origin
     }
 }
@@ -119,43 +164,207 @@ function Assert-CleanWorktree {
     $dirty = (& git.exe -C $Repo status --porcelain --untracked-files=all | Out-String).Trim()
     if ($dirty) {
         Write-Host $dirty
-        throw "Formal execution requires a clean worktree. Commit the applied fixes on main first."
+        throw "Formal execution requires a clean worktree. Commit the fixes on main first."
     }
 }
 
 function Save-RemoteBranchInventory {
     param([Parameter(Mandatory = $true)][string]$Path)
-    @(& git.exe -C $Repo ls-remote --heads origin) |
-        Sort-Object |
-        Set-Content -LiteralPath $Path -Encoding UTF8
+    $rows = @(& git.exe -C $Repo ls-remote --heads origin)
     if ($LASTEXITCODE -ne 0) {
-        throw "Could not read remote branch inventory."
+        throw "Could not read the remote branch inventory."
+    }
+    $rows | Sort-Object | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+function Get-DirectoryDigest {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Directory is missing: $Path"
+    }
+    $root = [IO.Path]::GetFullPath($Path)
+    $records = foreach ($file in Get-ChildItem -LiteralPath $root -File -Recurse | Sort-Object FullName) {
+        $relative = $file.FullName.Substring($root.Length).TrimStart('\', '/')
+        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$relative`t$($file.Length)`t$hash"
+    }
+    $temporary = Join-Path $env:TEMP "hairgpu_tree_$PID.txt"
+    try {
+        $records | Set-Content -LiteralPath $temporary -Encoding UTF8
+        return (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Resolve-SessionDirectory {
+    if ($SessionId) {
+        return Join-Path $SessionsRoot $SessionId
+    }
+    if (-not (Test-Path -LiteralPath $CurrentSessionPointer -PathType Leaf)) {
+        throw "No current session is recorded. Run Stage=Prepare first or pass -SessionId."
+    }
+    $resolvedId = (Get-Content -LiteralPath $CurrentSessionPointer -Raw).Trim()
+    if (-not $resolvedId) {
+        throw "CURRENT_SESSION.txt is empty."
+    }
+    return Join-Path $SessionsRoot $resolvedId
+}
+
+function Load-Session {
+    $directory = Resolve-SessionDirectory
+    $manifest = Join-Path $directory "formal_session.json"
+    $value = Read-JsonFile -Path $manifest
+    return [PSCustomObject]@{
+        Directory = $directory
+        ManifestPath = $manifest
+        Value = $value
+    }
+}
+
+function Save-Session {
+    param([Parameter(Mandatory = $true)]$Session)
+    Set-ObjectProperty -Object $Session.Value -Name "lastUpdatedAt" -Value (Get-Date).ToUniversalTime().ToString("o")
+    Write-JsonFile -Value $Session.Value -Path $Session.ManifestPath
+}
+
+function Add-CompletedStage {
+    param(
+        [Parameter(Mandatory = $true)]$Session,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    $stages = @()
+    if ($Session.Value.PSObject.Properties.Name -contains "completedStages") {
+        $stages = @($Session.Value.completedStages)
+    }
+    if ($stages -notcontains $Name) {
+        $stages += $Name
+    }
+    Set-ObjectProperty -Object $Session.Value -Name "completedStages" -Value $stages
+    Save-Session -Session $Session
+}
+
+function Assert-SessionInvariant {
+    param([Parameter(Mandatory = $true)]$Session)
+    $identity = Get-RepositoryIdentity
+    Assert-CleanWorktree
+    if ($identity.Head -ne ([string]$Session.Value.formalCommit).ToLowerInvariant()) {
+        throw "HEAD changed after Prepare. Expected=$($Session.Value.formalCommit) Observed=$($identity.Head)"
+    }
+    if ($identity.Tree -ne ([string]$Session.Value.sourceTreeSha).ToLowerInvariant()) {
+        throw "Git tree changed after Prepare. Expected=$($Session.Value.sourceTreeSha) Observed=$($identity.Tree)"
+    }
+    if ($identity.Branch -ne "main") {
+        throw "Formal session left main. Observed=$($identity.Branch)"
+    }
+    return $identity
+}
+
+function Assert-NewOutputDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        throw "Stage output already exists. Refusing to mix or overwrite evidence: $Path"
+    }
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Capture-Hardware {
+    param([Parameter(Mandatory = $true)][string]$EnvironmentDirectory)
+    $cpu = @(Get-CimInstance Win32_Processor | Select-Object Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed)
+    $gpu = @(Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, AdapterRAM, VideoProcessor, PNPDeviceID)
+    $computer = Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, TotalPhysicalMemory
+    $os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture, TotalVisibleMemorySize
+    $powerPlan = (& powercfg.exe /getactivescheme | Out-String).Trim()
+    $python = Get-PythonCommand
+    $pythonVersionArgs = @($python.Prefix) + @("--version")
+    $pythonVersion = (& $python.FilePath @pythonVersionArgs 2>&1 | Out-String).Trim()
+    $msbuild = Get-MSBuildPath
+    $msbuildVersion = (& $msbuild -version -nologo | Out-String).Trim()
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" | Select-Object DeviceID, Size, FreeSpace, FileSystem
+
+    $observed = [ordered]@{
+        schema = "hairgpu-observed-hardware-v1"
+        capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        cpu = $cpu
+        gpu = $gpu
+        computer = $computer
+        operatingSystem = $os
+        powerPlan = $powerPlan
+        pythonVersion = $pythonVersion
+        msbuildPath = $msbuild
+        msbuildVersion = $msbuildVersion
+        systemDrive = $disk
+        displayResolutionRequested = "1920x1080"
+    }
+    Write-JsonFile -Value $observed -Path (Join-Path $EnvironmentDirectory "observed_hardware.json")
+
+    $profilePath = Join-Path $EnvironmentDirectory "hardware_profile.json"
+    if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+        $profile = [ordered]@{
+            schema = "hairgpu-formal-hardware-profile-v2"
+            status = "PENDING_USER_ENTRY"
+            cpu = ""
+            gpu = ""
+            gpuVramMiB = $null
+            gpuDriver = ""
+            ramMiB = $null
+            windowsVersion = ""
+            windowsBuild = ""
+            visualStudioVersion = ""
+            msvcVersion = ""
+            windowsSdkVersion = ""
+            pythonVersion = ""
+            powerPlan = ""
+            displayResolution = "1920x1080"
+            acPowerRequired = $true
+            notes = ""
+        }
+        Write-JsonFile -Value $profile -Path $profilePath
     }
 }
 
 function Assert-HardwareProfileReady {
-    $path = Join-Path $OutputRoot "environment\hardware_profile.json"
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Hardware profile is missing: $path"
-    }
-    $profile = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    param([Parameter(Mandatory = $true)]$Session)
+    $profilePath = Join-Path $Session.Directory "environment\hardware_profile.json"
+    $observedPath = Join-Path $Session.Directory "environment\observed_hardware.json"
+    $profile = Read-JsonFile -Path $profilePath
+    $observed = Read-JsonFile -Path $observedPath
     if ($profile.status -ne "READY") {
-        throw "Set hardware_profile.json status to READY after entering the fixed PC details."
+        throw "Set hardware_profile.json status to READY after entering the fixed PC details: $profilePath"
     }
+
+    $observedCpu = (@($observed.cpu | ForEach-Object { $_.Name }) -join " | ")
+    $observedGpu = (@($observed.gpu | ForEach-Object { $_.Name }) -join " | ")
+    if ($profile.cpu -and $observedCpu -notlike "*$($profile.cpu)*") {
+        throw "CPU profile mismatch. Profile=$($profile.cpu) Observed=$observedCpu"
+    }
+    if ($profile.gpu -and $observedGpu -notlike "*$($profile.gpu)*") {
+        throw "GPU profile mismatch. Profile=$($profile.gpu) Observed=$observedGpu"
+    }
+    if ($profile.displayResolution -ne "1920x1080") {
+        throw "Formal displayResolution must be 1920x1080."
+    }
+    if ($profile.acPowerRequired -ne $true) {
+        throw "acPowerRequired must remain true for formal evidence."
+    }
+
+    $profileHash = (Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-ObjectProperty -Object $Session.Value -Name "hardwareProfileSha256" -Value $profileHash
+    Save-Session -Session $Session
 }
 
 function Build-FormalRelease {
+    param([Parameter(Mandatory = $true)]$Session)
     $msbuild = Get-MSBuildPath
     $solution = Join-Path $Repo "HairSystem.sln"
-    $log = Join-Path $OutputRoot "logs\formal_release_build.log"
+    $log = Join-Path $Session.Directory "logs\formal_release_build.log"
 
     Get-Process HairSystem -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 
-    Remove-Item -LiteralPath (Join-Path $Repo "bin\Release\HairSystem") `
-        -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Path $Repo "bin-int\Release\HairSystem") `
-        -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $Repo "bin\Release\HairSystem") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $Repo "bin-int\Release\HairSystem") -Recurse -Force -ErrorAction SilentlyContinue
 
     Invoke-NativeChecked `
         -FilePath $msbuild `
@@ -173,10 +382,47 @@ function Build-FormalRelease {
             "/flp:logfile=$log;verbosity=diagnostic"
         ) `
         -Label "Release x64 formal rebuild"
+
+    $viewer = Join-Path $Repo "bin\Release\HairSystem\HairSystem.exe"
+    if (-not (Test-Path -LiteralPath $viewer -PathType Leaf)) {
+        throw "Formal viewer was not produced: $viewer"
+    }
+    $viewerHash = (Get-FileHash -LiteralPath $viewer -Algorithm SHA256).Hash.ToLowerInvariant()
+    $buildLogHash = (Get-FileHash -LiteralPath $log -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-ObjectProperty -Object $Session.Value -Name "viewerPath" -Value $viewer
+    Set-ObjectProperty -Object $Session.Value -Name "viewerSha256" -Value $viewerHash
+    Set-ObjectProperty -Object $Session.Value -Name "buildLogSha256" -Value $buildLogHash
+    Save-Session -Session $Session
+}
+
+function Assert-FrozenInputs {
+    param([Parameter(Mandatory = $true)]$Session)
+    $viewer = Join-Path $Repo "bin\Release\HairSystem\HairSystem.exe"
+    $assetManifest = Join-Path $Session.Directory "asset\frozen_asset_manifest.json"
+    if (-not (Test-Path -LiteralPath $viewer -PathType Leaf)) {
+        throw "Viewer is missing. Run Stage=Asset first."
+    }
+    if (-not (Test-Path -LiteralPath $assetManifest -PathType Leaf)) {
+        throw "Frozen asset manifest is missing. Run Stage=Asset first."
+    }
+    $viewerHash = (Get-FileHash -LiteralPath $viewer -Algorithm SHA256).Hash.ToLowerInvariant()
+    $manifestHash = (Get-FileHash -LiteralPath $assetManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($viewerHash -ne ([string]$Session.Value.viewerSha256).ToLowerInvariant()) {
+        throw "Viewer SHA-256 changed after Asset freeze."
+    }
+    if ($manifestHash -ne ([string]$Session.Value.assetManifestSha256).ToLowerInvariant()) {
+        throw "Frozen asset manifest SHA-256 changed."
+    }
+    $scenarioRoot = Join-Path $Repo "benchmarks\novelty01\sgapt_scenarios"
+    $scenarioHash = Get-DirectoryDigest -Path $scenarioRoot
+    if ($scenarioHash -ne ([string]$Session.Value.canonicalScenarioTreeSha256).ToLowerInvariant()) {
+        throw "Canonical scenario tree changed after Asset freeze."
+    }
 }
 
 function Invoke-Matrix {
     param(
+        [Parameter(Mandatory = $true)]$Session,
         [Parameter(Mandatory = $true)][string]$Profile,
         [Parameter(Mandatory = $true)][string]$Scenarios,
         [Parameter(Mandatory = $true)][string]$SeedList,
@@ -184,12 +430,16 @@ function Invoke-Matrix {
         [Parameter(Mandatory = $true)][string]$Output
     )
 
+    Assert-SessionInvariant -Session $Session | Out-Null
+    Assert-FrozenInputs -Session $Session
+    Assert-NewOutputDirectory -Path $Output
+
     $python = Get-PythonCommand
     $viewer = Join-Path $Repo "bin\Release\HairSystem\HairSystem.exe"
     $matrix = Join-Path $Repo "tools\final_stage\hairgpu_novelty01_matrix.py"
     $template = Join-Path $Repo "docs\sample_assets\final_runtime_suite_template.json"
     $timeline = Join-Path $Repo "benchmarks\novelty01\sgapt_scenarios"
-    $manifest = Join-Path $OutputRoot "assets\novelty01_100k\frozen_asset_manifest.json"
+    $manifest = Join-Path $Session.Directory "asset\frozen_asset_manifest.json"
 
     foreach ($required in @($viewer, $matrix, $template, $timeline, $manifest)) {
         if (-not (Test-Path -LiteralPath $required)) {
@@ -198,6 +448,8 @@ function Invoke-Matrix {
     }
 
     $env:HAIRGPU_FROZEN_ASSET_MANIFEST = $manifest
+    $env:HAIRGPU_FORMAL_SESSION_ID = [string]$Session.Value.sessionId
+    $env:HAIRGPU_FORMAL_COMMIT = [string]$Session.Value.formalCommit
     try {
         Invoke-NativeChecked `
             -FilePath $python.FilePath `
@@ -220,66 +472,114 @@ function Invoke-Matrix {
     }
     finally {
         Remove-Item Env:HAIRGPU_FROZEN_ASSET_MANIFEST -ErrorAction SilentlyContinue
+        Remove-Item Env:HAIRGPU_FORMAL_SESSION_ID -ErrorAction SilentlyContinue
+        Remove-Item Env:HAIRGPU_FORMAL_COMMIT -ErrorAction SilentlyContinue
     }
 }
 
-$Repo = [IO.Path]::GetFullPath($Repo)
-$OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
-Ensure-OutputTree
-$identity = Get-RepositoryIdentity
+function Verify-RemoteBranches {
+    param([Parameter(Mandatory = $true)]$Session)
+    Assert-SessionInvariant -Session $Session | Out-Null
+    $before = Join-Path $Session.Directory "integrity\remote_branches_before.txt"
+    if (-not (Test-Path -LiteralPath $before -PathType Leaf)) {
+        throw "Prepare branch inventory is missing: $before"
+    }
+    $after = Join-Path $Session.Directory "integrity\remote_branches_after.txt"
+    Save-RemoteBranchInventory -Path $after
+    $difference = Compare-Object `
+        -ReferenceObject (Get-Content -LiteralPath $before) `
+        -DifferenceObject (Get-Content -LiteralPath $after)
+    if ($difference) {
+        $difference | Out-String |
+            Set-Content -LiteralPath (Join-Path $Session.Directory "integrity\REMOTE_BRANCH_CHANGE_DETECTED.txt") -Encoding UTF8
+        Set-ObjectProperty -Object $Session.Value -Name "status" -Value "INVALID_REMOTE_BRANCH_CHANGE"
+        Save-Session -Session $Session
+        throw "Remote branch inventory changed. Formal evidence is invalid."
+    }
+    $result = [ordered]@{
+        status = "PASS"
+        branchesUnchanged = $true
+        beforeSha256 = (Get-FileHash -LiteralPath $before -Algorithm SHA256).Hash.ToLowerInvariant()
+        afterSha256 = (Get-FileHash -LiteralPath $after -Algorithm SHA256).Hash.ToLowerInvariant()
+        verifiedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    Write-JsonFile -Value $result -Path (Join-Path $Session.Directory "integrity\remote_branch_integrity_result.json")
+    Add-CompletedStage -Session $Session -Name "VerifyBranches"
+}
+
+New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $SessionsRoot -Force | Out-Null
 
 switch ($Stage) {
     "Prepare" {
-        $before = Join-Path $OutputRoot "integrity\remote_branches_before.txt"
-        Save-RemoteBranchInventory -Path $before
-        $branchHash = (Get-FileHash -LiteralPath $before -Algorithm SHA256).Hash
-
-        @(
-            "repository=$($identity.Origin)",
-            "branch=$($identity.Branch)",
-            "head=$($identity.Head)",
-            "capturedAt=$((Get-Date).ToString('o'))",
-            "remoteBranchInventorySha256=$branchHash"
-        ) | Set-Content `
-            -LiteralPath (Join-Path $OutputRoot "integrity\repository_before.txt") `
-            -Encoding UTF8
-
-        $hardwarePath = Join-Path $OutputRoot "environment\hardware_profile.json"
-        if (-not (Test-Path -LiteralPath $hardwarePath -PathType Leaf)) {
-            [ordered]@{
-                schema = "hairgpu-formal-hardware-profile-v1"
-                status = "PENDING_USER_ENTRY"
-                cpu = ""
-                gpu = ""
-                gpuVramMiB = $null
-                gpuDriver = ""
-                ramMiB = $null
-                windowsVersion = ""
-                windowsBuild = ""
-                visualStudioVersion = ""
-                msvcVersion = ""
-                windowsSdkVersion = ""
-                pythonVersion = ""
-                powerPlan = ""
-                displayResolution = "1920x1080"
-                acPowerRequired = $true
-                notes = ""
-            } | ConvertTo-Json -Depth 5 |
-                Set-Content -LiteralPath $hardwarePath -Encoding UTF8
+        $identity = Get-RepositoryIdentity
+        Assert-CleanWorktree
+        if (-not $SessionId) {
+            $SessionId = "{0}_{1}" -f (Get-Date -Format "yyyyMMdd_HHmmss"), $identity.Head.Substring(0, 8)
         }
-        Write-Host "Preparation complete: $OutputRoot"
+        if ($SessionId -notmatch "^[A-Za-z0-9_.-]+$") {
+            throw "SessionId contains unsupported characters: $SessionId"
+        }
+        $sessionDirectory = Join-Path $SessionsRoot $SessionId
+        if (Test-Path -LiteralPath $sessionDirectory) {
+            throw "Session already exists. Refusing overwrite: $sessionDirectory"
+        }
+        foreach ($relative in @(
+            "environment", "integrity", "logs", "smoke", "pilot",
+            "quality", "performance", "determinism", "soak", "report", "archive"
+        )) {
+            New-Item -ItemType Directory -Path (Join-Path $sessionDirectory $relative) -Force | Out-Null
+        }
+
+        $before = Join-Path $sessionDirectory "integrity\remote_branches_before.txt"
+        Save-RemoteBranchInventory -Path $before
+        Capture-Hardware -EnvironmentDirectory (Join-Path $sessionDirectory "environment")
+
+        $sessionValue = [ordered]@{
+            schema = "hairgpu-thesis-formal-session-v2"
+            status = "PREPARED"
+            sessionId = $SessionId
+            repository = $identity.Origin
+            branch = $identity.Branch
+            formalCommit = $identity.Head
+            sourceTreeSha = $identity.Tree
+            createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            operator = $Operator
+            outputDirectory = $sessionDirectory
+            remoteBranchInventorySha256 = (Get-FileHash -LiteralPath $before -Algorithm SHA256).Hash.ToLowerInvariant()
+            comparisonMethods = @("B0", "P")
+            sameBinary = $true
+            sameCommit = $true
+            schedule = "counterbalanced"
+            seedAlgorithm = "sha256-scenario-input-v1"
+            seeds = @($Seeds.Split(',') | ForEach-Object { [int]$_.Trim() })
+            repetitions = $Repetitions
+            completedStages = @("Prepare")
+            branchCreated = $false
+            committed = $false
+            pushed = $false
+        }
+        Write-JsonFile -Value $sessionValue -Path (Join-Path $sessionDirectory "formal_session.json")
+        Set-Content -LiteralPath $CurrentSessionPointer -Value $SessionId -Encoding UTF8
+        Write-Host "Prepared isolated formal session: $sessionDirectory"
+        Write-Host "Hardware profile to complete later: $(Join-Path $sessionDirectory 'environment\hardware_profile.json')"
     }
 
     "Asset" {
-        Assert-CleanWorktree
-        Build-FormalRelease
+        $session = Load-Session
+        Assert-SessionInvariant -Session $session | Out-Null
+        $assetManifest = Join-Path $session.Directory "asset\frozen_asset_manifest.json"
+        if (Test-Path -LiteralPath $assetManifest) {
+            throw "Asset evidence already exists. Create a new session instead of overwriting it."
+        }
+        Build-FormalRelease -Session $session
 
         $python = Get-PythonCommand
         $viewer = Join-Path $Repo "bin\Release\HairSystem\HairSystem.exe"
         $preflight = Join-Path $Repo "tools\final_stage\hairgpu_novelty01_preflight.py"
         $freeze = Join-Path $Repo "tools\final_stage\freeze_novelty01_asset.py"
         $template = Join-Path $Repo "docs\sample_assets\novelty01_100k_asset_manifest.json"
-        $bundle = Join-Path $OutputRoot "assets\novelty01_100k"
+        $bundle = Join-Path $session.Directory "asset"
 
         Invoke-NativeChecked `
             -FilePath $python.FilePath `
@@ -287,7 +587,7 @@ switch ($Stage) {
                 $preflight,
                 "--repo", $Repo,
                 "--require-fxc",
-                "--json", (Join-Path $OutputRoot "integrity\novelty01_preflight.json")
+                "--json", (Join-Path $session.Directory "integrity\novelty01_preflight.json")
             )) `
             -Label "Novelty01 source preflight"
 
@@ -301,8 +601,7 @@ switch ($Stage) {
                 "--generate-source",
                 "--operator", $Operator,
                 "--repo-root", $Repo,
-                "--required-branch", "main",
-                "--force"
+                "--required-branch", "main"
             )) `
             -Label "Generate and freeze canonical 100k asset"
 
@@ -315,67 +614,130 @@ switch ($Stage) {
                 "--verify-only"
             )) `
             -Label "Verify canonical 100k asset"
+
+        $frozen = Read-JsonFile -Path $assetManifest
+        if ($frozen.freezeStatus -ne "FROZEN") {
+            throw "Frozen asset manifest did not reach FROZEN status."
+        }
+        if ([int]$frozen.generation.displayStrandCount -ne 100000 -or
+            [int]$frozen.generation.primaryGuideStrandCount -ne 4000 -or
+            [int]$frozen.generation.followersPerGuide -ne 24 -or
+            [int]$frozen.generation.particlesPerGuide -ne 128 -or
+            [int]$frozen.generation.solverIterations -ne 6 -or
+            [int]$frozen.generation.groupsPerBlock -ne 32) {
+            throw "Frozen asset generation contract mismatch."
+        }
+
+        Set-ObjectProperty -Object $session.Value -Name "assetManifestSha256" -Value ((Get-FileHash -LiteralPath $assetManifest -Algorithm SHA256).Hash.ToLowerInvariant())
+        Set-ObjectProperty -Object $session.Value -Name "assetBundleSha256" -Value ([string]$frozen.bundleSha256).ToLowerInvariant()
+        Set-ObjectProperty -Object $session.Value -Name "canonicalScenarioTreeSha256" -Value (Get-DirectoryDigest -Path (Join-Path $Repo "benchmarks\novelty01\sgapt_scenarios"))
+        Set-ObjectProperty -Object $session.Value -Name "status" -Value "ASSET_FROZEN"
+        Save-Session -Session $session
+        Add-CompletedStage -Session $session -Name "Asset"
     }
 
     "Smoke" {
-        Assert-CleanWorktree
-        Invoke-Matrix `
-            -Profile "smoke" `
-            -Scenarios "S01,S06,S11,S17,S18" `
-            -SeedList "1" `
-            -RepeatCount 1 `
-            -Output (Join-Path $OutputRoot "smoke\B0_vs_P")
+        $session = Load-Session
+        Invoke-Matrix -Session $session -Profile "smoke" -Scenarios "S01,S06,S11,S17,S18" -SeedList "1" -RepeatCount 1 -Output (Join-Path $session.Directory "smoke\B0_vs_P")
+        Add-CompletedStage -Session $session -Name "Smoke"
+    }
+
+    "Pilot" {
+        $session = Load-Session
+        Invoke-Matrix -Session $session -Profile "pilot" -Scenarios "S01,S07,S09,S11,S13,S16,S17" -SeedList "1,2" -RepeatCount 2 -Output (Join-Path $session.Directory "pilot\B0_vs_P")
+        Add-CompletedStage -Session $session -Name "Pilot"
     }
 
     "Quality" {
-        Assert-CleanWorktree
-        Assert-HardwareProfileReady
-        Invoke-Matrix `
-            -Profile "formal" `
-            -Scenarios "all" `
-            -SeedList $Seeds `
-            -RepeatCount $Repetitions `
-            -Output (Join-Path $OutputRoot "formal_quality\B0_vs_P")
+        $session = Load-Session
+        Assert-HardwareProfileReady -Session $session
+        Invoke-Matrix -Session $session -Profile "formal" -Scenarios "all" -SeedList $Seeds -RepeatCount $Repetitions -Output (Join-Path $session.Directory "quality\B0_vs_P")
+        Add-CompletedStage -Session $session -Name "Quality"
     }
 
     "Performance" {
-        Assert-CleanWorktree
-        Assert-HardwareProfileReady
-        Invoke-Matrix `
-            -Profile "performance" `
-            -Scenarios "all" `
-            -SeedList $Seeds `
-            -RepeatCount $Repetitions `
-            -Output (Join-Path $OutputRoot "formal_performance\B0_vs_P")
+        $session = Load-Session
+        Assert-HardwareProfileReady -Session $session
+        Invoke-Matrix -Session $session -Profile "performance" -Scenarios "all" -SeedList $Seeds -RepeatCount $Repetitions -Output (Join-Path $session.Directory "performance\B0_vs_P")
+        Add-CompletedStage -Session $session -Name "Performance"
+    }
+
+    "Determinism" {
+        $session = Load-Session
+        Assert-HardwareProfileReady -Session $session
+        Invoke-Matrix -Session $session -Profile "determinism" -Scenarios "S01,S06,S09,S11,S13,S16,S18" -SeedList "1" -RepeatCount 3 -Output (Join-Path $session.Directory "determinism\B0_vs_P")
+        Add-CompletedStage -Session $session -Name "Determinism"
+    }
+
+    "Soak" {
+        $session = Load-Session
+        Assert-HardwareProfileReady -Session $session
+        Invoke-Matrix -Session $session -Profile "soak" -Scenarios "S01,S07,S13,S16,S17" -SeedList "1" -RepeatCount 1 -Output (Join-Path $session.Directory "soak\B0_vs_P")
+        Add-CompletedStage -Session $session -Name "Soak"
+    }
+
+    "Report" {
+        $session = Load-Session
+        Assert-SessionInvariant -Session $session | Out-Null
+        Assert-FrozenInputs -Session $session
+        $python = Get-PythonCommand
+        $reporter = Join-Path $Repo "tools\final_stage\hairgpu_thesis_report.py"
+        Invoke-NativeChecked `
+            -FilePath $python.FilePath `
+            -Arguments (@($python.Prefix) + @($reporter, "--session", $session.Directory)) `
+            -Label "Generate thesis statistical report"
+        Add-CompletedStage -Session $session -Name "Report"
     }
 
     "VerifyBranches" {
-        $before = Join-Path $OutputRoot "integrity\remote_branches_before.txt"
-        if (-not (Test-Path -LiteralPath $before -PathType Leaf)) {
-            throw "Run Prepare first. Missing: $before"
-        }
-        $after = Join-Path $OutputRoot "integrity\remote_branches_after.txt"
-        Save-RemoteBranchInventory -Path $after
-        $difference = Compare-Object `
-            -ReferenceObject (Get-Content -LiteralPath $before) `
-            -DifferenceObject (Get-Content -LiteralPath $after)
-        if ($difference) {
-            $difference | Out-String |
-                Set-Content `
-                    -LiteralPath (Join-Path $OutputRoot "integrity\REMOTE_BRANCH_CHANGE_DETECTED.txt") `
-                    -Encoding UTF8
-            throw "Remote branch inventory changed. Formal evidence is invalid."
-        }
-
-        @(
-            "status=PASS",
-            "branchesUnchanged=true",
-            "beforeSha256=$((Get-FileHash -LiteralPath $before -Algorithm SHA256).Hash)",
-            "afterSha256=$((Get-FileHash -LiteralPath $after -Algorithm SHA256).Hash)",
-            "verifiedAt=$((Get-Date).ToString('o'))"
-        ) | Set-Content `
-            -LiteralPath (Join-Path $OutputRoot "integrity\remote_branch_integrity_result.txt") `
-            -Encoding UTF8
+        $session = Load-Session
+        Verify-RemoteBranches -Session $session
         Write-Host "Remote branch inventory is unchanged."
+    }
+
+    "FinalGate" {
+        $session = Load-Session
+        Assert-HardwareProfileReady -Session $session
+        Verify-RemoteBranches -Session $session
+        $python = Get-PythonCommand
+        $reporter = Join-Path $Repo "tools\final_stage\hairgpu_thesis_report.py"
+        $gate = Join-Path $Repo "tools\final_stage\hairgpu_thesis_final_gate.py"
+        Invoke-NativeChecked `
+            -FilePath $python.FilePath `
+            -Arguments (@($python.Prefix) + @($reporter, "--session", $session.Directory)) `
+            -Label "Refresh thesis statistical report"
+        Invoke-NativeChecked `
+            -FilePath $python.FilePath `
+            -Arguments (@($python.Prefix) + @($gate, "--session", $session.Directory)) `
+            -Label "Thesis final integrity gate"
+        Set-ObjectProperty -Object $session.Value -Name "status" -Value "FORMAL_COMPLETE_VALID"
+        Save-Session -Session $session
+        Add-CompletedStage -Session $session -Name "FinalGate"
+    }
+
+    "Archive" {
+        $session = Load-Session
+        $gateResult = Join-Path $session.Directory "integrity\final_gate.json"
+        if (-not (Test-Path -LiteralPath $gateResult -PathType Leaf)) {
+            throw "Final gate result is missing. Run Stage=FinalGate first."
+        }
+        $gate = Read-JsonFile -Path $gateResult
+        if ($gate.status -ne "PASS") {
+            throw "Cannot archive an invalid formal session."
+        }
+        $archives = Join-Path $OutputRoot "archives"
+        New-Item -ItemType Directory -Path $archives -Force | Out-Null
+        $destination = Join-Path $archives ("$($session.Value.sessionId).zip")
+        if (Test-Path -LiteralPath $destination) {
+            throw "Archive already exists. Refusing overwrite: $destination"
+        }
+        Compress-Archive -LiteralPath $session.Directory -DestinationPath $destination -CompressionLevel Optimal
+        $archiveHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-ObjectProperty -Object $session.Value -Name "archivePath" -Value $destination
+        Set-ObjectProperty -Object $session.Value -Name "archiveSha256" -Value $archiveHash
+        Save-Session -Session $session
+        Add-CompletedStage -Session $session -Name "Archive"
+        Write-Host "Archive: $destination"
+        Write-Host "SHA-256: $archiveHash"
     }
 }

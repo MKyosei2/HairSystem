@@ -1,0 +1,125 @@
+diff --git a/apps/dx11_viewer/src/AppMain.cpp b/apps/dx11_viewer/src/AppMain.cpp
+index 549df03..8df5dc8 100644
+--- a/apps/dx11_viewer/src/AppMain.cpp
++++ b/apps/dx11_viewer/src/AppMain.cpp
+@@ -6,7 +6,7 @@ namespace
+     constexpr uint32_t kDisplayStrandCount = 100000u;
+     constexpr uint32_t kParticlesPerStrand = 128u;
+     constexpr uint32_t kSolverIterations = 6u;
+-    constexpr uint32_t kGroupsPerBlock = 8u;
++    constexpr uint32_t kGroupsPerBlock = 32u;
+     constexpr uint32_t kGroupsPerGuide = kParticlesPerStrand - 1u;
+     constexpr float kReferenceLengthMeters = 0.50f;
+     constexpr char kTopologyMagic[8] = { 'H', 'G', 'P', 'U', 'T', 'O', 'P', '1' };
+@@ -20,7 +20,7 @@ namespace
+             !TextContainsKeyValue(text, "displayStrandCount", "100000") ||
+             !TextContainsKeyValue(text, "particlesPerStrand", "128") ||
+             !TextContainsKeyValue(text, "solverIterations", "6") ||
+-            !TextContainsKeyValue(text, "groupsPerBlock", "8") ||
++            !TextContainsKeyValue(text, "groupsPerBlock", "32") ||
+             !TextContainsKeyValue(text, "maskSourceMode", "\"Procedural\"") ||
+             !TextContainsKeyValue(text, "editStackApplied", "false"))
+         {
+diff --git a/apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl b/apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl
+index 7bfae8b..0429cd5 100644
+--- a/apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl
++++ b/apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl
+@@ -5,6 +5,17 @@ void GpuHairViewer::ApplyNovelty01DesignScenarioForTick(float dt)
+         runtime.scenarioRootTranslation = hairgpu::Vec3(0.0f, 0.0f, 0.0f);
+         runtime.scenarioRootYawRadians = 0.0f;
+ 
++        // Publication-grade B0/P comparisons use one method-independent seeded
++        // timeline. External root, wind, collider, edit, repair, camera, and
++        // force-state inputs are applied by ApplyScenarioForTick() before the
++        // method dispatcher. Do not add a second Proposal-only stimulus here;
++        // doing so would confound the representation comparison.
++        if (N01EnvironmentEnabled(
++                L"HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS", false))
++        {
++            return;
++        }
++
+         const uint32_t scenario = runtime.designScenarioIndex;
+         const uint32_t eventStart = std::max<uint32_t>(
+             m_experimentCase.warmupFrames,
+@@ -16,6 +27,7 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
+ {
+         ResetNoveltyTelemetryForFrame();
+         m_noveltyTelemetry.sourceFrameIndex = m_globalFrameIndex;
++        ApplyScenarioForTick(m_simulationTickIndex, dt);
+         if (m_experimentRunStatus == ExperimentRunStatus::Failed)
+         {
+             return;
+diff --git a/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json b/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json
+index 74013f0..d017d24 100644
+--- a/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json
++++ b/docs/experiments/NOVELTY01_FORMAL_CONTRACT.json
+@@ -1,8 +1,35 @@
+ {
+   "schema": "hairgpu-novelty01-formal-contract-v1",
+-  "documentRevision": "69.10-complete-repair",
+-  "branch": "Novelty01",
+-  "sourceCommit": "4f4c6210d7be40a0b5d522789d2684ade86d3de9",
++  "documentRevision": "main-single-binary-b0-p-formal-v2",
++  "branch": "main",
++  "sourceCommit": "06c38e2e03f5d4bf49b9b64cbf563087eb1d02de",
++  "sourceCommitRole": "minimumSupportedAncestor",
++  "sourceCommitPolicy": "exact-runtime-head-and-tree-recorded-in-session-manifest",
++  "comparisonDesign": {
++    "primaryMethods": [
++      "B0",
++      "P"
++    ],
++    "sameBinary": true,
++    "sameCommit": true,
++    "sameCanonicalAsset": true,
++    "methodIndependentScenarioInputs": true,
++    "requireScenarioInputHashParity": true,
++    "timelineOwnsExternalInputs": true,
++    "seedInputAlgorithm": "sha256-scenario-input-v1",
++    "schedule": "counterbalanced",
++    "seeds": [
++      1,
++      2,
++      3,
++      4,
++      5
++    ],
++    "repetitions": 3,
++    "sessionIsolation": true,
++    "refuseEvidenceOverwrite": true,
++    "exactCommitAndTreeLock": true
++  },
+   "sourceOfTruth": {
+     "runtime": [
+       "apps/dx11_viewer/src",
+@@ -15,7 +42,28 @@
+       "route": "legacy_full_dynamic",
+       "method": "B0",
+       "usesControlledDispatcher": false,
+-      "description": "Current full dynamic baseline"
++      "description": "Current full dynamic baseline",
++      "usesSgaptRepresentation": false,
++      "requiresDedicatedPerFrameRoute": true,
++      "evidencePolicy": "requested-applied-observed-method-and-flags-fail-closed",
++      "requiredEvidence": [
++        "requestedMethodCode=B0",
++        "appliedMethodCode=B0",
++        "observedMethodCode=B0",
++        "enableNoNoveltyBaseline=true",
++        "enableSegmentGroupIntegratedState=false",
++        "enableSegmentGroupSleep=false",
++        "enableStaticCache=false",
++        "novelty01TelemetryFiles=0"
++      ],
++      "forbiddenRuntimeResources": [
++        "SegmentGroupCoreBuffer",
++        "OptionalPayloadPool",
++        "PayloadOwnerTable",
++        "ReuseDescriptorBuffer",
++        "StaticCacheBuffer",
++        "SgaptCompactionLists"
++      ]
+     },
+     "B1": {
+       "route": "independent_full_dynamic_b1"
