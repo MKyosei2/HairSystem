@@ -27,7 +27,7 @@ namespace
     constexpr uint32_t kDisplayStrandCount = 100000u;
     constexpr uint32_t kParticlesPerStrand = 128u;
     constexpr uint32_t kSolverIterations = 6u;
-    constexpr uint32_t kGroupsPerBlock = 8u;
+    constexpr uint32_t kGroupsPerBlock = 32u;
     constexpr uint32_t kGroupsPerGuide = kParticlesPerStrand - 1u;
     constexpr float kReferenceLengthMeters = 0.50f;
     constexpr char kTopologyMagic[8] = { 'H', 'G', 'P', 'U', 'T', 'O', 'P', '1' };
@@ -267,7 +267,7 @@ namespace
             !TextContainsKeyValue(text, "displayStrandCount", "100000") ||
             !TextContainsKeyValue(text, "particlesPerStrand", "128") ||
             !TextContainsKeyValue(text, "solverIterations", "6") ||
-            !TextContainsKeyValue(text, "groupsPerBlock", "8") ||
+            !TextContainsKeyValue(text, "groupsPerBlock", "32") ||
             !TextContainsKeyValue(text, "maskSourceMode", "\"Procedural\"") ||
             !TextContainsKeyValue(text, "editStackApplied", "false"))
         {

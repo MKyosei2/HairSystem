@@ -1,8 +1,36 @@
 {
   "schema": "hairgpu-novelty01-formal-contract-v1",
-  "documentRevision": "69.10-complete-repair",
-  "branch": "Novelty01",
-  "sourceCommit": "4f4c6210d7be40a0b5d522789d2684ade86d3de9",
+  "documentRevision": "main-single-binary-b0-p-formal-v3",
+  "branch": "main",
+  "sourceCommit": "c90737a74152dacc399d89e82cb06d273840e19d",
+  "sourceCommitRole": "minimumSupportedAncestor",
+  "sourceCommitPolicy": "exact-runtime-head-and-tree-recorded-in-session-manifest",
+  "comparisonDesign": {
+    "primaryMethods": [
+      "B0",
+      "P"
+    ],
+    "sameBinary": true,
+    "sameCommit": true,
+    "sameCanonicalAsset": true,
+    "methodIndependentScenarioInputs": true,
+    "requireScenarioInputHashParity": true,
+    "requirePhysicalInputHashParity": true,
+    "timelineOwnsExternalInputs": true,
+    "seedInputAlgorithm": "sha256-scenario-physical-input-v2",
+    "schedule": "counterbalanced",
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "repetitions": 3,
+    "sessionIsolation": true,
+    "refuseEvidenceOverwrite": true,
+    "exactCommitAndTreeLock": true
+  },
   "sourceOfTruth": {
     "runtime": [
       "apps/dx11_viewer/src",
@@ -15,210 +43,191 @@
       "docs/sample_assets/novelty01_frozen_parameters.json"
     ],
     "overlayDirectoryAllowed": false,
-    "oldApplyScriptsAllowedInRepository": false,
     "replacementDirectoryAllowed": false,
-    "distributionCopiesMayRemainUntilCompressionPass": false,
-    "distributionCopiesMustNotBeReferencedByBuild": true,
-    "compressionDeferredByUser": false
+    "oldApplyScriptsAllowedInRepository": true,
+    "oldApplyScriptsReferencedByBuild": false,
+    "unappliedPatchArtifactsAreNonAuthoritative": true,
+    "distributionCopiesMustNotBeReferencedByBuild": true
+  },
+  "fixedWorkload": {
+    "displayStrandCount": 100000,
+    "guideStrandCount": 4000,
+    "followersPerGuide": 24,
+    "particlesPerStrand": 128,
+    "solverIterations": 6,
+    "groupsPerBlock": 32,
+    "renderWidth": 1920,
+    "renderHeight": 1080,
+    "fixedTimeStepSeconds": 0.016666666666666666,
+    "vsync": false,
+    "presentSyncInterval": 0
   },
   "baselines": {
     "B0": {
       "route": "legacy_full_dynamic",
       "method": "B0",
       "usesControlledDispatcher": false,
-      "description": "Current full dynamic baseline"
+      "usesSgaptRepresentation": false,
+      "description": "Current full dynamic baseline",
+      "requiresDedicatedPerFrameRoute": true,
+      "evidencePolicy": "requested-applied-observed-method-and-flags-fail-closed",
+      "requiredEvidence": [
+        "requestedMethodCode=B0",
+        "appliedMethodCode=B0",
+        "observedMethodCode=B0",
+        "enableNoNoveltyBaseline=true",
+        "enableSegmentGroupIntegratedState=false",
+        "enableSegmentGroupSleep=false",
+        "enableStaticCache=false",
+        "novelty01TelemetryFiles=0"
+      ],
+      "forbiddenRuntimeResources": [
+        "SegmentGroupCoreBuffer",
+        "OptionalPayloadPool",
+        "PayloadOwnerTable",
+        "ReuseDescriptorBuffer",
+        "StaticCacheBuffer",
+        "SgaptCompactionLists"
+      ]
     },
     "B1": {
-      "route": "independent_full_dynamic_b1",
+      "route": "strand_sleep",
       "method": "B1",
-      "usesControlledDispatcher": false,
-      "description": "Optimized full dynamic; common GPU optimizations only",
-      "disabled": [
-        "OptionalPayload",
-        "GroundTruth",
-        "ShadowDynamic",
-        "TransitionBudget"
-      ],
+      "usesControlledDispatcher": true,
       "usesSgaptRepresentation": false,
-      "requiresDedicatedPerFrameRoute": true,
-      "telemetrySource": "legacy_frame_telemetry_plus_n01_baseline_route_fields",
-      "forbiddenRuntimeResources": [
-        "SegmentGroupCoreBuffer",
-        "OptionalPayloadPool",
-        "PayloadOwnerTable",
-        "ReuseDescriptorBuffer",
-        "StaticCacheBuffer",
-        "SgaptCompactionLists"
-      ]
+      "description": "Controlled comparison baseline B1"
     },
     "B2": {
-      "route": "controlled_sleeping_flag",
-      "method": "P",
+      "route": "block_sleep",
+      "method": "B2",
       "usesControlledDispatcher": true,
-      "description": "Same payload for every group; solver skip only",
-      "disabled": [
-        "OptionalPayload",
-        "StableCompaction",
-        "FollowerDependency",
-        "RenderDirtyRange",
-        "FullDynamicFastPath",
-        "GroundTruth"
-      ],
-      "usesControlledBaselineAdapter": true
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B2"
     },
     "B3": {
-      "route": "controlled_active_list",
-      "method": "P",
+      "route": "segment_threshold_sleep",
+      "method": "B3",
       "usesControlledDispatcher": true,
-      "description": "Active list while every group retains payload",
-      "disabled": [
-        "OptionalPayload",
-        "FollowerDependency",
-        "RenderDirtyRange",
-        "GroundTruth"
-      ],
-      "usesControlledBaselineAdapter": true
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B3"
     },
     "B4": {
-      "route": "controlled_buffer_migration",
-      "method": "P",
+      "route": "segment_hysteresis_sleep",
+      "method": "B4",
       "usesControlledDispatcher": true,
-      "description": "Separate static and dynamic buffers with migration bytes",
-      "disabled": [
-        "OptionalPayload",
-        "FixedGroupIndex",
-        "GroundTruth"
-      ],
-      "usesControlledBaselineAdapter": true
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B4"
     },
     "B5": {
-      "route": "controlled_simple_payload",
-      "method": "P",
+      "route": "segment_cache",
+      "method": "B5",
       "usesControlledDispatcher": true,
-      "description": "Fixed core plus optional payload with simple threshold only",
-      "enabled": [
-        "OptionalPayload",
-        "FixedGroupIndex",
-        "StableCompaction",
-        "IndirectDispatch",
-        "BaselineEquivalentSolve",
-        "FormalTelemetry"
-      ],
-      "usesControlledBaselineAdapter": true
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B5"
     },
     "B6": {
-      "route": "controlled_no_incremental_blocks",
-      "method": "P",
+      "route": "segment_gpu_compaction",
+      "method": "B6",
       "usesControlledDispatcher": true,
-      "description": "SG-APT but all descriptors evaluated",
-      "disabled": [
-        "IncrementalBlocks"
-      ],
-      "usesControlledBaselineAdapter": true
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B6"
     },
     "B7": {
-      "route": "controlled_guide_local_only",
-      "method": "P",
+      "route": "active_set_only",
+      "method": "B7",
       "usesControlledDispatcher": true,
-      "description": "Guide local update; followers and render update fully",
-      "disabled": [
-        "FollowerDependency",
-        "RenderDirtyRange"
-      ],
-      "usesControlledBaselineAdapter": true
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B7"
     },
     "B8": {
-      "route": "independent_strongest_practical_b8",
+      "route": "external_state_array",
       "method": "B8",
-      "usesControlledDispatcher": false,
-      "description": "Strong common optimizations without SG-APT representation contract",
-      "disabled": [
-        "OptionalPayload",
-        "FixedGroupIndex",
-        "PayloadOwnerCheck",
-        "DelayedPayloadReuse",
-        "TransitionBudget",
-        "HardSoftDescriptor",
-        "GroundTruth"
-      ],
+      "usesControlledDispatcher": true,
       "usesSgaptRepresentation": false,
-      "requiresDedicatedPerFrameRoute": true,
-      "telemetrySource": "legacy_frame_telemetry_plus_n01_baseline_route_fields",
-      "forbiddenRuntimeResources": [
-        "SegmentGroupCoreBuffer",
-        "OptionalPayloadPool",
-        "PayloadOwnerTable",
-        "ReuseDescriptorBuffer",
-        "StaticCacheBuffer",
-        "SgaptCompactionLists"
-      ]
+      "description": "Controlled comparison baseline B8"
     },
     "P": {
-      "route": "controlled_sgapt",
+      "route": "integrated_segment_group_sgapt",
       "method": "P",
       "usesControlledDispatcher": true,
-      "description": "All SG-APT features enabled"
+      "usesSgaptRepresentation": true,
+      "description": "SG-APT proposed method"
     }
   },
   "ablations": {
     "A1": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "OptionalDynamicPayload"
     },
     "A2": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "FixedGroupIndex"
     },
     "A3": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "VersionCheck"
     },
     "A4": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "DelayedFree"
     },
     "A5": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "Hysteresis"
     },
     "A6": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "MinimumResidence"
     },
     "A7": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "StaticCache"
     },
     "A8": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "IncrementalBlockInvalidation"
     },
     "A9": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "StableSharedPoint"
     },
     "A10": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "FollowerDependency"
     },
     "A11": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "RenderDirtyRange"
     },
     "A12": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "FullDynamicFastPath"
     },
     "A13": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "ShadowDynamic"
     },
     "A14": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "Watchdog"
     },
     "A15": {
       "route": "controlled_ablation",
+      "method": "P",
       "removedFeature": "StableCompaction"
     }
   },
@@ -227,8 +236,6 @@
       "titleJa": "完全静止",
       "runtimeScenarioName": "S01_Idle",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S01.json",
-      "designInjection": "complete_stillness",
-      "expectedBehavior": "all groups settle; no forced dirty",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -242,8 +249,6 @@
       "titleJa": "Root平行移動",
       "runtimeScenarioName": "S02_Breathing",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S02.json",
-      "designInjection": "root_translation",
-      "expectedBehavior": "rigid transform without index-scaled displacement",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -257,8 +262,6 @@
       "titleJa": "Root回転",
       "runtimeScenarioName": "S03_Walk",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S03.json",
-      "designInjection": "root_rotation",
-      "expectedBehavior": "root-local cache rotation",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -269,11 +272,9 @@
       ]
     },
     "S04": {
-      "titleJa": "弱い風",
+      "titleJa": "急停止",
       "runtimeScenarioName": "S04_SuddenStop",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S04.json",
-      "designInjection": "weak_wind",
-      "expectedBehavior": "mixed static and dynamic groups",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -284,11 +285,9 @@
       ]
     },
     "S05": {
-      "titleJa": "通常頭部運動",
+      "titleJa": "頭部回転",
       "runtimeScenarioName": "S05_HeadRotation",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S05.json",
-      "designInjection": "normal_head_motion",
-      "expectedBehavior": "normal mixed workload",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -299,11 +298,9 @@
       ]
     },
     "S06": {
-      "titleJa": "局所衝突",
+      "titleJa": "Teleport",
       "runtimeScenarioName": "S06_Teleport",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S06.json",
-      "designInjection": "local_collision",
-      "expectedBehavior": "spatial block invalidation only",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -314,11 +311,9 @@
       ]
     },
     "S07": {
-      "titleJa": "複数Collider",
+      "titleJa": "Collider接近",
       "runtimeScenarioName": "S07_ColliderApproach",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S07.json",
-      "designInjection": "multiple_colliders",
-      "expectedBehavior": "multiple swept collider bounds",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -329,11 +324,9 @@
       ]
     },
     "S08": {
-      "titleJa": "一本単位編集",
+      "titleJa": "静動境界接触",
       "runtimeScenarioName": "S08_StaticDynamicBoundaryContact",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S08.json",
-      "designInjection": "single_strand_edit",
-      "expectedBehavior": "one guide range invalidated",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -344,11 +337,9 @@
       ]
     },
     "S09": {
-      "titleJa": "連続Brush編集",
+      "titleJa": "強風",
       "runtimeScenarioName": "S09_StrongWind",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S09.json",
-      "designInjection": "continuous_brush_edit",
-      "expectedBehavior": "moving local edit range",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -359,11 +350,9 @@
       ]
     },
     "S10": {
-      "titleJa": "強風",
+      "titleJa": "風停止",
       "runtimeScenarioName": "S10_WindStop",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S10.json",
-      "designInjection": "strong_wind",
-      "expectedBehavior": "high dynamic ratio",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -374,11 +363,9 @@
       ]
     },
     "S11": {
-      "titleJa": "全Group Dynamic",
+      "titleJa": "局所編集",
       "runtimeScenarioName": "S11_LocalEdit",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S11.json",
-      "designInjection": "all_dynamic",
-      "expectedBehavior": "force all dynamic and exercise fast path",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -389,11 +376,9 @@
       ]
     },
     "S12": {
-      "titleJa": "Static／Dynamic境界Stress",
+      "titleJa": "False Static Trap",
       "runtimeScenarioName": "S12_FalseStaticTrap",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S12.json",
-      "designInjection": "boundary_stress",
-      "expectedBehavior": "shared-point and boundary repair",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -404,11 +389,9 @@
       ]
     },
     "S13": {
-      "titleJa": "State Thrashing Stress",
+      "titleJa": "Repair Storm",
       "runtimeScenarioName": "S13_RepairStorm",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S13.json",
-      "designInjection": "thrashing_stress",
-      "expectedBehavior": "hysteresis and residence evaluation",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -419,11 +402,9 @@
       ]
     },
     "S14": {
-      "titleJa": "複数Guide依存Follower",
+      "titleJa": "全動的",
       "runtimeScenarioName": "S14_AllDynamic",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S14.json",
-      "designInjection": "multi_guide_follower_dependency",
-      "expectedBehavior": "CSR follower dependency propagation",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -434,12 +415,10 @@
       ]
     },
     "S15": {
-      "titleJa": "30分長時間試験",
+      "titleJa": "全静的",
       "runtimeScenarioName": "S15_AllStatic",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S15.json",
-      "designInjection": "thirty_minute_soak",
-      "expectedBehavior": "108000 measured frames",
-      "durationFrames": 108000,
+      "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
         "scenarioAppliedEventCount",
@@ -449,11 +428,9 @@
       ]
     },
     "S16": {
-      "titleJa": "決定性試験",
+      "titleJa": "状態Thrashing",
       "runtimeScenarioName": "S16_StateThrashing",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S16.json",
-      "designInjection": "determinism",
-      "expectedBehavior": "three identical-seed repetitions",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -464,13 +441,11 @@
       ]
     },
     "S17": {
-      "titleJa": "Payload Pool Stress",
+      "titleJa": "近距離カメラ10万本",
       "runtimeScenarioName": "S17_CloseCamera100k",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S17.json",
-      "designInjection": "payload_pool_stress",
-      "expectedBehavior": "payload capacity forced to 5 percent",
       "durationFrames": 7200,
-      "payloadCapacityPercent": 5,
+      "payloadCapacityPercent": 50,
       "requiredEvidence": [
         "scenarioAppliedEventCount",
         "fatalFailure",
@@ -479,11 +454,9 @@
       ]
     },
     "S18": {
-      "titleJa": "Version／Descriptor異常注入",
+      "titleJa": "遠距離カメラ10万本",
       "runtimeScenarioName": "S18_FarCamera100k",
       "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S18.json",
-      "designInjection": "version_descriptor_fault",
-      "expectedBehavior": "controlled invalid owner/version injection",
       "durationFrames": 7200,
       "payloadCapacityPercent": 50,
       "requiredEvidence": [
@@ -494,124 +467,13 @@
       ]
     }
   },
-  "profiles": {
-    "smoke": {
-      "warmupFrames": 120,
-      "measurementFrames": 360,
-      "repetitions": 1,
-      "groundTruth": true
-    },
-    "formal": {
-      "warmupFrames": 600,
-      "measurementFrames": 6000,
-      "repetitions": 3,
-      "groundTruth": true
-    },
-    "performance": {
-      "warmupFrames": 600,
-      "measurementFrames": 6000,
-      "repetitions": 3,
-      "groundTruth": false
-    },
-    "soak": {
-      "warmupFrames": 600,
-      "measurementFrames": 108000,
-      "repetitions": 1,
-      "groundTruth": true,
-      "groundTruthInterval": 300
-    },
-    "determinism": {
-      "warmupFrames": 600,
-      "measurementFrames": 6000,
-      "repetitions": 3,
-      "groundTruth": true
-    },
-    "gtx1660": {
-      "warmupFrames": 600,
-      "measurementFrames": 6000,
-      "repetitions": 3,
-      "groundTruth": false,
-      "adapterRegex": "(?i)(GTX\\s*1660|GeForce\\s*GTX\\s*1660)"
-    }
-  },
-  "statistics": {
-    "warmupExcluded": true,
-    "failedRunsExcluded": false,
-    "failedRunsReportedAsFailureRate": true,
-    "pairedComparison": [
-      "P",
-      "B8"
-    ],
-    "bootstrapConfidenceLevel": 0.95,
-    "bootstrapSamples": 10000,
-    "primaryMetric": "p95FrameMilliseconds",
-    "secondaryMetrics": [
-      "averageFrameMilliseconds",
-      "p99FrameMilliseconds",
-      "positionRmseMm",
-      "falseStaticRate",
-      "payloadActiveCount"
-    ]
-  },
-  "groundTruthContract": {
-    "qualityRun": {
-      "enabled": true,
-      "includedInPerformanceTiming": false,
-      "sameInput": true,
-      "sameSolverSettings": true
-    },
-    "performanceRun": {
-      "enabled": false
-    },
-    "shadowRun": {
-      "sampledStaticGroupsOnly": true,
-      "displayed": false
-    },
-    "determinismRun": {
-      "sameSeed": true,
-      "hashes": [
-        "stateSequenceHash",
-        "compactionSequenceHash",
-        "finalPositionHash"
-      ]
-    }
-  },
-  "mergeGate": {
-    "requiredArtifacts": [
-      "novelty01_preflight.json",
-      "novelty01_resource_audit.json",
-      "novelty01_matrix_summary.json",
-      "novelty01_performance_matrix_summary.json",
-      "novelty01_determinism_summary.json",
-      "novelty01_soak_summary.json",
-      "novelty01_formal_report.json",
-      "novelty01_gtx1660_summary.json",
-      "release_x64_build.log",
-      "fxc_entrypoints.json",
-      "native_self_test.log"
-    ],
-    "hardFailureConditions": {
-      "releaseX64BuildFailed": true,
-      "fxcEntryPointFailureCountGreaterThan": 0,
-      "invalidPayloadIndexGreaterThan": 0,
-      "duplicatePayloadOwnerGreaterThan": 0,
-      "nanOrInfGreaterThan": 0,
-      "fatalFailureGreaterThan": 0,
-      "s17FallbackFailureGreaterThan": 0,
-      "s18RecoveryFailureGreaterThan": 0,
-      "determinismMismatchGreaterThan": 0,
-      "payloadLeakGreaterThan": 0,
-      "missingGtx1660EvidenceWhenClaiming60Fps": true
-    },
-    "independentBaselineRequirements": {
-      "variants": [
-        "B1",
-        "B8"
-      ],
-      "n01UsesSgaptRepresentationExpected": 0,
-      "sgaptPayloadActiveExpected": 0,
-      "sgaptPayloadAllocationExpected": 0
-    }
-  },
-  "revision": "69.4-full-implementation"
+  "evidencePolicy": {
+    "realHardwareRequired": true,
+    "syntheticEvidenceForbidden": true,
+    "sameExecutableSha256AcrossMethods": true,
+    "sameAssetSha256AcrossMethods": true,
+    "samePhysicalScenarioInputSha256AcrossPairedRuns": true,
+    "recordCommitTreeExecutableAssetScenarioAndHardwareHashes": true,
+    "failClosed": true
+  }
 }

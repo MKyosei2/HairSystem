@@ -63,9 +63,10 @@ class Novelty01PackageCompletionContractTests(unittest.TestCase):
         freeze = (ROOT / "tools/final_stage/freeze_novelty01_asset.py").read_text(encoding="utf-8")
         manifest = json.loads((ROOT / "docs/sample_assets/novelty01_100k_asset_manifest.json").read_text(encoding="utf-8-sig"))
         self.assertIn('{"Novelty01", "main"}', readiness)
-        self.assertIn('branch != "Novelty01"', freeze)
+        self.assertIn('FORMAL_BRANCH = "main"', freeze)
+        self.assertNotIn('branch != "Novelty01"', freeze)
         self.assertEqual(manifest["manifestVersion"], "novelty01-100k-v1.6")
-        self.assertEqual(manifest["sourceBranch"], "Novelty01")
+        self.assertEqual(manifest["sourceBranch"], "main")
         self.assertEqual(manifest["generation"]["groupsPerBlock"], 32)
 
 

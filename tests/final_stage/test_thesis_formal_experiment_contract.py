@@ -61,6 +61,7 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         self.assertEqual(design["primaryMethods"], ["B0", "P"])
         self.assertTrue(design["sameBinary"])
         self.assertTrue(design["sameCommit"])
+        self.assertTrue(design["sameCanonicalAsset"])
         self.assertTrue(design["methodIndependentScenarioInputs"])
         self.assertTrue(design["requireScenarioInputHashParity"])
         self.assertTrue(design["requirePhysicalInputHashParity"])
@@ -74,55 +75,56 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
 
     def test_proposal_uses_common_timeline_and_disables_double_stimulus(self) -> None:
         source = (
-            ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
-        ).read_text(encoding="utf-8")
-        marker = "ApplyScenarioForTick(m_simulationTickIndex, dt);"
-        self.assertIn(marker, source)
-        self.assertIn("HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS", source)
-        flag_position = source.index("HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS")
-        scenario_position = source.index(
-            "const uint32_t scenario = runtime.designScenarioIndex", flag_position
-        )
-        return_position = source.index("return;", flag_position)
-        self.assertLess(return_position, scenario_position)
-        self.assertIn("timelineOwnsExternalInputs", source)
-        self.assertIn("std::numeric_limits<uint32_t>::max()", source)
-
-    def test_common_timeline_root_values_reach_both_simulation_routes(self) -> None:
-        header = (ROOT / "apps/dx11_viewer/src/GpuHairViewer.h").read_text(
-            encoding="utf-8"
-        )
-        simulation = (
-            ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"
-        ).read_text(encoding="utf-8")
-        telemetry = (
-            ROOT
-            / "apps/dx11_viewer/src/GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"
+            ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp"
         ).read_text(encoding="utf-8")
         for marker in (
-            "m_formalScenarioRootTranslation",
-            "m_formalScenarioRootRotationRadians",
+            "ExecuteNovelty01ExperimentTickLegacy",
+            "ApplyScenarioForTick(m_simulationTickIndex, dt);",
+            "HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS",
+            "savedDesignScenarioIndex",
+            "std::numeric_limits<uint32_t>::max()",
         ):
-            self.assertIn(marker, header)
-            self.assertIn(marker, simulation)
-            self.assertIn(marker, telemetry)
-        self.assertIn("kDegreesToRadians", telemetry)
-        self.assertIn("event.value[0] * kDegreesToRadians", telemetry)
-        self.assertIn("rotatedZ + m_scalpCenter + m_formalScenarioRootTranslation", simulation)
-        self.assertIn("A reset must not inherit the previous case", simulation)
-        self.assertNotIn(
-            "case ScenarioEventType::SetRootTranslation:\n"
-            "            case ScenarioEventType::SetRootRotation:\n"
-            "                m_enableScalpMotion = true;",
-            telemetry,
+            self.assertIn(marker, source)
+        call_position = source.index(
+            "ApplyScenarioForTick(m_simulationTickIndex, dt);"
         )
-        root_start = telemetry.index("case ScenarioEventType::SetRootTranslation:")
-        root_end = telemetry.index("case ScenarioEventType::SetColliderTransform:", root_start)
-        root_block = telemetry[root_start:root_end]
-        self.assertEqual(root_block.count("m_enableScalpMotion = false;"), 3)
-        self.assertNotIn("m_enableScalpMotion = true;", root_block)
+        disable_position = source.index(
+            "runtime->designScenarioIndex = std::numeric_limits<uint32_t>::max();"
+        )
+        legacy_position = source.index(
+            "ExecuteNovelty01ExperimentTickLegacy(dt);", disable_position
+        )
+        self.assertLess(call_position, disable_position)
+        self.assertLess(disable_position, legacy_position)
+
+    def test_common_timeline_root_values_reach_both_simulation_routes(self) -> None:
+        source = (
+            ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            "ApplyScenarioTimelineFrameLegacy(frameIndex);",
+            "FormalScenarioRootState",
+            "baseScalpPositions",
+            "case ScenarioEventType::SetRootTranslation:",
+            "case ScenarioEventType::SetRootRotation:",
+            "case ScenarioEventType::TeleportRoot:",
+            "kDegreesToRadians",
+            "state.translation",
+            "state.rotationRadians",
+            "m_enableScalpMotion = false;",
+            "rotatedZ + m_scalpCenter + state.translation",
+            "m_restScalpParticles[index].x = transformed.x;",
+        ):
+            self.assertIn(marker, source)
+        self.assertIn(
+            "#define ApplyScenarioTimelineFrame "
+            "ApplyScenarioTimelineFrameLegacy",
+            source,
+        )
+        self.assertNotIn(
+            "m_scalpCenter = m_scalpCenter + Vec3",
+            source[source.index("void GpuHairViewer::ApplyScenarioTimelineFrame("):],
+        )
 
     def test_seeded_physical_inputs_are_deterministic_and_unique_for_all_seeds(self) -> None:
         matrix = load_matrix_module()
@@ -329,17 +331,32 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         self.assertIn("physicalScenarioInputSha256", gate_source)
         self.assertIn("E_VIEWER_HASH", gate_source)
 
-    def test_repository_contains_no_unapplied_formal_patch_artifacts(self) -> None:
-        for relative in (
+    def test_obsolete_patch_artifacts_are_non_authoritative(self) -> None:
+        authoritative_paths = (
+            ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp",
+            ROOT / "tools/final_stage/Run_Thesis_B0_P_Formal.ps1",
+            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py",
+        )
+        combined = "\n".join(
+            path.read_text(encoding="utf-8") for path in authoritative_paths
+        )
+        for obsolete in (
+            "thesis_formal_main.patch",
+            "thesis_formal_v2.patch",
+            "CXX_EXISTING_FILES.patch",
             "Apply_ThesisFormalFix.ps1",
             "Apply_ThesisFormalFix_v2.ps1",
-            "patches/thesis_formal_main.patch",
-            "patches/thesis_formal_v2.patch",
-            "patches/CXX_EXISTING_FILES.patch",
-            "patches/MANUAL_PATCH_NOTES.md",
-            "patches/MANUAL_PATCH_SUMMARY.md",
         ):
-            self.assertFalse((ROOT / relative).exists(), relative)
+            self.assertNotIn(obsolete, combined)
+
+        contract = json.loads(
+            (ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        source_of_truth = contract["sourceOfTruth"]
+        self.assertFalse(source_of_truth["oldApplyScriptsReferencedByBuild"])
+        self.assertTrue(source_of_truth["unappliedPatchArtifactsAreNonAuthoritative"])
 
 
 if __name__ == "__main__":
