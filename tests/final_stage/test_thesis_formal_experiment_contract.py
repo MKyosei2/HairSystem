@@ -44,6 +44,16 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         self.assertEqual(template["generation"]["groupsPerBlock"], 32)
         self.assertEqual(template["sourceBranch"], "main")
 
+        runtime_template = json.loads(
+            (ROOT / "docs/sample_assets/final_runtime_suite_template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            runtime_template["frozen_asset_contract"]["required_groups_per_block"],
+            32,
+        )
+
     def test_formal_contract_locks_single_binary_seeded_session_design(self) -> None:
         contract = json.loads(
             (ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json").read_text(

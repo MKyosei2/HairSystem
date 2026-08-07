@@ -122,7 +122,7 @@
     "required_display_strand_count": 100000,
     "required_particles_per_strand": 128,
     "required_solver_iterations": 6,
-    "required_groups_per_block": 8,
+    "required_groups_per_block": 32,
     "require_round_trip_validation": true,
     "require_viewer_runtime_validation": true
   },
