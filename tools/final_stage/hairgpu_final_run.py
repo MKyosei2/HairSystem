@@ -587,7 +587,7 @@ def validate_asset_manifest(
     expected_generation = {
         "displayStrandCount": 100000, "primaryGuideStrandCount": 4000,
         "followersPerGuide": 24, "particlesPerGuide": 128, "solverIterations": 6,
-        "groupsPerBlock": 8,
+        "groupsPerBlock": 32,
     }
     for key, expected in expected_generation.items():
         if _to_int(generation.get(key), -1) != expected:
@@ -2500,6 +2500,7 @@ def _validate_asset_manifest(path: Path) -> list[dict[str, Any]]:
         'followersPerGuide': 24,
         'particlesPerGuide': 128,
         'solverIterations': 6,
+        'groupsPerBlock': 32,
     }
     problems: list[dict[str, Any]] = []
     for key, expected in expected_generation.items():

@@ -54,6 +54,36 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
             32,
         )
 
+        final_run_source = (
+            ROOT / "tools/final_stage/hairgpu_final_run.py"
+        ).read_text(encoding="utf-8")
+
+        validator_start = final_run_source.index("def validate_asset_manifest(")
+        validator_end = final_run_source.index(
+            "\n\ndef validate_frozen_asset_with_viewer",
+            validator_start,
+        )
+        formal_asset_validator = final_run_source[validator_start:validator_end]
+        self.assertIn('"groupsPerBlock": 32,', formal_asset_validator)
+        self.assertNotIn('"groupsPerBlock": 8,', formal_asset_validator)
+
+        compatibility_start = final_run_source.index(
+            "def _validate_asset_manifest("
+        )
+        compatibility_end = final_run_source.index(
+            "\n\ndef _compare_settings",
+            compatibility_start,
+        )
+        compatibility_validator = final_run_source[
+            compatibility_start:compatibility_end
+        ]
+        self.assertIn("'groupsPerBlock': 32,", compatibility_validator)
+
+        b2_start = final_run_source.index('"B2": _preset(')
+        b2_end = final_run_source.index('"B3": _preset(', b2_start)
+        b2_preset = final_run_source[b2_start:b2_end]
+        self.assertIn('groupsPerBlock=8, stateStorage="ExternalArray",', b2_preset)
+
     def test_formal_contract_locks_single_binary_seeded_session_design(self) -> None:
         contract = json.loads(
             (ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json").read_text(
