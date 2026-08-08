@@ -256,6 +256,88 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
                 case_p["physical_scenario_input_sha256"],
             )
 
+    def test_generated_formal_case_satisfies_viewer_assertions_contract(self) -> None:
+        matrix = load_matrix_module()
+        contract = json.loads(
+            (ROOT / "docs/experiments/NOVELTY01_FORMAL_CONTRACT.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        runtime_template = json.loads(
+            (ROOT / "docs/sample_assets/final_runtime_suite_template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        base_template = dict(runtime_template["run_defaults"])
+
+        viewer_source = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/"
+            / "10_phase1_telemetry_csv_jsonl_summary.inl"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'root.FindAny({ "assertions", "scenario_assertions" })',
+            viewer_source,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            timeline_root = ROOT / "benchmarks/novelty01/sgapt_scenarios"
+            for variant in ("B0", "P"):
+                case = matrix.build_case(
+                    base_template,
+                    variant=variant,
+                    scenario="S01",
+                    seed=1,
+                    repetition=0,
+                    profile="smoke",
+                    contract=contract,
+                )
+                self.assertIsInstance(case.get("assertions"), dict)
+
+                matrix.materialize_seeded_timeline(
+                    case, timeline_root, "S01", 1, base / variant
+                )
+                timeline = json.loads(
+                    Path(case["scenario_timeline"]).read_text(encoding="utf-8")
+                )
+                self.assertGreater(len(timeline["events"]), 0)
+                self.assertIsInstance(case.get("assertions"), dict)
+                self.assertEqual(
+                    case["assertions"]["min_applied_events"],
+                    len(timeline["events"]),
+                )
+                self.assertIs(
+                    timeline["assertions"]["timelineFinalFrameRequired"],
+                    True,
+                )
+
+        malformed = dict(base_template)
+        malformed["assertions"] = []
+        with self.assertRaises(ValueError):
+            matrix.build_case(
+                malformed,
+                variant="B0",
+                scenario="S01",
+                seed=1,
+                repetition=0,
+                profile="smoke",
+                contract=contract,
+            )
+
+    def test_hardware_capture_prefers_nvidia_smi_for_vram_when_available(self) -> None:
+        runner = (
+            ROOT / "tools/final_stage/Run_Thesis_B0_P_Formal.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn('--query-gpu=name,memory.total', runner)
+        self.assertIn('--format=csv,noheader,nounits', runner)
+        self.assertIn('gpuVramSource = $gpuVramSource', runner)
+        self.assertIn('$gpuVramSource = "nvidia-smi"', runner)
+        self.assertIn(
+            '$gpuVramSource = "Win32_VideoController.AdapterRAM"',
+            runner,
+        )
+
     def test_counterbalanced_plan_reverses_method_order(self) -> None:
         matrix = load_matrix_module()
         plan = list(

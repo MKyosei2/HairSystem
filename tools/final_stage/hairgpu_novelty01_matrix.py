@@ -174,6 +174,15 @@ def load_frozen_environment(repo: Path) -> dict[str, str]:
     return environment_values
 
 
+def _copy_assertions(value: Any, *, label: str) -> dict[str, Any]:
+    """Return an isolated assertions mapping or fail closed on malformed input."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} assertions must be a mapping")
+    return dict(value)
+
+
 def materialize_case_template(
     suite_template: Mapping[str, Any], template_path: Path
 ) -> dict[str, Any]:
@@ -213,6 +222,10 @@ def materialize_case_template(
     if not shader_root.is_dir():
         raise FileNotFoundError(f"Shader root is missing: {shader_root}")
 
+    case_template["assertions"] = _copy_assertions(
+        case_template.get("assertions", {}),
+        label="run_defaults",
+    )
     case_template["asset_manifest"] = str(manifest_path)
     case_template["shader_root"] = str(shader_root)
     case_template["timeline_repeat"] = True
@@ -291,6 +304,10 @@ def build_case(
 ) -> dict[str, Any]:
     settings = PROFILE_SETTINGS[profile]
     case = dict(template)
+    case["assertions"] = _copy_assertions(
+        case.get("assertions", {}),
+        label="formal case",
+    )
     scenario_code = scenario_id(scenario)
     case["case_id"] = (
         f"N01_{profile}_{variant}_{scenario_code}_seed{seed:03d}_r{repetition + 1:02d}"
@@ -547,6 +564,24 @@ def materialize_seeded_timeline(
         measurement_frames=int(case["measurement_frames"]),
         duration_frames=int(payload["durationFrames"]),
     )
+
+    # Viewer formal startup requires a top-level case assertions object.  Keep
+    # timeline assertions as timeline integrity evidence, and derive only the
+    # method-independent minimum applied-event assertion for the case itself.
+    timeline_assertions = _copy_assertions(
+        payload.get("assertions", {}),
+        label=f"timeline {source_path}",
+    )
+    timeline_assertions["timelineFinalFrameRequired"] = True
+    payload["assertions"] = timeline_assertions
+
+    case_assertions = _copy_assertions(
+        case.get("assertions", {}),
+        label="formal case",
+    )
+    case_assertions["min_applied_events"] = len(payload["events"])
+    case["assertions"] = case_assertions
+
     payload["seedDriven"] = True
     payload["generatedFromCanonical"] = (
         CANONICAL_SCENARIO_ROOT_RELATIVE / f"{scenario}.json"

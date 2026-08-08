@@ -376,15 +376,60 @@ function Capture-Hardware {
     $ramMiB = if ($computer.TotalPhysicalMemory) {
         [math]::Round([double]$computer.TotalPhysicalMemory / 1MB)
     } else { $null }
-    $gpuVramMiB = if ($primaryGpu.AdapterRAM) {
-        [math]::Round([double]$primaryGpu.AdapterRAM / 1MB)
-    } else { $null }
+
+    # Win32_VideoController.AdapterRAM is a 32-bit-sized field on some drivers
+    # and reported 4095 MiB for the 16 GiB RTX 4070 Ti SUPER. Prefer the
+    # vendor-reported dedicated VRAM when nvidia-smi is available, while keeping
+    # WMI as a portable fallback for non-NVIDIA systems.
+    $nvidiaSmiGpuMemory = @()
+    $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if ($null -ne $nvidiaSmi) {
+        $nvidiaLines = @(
+            & $nvidiaSmi.Source `
+                "--query-gpu=name,memory.total" `
+                "--format=csv,noheader,nounits" `
+                2>$null
+        )
+        foreach ($line in $nvidiaLines) {
+            $parts = @([string]$line -split ",")
+            if ($parts.Count -lt 2) {
+                continue
+            }
+            $memoryTotalMiB = 0
+            if (-not [int]::TryParse($parts[1].Trim(), [ref]$memoryTotalMiB)) {
+                continue
+            }
+            $nvidiaSmiGpuMemory += [PSCustomObject]@{
+                Name = $parts[0].Trim()
+                MemoryTotalMiB = $memoryTotalMiB
+            }
+        }
+    }
+
+    $matchedNvidiaGpu = $nvidiaSmiGpuMemory |
+        Where-Object { $_.Name -eq [string]$primaryGpu.Name } |
+        Select-Object -First 1
+
+    $gpuVramMiB = $null
+    $gpuVramSource = "unavailable"
+    if ($null -ne $matchedNvidiaGpu -and
+        [int]$matchedNvidiaGpu.MemoryTotalMiB -gt 0) {
+        $gpuVramMiB = [int]$matchedNvidiaGpu.MemoryTotalMiB
+        $gpuVramSource = "nvidia-smi"
+    }
+    elseif ($primaryGpu.AdapterRAM) {
+        $gpuVramMiB = [math]::Round([double]$primaryGpu.AdapterRAM / 1MB)
+        $gpuVramSource = "Win32_VideoController.AdapterRAM"
+    }
 
     $observed = [ordered]@{
         schema = "hairgpu-observed-hardware-v1"
         capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         cpu = $cpu
         gpu = $gpu
+        nvidiaSmiGpuMemory = $nvidiaSmiGpuMemory
+        resolvedGpuVramMiB = $gpuVramMiB
+        gpuVramSource = $gpuVramSource
         computer = $computer
         operatingSystem = $os
         powerPlan = $powerPlan
@@ -408,6 +453,7 @@ function Capture-Hardware {
             cpu = [string]$primaryCpu.Name
             gpu = [string]$primaryGpu.Name
             gpuVramMiB = $gpuVramMiB
+            gpuVramSource = $gpuVramSource
             gpuDriver = [string]$primaryGpu.DriverVersion
             ramMiB = $ramMiB
             windowsVersion = "{0} {1}" -f $os.Caption, $os.Version
