@@ -429,11 +429,63 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
             materialized = matrix.materialize_case_template(
                 template, template_path
             )
+        self.assertEqual(
+            materialized["minimum_visual_non_background_ratio"],
+            matrix.FORMAL_VISUAL_MIN_NON_BACKGROUND_RATIO,
+        )
+        self.assertEqual(
+            materialized["minimum_visual_bounding_box_ratio"],
+            matrix.FORMAL_VISUAL_MIN_BOUNDING_BOX_RATIO,
+        )
+        self.assertEqual(
+            matrix.FORMAL_VISUAL_MIN_NON_BACKGROUND_RATIO,
+            0.001,
+        )
+        self.assertEqual(
+            matrix.FORMAL_VISUAL_MIN_BOUNDING_BOX_RATIO,
+            0.001,
+        )
+        self.assertGreater(
+            matrix.FORMAL_VISUAL_MIN_NON_BACKGROUND_RATIO,
+            0.0,
+        )
+        self.assertGreater(
+            matrix.FORMAL_VISUAL_MIN_BOUNDING_BOX_RATIO,
+            0.0,
+        )
+        # Regression from the first real 70.12 Smoke capture.  It contained a
+        # coherent 100k-strand foreground (332 sampled foreground points), so the
+        # presence-only gate must not classify it as empty.
+        self.assertGreaterEqual(
+            0.004471380471380472,
+            matrix.FORMAL_VISUAL_MIN_NON_BACKGROUND_RATIO,
+        )
+        self.assertGreaterEqual(
+            0.007116126543209877,
+            matrix.FORMAL_VISUAL_MIN_BOUNDING_BOX_RATIO,
+        )
         self.assertEqual(materialized["minimum_visual_luminance_stddev"], 0.0)
         self.assertEqual(
             materialized["visual_validation_policy"],
-            "foreground-occupancy-bounds-v2",
+            "foreground-occupancy-bounds-v3-100k-framing",
         )
+        # S18 deliberately pushes the camera beyond the normal 2.5 m framing.
+        # A single generic 0.5%/1.0% minimum was therefore incompatible with the
+        # experiment matrix by construction.
+        s18_events = matrix.build_seeded_events(
+            scenario="S18",
+            seed=1,
+            warmup_frames=120,
+            measurement_frames=360,
+            duration_frames=7200,
+        )
+        far_camera = [
+            event
+            for event in s18_events
+            if event.get("type") == "set_camera_distance"
+        ]
+        self.assertEqual(len(far_camera), 1)
+        self.assertGreater(float(far_camera[0]["value"]), 2.5)
         final_run_source = (
             ROOT / "tools/final_stage/hairgpu_final_run.py"
         ).read_text(encoding="utf-8")
