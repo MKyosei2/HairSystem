@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.util
 import json
@@ -15,6 +16,24 @@ ROOT = Path(__file__).resolve().parents[2]
 def load_matrix_module():
     final_run_stub = types.ModuleType("hairgpu_final_run")
     final_run_stub.execute_case = lambda *args, **kwargs: {}
+    final_run_stub.REQUIRED_FRAME_COLUMNS = {
+        "gpuHairMilliseconds", "sourceFrameIndex"
+    }
+    def read_stub_csv(path):
+        with Path(path).open("r", encoding="utf-8", newline="") as handle:
+            return list(csv.DictReader(handle))
+
+    final_run_stub.read_csv_rows = read_stub_csv
+    final_run_stub.read_jsonl = lambda path: [
+        json.loads(line)
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    final_run_stub.validate_outputs = lambda *args, **kwargs: {
+        "valid": False,
+        "qualityGatePassed": False,
+        "issues": [{"severity": "error", "code": "E_CSV_JSONL_PARITY"}],
+    }
     preflight_stub = types.ModuleType("hairgpu_novelty01_preflight")
     preflight_stub.preflight = lambda *args, **kwargs: {"passed": True, "errors": []}
     sys.modules["hairgpu_final_run"] = final_run_stub
@@ -337,6 +356,196 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
             '$gpuVramSource = "Win32_VideoController.AdapterRAM"',
             runner,
         )
+
+    def test_csv_jsonl_parity_accepts_only_viewer_serialization_equivalence(self) -> None:
+        matrix = load_matrix_module()
+        self.assertEqual(matrix.CSV_DEFAULTFLOAT_SIGNIFICANT_DIGITS, 6)
+        self.assertEqual(
+            matrix.TELEMETRY_SERIALIZATION_POLICY,
+            "csv-defaultfloat6-jsonl-fixed6-equivalent-v1",
+        )
+        # Exact regression captured by the 70.9 Smoke failure.
+        self.assertTrue(
+            matrix._telemetry_scalar_serialization_equivalent(
+                "6.98458", "6.984576"
+            )
+        )
+        # A genuinely different measurement must remain fail-closed.
+        self.assertFalse(
+            matrix._telemetry_scalar_serialization_equivalent(
+                "6.98458", "6.98461"
+            )
+        )
+        source = (
+            ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Raw CSV/JSONL bytes are never rewritten.", source)
+        self.assertIn("E_CSV_JSONL_PARITY", source)
+
+    def test_serialization_shim_clears_only_format_only_parity_failure(self) -> None:
+        matrix = load_matrix_module()
+        matrix._install_publication_output_integrity_compatibility()
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            csv_path = base / "frames.csv"
+            jsonl_path = base / "frames.jsonl"
+            csv_path.write_text(
+                "gpuHairMilliseconds,sourceFrameIndex\n6.98458,1\n",
+                encoding="utf-8",
+            )
+            jsonl_path.write_text(
+                '{"gpuHairMilliseconds":6.984576,"sourceFrameIndex":1}\n',
+                encoding="utf-8",
+            )
+            paths = {"frames": csv_path, "jsonl": jsonl_path}
+            case = {"required_telemetry_fields": ["gpuHairMilliseconds"]}
+            accepted = matrix.final_run.validate_outputs(case, paths, {}, {})
+            self.assertTrue(accepted["valid"])
+            self.assertTrue(accepted["qualityGatePassed"])
+            self.assertEqual(accepted["issues"], [])
+            self.assertEqual(
+                accepted["telemetrySerializationParityPolicy"],
+                matrix.TELEMETRY_SERIALIZATION_POLICY,
+            )
+
+            jsonl_path.write_text(
+                '{"gpuHairMilliseconds":6.98461,"sourceFrameIndex":1}\n',
+                encoding="utf-8",
+            )
+            rejected = matrix.final_run.validate_outputs(case, paths, {}, {})
+            self.assertFalse(rejected["valid"])
+            self.assertEqual(
+                [issue["code"] for issue in rejected["issues"]],
+                ["E_CSV_JSONL_PARITY"],
+            )
+
+    def test_visual_gate_uses_foreground_occupancy_bounds_not_darkness(self) -> None:
+        matrix = load_matrix_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            manifest = base / "frozen_asset_manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            shaders = base / "shaders"
+            shaders.mkdir()
+            template_path = base / "template.json"
+            template = {
+                "run_defaults": {},
+                "source": {
+                    "asset_manifest": str(manifest),
+                    "shader_root": str(shaders),
+                },
+            }
+            materialized = matrix.materialize_case_template(
+                template, template_path
+            )
+        self.assertEqual(materialized["minimum_visual_luminance_stddev"], 0.0)
+        self.assertEqual(
+            materialized["visual_validation_policy"],
+            "foreground-occupancy-bounds-v2",
+        )
+        final_run_source = (
+            ROOT / "tools/final_stage/hairgpu_final_run.py"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            '"nonBackgroundRatio"',
+            '"foregroundBoundingBoxRatio"',
+            '"E_VISUAL_EMPTY"',
+            '"E_VISUAL_BOUNDS_TOO_SMALL"',
+            '"E_VISUAL_BOUNDS_TOO_LARGE"',
+        ):
+            self.assertIn(marker, final_run_source)
+
+    def test_publication_profiles_enforce_runtime_hardware_contract(self) -> None:
+        matrix = load_matrix_module()
+        contract = {
+            "baselines": {"B0": {"method": "B0"}},
+            "scenarios": {
+                "S01": {
+                    "runtimeScenarioName": "S01_Idle",
+                    "timelinePath": "S01.json",
+                }
+            },
+        }
+        hardware = {
+            "target": {
+                "gpuNameRegex": "RTX 4070 Ti SUPER",
+                "minimumDedicatedVramMiB": 15000,
+                "maximumDedicatedVramMiB": 17000,
+            },
+            "executionContract": {
+                "acPowerRequired": True,
+                "backgroundCaptureDisabled": True,
+            },
+        }
+        for profile in ("formal", "performance", "determinism", "soak"):
+            case = matrix.build_case(
+                {},
+                variant="B0",
+                scenario="S01",
+                seed=1,
+                repetition=0,
+                profile=profile,
+                contract=contract,
+                hardware_profile_contract=hardware,
+            )
+            self.assertTrue(case["hardware_profile_strict"], profile)
+            self.assertEqual(
+                case["hardware_profile"],
+                "measurement_rtx4070ti_super",
+                profile,
+            )
+            self.assertEqual(case["hardware_profile_contract"], hardware, profile)
+            self.assertIsNot(case["hardware_profile_contract"], hardware)
+
+        for profile in ("smoke", "pilot"):
+            case = matrix.build_case(
+                {},
+                variant="B0",
+                scenario="S01",
+                seed=1,
+                repetition=0,
+                profile=profile,
+                contract=contract,
+            )
+            self.assertFalse(case["hardware_profile_strict"], profile)
+            self.assertNotIn("hardware_profile_contract", case)
+
+    def test_fail_fast_matrix_still_writes_partial_summary(self) -> None:
+        matrix = load_matrix_module()
+        results = [{
+            "caseId": "N01_smoke_B0_S01_seed001_r01",
+            "variant": "B0",
+            "scenario": "S01",
+            "seed": 1,
+            "repetition": 0,
+            "scenarioInputSha256": "a" * 64,
+            "physicalScenarioInputSha256": "b" * 64,
+            "ok": False,
+            "error": "injected",
+        }]
+        payload = matrix.build_matrix_summary(
+            profile="smoke",
+            variants=["B0", "P"],
+            scenarios=["S01"],
+            seeds=[1],
+            repetitions=1,
+            schedule="counterbalanced",
+            results=results,
+            started=0.0,
+            dry_run=False,
+            aborted=True,
+            abort_reason="injected",
+        )
+        self.assertFalse(payload["passed"])
+        self.assertTrue(payload["aborted"])
+        self.assertEqual(payload["runCount"], 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            path = matrix.write_matrix_summary(output, payload)
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        self.assertFalse(loaded["passed"])
+        self.assertTrue(loaded["aborted"])
+        self.assertEqual(loaded["abortReason"], "injected")
 
     def test_counterbalanced_plan_reverses_method_order(self) -> None:
         matrix = load_matrix_module()
