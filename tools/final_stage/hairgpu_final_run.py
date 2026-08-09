@@ -1082,14 +1082,21 @@ class ProcessSampler:
         gdi_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["gdiObjectCount"])) for row in self.samples if _to_float(row.get("gdiObjectCount")) is not None]
         user_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["userObjectCount"])) for row in self.samples if _to_float(row.get("userObjectCount")) is not None]
         thread_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["threadCount"])) for row in self.samples if _to_float(row.get("threadCount")) is not None]
+        # ``expected_samples`` is retained only as a diagnostic estimate based
+        # on simulated duration.  The process sampler itself runs in wall-clock
+        # time, while the fixed-timestep HairSystem viewer may execute faster
+        # or slower than simulated time.  Therefore simulated duration cannot
+        # be the denominator of process-probe availability.
         expected_samples = max(1, int((expected_duration_seconds or 0.0) / self.interval_seconds)) if expected_duration_seconds else len(self.samples)
+        attempted_samples = len(self.samples)
         resource_series = handle_series or thread_series
         return {
             "pid": self.pid,
             "sampleCount": len(self.samples),
             "expectedSampleCount": expected_samples,
-            "sampleCoverage": min(1.0, len(private_series) / max(1, expected_samples)),
-            "gpuSampleCoverage": min(1.0, len(local_series) / max(1, expected_samples)),
+            "coverageDenominatorSampleCount": attempted_samples,
+            "sampleCoverage": min(1.0, len(private_series) / max(1, attempted_samples)),
+            "gpuSampleCoverage": min(1.0, len(local_series) / max(1, attempted_samples)),
             "peakProcessPrivateMiB": max(private) if private else None,
             "peakProcessWorkingSetMiB": max(working) if working else None,
             "processPrivateSlopeMiBPerMin": linear_slope_per_minute(private_series),
@@ -1101,7 +1108,7 @@ class ProcessSampler:
             "gpuTemperatureSpreadC": (max(temperatures) - min(temperatures)) if temperatures else None,
             "gpuClockDropRatio": ((max(clocks) - min(clocks)) / max(clocks)) if clocks and max(clocks) > 0.0 else None,
             "gpuHealthSampleCount": min(len(temperatures), len(clocks)),
-            "resourceSampleCoverage": min(1.0, len(resource_series) / max(1, expected_samples)),
+            "resourceSampleCoverage": min(1.0, len(resource_series) / max(1, attempted_samples)),
             "peakHandleCount": max(handles) if handles else None,
             "handleCountSlopePerMin": linear_slope_per_minute(handle_series),
             "peakGdiObjectCount": max(gdi_objects) if gdi_objects else None,
@@ -2245,6 +2252,50 @@ def _self_test() -> int:
         rows = [{"sourceFrameIndex": 10}, {"sourceFrameIndex": 11}, {"sourceFrameIndex": 12}]
         if _field_coverage(rows, "sourceFrameIndex") != 1.0:
             print("self-test failed: telemetry coverage")
+            return 1
+
+        # Regression for the 70.13 Pilot failure.  Five successful wall-clock
+        # probes during a nominal 35-second fixed-timestep case are five valid
+        # attempts, not 5/11 coverage.  A genuinely missing process-memory
+        # sample must still fail the unchanged 0.95 availability threshold.
+        sampler = ProcessSampler(interval_seconds=3.0)
+        sampler.pid = 123
+        sampler.samples = [
+            {
+                "elapsedSeconds": float(index * 3),
+                "privateBytesMiB": 100.0 + index,
+                "workingSetMiB": 50.0 + index,
+                "dxgiLocalUsageMiB": 500.0 + index,
+                "dxgiNonLocalUsageMiB": 10.0,
+                "handleCount": 100.0,
+                "threadCount": 50.0,
+                "gpuTemperatureC": 55.0,
+                "gpuGraphicsClockMHz": 2500.0,
+            }
+            for index in range(5)
+        ]
+        sampler_summary = sampler.summary(expected_duration_seconds=35.0)
+        if sampler_summary["expectedSampleCount"] != 11:
+            print("self-test failed: nominal sample diagnostic")
+            return 1
+        if sampler_summary["coverageDenominatorSampleCount"] != 5:
+            print("self-test failed: attempted sample denominator")
+            return 1
+        if sampler_summary["sampleCoverage"] != 1.0:
+            print("self-test failed: valid process sample coverage")
+            return 1
+        if sampler_summary["gpuSampleCoverage"] != 1.0:
+            print("self-test failed: valid GPU sample coverage")
+            return 1
+        if sampler_summary["resourceSampleCoverage"] != 1.0:
+            print("self-test failed: valid resource sample coverage")
+            return 1
+
+        sampler.samples[-1] = dict(sampler.samples[-1])
+        sampler.samples[-1].pop("privateBytesMiB")
+        degraded_summary = sampler.summary(expected_duration_seconds=35.0)
+        if abs(degraded_summary["sampleCoverage"] - 0.8) > 1.0e-12:
+            print("self-test failed: missing process sample was not detected")
             return 1
 
         digest = "a" * 64

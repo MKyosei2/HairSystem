@@ -553,6 +553,129 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
             self.assertFalse(case["hardware_profile_strict"], profile)
             self.assertNotIn("hardware_profile_contract", case)
 
+    def test_process_sampler_coverage_uses_actual_probe_attempts(self) -> None:
+        path = ROOT / "tools/final_stage/hairgpu_final_run.py"
+        spec = importlib.util.spec_from_file_location(
+            "thesis_final_run_sampler_regression_v1",
+            path,
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        assert spec is not None and spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        sampler = module.ProcessSampler(interval_seconds=3.0)
+        sampler.pid = 123
+        sampler.samples = [
+            {
+                "elapsedSeconds": float(index * 3),
+                "privateBytesMiB": 100.0 + index,
+                "workingSetMiB": 50.0 + index,
+                "dxgiLocalUsageMiB": 500.0 + index,
+                "dxgiNonLocalUsageMiB": 10.0,
+                "handleCount": 100.0,
+                "threadCount": 50.0,
+                "gpuTemperatureC": 55.0,
+                "gpuGraphicsClockMHz": 2500.0,
+            }
+            for index in range(5)
+        ]
+
+        summary = sampler.summary(expected_duration_seconds=35.0)
+
+        # 35 / 3 is retained as a nominal diagnostic only.
+        self.assertEqual(summary["expectedSampleCount"], 11)
+
+        # Actual availability is five successful probes out of five attempts.
+        self.assertEqual(summary["sampleCount"], 5)
+        self.assertEqual(summary["coverageDenominatorSampleCount"], 5)
+        self.assertEqual(summary["sampleCoverage"], 1.0)
+        self.assertEqual(summary["gpuSampleCoverage"], 1.0)
+        self.assertEqual(summary["resourceSampleCoverage"], 1.0)
+
+        # A real missing process-memory probe still fails the unchanged 0.95
+        # threshold: 4 successful process samples / 5 attempts = 0.8.
+        sampler.samples[-1] = dict(sampler.samples[-1])
+        sampler.samples[-1].pop("privateBytesMiB")
+        degraded = sampler.summary(expected_duration_seconds=35.0)
+
+        self.assertAlmostEqual(degraded["sampleCoverage"], 0.8)
+        self.assertLess(degraded["sampleCoverage"], 0.95)
+
+        template = json.loads(
+            (
+                ROOT / "docs/sample_assets/final_runtime_suite_template.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            template["run_defaults"][
+                "minimum_process_memory_sample_coverage"
+            ],
+            0.95,
+        )
+
+    def test_strict_hardware_profile_owns_duplicated_runtime_limits(self) -> None:
+        matrix = load_matrix_module()
+
+        contract = {
+            "baselines": {"B0": {"method": "B0"}},
+            "scenarios": {
+                "S01": {
+                    "runtimeScenarioName": "S01_Idle",
+                    "timelinePath": "S01.json",
+                }
+            },
+        }
+
+        hardware = {
+            "target": {
+                "gpuNameRegex": "RTX 4070 Ti SUPER",
+                "minimumDedicatedVramMiB": 15000,
+                "maximumDedicatedVramMiB": 17000,
+            },
+            "executionContract": {
+                "acPowerRequired": True,
+                "backgroundCaptureDisabled": True,
+                "minimumGpuTimingCoverage": 0.99,
+                "maximumProcessPrivateMemoryMiB": 32768.0,
+                "targetProcessPrivateMemoryMiB": 1024.0,
+                "maximumDxgiLocalUsageMiB": 16384.0,
+                "minimumProcessMemorySampleCoverage": 0.95,
+            },
+        }
+
+        case = matrix.build_case(
+            {},
+            variant="B0",
+            scenario="S01",
+            seed=1,
+            repetition=0,
+            profile="formal",
+            contract=contract,
+            hardware_profile_contract=hardware,
+        )
+
+        self.assertTrue(case["hardware_profile_strict"])
+        self.assertEqual(case["minimum_gpu_timing_coverage"], 0.99)
+        self.assertEqual(
+            case["maximum_process_private_memory_mib"],
+            32768.0,
+        )
+        self.assertEqual(
+            case["target_process_private_memory_mib"],
+            1024.0,
+        )
+        self.assertEqual(
+            case["maximum_dxgi_local_usage_mib"],
+            16384.0,
+        )
+        self.assertEqual(
+            case["minimum_process_memory_sample_coverage"],
+            0.95,
+        )
+
     def test_fail_fast_matrix_still_writes_partial_summary(self) -> None:
         matrix = load_matrix_module()
         results = [{

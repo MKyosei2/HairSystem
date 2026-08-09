@@ -406,6 +406,44 @@ def build_case(
         case["hardware_profile_contract"] = copy.deepcopy(
             dict(hardware_profile_contract)
         )
+
+        # Publication profiles have a single authoritative measured-host
+        # contract.  Mirror duplicated runtime validator limits from that
+        # profile so generic template defaults (for example the old 6144 MiB
+        # DXGI limit) cannot contradict the RTX 4070 Ti SUPER contract.
+        execution_contract = case["hardware_profile_contract"].get(
+            "executionContract",
+            {},
+        )
+        if not isinstance(execution_contract, Mapping):
+            raise ValueError(
+                f"Strict profile {profile} has an invalid executionContract"
+            )
+
+        runtime_gate_mapping = (
+            ("minimumGpuTimingCoverage", "minimum_gpu_timing_coverage"),
+            (
+                "maximumProcessPrivateMemoryMiB",
+                "maximum_process_private_memory_mib",
+            ),
+            (
+                "targetProcessPrivateMemoryMiB",
+                "target_process_private_memory_mib",
+            ),
+            (
+                "maximumDxgiLocalUsageMiB",
+                "maximum_dxgi_local_usage_mib",
+            ),
+            (
+                "minimumProcessMemorySampleCoverage",
+                "minimum_process_memory_sample_coverage",
+            ),
+        )
+
+        for profile_key, case_key in runtime_gate_mapping:
+            value = execution_contract.get(profile_key)
+            if value is not None:
+                case[case_key] = value
     else:
         case.pop("hardware_profile_contract", None)
 
