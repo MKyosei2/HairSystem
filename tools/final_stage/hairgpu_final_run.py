@@ -35,7 +35,7 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.7-visual-resource-stability"
+VALIDATION_VERSION = "01-safe-v3.8-measurement-window-gpu-stability"
 FROZEN_ASSET_RUNTIME_VERSION = 5
 
 _FROZEN_ASSET_VIEWER_VALIDATION_CACHE: set[tuple[str, str]] = set()
@@ -1045,11 +1045,18 @@ class ProcessSampler:
         self._thread.start()
 
     def _sample_once(self) -> None:
+        # Sampling is valid only while the exact Viewer process is alive.  This
+        # prevents a race at shutdown from recording the desktop-idle GPU state
+        # as if it belonged to the formal HairSystem workload.
+        if self.pid and not _process_alive(self.pid):
+            return
         memory = _windows_process_memory(self.pid) if sys.platform == "win32" else _proc_status_memory(self.pid)
         gpu = _powershell_gpu_memory(self.pid)
         if not gpu:
             gpu = _nvidia_process_memory(self.pid)
         gpu_health = _nvidia_gpu_health()
+        if self.pid and not _process_alive(self.pid):
+            return
         self.samples.append({
             "timestampUtc": utc_now(),
             "elapsedSeconds": max(0.0, time.monotonic() - self._started_monotonic),
@@ -1062,61 +1069,153 @@ class ProcessSampler:
             self._stop.wait(self.interval_seconds)
 
     def stop(self) -> None:
+        # The viewer has already returned when execute_case calls stop().  Never
+        # manufacture a final sample here: a post-exit idle GPU clock/temperature
+        # is not evidence about the measured HairSystem workload.
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=max(2.0, self.interval_seconds * 2.0))
-        if self.pid and (not self.samples or self.samples[-1].get("elapsedSeconds", 0) < time.monotonic() - self._started_monotonic - 0.1):
-            self._sample_once()
+            self._thread = None
 
-    def summary(self, expected_duration_seconds: float | None = None) -> dict[str, Any]:
-        def values(key: str) -> list[float]:
-            return [float(row[key]) for row in self.samples if _to_float(row.get(key)) is not None]
-        private = values("privateBytesMiB"); working = values("workingSetMiB")
-        local = values("dxgiLocalUsageMiB"); nonlocal_values = values("dxgiNonLocalUsageMiB")
-        temperatures = values("gpuTemperatureC"); clocks = values("gpuGraphicsClockMHz")
-        handles = values("handleCount"); gdi_objects = values("gdiObjectCount")
-        user_objects = values("userObjectCount"); threads = values("threadCount")
-        private_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["privateBytesMiB"])) for row in self.samples if _to_float(row.get("privateBytesMiB")) is not None]
-        local_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["dxgiLocalUsageMiB"])) for row in self.samples if _to_float(row.get("dxgiLocalUsageMiB")) is not None]
-        handle_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["handleCount"])) for row in self.samples if _to_float(row.get("handleCount")) is not None]
-        gdi_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["gdiObjectCount"])) for row in self.samples if _to_float(row.get("gdiObjectCount")) is not None]
-        user_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["userObjectCount"])) for row in self.samples if _to_float(row.get("userObjectCount")) is not None]
-        thread_series = [(float(row.get("elapsedSeconds", 0.0)), float(row["threadCount"])) for row in self.samples if _to_float(row.get("threadCount")) is not None]
-        # ``expected_samples`` is retained only as a diagnostic estimate based
-        # on simulated duration.  The process sampler itself runs in wall-clock
-        # time, while the fixed-timestep HairSystem viewer may execute faster
-        # or slower than simulated time.  Therefore simulated duration cannot
-        # be the denominator of process-probe availability.
-        expected_samples = max(1, int((expected_duration_seconds or 0.0) / self.interval_seconds)) if expected_duration_seconds else len(self.samples)
-        attempted_samples = len(self.samples)
-        resource_series = handle_series or thread_series
+    @staticmethod
+    def _directional_clock_drawdown(clocks: list[float]) -> float | None:
+        """Maximum fall from a previously observed peak, never idle->boost range."""
+        if not clocks:
+            return None
+        peak = float(clocks[0])
+        maximum_drop = 0.0
+        for value in clocks[1:]:
+            clock = float(value)
+            if clock > peak:
+                peak = clock
+            elif peak > 0.0:
+                maximum_drop = max(maximum_drop, (peak - clock) / peak)
+        return maximum_drop
+
+    @staticmethod
+    def _measurement_rows(
+        rows: list[dict[str, Any]],
+        warmup_frames: int,
+        measurement_frames: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Select the measurement portion from the *actual probe sequence*.
+
+        Process probes are wall-clock samples while HairSystem uses a fixed
+        simulation timestep, so nominal simulated seconds must not define this
+        boundary.  The run's frame-count ratio is instead applied to the actual
+        in-process probe sequence.  This removes the startup/warm-up region
+        without inventing samples or using the old simulated-duration denominator.
+        """
+        if not rows:
+            return [], 0
+        warmup = max(0, int(warmup_frames))
+        measured = max(0, int(measurement_frames))
+        total = warmup + measured
+        if total <= 0 or warmup <= 0:
+            return list(rows), 0
+        discard = int(math.ceil(len(rows) * (warmup / total)))
+        discard = min(len(rows), max(0, discard))
+        return list(rows[discard:]), discard
+
+    def summary(
+        self,
+        expected_duration_seconds: float | None = None,
+        *,
+        warmup_frames: int = 0,
+        measurement_frames: int = 0,
+    ) -> dict[str, Any]:
+        def values(rows: list[dict[str, Any]], key: str) -> list[float]:
+            return [float(row[key]) for row in rows if _to_float(row.get(key)) is not None]
+
+        lifetime_rows = list(self.samples)
+        measurement_rows, measurement_discarded = self._measurement_rows(
+            lifetime_rows, warmup_frames, measurement_frames
+        )
+        health_rows = [
+            row for row in lifetime_rows
+            if _to_float(row.get("gpuTemperatureC")) is not None
+            and _to_float(row.get("gpuGraphicsClockMHz")) is not None
+        ]
+        measurement_health_rows, health_discarded = self._measurement_rows(
+            health_rows, warmup_frames, measurement_frames
+        )
+
+        private = values(lifetime_rows, "privateBytesMiB")
+        working = values(lifetime_rows, "workingSetMiB")
+        local = values(lifetime_rows, "dxgiLocalUsageMiB")
+        nonlocal_values = values(lifetime_rows, "dxgiNonLocalUsageMiB")
+        temperatures = values(lifetime_rows, "gpuTemperatureC")
+        clocks = values(lifetime_rows, "gpuGraphicsClockMHz")
+        measurement_temperatures = values(measurement_health_rows, "gpuTemperatureC")
+        measurement_clocks = values(measurement_health_rows, "gpuGraphicsClockMHz")
+        handles = values(lifetime_rows, "handleCount")
+        gdi_objects = values(lifetime_rows, "gdiObjectCount")
+        user_objects = values(lifetime_rows, "userObjectCount")
+        threads = values(lifetime_rows, "threadCount")
+
+        def series(rows: list[dict[str, Any]], key: str) -> list[tuple[float, float]]:
+            return [
+                (float(row.get("elapsedSeconds", 0.0)), float(row[key]))
+                for row in rows if _to_float(row.get(key)) is not None
+            ]
+
+        lifetime_private_series = series(lifetime_rows, "privateBytesMiB")
+        lifetime_local_series = series(lifetime_rows, "dxgiLocalUsageMiB")
+        measurement_private_series = series(measurement_rows, "privateBytesMiB")
+        measurement_local_series = series(measurement_rows, "dxgiLocalUsageMiB")
+        measurement_handle_series = series(measurement_rows, "handleCount")
+        measurement_gdi_series = series(measurement_rows, "gdiObjectCount")
+        measurement_user_series = series(measurement_rows, "userObjectCount")
+        measurement_thread_series = series(measurement_rows, "threadCount")
+        lifetime_handle_series = series(lifetime_rows, "handleCount")
+        lifetime_thread_series = series(lifetime_rows, "threadCount")
+
+        # ``expected_samples`` remains a diagnostic estimate only.  Availability
+        # is still valid samples / actual attempts, as fixed by 70.14.
+        expected_samples = max(1, int((expected_duration_seconds or 0.0) / self.interval_seconds)) if expected_duration_seconds else len(lifetime_rows)
+        attempted_samples = len(lifetime_rows)
+        resource_series = lifetime_handle_series or lifetime_thread_series
+        lifetime_clock_range = (
+            (max(clocks) - min(clocks)) / max(clocks)
+            if clocks and max(clocks) > 0.0 else None
+        )
         return {
             "pid": self.pid,
-            "sampleCount": len(self.samples),
+            "sampleCount": len(lifetime_rows),
             "expectedSampleCount": expected_samples,
             "coverageDenominatorSampleCount": attempted_samples,
-            "sampleCoverage": min(1.0, len(private_series) / max(1, attempted_samples)),
-            "gpuSampleCoverage": min(1.0, len(local_series) / max(1, attempted_samples)),
+            "sampleCoverage": min(1.0, len(lifetime_private_series) / max(1, attempted_samples)),
+            "gpuSampleCoverage": min(1.0, len(lifetime_local_series) / max(1, attempted_samples)),
             "peakProcessPrivateMiB": max(private) if private else None,
             "peakProcessWorkingSetMiB": max(working) if working else None,
-            "processPrivateSlopeMiBPerMin": linear_slope_per_minute(private_series),
+            "processPrivateSlopeMiBPerMin": linear_slope_per_minute(measurement_private_series),
             "peakDxgiLocalUsageMiB": max(local) if local else None,
-            "dxgiLocalUsageSlopeMiBPerMin": linear_slope_per_minute(local_series),
+            "dxgiLocalUsageSlopeMiBPerMin": linear_slope_per_minute(measurement_local_series),
             "peakDxgiNonLocalUsageMiB": max(nonlocal_values) if nonlocal_values else None,
-            "gpuProbe": next((str(row.get("gpuMemoryProbe")) for row in reversed(self.samples) if row.get("gpuMemoryProbe")), "unavailable"),
+            "gpuProbe": next((str(row.get("gpuMemoryProbe")) for row in reversed(lifetime_rows) if row.get("gpuMemoryProbe")), "unavailable"),
+            # Peak temperature remains lifetime-wide for safety. Stability metrics
+            # intentionally use only the measurement window.
             "gpuTemperatureMaxC": max(temperatures) if temperatures else None,
-            "gpuTemperatureSpreadC": (max(temperatures) - min(temperatures)) if temperatures else None,
-            "gpuClockDropRatio": ((max(clocks) - min(clocks)) / max(clocks)) if clocks and max(clocks) > 0.0 else None,
-            "gpuHealthSampleCount": min(len(temperatures), len(clocks)),
+            "gpuTemperatureSpreadC": (max(measurement_temperatures) - min(measurement_temperatures)) if measurement_temperatures else None,
+            "gpuTemperatureLifetimeSpreadC": (max(temperatures) - min(temperatures)) if temperatures else None,
+            "gpuClockDropRatio": self._directional_clock_drawdown(measurement_clocks),
+            "gpuClockLifetimeRangeRatio": lifetime_clock_range,
+            "gpuHealthSampleCount": len(measurement_health_rows),
+            "gpuHealthLifetimeSampleCount": len(health_rows),
+            "gpuHealthWarmupDiscardedSampleCount": health_discarded,
+            "measurementSampleCount": len(measurement_rows),
+            "measurementWarmupDiscardedSampleCount": measurement_discarded,
+            "gpuHealthWindowPolicy": "actual-probe-sequence-warmup-fraction-v1",
+            "gpuClockMetric": "max-directional-drawdown-measurement-window-v1",
             "resourceSampleCoverage": min(1.0, len(resource_series) / max(1, attempted_samples)),
             "peakHandleCount": max(handles) if handles else None,
-            "handleCountSlopePerMin": linear_slope_per_minute(handle_series),
+            "handleCountSlopePerMin": linear_slope_per_minute(measurement_handle_series),
             "peakGdiObjectCount": max(gdi_objects) if gdi_objects else None,
-            "gdiObjectCountSlopePerMin": linear_slope_per_minute(gdi_series),
+            "gdiObjectCountSlopePerMin": linear_slope_per_minute(measurement_gdi_series),
             "peakUserObjectCount": max(user_objects) if user_objects else None,
-            "userObjectCountSlopePerMin": linear_slope_per_minute(user_series),
+            "userObjectCountSlopePerMin": linear_slope_per_minute(measurement_user_series),
             "peakThreadCount": max(threads) if threads else None,
-            "threadCountSlopePerMin": linear_slope_per_minute(thread_series),
+            "threadCountSlopePerMin": linear_slope_per_minute(measurement_thread_series),
         }
 
 
@@ -1611,12 +1710,12 @@ $captureDisabled=(($null -eq $dvr -or [int]$dvr -eq 0) -and ($null -eq $game -or
     return {}
 
 
-def _nvidia_gpu_health() -> dict[str, float]:
+def _nvidia_gpu_health() -> dict[str, Any]:
     try:
         run = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=temperature.gpu,clocks.current.graphics",
+                "--query-gpu=temperature.gpu,clocks.current.graphics,utilization.gpu,pstate,power.draw,power.limit",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -1627,13 +1726,25 @@ def _nvidia_gpu_health() -> dict[str, float]:
         if run.returncode == 0 and run.stdout.strip():
             fields = [item.strip() for item in run.stdout.splitlines()[0].split(",")]
             if len(fields) >= 2:
-                result: dict[str, float] = {}
+                result: dict[str, Any] = {}
                 temperature = _to_float(fields[0])
                 clock = _to_float(fields[1])
+                utilization = _to_float(fields[2]) if len(fields) > 2 else None
+                pstate = fields[3] if len(fields) > 3 else ""
+                power_draw = _to_float(fields[4]) if len(fields) > 4 else None
+                power_limit = _to_float(fields[5]) if len(fields) > 5 else None
                 if temperature is not None:
                     result["gpuTemperatureC"] = temperature
                 if clock is not None:
                     result["gpuGraphicsClockMHz"] = clock
+                if utilization is not None:
+                    result["gpuUtilizationPercent"] = utilization
+                if pstate:
+                    result["gpuPState"] = pstate
+                if power_draw is not None:
+                    result["gpuPowerDrawW"] = power_draw
+                if power_limit is not None:
+                    result["gpuPowerLimitW"] = power_limit
                 return result
     except Exception:
         pass
@@ -1721,6 +1832,21 @@ def _validate_hardware_contract(
     observed_samples = _to_int(process_summary.get("gpuHealthSampleCount"), 0)
     if observed_samples < minimum_samples:
         problems.append(issue("E_HARDWARE_GPU_CLOCK_SAMPLES", "Too few GPU health samples.", expected=minimum_samples, observed=observed_samples))
+
+    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-v1":
+        problems.append(issue(
+            "E_HARDWARE_GPU_STABILITY_WINDOW",
+            "Strict hardware stability metrics were not computed from the measurement window.",
+            expected="actual-probe-sequence-warmup-fraction-v1",
+            observed=process_summary.get("gpuHealthWindowPolicy"),
+        ))
+    if process_summary.get("gpuClockMetric") != "max-directional-drawdown-measurement-window-v1":
+        problems.append(issue(
+            "E_HARDWARE_GPU_CLOCK_METRIC",
+            "Strict GPU clock stability must use directional measurement-window drawdown.",
+            expected="max-directional-drawdown-measurement-window-v1",
+            observed=process_summary.get("gpuClockMetric"),
+        ))
 
     for phase, gpu in (("pre", pre_gpu), ("post", post_gpu)):
         endpoint = _to_float(gpu.get("temperatureC"))
@@ -2107,7 +2233,7 @@ def _artifact_manifest(paths: Mapping[str, Path], case: Mapping[str, Any], finge
         if path.is_file():
             artifacts.append({"kind": key, "path": path.name, "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)})
     payload = {
-        "manifestVersion": "hairgpu-artifacts-v3.7",
+        "manifestVersion": "hairgpu-artifacts-v3.8",
         "runName": case["run_name"], "executionFingerprint": fingerprint,
         "createdUtc": utc_now(), "artifacts": artifacts,
     }
@@ -2188,7 +2314,11 @@ def execute_case(case: Mapping[str, Any], viewer_exe: Path, output_dir: Path,
             atomic_write_bytes(paths["stderr"], stderr.encode("utf-8", errors="replace"))
             _write_jsonl(paths["process_samples"], sampler.samples)
             expected_duration = (_to_int(normalized.get("warmup_frames")) + _to_int(normalized.get("measurement_frames"))) * float(normalized.get("fixed_timestep_seconds", 1.0 / 60.0))
-            process_summary = sampler.summary(expected_duration)
+            process_summary = sampler.summary(
+                expected_duration,
+                warmup_frames=_to_int(normalized.get("warmup_frames"), 0),
+                measurement_frames=_to_int(normalized.get("measurement_frames"), 0),
+            )
             post_hardware = collect_hardware_probe(str(normalized.get("hardware_profile", "")), "post")
             environment_payload = {
                 "pre": pre_hardware, "post": post_hardware,
@@ -2298,6 +2428,58 @@ def _self_test() -> int:
             print("self-test failed: missing process sample was not detected")
             return 1
 
+        # Regression for the 70.14 Quality failure.  Startup idle->boost must
+        # not be interpreted as a clock *drop*, and a startup thermal ramp must
+        # not be part of the measurement stability spread.
+        stability = ProcessSampler(interval_seconds=1.0)
+        stability.pid = 321
+        stability.samples = [
+            {"elapsedSeconds": 0.0, "privateBytesMiB": 100.0, "dxgiLocalUsageMiB": 500.0, "gpuTemperatureC": 50.0, "gpuGraphicsClockMHz": 480.0},
+            {"elapsedSeconds": 1.0, "privateBytesMiB": 101.0, "dxgiLocalUsageMiB": 501.0, "gpuTemperatureC": 62.0, "gpuGraphicsClockMHz": 2700.0},
+            {"elapsedSeconds": 2.0, "privateBytesMiB": 102.0, "dxgiLocalUsageMiB": 502.0, "gpuTemperatureC": 64.0, "gpuGraphicsClockMHz": 2730.0},
+            {"elapsedSeconds": 3.0, "privateBytesMiB": 103.0, "dxgiLocalUsageMiB": 503.0, "gpuTemperatureC": 66.0, "gpuGraphicsClockMHz": 2715.0},
+            {"elapsedSeconds": 4.0, "privateBytesMiB": 104.0, "dxgiLocalUsageMiB": 504.0, "gpuTemperatureC": 68.0, "gpuGraphicsClockMHz": 2700.0},
+        ]
+        stable_summary = stability.summary(
+            expected_duration_seconds=5.0, warmup_frames=1, measurement_frames=4
+        )
+        if stable_summary["gpuTemperatureMaxC"] != 68.0:
+            print("self-test failed: lifetime temperature safety peak")
+            return 1
+        if stable_summary["gpuTemperatureSpreadC"] != 6.0:
+            print("self-test failed: measurement temperature spread")
+            return 1
+        if stable_summary["gpuClockDropRatio"] is None or stable_summary["gpuClockDropRatio"] >= 0.15:
+            print("self-test failed: startup boost counted as clock drop")
+            return 1
+        if stable_summary["gpuClockLifetimeRangeRatio"] is None or stable_summary["gpuClockLifetimeRangeRatio"] < 0.80:
+            print("self-test failed: lifetime clock diagnostic missing")
+            return 1
+
+        throttled = ProcessSampler(interval_seconds=1.0)
+        throttled.samples = [
+            {"elapsedSeconds": 0.0, "gpuTemperatureC": 60.0, "gpuGraphicsClockMHz": 500.0},
+            {"elapsedSeconds": 1.0, "gpuTemperatureC": 65.0, "gpuGraphicsClockMHz": 2700.0},
+            {"elapsedSeconds": 2.0, "gpuTemperatureC": 66.0, "gpuGraphicsClockMHz": 2730.0},
+            {"elapsedSeconds": 3.0, "gpuTemperatureC": 67.0, "gpuGraphicsClockMHz": 1900.0},
+        ]
+        throttled_summary = throttled.summary(
+            warmup_frames=1, measurement_frames=3
+        )
+        if throttled_summary["gpuClockDropRatio"] is None or throttled_summary["gpuClockDropRatio"] <= 0.15:
+            print("self-test failed: real directional clock drop was hidden")
+            return 1
+
+        # stop() is intentionally side-effect free after the viewer has exited.
+        stopped = ProcessSampler(interval_seconds=1.0)
+        stopped.pid = 999
+        stopped.samples = [{"elapsedSeconds": 1.0}]
+        stopped._sample_once = lambda: (_ for _ in ()).throw(RuntimeError("post-exit sample"))  # type: ignore[method-assign]
+        stopped.stop()
+        if len(stopped.samples) != 1:
+            print("self-test failed: stop appended a post-exit sample")
+            return 1
+
         digest = "a" * 64
         commit = "b" * 40
         flags = {"enableGpuResident": True, "stateStorage": "IntegratedRecord"}
@@ -2396,7 +2578,6 @@ def _self_test() -> int:
 
     print("hairgpu_final_run self-test: PASS")
     return 0
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one strict HairSystem formal case.")

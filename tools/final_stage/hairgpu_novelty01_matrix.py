@@ -119,7 +119,7 @@ PROFILE_SETTINGS: dict[str, dict[str, Any]] = {
         "measurement_mode": "robustness",
         "ground_truth": True,
         "ground_truth_interval": 300,
-        "timeout_seconds": 3600,
+        "timeout_seconds": 7200,
         "repetitions": 1,
         "default_seeds": (1,),
     },
@@ -408,9 +408,8 @@ def build_case(
         )
 
         # Publication profiles have a single authoritative measured-host
-        # contract.  Mirror duplicated runtime validator limits from that
-        # profile so generic template defaults (for example the old 6144 MiB
-        # DXGI limit) cannot contradict the RTX 4070 Ti SUPER contract.
+        # contract. Mirror duplicated runtime validator limits from that profile
+        # so generic template defaults cannot contradict the RTX profile.
         execution_contract = case["hardware_profile_contract"].get(
             "executionContract",
             {},

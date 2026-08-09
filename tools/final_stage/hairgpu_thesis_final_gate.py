@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 REQUIRED_STAGES = {
     "Prepare",
@@ -18,7 +18,21 @@ REQUIRED_STAGES = {
     "Report",
     "VerifyBranches",
 }
-REQUIRED_MATRIX_PROFILES = {"smoke", "pilot", "formal", "performance", "determinism", "soak"}
+REQUIRED_MATRIX_PROFILES = {
+    "smoke", "pilot", "formal", "performance", "determinism", "soak"
+}
+# Exact thesis design owned by Run_Thesis_B0_P_Formal.ps1 / matrix profiles.
+# A balanced but incomplete B0/P data set must never be accepted as final evidence.
+EXPECTED_MATRIX_RUN_COUNTS = {
+    "smoke": 10,
+    "pilot": 56,
+    "formal": 540,
+    "performance": 540,
+    "determinism": 42,
+    "soak": 10,
+}
+EXPECTED_TOTAL_RUN_COUNT = sum(EXPECTED_MATRIX_RUN_COUNTS.values())
+EXPECTED_METHOD_RUN_COUNT = EXPECTED_TOTAL_RUN_COUNT // 2
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -58,6 +72,43 @@ def find_value(payload: Any, name: str) -> Any | None:
             if found is not None:
                 return found
     return None
+
+
+def _validated_matrix_results(
+    summary: Mapping[str, Any],
+    *,
+    profile: str,
+    expected_count: int,
+    path: Path,
+    issues: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    results_raw = summary.get("results")
+    results = [row for row in results_raw if isinstance(row, dict)] if isinstance(results_raw, list) else []
+    declared_count = summary.get("runCount")
+    if declared_count != expected_count or len(results) != expected_count:
+        issues.append({
+            "code": "E_MATRIX_RUN_COUNT",
+            "profile": profile,
+            "expected": expected_count,
+            "declared": declared_count,
+            "observedResults": len(results),
+            "path": str(path),
+        })
+
+    expected_each = expected_count // 2
+    variant_counts = {
+        "B0": sum(1 for row in results if row.get("ok") is True and str(row.get("variant", "")) == "B0"),
+        "P": sum(1 for row in results if row.get("ok") is True and str(row.get("variant", "")) == "P"),
+    }
+    if variant_counts != {"B0": expected_each, "P": expected_each}:
+        issues.append({
+            "code": "E_MATRIX_METHOD_RUN_COUNT",
+            "profile": profile,
+            "expected": {"B0": expected_each, "P": expected_each},
+            "observed": variant_counts,
+            "path": str(path),
+        })
+    return results
 
 
 def main() -> int:
@@ -142,12 +193,15 @@ def main() -> int:
             issues.append({"code": "E_HARDWARE_PROFILE_HASH"})
 
     profiles_seen: set[str] = set()
+    profile_summary_counts: dict[str, int] = {}
+    profile_run_counts: dict[str, int] = {}
     b0_run_count = 0
     proposal_run_count = 0
     for summary_path in sorted(session.rglob("novelty01_matrix_summary.json")):
         summary = read_json(summary_path)
         profile = str(summary.get("profile", ""))
         profiles_seen.add(profile)
+        profile_summary_counts[profile] = profile_summary_counts.get(profile, 0) + 1
         if summary.get("passed") is not True:
             issues.append({"code": "E_MATRIX_FAILED", "profile": profile, "path": str(summary_path)})
         for issue_name in (
@@ -162,8 +216,29 @@ def main() -> int:
                     "issueType": issue_name,
                     "details": summary.get(issue_name),
                 })
-        for row in summary.get("results", []):
-            if not isinstance(row, dict) or row.get("ok") is not True:
+
+        expected_count = EXPECTED_MATRIX_RUN_COUNTS.get(profile)
+        if expected_count is None:
+            issues.append({
+                "code": "E_MATRIX_PROFILE_UNEXPECTED",
+                "profile": profile,
+                "path": str(summary_path),
+            })
+            results = [
+                row for row in summary.get("results", []) if isinstance(row, dict)
+            ] if isinstance(summary.get("results"), list) else []
+        else:
+            results = _validated_matrix_results(
+                summary,
+                profile=profile,
+                expected_count=expected_count,
+                path=summary_path,
+                issues=issues,
+            )
+        profile_run_counts[profile] = profile_run_counts.get(profile, 0) + len(results)
+
+        for row in results:
+            if row.get("ok") is not True:
                 continue
             variant = str(row.get("variant", ""))
             if variant == "B0":
@@ -190,9 +265,19 @@ def main() -> int:
     missing_profiles = sorted(REQUIRED_MATRIX_PROFILES - profiles_seen)
     if missing_profiles:
         issues.append({"code": "E_MATRIX_PROFILES_MISSING", "profiles": missing_profiles})
-    if b0_run_count == 0 or proposal_run_count == 0 or b0_run_count != proposal_run_count:
+    for profile in sorted(REQUIRED_MATRIX_PROFILES):
+        count = profile_summary_counts.get(profile, 0)
+        if count != 1:
+            issues.append({
+                "code": "E_MATRIX_PROFILE_SUMMARY_COUNT",
+                "profile": profile,
+                "expected": 1,
+                "observed": count,
+            })
+    if b0_run_count != EXPECTED_METHOD_RUN_COUNT or proposal_run_count != EXPECTED_METHOD_RUN_COUNT:
         issues.append({
             "code": "E_METHOD_RUN_BALANCE",
+            "expectedEach": EXPECTED_METHOD_RUN_COUNT,
             "b0Runs": b0_run_count,
             "proposalRuns": proposal_run_count,
         })
@@ -216,12 +301,16 @@ def main() -> int:
             issues.append({"code": "E_NO_PAIRED_RESULTS"})
 
     result = {
-        "schema": "hairgpu-thesis-final-gate-v2",
+        "schema": "hairgpu-thesis-final-gate-v3",
         "status": "PASS" if not issues else "FAIL",
         "sessionId": session_manifest.get("sessionId"),
         "formalCommit": formal_commit,
+        "expectedTotalRunCount": EXPECTED_TOTAL_RUN_COUNT,
+        "expectedMethodRunCount": EXPECTED_METHOD_RUN_COUNT,
         "b0RunCount": b0_run_count,
         "proposalRunCount": proposal_run_count,
+        "profileRunCounts": profile_run_counts,
+        "profileSummaryCounts": profile_summary_counts,
         "profilesSeen": sorted(profiles_seen),
         "issues": issues,
     }

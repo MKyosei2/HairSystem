@@ -584,23 +584,16 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         ]
 
         summary = sampler.summary(expected_duration_seconds=35.0)
-
-        # 35 / 3 is retained as a nominal diagnostic only.
         self.assertEqual(summary["expectedSampleCount"], 11)
-
-        # Actual availability is five successful probes out of five attempts.
         self.assertEqual(summary["sampleCount"], 5)
         self.assertEqual(summary["coverageDenominatorSampleCount"], 5)
         self.assertEqual(summary["sampleCoverage"], 1.0)
         self.assertEqual(summary["gpuSampleCoverage"], 1.0)
         self.assertEqual(summary["resourceSampleCoverage"], 1.0)
 
-        # A real missing process-memory probe still fails the unchanged 0.95
-        # threshold: 4 successful process samples / 5 attempts = 0.8.
         sampler.samples[-1] = dict(sampler.samples[-1])
         sampler.samples[-1].pop("privateBytesMiB")
         degraded = sampler.summary(expected_duration_seconds=35.0)
-
         self.assertAlmostEqual(degraded["sampleCoverage"], 0.8)
         self.assertLess(degraded["sampleCoverage"], 0.95)
 
@@ -618,7 +611,6 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
 
     def test_strict_hardware_profile_owns_duplicated_runtime_limits(self) -> None:
         matrix = load_matrix_module()
-
         contract = {
             "baselines": {"B0": {"method": "B0"}},
             "scenarios": {
@@ -628,7 +620,6 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
                 }
             },
         }
-
         hardware = {
             "target": {
                 "gpuNameRegex": "RTX 4070 Ti SUPER",
@@ -645,36 +636,108 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
                 "minimumProcessMemorySampleCoverage": 0.95,
             },
         }
-
         case = matrix.build_case(
-            {},
-            variant="B0",
-            scenario="S01",
-            seed=1,
-            repetition=0,
-            profile="formal",
-            contract=contract,
+            {}, variant="B0", scenario="S01", seed=1, repetition=0,
+            profile="formal", contract=contract,
             hardware_profile_contract=hardware,
         )
-
         self.assertTrue(case["hardware_profile_strict"])
         self.assertEqual(case["minimum_gpu_timing_coverage"], 0.99)
-        self.assertEqual(
-            case["maximum_process_private_memory_mib"],
-            32768.0,
+        self.assertEqual(case["maximum_process_private_memory_mib"], 32768.0)
+        self.assertEqual(case["target_process_private_memory_mib"], 1024.0)
+        self.assertEqual(case["maximum_dxgi_local_usage_mib"], 16384.0)
+        self.assertEqual(case["minimum_process_memory_sample_coverage"], 0.95)
+
+    def test_gpu_stability_uses_measurement_window_directional_drawdown(self) -> None:
+        path = ROOT / "tools/final_stage/hairgpu_final_run.py"
+        spec = importlib.util.spec_from_file_location(
+            "thesis_final_run_gpu_stability_v1", path
         )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        sampler = module.ProcessSampler(interval_seconds=1.0)
+        sampler.samples = [
+            {"elapsedSeconds": 0.0, "gpuTemperatureC": 50.0, "gpuGraphicsClockMHz": 480.0},
+            {"elapsedSeconds": 1.0, "gpuTemperatureC": 62.0, "gpuGraphicsClockMHz": 2700.0},
+            {"elapsedSeconds": 2.0, "gpuTemperatureC": 64.0, "gpuGraphicsClockMHz": 2730.0},
+            {"elapsedSeconds": 3.0, "gpuTemperatureC": 66.0, "gpuGraphicsClockMHz": 2715.0},
+            {"elapsedSeconds": 4.0, "gpuTemperatureC": 68.0, "gpuGraphicsClockMHz": 2700.0},
+        ]
+        summary = sampler.summary(warmup_frames=1, measurement_frames=4)
+        self.assertEqual(summary["gpuTemperatureMaxC"], 68.0)
+        self.assertEqual(summary["gpuTemperatureSpreadC"], 6.0)
+        self.assertLess(summary["gpuClockDropRatio"], 0.15)
+        self.assertGreater(summary["gpuClockLifetimeRangeRatio"], 0.80)
         self.assertEqual(
-            case["target_process_private_memory_mib"],
-            1024.0,
+            summary["gpuHealthWindowPolicy"],
+            "actual-probe-sequence-warmup-fraction-v1",
         )
-        self.assertEqual(
-            case["maximum_dxgi_local_usage_mib"],
-            16384.0,
+
+        sampler.samples[-1] = dict(sampler.samples[-1])
+        sampler.samples[-1]["gpuGraphicsClockMHz"] = 1900.0
+        degraded = sampler.summary(warmup_frames=1, measurement_frames=4)
+        self.assertGreater(degraded["gpuClockDropRatio"], 0.15)
+
+    def test_sampler_stop_never_adds_post_exit_gpu_sample(self) -> None:
+        path = ROOT / "tools/final_stage/hairgpu_final_run.py"
+        spec = importlib.util.spec_from_file_location(
+            "thesis_final_run_stop_regression_v1", path
         )
-        self.assertEqual(
-            case["minimum_process_memory_sample_coverage"],
-            0.95,
-        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        sampler = module.ProcessSampler(interval_seconds=1.0)
+        sampler.pid = 999
+        sampler.samples = [{"elapsedSeconds": 1.0}]
+        calls = []
+        sampler._sample_once = lambda: calls.append("sample")
+        sampler.stop()
+        self.assertEqual(calls, [])
+        self.assertEqual(len(sampler.samples), 1)
+
+    def test_strict_gpu_thresholds_remain_unchanged(self) -> None:
+        profiles = json.loads(
+            (ROOT / "benchmarks/novelty01/hardware_profiles.json").read_text(encoding="utf-8")
+        )["profiles"]
+        profile = profiles["measurement_rtx4070ti_super"]
+        execution = profile["executionContract"]
+        self.assertEqual(execution["maximumGpuTemperatureCelsius"], 88.0)
+        self.assertEqual(execution["maximumGpuTemperatureSpreadCelsius"], 12.0)
+        self.assertEqual(execution["maximumGpuClockDropRatio"], 0.15)
+        self.assertEqual(execution["minimumGpuClockSamples"], 3)
+
+    def test_soak_timeout_is_operational_not_a_quality_weakening(self) -> None:
+        matrix = load_matrix_module()
+        self.assertEqual(matrix.PROFILE_SETTINGS["soak"]["measurement_frames"], 108000)
+        self.assertGreaterEqual(matrix.PROFILE_SETTINGS["soak"]["timeout_seconds"], 7200)
+        final_run = (ROOT / "tools/final_stage/hairgpu_final_run.py").read_text(encoding="utf-8")
+        self.assertIn('"gpuTemperatureMaxC"', final_run)
+        self.assertIn('"gpuTemperatureSpreadC"', final_run)
+        self.assertIn('"gpuClockDropRatio"', final_run)
+
+    def test_final_gate_requires_exact_profile_run_counts(self) -> None:
+        source = (ROOT / "tools/final_stage/hairgpu_thesis_final_gate.py").read_text(encoding="utf-8")
+        compile(source, "hairgpu_thesis_final_gate.py", "exec")
+        for marker in (
+            "EXPECTED_MATRIX_RUN_COUNTS",
+            '"smoke": 10',
+            '"pilot": 56',
+            '"formal": 540',
+            '"performance": 540',
+            '"determinism": 42',
+            '"soak": 10',
+            '"E_MATRIX_RUN_COUNT"',
+            '"E_MATRIX_METHOD_RUN_COUNT"',
+            '"E_MATRIX_PROFILE_SUMMARY_COUNT"',
+        ):
+            self.assertIn(marker, source)
 
     def test_fail_fast_matrix_still_writes_partial_summary(self) -> None:
         matrix = load_matrix_module()
