@@ -361,113 +361,54 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
             runner,
         )
 
-    def test_csv_jsonl_parity_accepts_only_viewer_serialization_equivalence(self) -> None:
-        matrix = load_matrix_module()
-        self.assertEqual(matrix.CSV_DEFAULTFLOAT_SIGNIFICANT_DIGITS, 6)
-        self.assertEqual(
-            matrix.TELEMETRY_SERIALIZATION_POLICY,
-            "csv-defaultfloat6-jsonl-fixed6-bool-normalized-equivalent-v2",
+    def test_csv_jsonl_serialization_is_canonical_in_viewer(self) -> None:
+        source = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl"
+        ).read_text(encoding="utf-8")
+
+        csv_start = source.index("bool GpuHairViewer::ExportPerformanceCsv")
+        json_start = source.index("bool GpuHairViewer::ExportPerformanceJsonl")
+        settings_start = source.index("bool GpuHairViewer::ExportExperimentSettingsJson")
+        csv_block = source[csv_start:json_start]
+        json_block = source[json_start:settings_start]
+
+        canonical = "out << std::fixed << std::setprecision(6);"
+        self.assertIn(canonical, csv_block)
+        self.assertIn(canonical, json_block)
+        self.assertIn(
+            "Formal CSV and JSONL are two serializations of the same PerformanceSample.",
+            csv_block,
         )
-        # Exact float-serialization regressions captured by real Smoke runs.
-        self.assertTrue(
-            matrix._telemetry_scalar_serialization_equivalent(
-                "6.98458", "6.984576"
-            )
-        )
-        self.assertTrue(
-            matrix._telemetry_scalar_serialization_equivalent(
-                "11.8052", "11.805248"
-            )
-        )
-        # CSV integer boolean encoding and JSON boolean encoding are equivalent.
-        self.assertTrue(
-            matrix._telemetry_scalar_serialization_equivalent("0", False)
-        )
-        self.assertTrue(
-            matrix._telemetry_scalar_serialization_equivalent("1", True)
-        )
-        self.assertFalse(
-            matrix._telemetry_scalar_serialization_equivalent("0", True)
-        )
-        # A genuinely different measurement must remain fail-closed.
-        self.assertFalse(
-            matrix._telemetry_scalar_serialization_equivalent(
-                "11.8052", "11.8059"
-            )
-        )
+        self.assertLess(csv_block.index(canonical), csv_block.index("sampleIndex,elapsedSeconds"))
+        self.assertLess(json_block.index(canonical), json_block.index("for (const PerformanceSample& sample"))
+
+        # Regression captured by the real 70.11 Smoke failure.  The canonical
+        # exporter must emit the JSONL-side six-decimal representation to CSV too.
+        self.assertEqual(format(7.192064, ".6f"), "7.192064")
+        self.assertNotEqual("7.19206", format(7.192064, ".6f"))
+
+    def test_matrix_never_monkeypatches_output_integrity_validation(self) -> None:
         source = (
             ROOT / "tools/final_stage/hairgpu_novelty01_matrix.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("Raw CSV/JSONL bytes are never rewritten.", source)
-        self.assertIn("E_CSV_JSONL_PARITY", source)
 
-    def test_serialization_shim_clears_only_documented_full_row_format_differences(self) -> None:
-        matrix = load_matrix_module()
-        matrix._install_publication_output_integrity_compatibility()
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            csv_path = base / "frames.csv"
-            jsonl_path = base / "frames.jsonl"
-            header = (
-                "caseId,scenario,seed,sourceFrameIndex,frameMilliseconds,"
-                "gpuHairMilliseconds,totalStrandCount,availabilityMask,"
-                "metricAvailabilityMask,syntheticMetricCount,sameFrameReadbackCount,"
-                "nanStateCount,infiniteStateCount,fatalFailure,fatalFailureCode\n"
-            )
-            csv_path.write_text(
-                header
-                + "N01_smoke_B0_S01_seed001_r01,S01_Idle,1,1,16.6667,11.8052,"
-                "100000,32767,32767,0,0,0,0,0,0\n",
-                encoding="utf-8",
-            )
-            jsonl_path.write_text(
-                json.dumps(
-                    {
-                        "caseId": "N01_smoke_B0_S01_seed001_r01",
-                        "scenario": "S01_Idle",
-                        "seed": 1,
-                        "sourceFrameIndex": 1,
-                        "frameMilliseconds": 16.666667,
-                        "gpuHairMilliseconds": 11.805248,
-                        "totalStrandCount": 100000,
-                        "availabilityMask": 32767,
-                        "metricAvailabilityMask": 32767,
-                        "syntheticMetricCount": 0,
-                        "sameFrameReadbackCount": 0,
-                        "nanStateCount": 0,
-                        "infiniteStateCount": 0,
-                        "fatalFailure": False,
-                        "fatalFailureCode": 0,
-                    },
-                    separators=(",", ":"),
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            paths = {"frames": csv_path, "jsonl": jsonl_path}
-            case = {"required_telemetry_fields": []}
-            accepted = matrix.final_run.validate_outputs(case, paths, {}, {})
-            self.assertTrue(accepted["valid"])
-            self.assertTrue(accepted["qualityGatePassed"])
-            self.assertEqual(accepted["issues"], [])
-            self.assertEqual(
-                accepted["telemetrySerializationParityPolicy"],
-                matrix.TELEMETRY_SERIALIZATION_POLICY,
-            )
+        # The Viewer now owns canonical serialization.  Matrix execution must use
+        # hairgpu_final_run.validate_outputs directly and must not reinterpret or
+        # clear E_CSV_JSONL_PARITY after validation.
+        forbidden = (
+            "CSV_DEFAULTFLOAT_SIGNIFICANT_DIGITS",
+            "TELEMETRY_SERIALIZATION_POLICY",
+            "_telemetry_scalar_serialization_equivalent",
+            "_telemetry_files_are_serialization_equivalent",
+            "_install_publication_output_integrity_compatibility",
+            "_hairgpu_thesis_original_validate_outputs",
+        )
+        for marker in forbidden:
+            self.assertNotIn(marker, source)
 
-            # Change only the measured GPU time beyond defaultfloat6 equivalence.
-            bad_row = json.loads(jsonl_path.read_text(encoding="utf-8"))
-            bad_row["gpuHairMilliseconds"] = 11.8059
-            jsonl_path.write_text(
-                json.dumps(bad_row, separators=(",", ":")) + "\n",
-                encoding="utf-8",
-            )
-            rejected = matrix.final_run.validate_outputs(case, paths, {}, {})
-            self.assertFalse(rejected["valid"])
-            self.assertEqual(
-                [issue["code"] for issue in rejected["issues"]],
-                ["E_CSV_JSONL_PARITY"],
-            )
+        self.assertNotIn("final_run.validate_outputs =", source)
+        self.assertIn("final_run.execute_case", source)
 
     def test_visual_gate_uses_foreground_occupancy_bounds_not_darkness(self) -> None:
         matrix = load_matrix_module()
