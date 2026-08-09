@@ -179,7 +179,40 @@ def load_frozen_environment(repo: Path) -> dict[str, str]:
 
 
 CSV_DEFAULTFLOAT_SIGNIFICANT_DIGITS = 6
-TELEMETRY_SERIALIZATION_POLICY = "csv-defaultfloat6-jsonl-fixed6-equivalent-v1"
+TELEMETRY_SERIALIZATION_POLICY = (
+    "csv-defaultfloat6-jsonl-fixed6-bool-normalized-equivalent-v2"
+)
+
+
+def _explicit_boolean_token(value: Any) -> bool | None:
+    """Return a boolean only for explicit textual/JSON boolean encodings."""
+    if isinstance(value, bool):
+        return value
+    token = str(value).strip().lower()
+    if token in {"true", "yes", "on"}:
+        return True
+    if token in {"false", "no", "off"}:
+        return False
+    return None
+
+
+def _boolean_compatible_value(value: Any) -> bool | None:
+    """Normalize 0/1 only when the opposite side is explicitly boolean."""
+    explicit = _explicit_boolean_token(value)
+    if explicit is not None:
+        return explicit
+    token = str(value).strip()
+    try:
+        number = float(token)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number):
+        return None
+    if number == 0.0:
+        return False
+    if number == 1.0:
+        return True
+    return None
 
 
 def _telemetry_scalar_serialization_equivalent(
@@ -187,22 +220,43 @@ def _telemetry_scalar_serialization_equivalent(
 ) -> bool:
     """Compare one Viewer telemetry scalar without hiding real mismatches.
 
-    The current Viewer writes CSV with the C++ ostream defaultfloat precision
-    (six significant digits) and JSONL with fixed six decimal places.  These are
-    two textual serializations of the same in-memory float.  Treat them as the
-    same measurement only when the JSON numeric value rounds *exactly* to the
-    CSV defaultfloat representation.  This accepts 6.98458 versus 6.984576, but
-    continues to reject materially different measurements.
+    The current Viewer has two known representation differences for the same
+    in-memory telemetry record:
+
+    * CSV floating-point fields use C++ ``defaultfloat`` with six significant
+      digits while JSONL uses ``fixed`` with six decimal places.
+    * CSV boolean-like fields are emitted as ``0``/``1`` while JSONL may carry
+      JSON ``false``/``true`` values.
+
+    Only those serialization differences are normalized.  A numeric value is
+    accepted only when the JSON numeric value rounds exactly to the CSV
+    defaultfloat token.  This covers the real Smoke regression
+    ``11.8052`` versus ``11.805248`` while still rejecting a materially
+    different value such as ``11.8052`` versus ``11.8059``.
     """
     left = str(csv_value).strip()
     right = str(json_value).strip()
+    if left == right:
+        return True
+
+    left_explicit_bool = _explicit_boolean_token(csv_value)
+    right_explicit_bool = _explicit_boolean_token(json_value)
+    if left_explicit_bool is not None or right_explicit_bool is not None:
+        left_bool = _boolean_compatible_value(csv_value)
+        right_bool = _boolean_compatible_value(json_value)
+        return (
+            left_bool is not None
+            and right_bool is not None
+            and left_bool == right_bool
+        )
+
     try:
         left_number = float(left)
         right_number = float(right)
     except (TypeError, ValueError, OverflowError):
-        return left == right
+        return False
     if not math.isfinite(left_number) or not math.isfinite(right_number):
-        return left == right
+        return False
     if left_number == right_number:
         return True
     return left.lower() == format(
@@ -237,7 +291,8 @@ def _install_publication_output_integrity_compatibility() -> None:
     """Install a narrow validator shim for the Viewer's known text formats.
 
     Raw CSV/JSONL bytes are never rewritten.  Only an E_CSV_JSONL_PARITY issue
-    caused solely by defaultfloat-vs-fixed formatting can be cleared.  All other
+    caused solely by the documented float/boolean serialization policy can be
+    cleared.  All other
     integrity, quality, visual, resource and hardware failures remain fail-closed.
     """
     marker = "_hairgpu_thesis_original_validate_outputs"
