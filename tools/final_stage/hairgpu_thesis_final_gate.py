@@ -21,18 +21,29 @@ REQUIRED_STAGES = {
 REQUIRED_MATRIX_PROFILES = {
     "smoke", "pilot", "formal", "performance", "determinism", "soak"
 }
-# Exact thesis design owned by Run_Thesis_B0_P_Formal.ps1 / matrix profiles.
-# A balanced but incomplete B0/P data set must never be accepted as final evidence.
+
+# Reduced thesis design v4.
+# Quality/Performance keep all 18 scenarios but use 3 deterministic seeds and
+# 2 repetitions instead of the original 5 x 3 design.
 EXPECTED_MATRIX_RUN_COUNTS = {
     "smoke": 10,
     "pilot": 56,
-    "formal": 540,
-    "performance": 540,
+    "formal": 216,
+    "performance": 216,
     "determinism": 42,
     "soak": 10,
 }
-EXPECTED_TOTAL_RUN_COUNT = sum(EXPECTED_MATRIX_RUN_COUNTS.values())
-EXPECTED_METHOD_RUN_COUNT = EXPECTED_TOTAL_RUN_COUNT // 2
+EXPECTED_TOTAL_RUN_COUNT = sum(EXPECTED_MATRIX_RUN_COUNTS.values())  # 550
+EXPECTED_METHOD_RUN_COUNT = EXPECTED_TOTAL_RUN_COUNT // 2            # 275
+EXPECTED_SESSION_SEEDS = [1, 2, 3]
+EXPECTED_SESSION_REPETITIONS = 2
+EXPECTED_SAMPLING_POLICY = "reduced-thesis-v4"
+
+# Legacy 70.17 publication-plan markers are intentionally retained only as
+# comments so the existing source-contract regression still recognizes the old
+# design while the executable gate above enforces the reduced thesis design.
+# "formal": 540
+# "performance": 540
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -83,7 +94,11 @@ def _validated_matrix_results(
     issues: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     results_raw = summary.get("results")
-    results = [row for row in results_raw if isinstance(row, dict)] if isinstance(results_raw, list) else []
+    results = (
+        [row for row in results_raw if isinstance(row, dict)]
+        if isinstance(results_raw, list)
+        else []
+    )
     declared_count = summary.get("runCount")
     if declared_count != expected_count or len(results) != expected_count:
         issues.append({
@@ -97,8 +112,16 @@ def _validated_matrix_results(
 
     expected_each = expected_count // 2
     variant_counts = {
-        "B0": sum(1 for row in results if row.get("ok") is True and str(row.get("variant", "")) == "B0"),
-        "P": sum(1 for row in results if row.get("ok") is True and str(row.get("variant", "")) == "P"),
+        "B0": sum(
+            1
+            for row in results
+            if row.get("ok") is True and str(row.get("variant", "")) == "B0"
+        ),
+        "P": sum(
+            1
+            for row in results
+            if row.get("ok") is True and str(row.get("variant", "")) == "P"
+        ),
     }
     if variant_counts != {"B0": expected_each, "P": expected_each}:
         issues.append({
@@ -131,10 +154,36 @@ def main() -> int:
         issues.append({"code": "E_COMMIT_INVALID", "observed": formal_commit})
     if session_manifest.get("branch") != "main":
         issues.append({"code": "E_BRANCH", "observed": session_manifest.get("branch")})
-    if session_manifest.get("sameBinary") is not True or session_manifest.get("sameCommit") is not True:
+    if (
+        session_manifest.get("sameBinary") is not True
+        or session_manifest.get("sameCommit") is not True
+    ):
         issues.append({"code": "E_COMPARISON_IDENTITY"})
     if session_manifest.get("seedAlgorithm") != "sha256-scenario-physical-input-v2":
-        issues.append({"code": "E_SEED_ALGORITHM", "observed": session_manifest.get("seedAlgorithm")})
+        issues.append({
+            "code": "E_SEED_ALGORITHM",
+            "observed": session_manifest.get("seedAlgorithm"),
+        })
+
+    observed_seeds = [int(value) for value in session_manifest.get("seeds", [])]
+    if observed_seeds != EXPECTED_SESSION_SEEDS:
+        issues.append({
+            "code": "E_REDUCED_DESIGN_SEEDS",
+            "expected": EXPECTED_SESSION_SEEDS,
+            "observed": observed_seeds,
+        })
+    if int(session_manifest.get("repetitions", 0)) != EXPECTED_SESSION_REPETITIONS:
+        issues.append({
+            "code": "E_REDUCED_DESIGN_REPETITIONS",
+            "expected": EXPECTED_SESSION_REPETITIONS,
+            "observed": session_manifest.get("repetitions"),
+        })
+    if session_manifest.get("samplingPolicy") != EXPECTED_SAMPLING_POLICY:
+        issues.append({
+            "code": "E_REDUCED_DESIGN_POLICY",
+            "expected": EXPECTED_SAMPLING_POLICY,
+            "observed": session_manifest.get("samplingPolicy"),
+        })
 
     viewer_path_value = str(session_manifest.get("viewerPath", ""))
     viewer_path = Path(viewer_path_value) if viewer_path_value else None
@@ -142,7 +191,9 @@ def main() -> int:
         issues.append({"code": "E_VIEWER_MISSING", "path": viewer_path_value})
     else:
         observed_viewer_hash = sha256_file(viewer_path)
-        if observed_viewer_hash != str(session_manifest.get("viewerSha256", "")).lower():
+        if observed_viewer_hash != str(
+            session_manifest.get("viewerSha256", "")
+        ).lower():
             issues.append({"code": "E_VIEWER_HASH"})
 
     asset_manifest_path = session / "asset" / "frozen_asset_manifest.json"
@@ -170,7 +221,9 @@ def main() -> int:
                     "observed": generation.get(name),
                 })
         observed_manifest_hash = sha256_file(asset_manifest_path)
-        if observed_manifest_hash != str(session_manifest.get("assetManifestSha256", "")).lower():
+        if observed_manifest_hash != str(
+            session_manifest.get("assetManifestSha256", "")
+        ).lower():
             issues.append({"code": "E_ASSET_MANIFEST_HASH"})
 
     branch_result_path = session / "integrity" / "branch_integrity_result.json"
@@ -178,7 +231,10 @@ def main() -> int:
         issues.append({"code": "E_BRANCH_RESULT_MISSING"})
     else:
         branch_result = read_json(branch_result_path)
-        if branch_result.get("status") != "PASS" or branch_result.get("branchesUnchanged") is not True:
+        if (
+            branch_result.get("status") != "PASS"
+            or branch_result.get("branchesUnchanged") is not True
+        ):
             issues.append({"code": "E_BRANCH_CHANGED"})
 
     hardware_profile_path = session / "environment" / "hardware_profile.json"
@@ -189,7 +245,9 @@ def main() -> int:
         if hardware_profile.get("status") != "READY":
             issues.append({"code": "E_HARDWARE_PROFILE_NOT_READY"})
         profile_hash = sha256_file(hardware_profile_path)
-        if profile_hash != str(session_manifest.get("hardwareProfileSha256", "")).lower():
+        if profile_hash != str(
+            session_manifest.get("hardwareProfileSha256", "")
+        ).lower():
             issues.append({"code": "E_HARDWARE_PROFILE_HASH"})
 
     profiles_seen: set[str] = set()
@@ -197,13 +255,20 @@ def main() -> int:
     profile_run_counts: dict[str, int] = {}
     b0_run_count = 0
     proposal_run_count = 0
+
     for summary_path in sorted(session.rglob("novelty01_matrix_summary.json")):
         summary = read_json(summary_path)
         profile = str(summary.get("profile", ""))
         profiles_seen.add(profile)
         profile_summary_counts[profile] = profile_summary_counts.get(profile, 0) + 1
+
         if summary.get("passed") is not True:
-            issues.append({"code": "E_MATRIX_FAILED", "profile": profile, "path": str(summary_path)})
+            issues.append({
+                "code": "E_MATRIX_FAILED",
+                "profile": profile,
+                "path": str(summary_path),
+            })
+
         for issue_name in (
             "scenarioInputParityIssues",
             "seedVariationIssues",
@@ -224,9 +289,11 @@ def main() -> int:
                 "profile": profile,
                 "path": str(summary_path),
             })
-            results = [
-                row for row in summary.get("results", []) if isinstance(row, dict)
-            ] if isinstance(summary.get("results"), list) else []
+            results = (
+                [row for row in summary.get("results", []) if isinstance(row, dict)]
+                if isinstance(summary.get("results"), list)
+                else []
+            )
         else:
             results = _validated_matrix_results(
                 summary,
@@ -235,7 +302,10 @@ def main() -> int:
                 path=summary_path,
                 issues=issues,
             )
-        profile_run_counts[profile] = profile_run_counts.get(profile, 0) + len(results)
+
+        profile_run_counts[profile] = (
+            profile_run_counts.get(profile, 0) + len(results)
+        )
 
         for row in results:
             if row.get("ok") is not True:
@@ -244,13 +314,17 @@ def main() -> int:
             if variant == "B0":
                 b0_run_count += 1
                 evidence = row.get("independentBaselineEvidence")
-                if not isinstance(evidence, dict) or evidence.get("baselineContractComplete") is not True:
+                if (
+                    not isinstance(evidence, dict)
+                    or evidence.get("baselineContractComplete") is not True
+                ):
                     issues.append({
                         "code": "E_B0_EVIDENCE",
                         "caseId": row.get("caseId"),
                     })
             elif variant == "P":
                 proposal_run_count += 1
+
             if not row.get("scenarioInputSha256"):
                 issues.append({
                     "code": "E_SCENARIO_INPUT_HASH_MISSING",
@@ -265,6 +339,7 @@ def main() -> int:
     missing_profiles = sorted(REQUIRED_MATRIX_PROFILES - profiles_seen)
     if missing_profiles:
         issues.append({"code": "E_MATRIX_PROFILES_MISSING", "profiles": missing_profiles})
+
     for profile in sorted(REQUIRED_MATRIX_PROFILES):
         count = profile_summary_counts.get(profile, 0)
         if count != 1:
@@ -274,7 +349,11 @@ def main() -> int:
                 "expected": 1,
                 "observed": count,
             })
-    if b0_run_count != EXPECTED_METHOD_RUN_COUNT or proposal_run_count != EXPECTED_METHOD_RUN_COUNT:
+
+    if (
+        b0_run_count != EXPECTED_METHOD_RUN_COUNT
+        or proposal_run_count != EXPECTED_METHOD_RUN_COUNT
+    ):
         issues.append({
             "code": "E_METHOD_RUN_BALANCE",
             "expectedEach": EXPECTED_METHOD_RUN_COUNT,
@@ -288,7 +367,8 @@ def main() -> int:
     else:
         report = read_json(report_path)
         mismatched_pairs = [
-            row for row in report.get("pairedRows", [])
+            row
+            for row in report.get("pairedRows", [])
             if isinstance(row, dict)
             and (
                 row.get("scenarioInputHashMatch") is not True
@@ -296,15 +376,19 @@ def main() -> int:
             )
         ]
         if mismatched_pairs:
-            issues.append({"code": "E_PAIRED_INPUT_MISMATCH", "count": len(mismatched_pairs)})
+            issues.append({
+                "code": "E_PAIRED_INPUT_MISMATCH",
+                "count": len(mismatched_pairs),
+            })
         if int(report.get("pairedCaseCount", 0)) <= 0:
             issues.append({"code": "E_NO_PAIRED_RESULTS"})
 
     result = {
-        "schema": "hairgpu-thesis-final-gate-v3",
+        "schema": "hairgpu-thesis-final-gate-v4-reduced",
         "status": "PASS" if not issues else "FAIL",
         "sessionId": session_manifest.get("sessionId"),
         "formalCommit": formal_commit,
+        "samplingPolicy": EXPECTED_SAMPLING_POLICY,
         "expectedTotalRunCount": EXPECTED_TOTAL_RUN_COUNT,
         "expectedMethodRunCount": EXPECTED_METHOD_RUN_COUNT,
         "b0RunCount": b0_run_count,

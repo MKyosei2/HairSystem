@@ -1,6 +1,7 @@
 {
   "schema": "hairgpu-novelty01-formal-contract-v1",
   "documentRevision": "main-single-binary-b0-p-formal-v3",
+  "samplingRevision": "reduced-thesis-v4-3seeds-2repetitions",
   "branch": "main",
   "sourceCommit": "c90737a74152dacc399d89e82cb06d273840e19d",
   "sourceCommitRole": "minimumSupportedAncestor",
@@ -22,11 +23,11 @@
     "seeds": [
       1,
       2,
-      3,
-      4,
-      5
+      3
     ],
-    "repetitions": 3,
+    "repetitions": 2,
+    "samplingPolicy": "reduced-thesis-v4",
+    "samplingRationale": "Runtime reduced from the original 5-seed x 3-repetition publication plan while preserving all 18 formal scenarios, paired B0/P inputs, counterbalancing, and deterministic seeds.",
     "sessionIsolation": true,
     "refuseEvidenceOverwrite": true,
     "exactCommitAndTreeLock": true
