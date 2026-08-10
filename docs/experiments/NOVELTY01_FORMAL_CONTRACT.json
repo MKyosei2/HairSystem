@@ -41,7 +41,8 @@
     "experiments": [
       "tools/final_stage",
       "benchmarks/novelty01/sgapt_scenarios",
-      "docs/sample_assets/novelty01_frozen_parameters.json"
+      "docs/sample_assets/novelty01_frozen_parameters.json",
+      "tools/signing"
     ],
     "overlayDirectoryAllowed": false,
     "replacementDirectoryAllowed": false,
@@ -475,6 +476,25 @@
     "sameAssetSha256AcrossMethods": true,
     "samePhysicalScenarioInputSha256AcrossPairedRuns": true,
     "recordCommitTreeExecutableAssetScenarioAndHardwareHashes": true,
-    "failClosed": true
+    "failClosed": true,
+    "authenticodeSignatureRequired": true,
+    "signedBinaryHashRecordedAfterSigning": true,
+    "applicationControlExecutionProbeRequired": true,
+    "nativeAndShaderSelfTestsRequiredBeforeAssetFreeze": true,
+    "securityPolicyBypassForbidden": true
+  },
+  "signingPolicy": {
+    "schema": "hairgpu-formal-signing-policy-v1",
+    "required": true,
+    "certificateSubjectLike": "HairSystem Internal Test Signing",
+    "defaultStoreScope": "CurrentUser",
+    "signatureStatusRequired": "Valid",
+    "signBeforeViewerHash": true,
+    "actualCreateProcessProbeRequired": true,
+    "requiredViewerProbes": [
+      "--native-self-test",
+      "--shader-self-test"
+    ],
+    "winError4551Policy": "fail-closed-with-diagnostic; do-not-disable-or-bypass-app-control"
   }
 }

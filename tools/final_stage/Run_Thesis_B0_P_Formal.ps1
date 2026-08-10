@@ -20,7 +20,10 @@ param(
     [string]$Operator = "kyose",
     [string]$Seeds = "1,2,3",
     [ValidateRange(1, 100)]
-    [int]$Repetitions = 2
+    [int]$Repetitions = 2,
+    [string]$SigningSubjectLike = "HairSystem Internal Test Signing",
+    [ValidateSet("CurrentUser","LocalMachine")]
+    [string]$SigningStoreScope = "CurrentUser"
 )
 
 Set-StrictMode -Version Latest
@@ -188,6 +191,219 @@ function Get-MSBuildPath {
         throw "MSBuild.exe was not found."
     }
     return ([string]$found[0]).Trim()
+}
+
+function Get-SignToolPath {
+    $direct = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($null -ne $direct) {
+        return $direct.Source
+    }
+
+    $roots = @(
+        "$env:ProgramFiles(x86)\Windows Kits\10\bin",
+        "$env:ProgramFiles\Windows Kits\10\bin"
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+    foreach ($root in $roots) {
+        $candidate = Get-ChildItem `
+            -LiteralPath $root `
+            -Recurse `
+            -Filter signtool.exe `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+        if ($null -ne $candidate) {
+            return $candidate.FullName
+        }
+    }
+
+    throw "signtool.exe was not found. Install the Windows SDK / Visual Studio signing tools."
+}
+
+function Get-FormalSigningCertificate {
+    $store = "Cert:\$SigningStoreScope\My"
+    $cert = Get-ChildItem -Path $store -ErrorAction Stop |
+        Where-Object {
+            (
+                $_.Subject -like "*$SigningSubjectLike*" -or
+                $_.FriendlyName -like "*$SigningSubjectLike*"
+            ) -and
+            $_.HasPrivateKey -and
+            (Get-Date) -ge $_.NotBefore -and
+            (Get-Date) -le $_.NotAfter
+        } |
+        Sort-Object NotAfter -Descending |
+        Select-Object -First 1
+
+    if ($null -eq $cert) {
+        throw @"
+Formal signing certificate was not found in $store.
+
+Required subject/friendly-name:
+$SigningSubjectLike
+
+Create/install the existing HairSystem internal test signing certificate before starting a formal session.
+Do not disable Windows App Control / Code Integrity.
+"@
+    }
+
+    $ekuOids = @(
+        $cert.EnhancedKeyUsageList |
+            ForEach-Object { [string]$_.ObjectId.Value }
+    )
+    if ($ekuOids -notcontains "1.3.6.1.5.5.7.3.3") {
+        throw "Formal signing certificate does not contain the Code Signing EKU. Thumbprint=$($cert.Thumbprint)"
+    }
+
+    return $cert
+}
+
+function Assert-FormalSigningReady {
+    $signScript = Join-Path $Repo "tools\signing\Sign-HairSystemBuild.ps1"
+    if (-not (Test-Path -LiteralPath $signScript -PathType Leaf)) {
+        throw "Formal signing script is missing: $signScript"
+    }
+
+    $signtool = Get-SignToolPath
+    $cert = Get-FormalSigningCertificate
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "FORMAL CODE SIGNING PREFLIGHT"
+    Write-Host "============================================================"
+    Write-Host "SignTool   : $signtool"
+    Write-Host "Certificate: $($cert.Subject)"
+    Write-Host "Thumbprint : $($cert.Thumbprint)"
+    Write-Host "Store      : $SigningStoreScope\My"
+    Write-Host "Valid until: $($cert.NotAfter.ToString('o'))"
+    Write-Host "Status     : READY"
+    Write-Host "============================================================"
+
+    return [PSCustomObject]@{
+        SignTool = $signtool
+        Certificate = $cert
+        SignScript = $signScript
+    }
+}
+
+function Get-NativeErrorCode {
+    param([Parameter(Mandatory = $true)]$Exception)
+
+    $cursor = $Exception
+    while ($null -ne $cursor) {
+        if ($cursor.PSObject.Properties.Name -contains "NativeErrorCode") {
+            try {
+                return [int]$cursor.NativeErrorCode
+            }
+            catch {
+            }
+        }
+        $cursor = $cursor.InnerException
+    }
+    return $null
+}
+
+function Invoke-ViewerExecutionPolicyProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Viewer,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)]$Session,
+        [ValidateRange(1, 600)]
+        [int]$TimeoutSeconds = 180
+    )
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "[RUN] $Label"
+    Write-Host "============================================================"
+
+    try {
+        $process = Start-Process `
+            -FilePath $Viewer `
+            -ArgumentList $Arguments `
+            -WorkingDirectory (Split-Path -Parent $Viewer) `
+            -PassThru `
+            -ErrorAction Stop
+
+        $exited = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $exited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "$Label timed out after $TimeoutSeconds seconds."
+        }
+
+        $process.Refresh()
+        if ($process.ExitCode -ne 0) {
+            throw "$Label failed. ExitCode=$($process.ExitCode)"
+        }
+
+        Write-Host "[PASS] $Label"
+    }
+    catch {
+        $nativeCode = Get-NativeErrorCode -Exception $_.Exception
+        $failure = [ordered]@{
+            schema = "hairgpu-formal-execution-policy-failure-v1"
+            status = "FAIL"
+            label = $Label
+            viewer = $Viewer
+            arguments = $Arguments
+            nativeErrorCode = $nativeCode
+            exceptionType = $_.Exception.GetType().FullName
+            message = $_.Exception.Message
+            capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        }
+        Write-JsonFile `
+            -Value $failure `
+            -Path (Join-Path $Session.Directory "integrity\formal_signing_failure.json")
+
+        if ($nativeCode -eq 4551 -or $_.Exception.Message -match "4551") {
+            throw @"
+Windows App Control / Code Integrity still blocked the signed HairSystem.exe (WinError 4551).
+
+The formal runner did NOT disable or bypass the policy.
+The configured signing certificate must be permitted by the machine's App Control policy.
+Evidence:
+$(Join-Path $Session.Directory "integrity\formal_signing_failure.json")
+"@
+        }
+
+        throw
+    }
+}
+
+function Assert-ViewerSignatureInvariant {
+    param(
+        [Parameter(Mandatory = $true)]$Session,
+        [Parameter(Mandatory = $true)][string]$Viewer
+    )
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Viewer
+    if ($signature.Status -ne "Valid") {
+        throw "Viewer Authenticode signature is no longer Valid. Status=$($signature.Status)"
+    }
+    if ($null -eq $signature.SignerCertificate) {
+        throw "Viewer signature has no signer certificate."
+    }
+
+    $expectedThumbprint = ([string]$Session.Value.viewerSignatureThumbprint).ToUpperInvariant()
+    $observedThumbprint = ([string]$signature.SignerCertificate.Thumbprint).ToUpperInvariant()
+    if ($expectedThumbprint -ne $observedThumbprint) {
+        throw "Viewer signer changed after Asset freeze. Expected=$expectedThumbprint Observed=$observedThumbprint"
+    }
+
+    $evidencePath = Join-Path $Session.Directory "integrity\formal_signing.json"
+    if (-not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) {
+        throw "Formal signing evidence is missing: $evidencePath"
+    }
+    $evidenceHash = (
+        Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    if ($evidenceHash -ne ([string]$Session.Value.signingEvidenceSha256).ToLowerInvariant()) {
+        throw "Formal signing evidence changed after it was frozen."
+    }
 }
 
 function Read-JsonFile {
@@ -680,15 +896,18 @@ function Assert-HardwareProfileReady {
 function Build-FormalRelease {
     param([Parameter(Mandatory = $true)]$Session)
 
+    $signing = Assert-FormalSigningReady
     $msbuild = Get-MSBuildPath
     $solution = Join-Path $Repo "HairSystem.sln"
     $log = Join-Path $Session.Directory "logs\formal_release_build.log"
+    $buildRoot = Join-Path $Repo "bin\Release\HairSystem"
+    $viewer = Join-Path $buildRoot "HairSystem.exe"
 
     Get-Process HairSystem -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 
     Remove-Item `
-        -LiteralPath (Join-Path $Repo "bin\Release\HairSystem") `
+        -LiteralPath $buildRoot `
         -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item `
         -LiteralPath (Join-Path $Repo "bin-int\Release\HairSystem") `
@@ -711,11 +930,68 @@ function Build-FormalRelease {
         ) `
         -Label "Release x64 formal rebuild"
 
-    $viewer = Join-Path $Repo "bin\Release\HairSystem\HairSystem.exe"
     if (-not (Test-Path -LiteralPath $viewer -PathType Leaf)) {
         throw "Formal viewer was not produced: $viewer"
     }
 
+    # Remove Mark-of-the-Web if it somehow propagated into copied build inputs.
+    # This does not bypass App Control; the executable still must be validly
+    # signed and must pass the actual execution-policy probe below.
+    Get-ChildItem `
+        -LiteralPath $buildRoot `
+        -Recurse `
+        -File `
+        -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Unblock-File -LiteralPath $_.FullName -ErrorAction SilentlyContinue
+        }
+
+    Invoke-NativeChecked `
+        -FilePath "powershell.exe" `
+        -Arguments @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", $signing.SignScript,
+            "-BuildRoot", $buildRoot,
+            "-Thumbprint", $signing.Certificate.Thumbprint,
+            "-StoreScope", $SigningStoreScope
+        ) `
+        -Label "Authenticode sign formal Release output"
+
+    $viewerSignature = Get-AuthenticodeSignature -LiteralPath $viewer
+    if ($viewerSignature.Status -ne "Valid") {
+        throw "Formal Viewer signature is not Valid after signing. Status=$($viewerSignature.Status) Message=$($viewerSignature.StatusMessage)"
+    }
+    if ($null -eq $viewerSignature.SignerCertificate) {
+        throw "Formal Viewer signature has no signer certificate."
+    }
+
+    $expectedThumbprint = (
+        [string]$signing.Certificate.Thumbprint
+    ).ToUpperInvariant()
+    $observedThumbprint = (
+        [string]$viewerSignature.SignerCertificate.Thumbprint
+    ).ToUpperInvariant()
+    if ($expectedThumbprint -ne $observedThumbprint) {
+        throw "Formal Viewer was signed by an unexpected certificate. Expected=$expectedThumbprint Observed=$observedThumbprint"
+    }
+
+    # These are real CreateProcess probes. A valid Authenticode signature alone
+    # is not sufficient: the machine's App Control policy must actually permit
+    # HairSystem.exe to start.
+    Invoke-ViewerExecutionPolicyProbe `
+        -Viewer $viewer `
+        -Arguments @("--native-self-test") `
+        -Label "signed Viewer native self-test / App Control probe" `
+        -Session $Session
+
+    Invoke-ViewerExecutionPolicyProbe `
+        -Viewer $viewer `
+        -Arguments @("--shader-self-test") `
+        -Label "signed Viewer shader self-test / App Control probe" `
+        -Session $Session
+
+    # Hash only AFTER the final signed bytes and policy probes are complete.
     $viewerHash = (
         Get-FileHash -LiteralPath $viewer -Algorithm SHA256
     ).Hash.ToLowerInvariant()
@@ -723,9 +999,36 @@ function Build-FormalRelease {
         Get-FileHash -LiteralPath $log -Algorithm SHA256
     ).Hash.ToLowerInvariant()
 
+    $signingEvidence = [ordered]@{
+        schema = "hairgpu-formal-signing-evidence-v1"
+        status = "PASS"
+        signerSubject = [string]$viewerSignature.SignerCertificate.Subject
+        signerThumbprint = $observedThumbprint
+        signingStoreScope = $SigningStoreScope
+        signatureStatus = [string]$viewerSignature.Status
+        signatureStatusMessage = [string]$viewerSignature.StatusMessage
+        viewerPath = $viewer
+        viewerSha256 = $viewerHash
+        nativeSelfTest = "PASS"
+        shaderSelfTest = "PASS"
+        applicationControlExecutionProbe = "PASS"
+        hashRecordedAfterSigning = $true
+        capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    $signingEvidencePath = Join-Path $Session.Directory "integrity\formal_signing.json"
+    Write-JsonFile -Value $signingEvidence -Path $signingEvidencePath
+    $signingEvidenceHash = (
+        Get-FileHash -LiteralPath $signingEvidencePath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+
     Set-ObjectProperty -Object $Session.Value -Name "viewerPath" -Value $viewer
     Set-ObjectProperty -Object $Session.Value -Name "viewerSha256" -Value $viewerHash
     Set-ObjectProperty -Object $Session.Value -Name "buildLogSha256" -Value $buildLogHash
+    Set-ObjectProperty -Object $Session.Value -Name "viewerSigningRequired" -Value $true
+    Set-ObjectProperty -Object $Session.Value -Name "viewerSignatureStatus" -Value "Valid"
+    Set-ObjectProperty -Object $Session.Value -Name "viewerSignatureThumbprint" -Value $observedThumbprint
+    Set-ObjectProperty -Object $Session.Value -Name "viewerExecutionPolicyProbe" -Value "PASS"
+    Set-ObjectProperty -Object $Session.Value -Name "signingEvidenceSha256" -Value $signingEvidenceHash
     Save-Session -Session $Session
 }
 
@@ -741,6 +1044,8 @@ function Assert-FrozenInputs {
     if (-not (Test-Path -LiteralPath $assetManifest -PathType Leaf)) {
         throw "Frozen asset manifest is missing. Run Stage=Asset first."
     }
+
+    Assert-ViewerSignatureInvariant -Session $Session -Viewer $viewer
 
     $viewerHash = (
         Get-FileHash -LiteralPath $viewer -Algorithm SHA256
@@ -909,6 +1214,7 @@ switch ($Stage) {
     "Prepare" {
         $identity = Get-RepositoryIdentity
         Assert-CleanWorktree
+        Assert-FormalSigningReady | Out-Null
         Invoke-StaticContractChecks
 
         if (-not $SessionId) {

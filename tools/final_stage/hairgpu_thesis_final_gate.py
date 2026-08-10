@@ -196,6 +196,76 @@ def main() -> int:
         ).lower():
             issues.append({"code": "E_VIEWER_HASH"})
 
+    signing_evidence_path = session / "integrity" / "formal_signing.json"
+    if not signing_evidence_path.is_file():
+        issues.append({"code": "E_SIGNING_EVIDENCE_MISSING"})
+    else:
+        signing_evidence = read_json(signing_evidence_path)
+        if signing_evidence.get("status") != "PASS":
+            issues.append({
+                "code": "E_SIGNING_EVIDENCE_FAILED",
+                "observed": signing_evidence.get("status"),
+            })
+        if signing_evidence.get("signatureStatus") != "Valid":
+            issues.append({
+                "code": "E_VIEWER_SIGNATURE_INVALID",
+                "observed": signing_evidence.get("signatureStatus"),
+            })
+        if signing_evidence.get("nativeSelfTest") != "PASS":
+            issues.append({"code": "E_SIGNED_VIEWER_NATIVE_SELFTEST"})
+        if signing_evidence.get("shaderSelfTest") != "PASS":
+            issues.append({"code": "E_SIGNED_VIEWER_SHADER_SELFTEST"})
+        if signing_evidence.get("applicationControlExecutionProbe") != "PASS":
+            issues.append({"code": "E_APP_CONTROL_EXECUTION_PROBE"})
+        if signing_evidence.get("hashRecordedAfterSigning") is not True:
+            issues.append({"code": "E_VIEWER_HASH_BEFORE_SIGNING"})
+
+        evidence_viewer_hash = str(signing_evidence.get("viewerSha256", "")).lower()
+        session_viewer_hash = str(session_manifest.get("viewerSha256", "")).lower()
+        if evidence_viewer_hash != session_viewer_hash:
+            issues.append({
+                "code": "E_SIGNING_VIEWER_HASH",
+                "expected": session_viewer_hash,
+                "observed": evidence_viewer_hash,
+            })
+
+        evidence_thumbprint = str(
+            signing_evidence.get("signerThumbprint", "")
+        ).upper()
+        session_thumbprint = str(
+            session_manifest.get("viewerSignatureThumbprint", "")
+        ).upper()
+        if not evidence_thumbprint or evidence_thumbprint != session_thumbprint:
+            issues.append({
+                "code": "E_SIGNING_THUMBPRINT",
+                "expected": session_thumbprint,
+                "observed": evidence_thumbprint,
+            })
+
+        recorded_signing_hash = str(
+            session_manifest.get("signingEvidenceSha256", "")
+        ).lower()
+        observed_signing_hash = sha256_file(signing_evidence_path)
+        if observed_signing_hash != recorded_signing_hash:
+            issues.append({
+                "code": "E_SIGNING_EVIDENCE_HASH",
+                "expected": recorded_signing_hash,
+                "observed": observed_signing_hash,
+            })
+
+    if session_manifest.get("viewerSigningRequired") is not True:
+        issues.append({"code": "E_VIEWER_SIGNING_NOT_REQUIRED"})
+    if session_manifest.get("viewerSignatureStatus") != "Valid":
+        issues.append({
+            "code": "E_SESSION_VIEWER_SIGNATURE",
+            "observed": session_manifest.get("viewerSignatureStatus"),
+        })
+    if session_manifest.get("viewerExecutionPolicyProbe") != "PASS":
+        issues.append({
+            "code": "E_SESSION_APP_CONTROL_PROBE",
+            "observed": session_manifest.get("viewerExecutionPolicyProbe"),
+        })
+
     asset_manifest_path = session / "asset" / "frozen_asset_manifest.json"
     if not asset_manifest_path.is_file():
         issues.append({"code": "E_ASSET_MANIFEST_MISSING"})
