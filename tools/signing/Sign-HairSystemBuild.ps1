@@ -43,6 +43,52 @@ function Find-SignTool {
     throw 'signtool.exe was not found. Install Visual Studio or Windows SDK first.'
 }
 
+function Get-CertificateEkuOidValues {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Certificate
+    )
+
+    $values = @()
+
+    foreach ($eku in @($Certificate.EnhancedKeyUsageList)) {
+        if ($null -eq $eku) {
+            continue
+        }
+
+        # Windows PowerShell 5.1 normally exposes EnhancedKeyUsageList items
+        # as System.Security.Cryptography.Oid objects with a direct Value
+        # property.  Other PowerShell/.NET combinations can expose a wrapper
+        # whose ObjectId property contains the Oid.  Resolve both shapes
+        # without touching a missing property under Set-StrictMode.
+        $directValueProperty = $eku.PSObject.Properties["Value"]
+        if (
+            $null -ne $directValueProperty -and
+            -not [string]::IsNullOrWhiteSpace([string]$directValueProperty.Value)
+        ) {
+            $values += [string]$directValueProperty.Value
+            continue
+        }
+
+        $objectIdProperty = $eku.PSObject.Properties["ObjectId"]
+        if ($null -ne $objectIdProperty -and $null -ne $objectIdProperty.Value) {
+            $objectId = $objectIdProperty.Value
+            $nestedValueProperty = $objectId.PSObject.Properties["Value"]
+            if (
+                $null -ne $nestedValueProperty -and
+                -not [string]::IsNullOrWhiteSpace([string]$nestedValueProperty.Value)
+            ) {
+                $values += [string]$nestedValueProperty.Value
+                continue
+            }
+        }
+
+        throw "Unsupported EnhancedKeyUsageList item type: $($eku.GetType().FullName)"
+    }
+
+    return @($values)
+}
+
 function Resolve-Certificate {
     param(
         [string]$Thumbprint,
@@ -87,10 +133,7 @@ function Resolve-Certificate {
         throw "Signing certificate is outside its validity period: $($match.Thumbprint)"
     }
 
-    $ekuOids = @(
-        $match.EnhancedKeyUsageList |
-            ForEach-Object { [string]$_.ObjectId.Value }
-    )
+    $ekuOids = @(Get-CertificateEkuOidValues -Certificate $match)
     if ($ekuOids -notcontains '1.3.6.1.5.5.7.3.3') {
         throw "Certificate is not valid for Code Signing EKU: $($match.Thumbprint)"
     }
