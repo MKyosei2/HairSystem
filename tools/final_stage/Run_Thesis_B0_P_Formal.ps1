@@ -59,7 +59,7 @@ public static class HairGpuFormalExecutionState
 }
 
 function Enter-FormalHostGuard {
-    [uint32]$ES_CONTINUOUS = 0x80000000
+    [uint32]$ES_CONTINUOUS = 2147483648
     [uint32]$ES_SYSTEM_REQUIRED = 0x00000001
     [uint32]$ES_DISPLAY_REQUIRED = 0x00000002
     [uint32]$flags = $ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED -bor $ES_DISPLAY_REQUIRED
@@ -78,7 +78,7 @@ function Enter-FormalHostGuard {
 }
 
 function Exit-FormalHostGuard {
-    [uint32]$ES_CONTINUOUS = 0x80000000
+    [uint32]$ES_CONTINUOUS = 2147483648
     [void][HairGpuFormalExecutionState]::SetThreadExecutionState($ES_CONTINUOUS)
 }
 
