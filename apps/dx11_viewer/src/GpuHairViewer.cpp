@@ -148,6 +148,44 @@ namespace
             Sleep(1u);
         }
     }
+
+    // HAIRGPU_N01_PERFORMANCE_COUNTER_ONLY_READBACK_V1
+    // SG-APT's quality path intentionally reads back the full dynamic/repair
+    // index lists so it can build CPU-side validation/diagnostic views. Those
+    // multi-megabyte staging copies are not part of the production simulation
+    // algorithm and become unsafe/high-pressure when Performance submits frames
+    // much faster than Quality. Performance therefore keeps only the 64-counter
+    // asynchronous feedback required by the FullDynamicFastPath controller.
+    struct HairGpuN01PerformanceCounterReadbackSlot
+    {
+        ComPtr<ID3D11Buffer> counters;
+        uint32_t sourceFrame = 0u;
+        uint32_t ageFrames = 0u;
+        bool issued = false;
+    };
+
+    struct HairGpuN01PerformanceCounterReadbackState
+    {
+        std::array<HairGpuN01PerformanceCounterReadbackSlot, 16u> slots = {};
+        uint32_t writeIndex = 0u;
+    };
+
+    std::unordered_map<
+        hairgpu::viewer::GpuHairViewer*,
+        HairGpuN01PerformanceCounterReadbackState>&
+    HairGpuN01PerformanceCounterReadbacks()
+    {
+        static std::unordered_map<
+            hairgpu::viewer::GpuHairViewer*,
+            HairGpuN01PerformanceCounterReadbackState> states;
+        return states;
+    }
+
+    void HairGpuReleaseN01PerformanceCounterReadbacks(
+        hairgpu::viewer::GpuHairViewer* viewer)
+    {
+        HairGpuN01PerformanceCounterReadbacks().erase(viewer);
+    }
 }
 
 #include "GpuHairViewer_parts/00_preamble_helpers_and_phase1_hooks.inl"
@@ -159,15 +197,19 @@ namespace
 // HAIRGPU_FORMAL_POST_MEASUREMENT_BARRIER_V1:
 // The original Run() calls DrainGpuTimingAndCounterReadbacks() after its measured
 // loop and after the final visual capture.  Interpose only at that exact call.
-// A Performance run gets one terminal counter copy outside the measured frames,
-// then an event-query GPU completion barrier.  The original drain still runs.
+// Legacy Performance methods get one terminal counter copy outside the measured
+// frames. P already owns a dedicated counter-only SG-APT readback controller and
+// must not touch the unrelated legacy segment-group counter resource at teardown.
+// All methods then use the event-query GPU completion barrier before teardown.
 // The macro self-reference intentionally resolves to the real member function
 // after this replacement is disabled by the preprocessor.
 #define DrainGpuTimingAndCounterReadbacks()                                      \
     do                                                                            \
     {                                                                             \
         if (IsExperimentModeEnabled() &&                                          \
-            m_experimentCase.measurementMode == MeasurementMode::Performance)      \
+            m_experimentCase.measurementMode == MeasurementMode::Performance &&    \
+            m_experimentCase.methodId !=                                           \
+                ExperimentMethodId::P_IntegratedSegmentGroup)                      \
         {                                                                         \
             QueueCounterReadback(m_globalFrameIndex);                              \
         }                                                                         \
@@ -182,6 +224,14 @@ namespace
             runExitCode = 94;                                                      \
         }                                                                         \
         DrainGpuTimingAndCounterReadbacks();                                       \
+        if (IsExperimentModeEnabled() &&                                          \
+            m_experimentCase.measurementMode == MeasurementMode::Performance &&    \
+            m_context)                                                             \
+        {                                                                         \
+            m_context->ClearState();                                               \
+            m_context->Flush();                                                    \
+            HairGpuReleaseN01PerformanceCounterReadbacks(this);                    \
+        }                                                                         \
     } while (false)
 #define Shutdown ShutdownNovelty01Routed
 #include "GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"
@@ -239,10 +289,163 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
         return;
     }
 
+    const bool performanceMode =
+        m_experimentCase.measurementMode == MeasurementMode::Performance;
+
+    if (performanceMode)
+    {
+        // Performance is defined by the formal matrix with ground_truth=false.
+        // kAllFeatures historically retained Feature_GroundTruth even when the
+        // corresponding resources were not created. Make the execution mask
+        // match the actual resource contract before the first P dispatch.
+        if (runtime->formalGroundTruthEnabled)
+        {
+            SetFatalExperimentFailure(
+                1502u,
+                L"Performance P run requested Ground Truth resources. "
+                L"The thesis Performance profile requires ground_truth=false.");
+            return;
+        }
+        runtime->featureMask &=
+            ~hairgpu::novelty01::Feature_GroundTruth;
+        runtime->formalGroundTruthValidThisFrame = false;
+
+        // Prevent the legacy SG-APT diagnostics ring from issuing/mapping the
+        // full dynamicList + repairList staging copies. These CPU vectors are
+        // used only for diagnostics/telemetry sizing; GPU follower propagation
+        // is driven by followerFlags/activeFollowerList and does not consume them.
+        for (auto& legacySlot : runtime->readbacks)
+        {
+            legacySlot.issued = true;
+            legacySlot.ageFrames = 0u;
+            legacySlot.formalMetricsIssued = false;
+        }
+
+        HairGpuN01PerformanceCounterReadbackState& state =
+            HairGpuN01PerformanceCounterReadbacks()[this];
+
+        // Resolve only tiny counter snapshots. DO_NOT_WAIT keeps this path
+        // asynchronous; an unresolved slot is simply retried on a later frame.
+        for (HairGpuN01PerformanceCounterReadbackSlot& slot : state.slots)
+        {
+            if (!slot.issued)
+            {
+                continue;
+            }
+            ++slot.ageFrames;
+            if (slot.ageFrames < 4u)
+            {
+                continue;
+            }
+
+            D3D11_MAPPED_SUBRESOURCE mapped = {};
+            const HRESULT result = m_context->Map(
+                slot.counters.Get(),
+                0u,
+                D3D11_MAP_READ,
+                D3D11_MAP_FLAG_DO_NOT_WAIT,
+                &mapped);
+            if (result != S_OK)
+            {
+                continue;
+            }
+            if (!mapped.pData)
+            {
+                m_context->Unmap(slot.counters.Get(), 0u);
+                SetFatalExperimentFailure(
+                    1503u,
+                    L"Performance SG-APT counter readback returned null data.");
+                return;
+            }
+
+            std::memcpy(
+                runtime->latestCounters.values.data(),
+                mapped.pData,
+                sizeof(uint32_t) * hairgpu::novelty01::kCounterCount);
+            m_context->Unmap(slot.counters.Get(), 0u);
+
+            runtime->latestCountersValid = true;
+            runtime->latestCounterSourceFrame = slot.sourceFrame;
+
+            // The CPU-side follower vector is telemetry-only in the integrated
+            // runtime. Keep its size meaningful without copying 508k group IDs.
+            const uint32_t dirtyFollowers = std::min<uint32_t>(
+                runtime->latestCounters.Get(
+                    hairgpu::novelty01::Counter_DirtyFollowers),
+                m_asset.followerStrandCount);
+            runtime->activeGuides.clear();
+            runtime->activeFollowers.assign(dirtyFollowers, 0u);
+
+            slot.issued = false;
+            slot.ageFrames = 0u;
+            ++m_counterReadbackResolvedCount;
+        }
+    }
+
     const uint32_t savedDesignScenarioIndex = runtime->designScenarioIndex;
     runtime->designScenarioIndex = std::numeric_limits<uint32_t>::max();
     ExecuteNovelty01ExperimentTickLegacy(dt);
     runtime->designScenarioIndex = savedDesignScenarioIndex;
+
+    if (performanceMode &&
+        m_experimentRunStatus != ExperimentRunStatus::Failed)
+    {
+        // The legacy tick increments the internal readback ages once. Re-pin
+        // them so the next tick cannot Map or re-issue the large list copies.
+        for (auto& legacySlot : runtime->readbacks)
+        {
+            legacySlot.issued = true;
+            legacySlot.ageFrames = 0u;
+            legacySlot.formalMetricsIssued = false;
+        }
+
+        HairGpuN01PerformanceCounterReadbackState& state =
+            HairGpuN01PerformanceCounterReadbacks()[this];
+        HairGpuN01PerformanceCounterReadbackSlot& slot =
+            state.slots[state.writeIndex];
+        if (!slot.issued)
+        {
+            if (!slot.counters)
+            {
+                if (!runtime->counters.buffer)
+                {
+                    SetFatalExperimentFailure(
+                        1504u,
+                        L"Performance SG-APT counter source is missing.");
+                    return;
+                }
+
+                D3D11_BUFFER_DESC desc = {};
+                runtime->counters.buffer->GetDesc(&desc);
+                desc.Usage = D3D11_USAGE_STAGING;
+                desc.BindFlags = 0u;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                desc.MiscFlags = 0u;
+                desc.StructureByteStride = 0u;
+                if (FAILED(m_device->CreateBuffer(
+                        &desc,
+                        nullptr,
+                        &slot.counters)) ||
+                    !slot.counters)
+                {
+                    SetFatalExperimentFailure(
+                        1505u,
+                        L"Performance SG-APT counter staging allocation failed.");
+                    return;
+                }
+            }
+
+            m_context->CopyResource(
+                slot.counters.Get(),
+                runtime->counters.buffer.Get());
+            slot.sourceFrame = m_globalFrameIndex;
+            slot.ageFrames = 0u;
+            slot.issued = true;
+            state.writeIndex =
+                (state.writeIndex + 1u) %
+                static_cast<uint32_t>(state.slots.size());
+        }
+    }
 }
 
 #define ShutdownNovelty01Routed ShutdownNovelty01RoutedCore
