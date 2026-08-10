@@ -35,7 +35,7 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.8-measurement-window-gpu-stability"
+VALIDATION_VERSION = "01-safe-v3.9-performance-exit-hardening"
 FROZEN_ASSET_RUNTIME_VERSION = 5
 
 _FROZEN_ASSET_VIEWER_VALIDATION_CACHE: set[tuple[str, str]] = set()
@@ -234,6 +234,35 @@ def normalize_method_code(value: str) -> str:
     if raw in FORMAL_METHOD_CODES:
         return raw
     return METHOD_ALIASES.get(raw.lower(), raw)
+
+
+WINDOWS_NTSTATUS_NAMES: dict[int, str] = {
+    0xC0000005: "STATUS_ACCESS_VIOLATION",
+    0xC000001D: "STATUS_ILLEGAL_INSTRUCTION",
+    0xC0000094: "STATUS_INTEGER_DIVIDE_BY_ZERO",
+    0xC00000FD: "STATUS_STACK_OVERFLOW",
+    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN",
+}
+
+
+def process_exit_diagnostic(return_code: int) -> dict[str, Any]:
+    """Normalize native process termination without changing pass/fail semantics.
+
+    Python/subprocess wrappers do not agree on whether a Windows NTSTATUS exit
+    is exposed as signed or unsigned.  Preserve the original value and always
+    include the 32-bit hexadecimal representation so a Viewer crash is
+    immediately distinguishable from a normal application error code.
+    """
+    raw = int(return_code)
+    unsigned = raw & 0xFFFFFFFF
+    status_name = WINDOWS_NTSTATUS_NAMES.get(unsigned, "")
+    return {
+        "returnCode": raw,
+        "unsigned32": unsigned,
+        "hex32": f"0x{unsigned:08X}",
+        "isWindowsNtStatus": unsigned >= 0x80000000,
+        "windowsStatusName": status_name,
+    }
 
 
 def sha256_file(path: Path) -> str:
@@ -2233,7 +2262,7 @@ def _artifact_manifest(paths: Mapping[str, Path], case: Mapping[str, Any], finge
         if path.is_file():
             artifacts.append({"kind": key, "path": path.name, "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)})
     payload = {
-        "manifestVersion": "hairgpu-artifacts-v3.8",
+        "manifestVersion": "hairgpu-artifacts-v3.9",
         "runName": case["run_name"], "executionFingerprint": fingerprint,
         "createdUtc": utc_now(), "artifacts": artifacts,
     }
@@ -2330,7 +2359,40 @@ def execute_case(case: Mapping[str, Any], viewer_exe: Path, output_dir: Path,
             if timed_out:
                 raise FormalRunError("Viewer timed out.", EXIT_RUNTIME_FAILURE, [issue("E_VIEWER_TIMEOUT", "Viewer timed out.")])
             if return_code != 0:
-                raise FormalRunError("Viewer returned a non-zero exit code.", EXIT_RUNTIME_FAILURE, [issue("E_VIEWER_EXIT", "Viewer returned a non-zero exit code.", observed=return_code)])
+                exit_diagnostic = process_exit_diagnostic(return_code)
+                exit_diagnostic.update({
+                    "schema": "hairgpu-viewer-exit-diagnostic-v1",
+                    "caseId": str(normalized.get("case_id", normalized.get("run_name", ""))),
+                    "runName": str(normalized.get("run_name", "")),
+                    "method": str(normalized.get("method", "")),
+                    "scenario": str(normalized.get("scenario", "")),
+                    "measurementMode": str(normalized.get("measurement_mode", "")),
+                    "lastProcessSample": sampler.samples[-1] if sampler.samples else None,
+                    "stdoutTail": stdout[-4000:],
+                    "stderrTail": stderr[-4000:],
+                })
+                write_json(output_dir / "viewer_exit_diagnostic.json", exit_diagnostic)
+                exit_issues = [
+                    issue(
+                        "E_VIEWER_EXIT",
+                        "Viewer returned a non-zero exit code "
+                        f"({exit_diagnostic['hex32']}).",
+                        observed=return_code,
+                    )
+                ]
+                if exit_diagnostic["isWindowsNtStatus"]:
+                    status_name = str(exit_diagnostic.get("windowsStatusName") or "UNKNOWN_NTSTATUS")
+                    exit_issues.append(issue(
+                        "E_VIEWER_WINDOWS_EXCEPTION",
+                        "Viewer terminated with a Windows NTSTATUS exception: "
+                        f"{exit_diagnostic['hex32']} {status_name}.",
+                        observed=exit_diagnostic,
+                    ))
+                raise FormalRunError(
+                    "Viewer returned a non-zero exit code.",
+                    EXIT_RUNTIME_FAILURE,
+                    exit_issues,
+                )
             for key, before in pre_asset_hashes.items():
                 value = asset_manifest.get("_resolvedMembers", {}).get(key)
                 if value and sha256_file(Path(value)) != before:

@@ -92,15 +92,101 @@
 
 using Microsoft::WRL::ComPtr;
 
+namespace
+{
+    // HAIRGPU_FORMAL_POST_MEASUREMENT_BARRIER_V1
+    // Performance evidence deliberately avoids the quality-mode per-frame counter
+    // readback.  The missing readback must not be replaced inside the measured
+    // frame interval because doing so would contaminate performance timing.
+    // Instead, wait for all GPU work only after the measurement/visual-capture
+    // interval and before telemetry export/resource teardown.
+    bool HairGpuWaitForGpuIdleAfterMeasurement(
+        ID3D11Device* device,
+        ID3D11DeviceContext* context,
+        DWORD timeoutMilliseconds = 15000u)
+    {
+        if (!device || !context)
+        {
+            return true;
+        }
+
+        D3D11_QUERY_DESC queryDesc = {};
+        queryDesc.Query = D3D11_QUERY_EVENT;
+        queryDesc.MiscFlags = 0u;
+
+        ComPtr<ID3D11Query> completionQuery;
+        if (FAILED(device->CreateQuery(&queryDesc, &completionQuery)) ||
+            !completionQuery)
+        {
+            return false;
+        }
+
+        context->End(completionQuery.Get());
+        context->Flush();
+
+        const ULONGLONG started = GetTickCount64();
+        for (;;)
+        {
+            BOOL completed = FALSE;
+            const HRESULT result = context->GetData(
+                completionQuery.Get(),
+                &completed,
+                static_cast<UINT>(sizeof(completed)),
+                D3D11_ASYNC_GETDATA_DONOTFLUSH);
+            if (result == S_OK && completed)
+            {
+                return true;
+            }
+            if (FAILED(result))
+            {
+                return false;
+            }
+            if (GetTickCount64() - started >= timeoutMilliseconds)
+            {
+                return false;
+            }
+            Sleep(1u);
+        }
+    }
+}
+
 #include "GpuHairViewer_parts/00_preamble_helpers_and_phase1_hooks.inl"
 #include "GpuHairViewer_parts/01_window_device_and_ui_setup.inl"
 
 // Route only the main run loop to the method dispatcher that selects SG-APT
 // for P and the untouched Main implementation for B0-B8.
 #define ExecuteExperimentSimulationTick ExecuteNovelty01ExperimentTick
+// HAIRGPU_FORMAL_POST_MEASUREMENT_BARRIER_V1:
+// The original Run() calls DrainGpuTimingAndCounterReadbacks() after its measured
+// loop and after the final visual capture.  Interpose only at that exact call.
+// A Performance run gets one terminal counter copy outside the measured frames,
+// then an event-query GPU completion barrier.  The original drain still runs.
+// The macro self-reference intentionally resolves to the real member function
+// after this replacement is disabled by the preprocessor.
+#define DrainGpuTimingAndCounterReadbacks()                                      \
+    do                                                                            \
+    {                                                                             \
+        if (IsExperimentModeEnabled() &&                                          \
+            m_experimentCase.measurementMode == MeasurementMode::Performance)      \
+        {                                                                         \
+            QueueCounterReadback(m_globalFrameIndex);                              \
+        }                                                                         \
+        if (IsExperimentModeEnabled() &&                                          \
+            !HairGpuWaitForGpuIdleAfterMeasurement(                               \
+                m_device.Get(),                                                    \
+                m_context.Get()))                                                  \
+        {                                                                         \
+            SetFatalExperimentFailure(                                             \
+                1501u,                                                             \
+                L"Post-measurement GPU completion barrier failed or timed out."); \
+            runExitCode = 94;                                                      \
+        }                                                                         \
+        DrainGpuTimingAndCounterReadbacks();                                       \
+    } while (false)
 #define Shutdown ShutdownNovelty01Routed
 #include "GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"
 #undef Shutdown
+#undef DrainGpuTimingAndCounterReadbacks
 #undef ExecuteExperimentSimulationTick
 
 // Compile the Main simulation functions under explicit Legacy names.

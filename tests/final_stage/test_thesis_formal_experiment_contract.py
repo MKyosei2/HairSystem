@@ -498,6 +498,79 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         ):
             self.assertIn(marker, final_run_source)
 
+    def test_performance_profile_preserves_uncontaminated_measurement_mode(self) -> None:
+        matrix = load_matrix_module()
+        settings = matrix.PROFILE_SETTINGS["performance"]
+        self.assertEqual(settings["warmup_frames"], 600)
+        self.assertEqual(settings["measurement_frames"], 6000)
+        self.assertEqual(settings["measurement_mode"], "performance")
+        self.assertFalse(settings["ground_truth"])
+
+        # The fix must not hide the crash by making Performance use the Quality
+        # execution path.  Quality retains its independent evidence semantics.
+        self.assertEqual(
+            matrix.PROFILE_SETTINGS["formal"]["measurement_mode"],
+            "quality",
+        )
+
+    def test_performance_gpu_barrier_is_post_measurement_only(self) -> None:
+        aggregate = (
+            ROOT / "apps/dx11_viewer/src/GpuHairViewer.cpp"
+        ).read_text(encoding="utf-8")
+        legacy = (
+            ROOT
+            / "apps/dx11_viewer/src/GpuHairViewer_parts/03_simulation_reset_and_frame_step.inl"
+        ).read_text(encoding="utf-8")
+
+        for marker in (
+            "HAIRGPU_FORMAL_POST_MEASUREMENT_BARRIER_V1",
+            "HairGpuWaitForGpuIdleAfterMeasurement",
+            "D3D11_QUERY_EVENT",
+            "D3D11_ASYNC_GETDATA_DONOTFLUSH",
+            "QueueCounterReadback(m_globalFrameIndex);",
+            "runExitCode = 94;",
+            "Post-measurement GPU completion barrier failed or timed out.",
+        ):
+            self.assertIn(marker, aggregate)
+
+        # Performance remains free of the Quality-mode per-frame counter copy.
+        self.assertIn(
+            "m_experimentCase.measurementMode != MeasurementMode::Performance",
+            legacy,
+        )
+        barrier = aggregate.index("#define DrainGpuTimingAndCounterReadbacks()")
+        run_include = aggregate.index(
+            '#include "GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"'
+        )
+        self.assertLess(barrier, run_include)
+        self.assertNotIn(
+            "m_experimentCase.measurementMode = MeasurementMode::Quality",
+            aggregate,
+        )
+
+    def test_access_violation_exit_code_is_explained_fail_closed(self) -> None:
+        path = ROOT / "tools/final_stage/hairgpu_final_run.py"
+        spec = importlib.util.spec_from_file_location(
+            "thesis_final_run_exit_v39", path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        for value in (3221225477, -1073741819):
+            diagnostic = module.process_exit_diagnostic(value)
+            self.assertEqual(diagnostic["hex32"], "0xC0000005")
+            self.assertTrue(diagnostic["isWindowsNtStatus"])
+            self.assertEqual(
+                diagnostic["windowsStatusName"],
+                "STATUS_ACCESS_VIOLATION",
+            )
+
+        source = path.read_text(encoding="utf-8")
+        self.assertIn('"E_VIEWER_WINDOWS_EXCEPTION"', source)
+        self.assertIn('"viewer_exit_diagnostic.json"', source)
+
     def test_publication_profiles_enforce_runtime_hardware_contract(self) -> None:
         matrix = load_matrix_module()
         contract = {
