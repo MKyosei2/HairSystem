@@ -43,6 +43,17 @@ function Get-CertificateEkuOidValues {
         $objectIdProperty = $eku.PSObject.Properties["ObjectId"]
         if ($null -ne $objectIdProperty -and $null -ne $objectIdProperty.Value) {
             $objectId = $objectIdProperty.Value
+
+            # Windows PowerShell 5.1 can expose
+            # EnhancedKeyUsageRepresentation.ObjectId as the OID string itself.
+            if (
+                $objectId -is [string] -and
+                -not [string]::IsNullOrWhiteSpace([string]$objectId)
+            ) {
+                $values += [string]$objectId
+                continue
+            }
+
             $nestedValueProperty = $objectId.PSObject.Properties["Value"]
             if (
                 $null -ne $nestedValueProperty -and

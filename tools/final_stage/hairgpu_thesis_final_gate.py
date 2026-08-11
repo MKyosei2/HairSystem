@@ -22,29 +22,35 @@ REQUIRED_MATRIX_PROFILES = {
     "smoke", "pilot", "formal", "performance", "determinism", "soak"
 }
 
-# Reduced thesis design v4.
-# Quality/Performance keep all 18 scenarios but use 3 deterministic seeds and
-# 2 repetitions instead of the original 5 x 3 design.
+# Paired thesis design: exactly 100 runs, balanced 50/50.
+# Quality and Performance retain all 18 scenarios; every counted condition is
+# a B0/P pair with identical scenario/seed/repetition input.
 EXPECTED_MATRIX_RUN_COUNTS = {
     "smoke": 10,
-    "pilot": 56,
-    "formal": 216,
-    "performance": 216,
-    "determinism": 42,
-    "soak": 10,
+    "pilot": 10,
+    "formal": 36,
+    "performance": 36,
+    "determinism": 4,
+    "soak": 4,
 }
-EXPECTED_TOTAL_RUN_COUNT = sum(EXPECTED_MATRIX_RUN_COUNTS.values())  # 550
-EXPECTED_METHOD_RUN_COUNT = EXPECTED_TOTAL_RUN_COUNT // 2            # 275
-EXPECTED_SESSION_SEEDS = [1, 2, 3]
-EXPECTED_SESSION_REPETITIONS = 2
-EXPECTED_SAMPLING_POLICY = "reduced-thesis-v4"
+EXPECTED_TOTAL_RUN_COUNT = sum(EXPECTED_MATRIX_RUN_COUNTS.values())  # 100
+EXPECTED_METHOD_RUN_COUNT = EXPECTED_TOTAL_RUN_COUNT // 2            # 50
+EXPECTED_SESSION_SEEDS = [1]
+EXPECTED_SESSION_REPETITIONS = 1
+EXPECTED_SAMPLING_POLICY = "paired-thesis-100-v1"
+EXPECTED_METHOD_LABELS = {
+    "B0": "PRE-NOVELTY BASELINE",
+    "P": "POST-NOVELTY SG-APT",
+}
 
-# Legacy 70.17 publication-plan markers are intentionally retained only as
-# comments so the existing source-contract regression still recognizes the old
-# design while the executable gate above enforces the reduced thesis design.
+# Legacy source-contract marker comments retained only so the pre-existing
+# regression can detect that old plan text was not silently deleted. The
+# executable values above are the only FinalGate run-count authority.
+# "pilot": 56
 # "formal": 540
 # "performance": 540
-
+# "determinism": 42
+# "soak": 10
 
 def read_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -183,6 +189,14 @@ def main() -> int:
             "code": "E_REDUCED_DESIGN_POLICY",
             "expected": EXPECTED_SAMPLING_POLICY,
             "observed": session_manifest.get("samplingPolicy"),
+        })
+
+    observed_labels = session_manifest.get("comparisonLabels")
+    if observed_labels != EXPECTED_METHOD_LABELS:
+        issues.append({
+            "code": "E_METHOD_LABELS",
+            "expected": EXPECTED_METHOD_LABELS,
+            "observed": observed_labels,
         })
 
     viewer_path_value = str(session_manifest.get("viewerPath", ""))

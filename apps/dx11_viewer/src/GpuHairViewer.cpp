@@ -149,16 +149,21 @@ namespace
         }
     }
 
-    // HAIRGPU_N01_PERFORMANCE_COUNTER_ONLY_READBACK_V1
+    // HAIRGPU_N01_PERFORMANCE_QUERY_GATED_READBACK_V2
     // SG-APT's quality path intentionally reads back the full dynamic/repair
     // index lists so it can build CPU-side validation/diagnostic views. Those
     // multi-megabyte staging copies are not part of the production simulation
     // algorithm and become unsafe/high-pressure when Performance submits frames
     // much faster than Quality. Performance therefore keeps only the 64-counter
     // asynchronous feedback required by the FullDynamicFastPath controller.
+    // V2 removes the remaining age-only Map heuristic: every staging copy is
+    // paired with an EVENT query and is mapped only after the GPU confirms that
+    // the CopyResource has completed. This avoids a P/Performance-only race with
+    // the D3D11 driver observed as 0xC0000005 on S01.
     struct HairGpuN01PerformanceCounterReadbackSlot
     {
         ComPtr<ID3D11Buffer> counters;
+        ComPtr<ID3D11Query> completionQuery;
         uint32_t sourceFrame = 0u;
         uint32_t ageFrames = 0u;
         bool issued = false;
@@ -260,6 +265,27 @@ namespace
 // edit, repair, camera, or force-state stimuli on top of the common input.
 void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 {
+    // HAIRGPU_FORMAL_METHOD_LABEL_V1
+    // Every matrix case is a separate Viewer process. Label the first simulation
+    // tick so an unattended/interactive run makes the active thesis side explicit
+    // without adding per-frame UI work to the measured interval.
+    if (m_hwnd && m_simulationTickIndex == 0u)
+    {
+        if (m_experimentCase.methodId == ExperimentMethodId::B0_FullDynamic)
+        {
+            SetWindowTextW(
+                m_hwnd,
+                L"HairSystem Thesis | PRE-NOVELTY BASELINE [B0]");
+        }
+        else if (m_experimentCase.methodId ==
+                 ExperimentMethodId::P_IntegratedSegmentGroup)
+        {
+            SetWindowTextW(
+                m_hwnd,
+                L"HairSystem Thesis | POST-NOVELTY [P / SG-APT]");
+        }
+    }
+
     const bool timelineOwnsExternalInputs =
         N01EnvironmentEnabled(
             L"HAIRGPU_N01_TIMELINE_OWNS_EXTERNAL_INPUTS",
@@ -324,8 +350,9 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
         HairGpuN01PerformanceCounterReadbackState& state =
             HairGpuN01PerformanceCounterReadbacks()[this];
 
-        // Resolve only tiny counter snapshots. DO_NOT_WAIT keeps this path
-        // asynchronous; an unresolved slot is simply retried on a later frame.
+        // Resolve only tiny counter snapshots. Age is used only to avoid polling
+        // a query immediately after submission; the EVENT query, not frame age,
+        // is the synchronization authority for CPU mapping.
         for (HairGpuN01PerformanceCounterReadbackSlot& slot : state.slots)
         {
             if (!slot.issued)
@@ -333,21 +360,50 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 continue;
             }
             ++slot.ageFrames;
-            if (slot.ageFrames < 4u)
+            if (slot.ageFrames < 2u)
             {
                 continue;
             }
+            if (!slot.counters || !slot.completionQuery || !m_context)
+            {
+                SetFatalExperimentFailure(
+                    1508u,
+                    L"Performance SG-APT readback slot lost its staging/query resource.");
+                return;
+            }
+
+            BOOL copyCompleted = FALSE;
+            const HRESULT completionResult = m_context->GetData(
+                slot.completionQuery.Get(),
+                &copyCompleted,
+                static_cast<UINT>(sizeof(copyCompleted)),
+                D3D11_ASYNC_GETDATA_DONOTFLUSH);
+            if (completionResult == S_FALSE ||
+                (completionResult == S_OK && !copyCompleted))
+            {
+                continue;
+            }
+            if (FAILED(completionResult))
+            {
+                SetFatalExperimentFailure(
+                    1507u,
+                    L"Performance SG-APT counter completion query failed.");
+                return;
+            }
 
             D3D11_MAPPED_SUBRESOURCE mapped = {};
-            const HRESULT result = m_context->Map(
+            const HRESULT mapResult = m_context->Map(
                 slot.counters.Get(),
                 0u,
                 D3D11_MAP_READ,
-                D3D11_MAP_FLAG_DO_NOT_WAIT,
+                0u,
                 &mapped);
-            if (result != S_OK)
+            if (FAILED(mapResult))
             {
-                continue;
+                SetFatalExperimentFailure(
+                    1506u,
+                    L"Performance SG-APT counter staging Map failed after GPU completion.");
+                return;
             }
             if (!mapped.pData)
             {
@@ -435,9 +491,39 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 }
             }
 
+            if (!slot.completionQuery)
+            {
+                D3D11_QUERY_DESC queryDesc = {};
+                queryDesc.Query = D3D11_QUERY_EVENT;
+                queryDesc.MiscFlags = 0u;
+                if (!m_device ||
+                    FAILED(m_device->CreateQuery(
+                        &queryDesc,
+                        &slot.completionQuery)) ||
+                    !slot.completionQuery)
+                {
+                    SetFatalExperimentFailure(
+                        1509u,
+                        L"Performance SG-APT counter completion query allocation failed.");
+                    return;
+                }
+            }
+            if (!m_context || !runtime->counters.buffer)
+            {
+                SetFatalExperimentFailure(
+                    1504u,
+                    L"Performance SG-APT counter source/context is missing.");
+                return;
+            }
+
+            // Explicitly remove any compute bindings before the copy. The EVENT
+            // query is ended immediately after CopyResource, so GetData later
+            // proves that this exact staging snapshot is complete before Map.
+            N01UnbindCompute(m_context.Get());
             m_context->CopyResource(
                 slot.counters.Get(),
                 runtime->counters.buffer.Get());
+            m_context->End(slot.completionQuery.Get());
             slot.sourceFrame = m_globalFrameIndex;
             slot.ageFrames = 0u;
             slot.issued = true;

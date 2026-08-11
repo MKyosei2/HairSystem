@@ -14,12 +14,16 @@ class Novelty01PerformanceReadbackStabilityTests(unittest.TestCase):
 
     def test_performance_counter_only_controller_is_present(self) -> None:
         for marker in (
-            "HAIRGPU_N01_PERFORMANCE_COUNTER_ONLY_READBACK_V1",
+            "HAIRGPU_N01_PERFORMANCE_QUERY_GATED_READBACK_V2",
             "HairGpuN01PerformanceCounterReadbackSlot",
             "HairGpuN01PerformanceCounterReadbackState",
             "HairGpuN01PerformanceCounterReadbacks",
             "HairGpuReleaseN01PerformanceCounterReadbacks",
-            "D3D11_MAP_FLAG_DO_NOT_WAIT",
+            "ComPtr<ID3D11Query> completionQuery;",
+            "D3D11_QUERY_EVENT",
+            "D3D11_ASYNC_GETDATA_DONOTFLUSH",
+            "m_context->End(slot.completionQuery.Get());",
+            "D3D11_MAP_READ,\n                0u,",
             "runtime->latestCountersValid = true;",
             "runtime->latestCounterSourceFrame = slot.sourceFrame;",
         ):
@@ -109,8 +113,30 @@ class Novelty01PerformanceReadbackStabilityTests(unittest.TestCase):
         ):
             self.assertIn(marker, wrapper)
 
+    def test_query_gated_map_replaces_age_only_do_not_wait_map(self) -> None:
+        wrapper_start = self.source.index(
+            "void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)"
+        )
+        wrapper_end = self.source.index(
+            "#define ShutdownNovelty01Routed ShutdownNovelty01RoutedCore",
+            wrapper_start,
+        )
+        wrapper = self.source[wrapper_start:wrapper_end]
+        self.assertIn("GetData(", wrapper)
+        self.assertIn("D3D11_ASYNC_GETDATA_DONOTFLUSH", wrapper)
+        self.assertIn("m_context->End(slot.completionQuery.Get());", wrapper)
+        self.assertNotIn("D3D11_MAP_FLAG_DO_NOT_WAIT", wrapper)
+
+    def test_formal_method_window_labels_are_explicit(self) -> None:
+        self.assertIn("HAIRGPU_FORMAL_METHOD_LABEL_V1", self.source)
+        self.assertIn("PRE-NOVELTY BASELINE [B0]", self.source)
+        self.assertIn("POST-NOVELTY [P / SG-APT]", self.source)
+
     def test_new_fail_closed_codes_are_present(self) -> None:
-        for code in ("1502u", "1503u", "1504u", "1505u"):
+        for code in (
+            "1502u", "1503u", "1504u", "1505u",
+            "1506u", "1507u", "1508u", "1509u",
+        ):
             self.assertIn(code, self.source)
 
 

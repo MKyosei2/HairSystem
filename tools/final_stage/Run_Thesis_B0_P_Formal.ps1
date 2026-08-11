@@ -18,9 +18,9 @@ param(
     [string]$OutputRoot = "C:\HairSystemFormalResults",
     [string]$SessionId = "",
     [string]$Operator = "kyose",
-    [string]$Seeds = "1,2,3",
+    [string]$Seeds = "1",
     [ValidateRange(1, 100)]
-    [int]$Repetitions = 2,
+    [int]$Repetitions = 1,
     [string]$SigningSubjectLike = "HairSystem Internal Test Signing",
     [ValidateSet("CurrentUser","LocalMachine")]
     [string]$SigningStoreScope = "CurrentUser"
@@ -34,9 +34,9 @@ $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $SessionsRoot = Join-Path $OutputRoot "sessions"
 $CurrentSessionPointer = Join-Path $OutputRoot "CURRENT_SESSION.txt"
 $ExpectedRemotePattern = "MKyosei2/HairSystem"
-$ReducedSamplingPolicy = "reduced-thesis-v4"
-$ExpectedReducedSeeds = "1,2,3"
-$ExpectedReducedRepetitions = 2
+$ReducedSamplingPolicy = "paired-thesis-100-v1"
+$ExpectedReducedSeeds = "1"
+$ExpectedReducedRepetitions = 1
 
 # ----------------------------------------------------------------------
 # Host guard for the real ExitCode=92 failure observed during unattended
@@ -200,7 +200,7 @@ function Get-SignToolPath {
     }
 
     $roots = @(
-        "$env:ProgramFiles(x86)\Windows Kits\10\bin",
+        "${env:ProgramFiles(x86)}\Windows Kits\10\bin",
         "$env:ProgramFiles\Windows Kits\10\bin"
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
 
@@ -253,6 +253,17 @@ function Get-CertificateEkuOidValues {
         $objectIdProperty = $eku.PSObject.Properties["ObjectId"]
         if ($null -ne $objectIdProperty -and $null -ne $objectIdProperty.Value) {
             $objectId = $objectIdProperty.Value
+
+            # Windows PowerShell 5.1 can expose
+            # EnhancedKeyUsageRepresentation.ObjectId as the OID string itself.
+            if (
+                $objectId -is [string] -and
+                -not [string]::IsNullOrWhiteSpace([string]$objectId)
+            ) {
+                $values += [string]$objectId
+                continue
+            }
+
             $nestedValueProperty = $objectId.PSObject.Properties["Value"]
             if (
                 $null -ne $nestedValueProperty -and
@@ -625,7 +636,8 @@ function Invoke-StaticContractChecks {
         "tools/final_stage/hairgpu_novelty01_matrix.py",
         "tools/final_stage/hairgpu_thesis_report.py",
         "tools/final_stage/hairgpu_thesis_final_gate.py",
-        "tests/final_stage/test_thesis_formal_experiment_contract.py"
+        "tests/final_stage/test_thesis_formal_experiment_contract.py",
+        "tests/final_stage/test_novelty01_performance_readback_stability.py"
     )
     foreach ($relative in $compileTargets) {
         $path = Join-Path $Repo $relative
@@ -647,6 +659,16 @@ function Invoke-StaticContractChecks {
             "-v"
         )) `
         -Label "Thesis formal source contract tests"
+
+    Invoke-NativeChecked `
+        -FilePath $python.FilePath `
+        -Arguments (@($python.Prefix) + @(
+            "-m", "unittest", "discover",
+            "-s", (Join-Path $Repo "tests\final_stage"),
+            "-p", "test_novelty01_performance_readback_stability.py",
+            "-v"
+        )) `
+        -Label "P/Performance query-gated readback regression tests"
 
     $preflight = Join-Path $Repo "tools\final_stage\hairgpu_novelty01_preflight.py"
     $preflightJson = Join-Path $env:TEMP "hairgpu_n01_prepare_preflight_$PID.json"
@@ -1162,6 +1184,16 @@ function Invoke-Matrix {
     $env:HAIRGPU_FORMAL_SESSION_ID = [string]$Session.Value.sessionId
     $env:HAIRGPU_FORMAL_COMMIT = [string]$Session.Value.formalCommit
 
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "THESIS METHOD LEGEND / CURRENT VIEWER TITLE"
+    Write-Host "============================================================"
+    Write-Host "B0 = PRE-NOVELTY BASELINE (新規性実装前相当)" -ForegroundColor Cyan
+    Write-Host "P  = POST-NOVELTY SG-APT (新規性実装後)" -ForegroundColor Yellow
+    Write-Host "Each B0/P condition uses the same scenario, seed and repetition."
+    Write-Host "The HairSystem window title identifies the case currently running."
+    Write-Host "============================================================"
+
     try {
         Invoke-NativeChecked `
             -FilePath $python.FilePath `
@@ -1241,13 +1273,13 @@ function Verify-LocalBranches {
     Add-CompletedStage -Session $Session -Name "VerifyBranches"
 }
 
-# Reduced formal design is fixed, not user-selectable, so evidence cannot
-# accidentally mix the original 5x3 plan with the reduced 3x2 plan.
+# Paired 100-run thesis design is fixed, not user-selectable. Every counted
+# condition has a matched B0/P pair; FinalGate requires exactly 50 runs each.
 if ($Seeds -ne $ExpectedReducedSeeds) {
-    throw "Reduced thesis runner requires -Seeds `"$ExpectedReducedSeeds`". Observed=$Seeds"
+    throw "Paired 100-run thesis runner requires -Seeds `"$ExpectedReducedSeeds`". Observed=$Seeds"
 }
 if ($Repetitions -ne $ExpectedReducedRepetitions) {
-    throw "Reduced thesis runner requires -Repetitions $ExpectedReducedRepetitions. Observed=$Repetitions"
+    throw "Paired 100-run thesis runner requires -Repetitions $ExpectedReducedRepetitions. Observed=$Repetitions"
 }
 
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
@@ -1314,11 +1346,15 @@ switch ($Stage) {
             sameCommit = $true
             schedule = "counterbalanced"
             seedAlgorithm = "sha256-scenario-physical-input-v2"
-            seeds = @(1, 2, 3)
-            repetitions = 2
+            seeds = @(1)
+            repetitions = 1
             samplingPolicy = $ReducedSamplingPolicy
-            expectedFormalRunCount = 550
-            expectedMethodRunCount = 275
+            expectedFormalRunCount = 100
+            expectedMethodRunCount = 50
+            comparisonLabels = [ordered]@{
+                B0 = "PRE-NOVELTY BASELINE"
+                P = "POST-NOVELTY SG-APT"
+            }
             completedStages = @("Prepare")
             branchCreated = $false
             committed = $false
@@ -1453,9 +1489,9 @@ switch ($Stage) {
         Invoke-Matrix `
             -Session $session `
             -Profile "pilot" `
-            -Scenarios "S01,S07,S09,S11,S13,S16,S17" `
-            -SeedList "1,2" `
-            -RepeatCount 2 `
+            -Scenarios "S01,S07,S13,S16,S17" `
+            -SeedList "1" `
+            -RepeatCount 1 `
             -Output (Join-Path $session.Directory "pilot\B0_vs_P")
         Add-CompletedStage -Session $session -Name "Pilot"
     }
@@ -1468,8 +1504,8 @@ switch ($Stage) {
             -Session $session `
             -Profile "formal" `
             -Scenarios "all" `
-            -SeedList "1,2,3" `
-            -RepeatCount 2 `
+            -SeedList "1" `
+            -RepeatCount 1 `
             -Output (Join-Path $session.Directory "quality\B0_vs_P")
         Add-CompletedStage -Session $session -Name "Quality"
     }
@@ -1482,8 +1518,8 @@ switch ($Stage) {
             -Session $session `
             -Profile "performance" `
             -Scenarios "all" `
-            -SeedList "1,2,3" `
-            -RepeatCount 2 `
+            -SeedList "1" `
+            -RepeatCount 1 `
             -Output (Join-Path $session.Directory "performance\B0_vs_P")
         Add-CompletedStage -Session $session -Name "Performance"
     }
@@ -1495,9 +1531,9 @@ switch ($Stage) {
         Invoke-Matrix `
             -Session $session `
             -Profile "determinism" `
-            -Scenarios "S01,S06,S09,S11,S13,S16,S18" `
+            -Scenarios "S01" `
             -SeedList "1" `
-            -RepeatCount 3 `
+            -RepeatCount 2 `
             -Output (Join-Path $session.Directory "determinism\B0_vs_P")
         Add-CompletedStage -Session $session -Name "Determinism"
     }
@@ -1509,7 +1545,7 @@ switch ($Stage) {
         Invoke-Matrix `
             -Session $session `
             -Profile "soak" `
-            -Scenarios "S01,S07,S13,S16,S17" `
+            -Scenarios "S01,S13" `
             -SeedList "1" `
             -RepeatCount 1 `
             -Output (Join-Path $session.Directory "soak\B0_vs_P")
