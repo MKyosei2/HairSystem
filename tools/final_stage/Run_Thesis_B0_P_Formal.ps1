@@ -1213,6 +1213,184 @@ function Assert-FrozenInputs {
         -Label "Verify frozen asset bytes and manifest"
 }
 
+
+# ----------------------------------------------------------------------
+# 70.24 qualification / crash-dump / downstream guards.
+# Qualification artifacts live outside sessions\ so the thesis FinalGate never
+# counts them as formal evidence. They are intentionally destructive-to-time but
+# non-formal: their only purpose is to discover P/Performance, Determinism and
+# long-run failures before the 100-run session spends hours collecting evidence.
+# ----------------------------------------------------------------------
+function Assert-FreeDiskSpace {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [double]$MinimumFreeGiB = 20.0
+    )
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        throw "Could not resolve a drive root for disk-space preflight: $full"
+    }
+    $driveName = $root.TrimEnd('\').TrimEnd(':')
+    $drive = Get-PSDrive -Name $driveName -ErrorAction Stop
+    $freeGiB = [double]$drive.Free / 1GB
+    Write-Host ("Disk free on {0}: {1:N2} GiB" -f $root, $freeGiB)
+    if ($freeGiB -lt $MinimumFreeGiB) {
+        throw ("Insufficient free disk space. Required>={0:N2} GiB Observed={1:N2} GiB Drive={2}" -f $MinimumFreeGiB, $freeGiB, $root)
+    }
+}
+
+function Enable-HairSystemCrashDumpCapture {
+    param([Parameter(Mandatory = $true)][string]$DumpFolder)
+
+    if ($env:OS -ne "Windows_NT") {
+        return $null
+    }
+    New-Item -ItemType Directory -Path $DumpFolder -Force | Out-Null
+    $key = "HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\HairSystem.exe"
+    $existed = Test-Path -LiteralPath $key
+    $snapshot = [ordered]@{
+        Key = $key
+        Existed = $existed
+        DumpFolderPresent = $false
+        DumpFolder = $null
+        DumpTypePresent = $false
+        DumpType = $null
+        DumpCountPresent = $false
+        DumpCount = $null
+    }
+    if ($existed) {
+        $old = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+        foreach ($name in @("DumpFolder", "DumpType", "DumpCount")) {
+            if ($null -ne $old -and $old.PSObject.Properties.Name -contains $name) {
+                $snapshot[$name + "Present"] = $true
+                $snapshot[$name] = $old.$name
+            }
+        }
+    }
+    New-Item -ItemType Directory -Path $key -Force | Out-Null
+    New-ItemProperty -LiteralPath $key -Name "DumpFolder" -Value $DumpFolder -PropertyType ExpandString -Force | Out-Null
+    New-ItemProperty -LiteralPath $key -Name "DumpType" -Value 2 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -LiteralPath $key -Name "DumpCount" -Value 1 -PropertyType DWord -Force | Out-Null
+    Write-Host "WER full crash dump capture: $DumpFolder"
+    return [PSCustomObject]$snapshot
+}
+
+function Restore-HairSystemCrashDumpCapture {
+    param($Snapshot)
+    if ($null -eq $Snapshot -or $env:OS -ne "Windows_NT") {
+        return
+    }
+    $key = [string]$Snapshot.Key
+    if (-not [bool]$Snapshot.Existed) {
+        Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue
+        return
+    }
+    foreach ($name in @("DumpFolder", "DumpType", "DumpCount")) {
+        $presentName = $name + "Present"
+        if ([bool]$Snapshot.$presentName) {
+            $type = if ($name -eq "DumpFolder") { "ExpandString" } else { "DWord" }
+            New-ItemProperty -LiteralPath $key -Name $name -Value $Snapshot.$name -PropertyType $type -Force | Out-Null
+        }
+        else {
+            Remove-ItemProperty -LiteralPath $key -Name $name -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Assert-MatrixSummaryContract {
+    param(
+        [Parameter(Mandatory = $true)][string]$Output,
+        [Parameter(Mandatory = $true)][string]$Profile,
+        [Parameter(Mandatory = $true)][int]$ExpectedRuns
+    )
+    $summaryPath = Join-Path $Output "novelty01_matrix_summary.json"
+    if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) {
+        throw "Matrix summary is missing: $summaryPath"
+    }
+    $summary = Read-JsonFile -Path $summaryPath
+    if ($summary.passed -ne $true) {
+        throw "Matrix summary did not pass: $summaryPath"
+    }
+    if ([string]$summary.profile -ne $Profile) {
+        throw "Matrix profile mismatch. Expected=$Profile Observed=$($summary.profile)"
+    }
+    if ([int]$summary.runCount -ne $ExpectedRuns) {
+        throw "Matrix run count mismatch. Profile=$Profile Expected=$ExpectedRuns Observed=$($summary.runCount)"
+    }
+    $rows = @($summary.results)
+    if ($rows.Count -ne $ExpectedRuns) {
+        throw "Matrix results count mismatch. Profile=$Profile Expected=$ExpectedRuns Observed=$($rows.Count)"
+    }
+    $failed = @($rows | Where-Object { $_.ok -ne $true })
+    if ($failed.Count -ne 0) {
+        throw "Matrix contains failed rows. Profile=$Profile Failed=$($failed.Count)"
+    }
+    if (@($summary.scenarioInputParityIssues).Count -ne 0) {
+        throw "Scenario-input parity issues were detected in $summaryPath"
+    }
+    if (@($summary.seedVariationIssues).Count -ne 0) {
+        throw "Seed-variation issues were detected in $summaryPath"
+    }
+    if ($Profile -eq "determinism" -and @($summary.determinismIssues).Count -ne 0) {
+        throw "Determinism mismatches were detected in $summaryPath"
+    }
+    $b0 = @($rows | Where-Object { [string]$_.variant -eq "B0" }).Count
+    $proposal = @($rows | Where-Object { [string]$_.variant -eq "P" }).Count
+    if ($b0 -ne ($ExpectedRuns / 2) -or $proposal -ne ($ExpectedRuns / 2)) {
+        throw "B0/P balance mismatch. Profile=$Profile B0=$b0 P=$proposal ExpectedEach=$($ExpectedRuns / 2)"
+    }
+}
+
+function Assert-FormalEvidenceReadyForReport {
+    param([Parameter(Mandatory = $true)]$Session)
+
+    $expected = [ordered]@{
+        smoke = 10
+        pilot = 10
+        formal = 36
+        performance = 36
+        determinism = 4
+        soak = 4
+    }
+    $summaries = @(
+        Get-ChildItem -LiteralPath $Session.Directory -Recurse -File -Filter "novelty01_matrix_summary.json" -ErrorAction Stop
+    )
+    if ($summaries.Count -ne 6) {
+        throw "Pre-Report gate requires exactly 6 formal matrix summaries. Observed=$($summaries.Count)"
+    }
+    $total = 0
+    $b0Total = 0
+    $pTotal = 0
+    foreach ($file in $summaries) {
+        $summary = Read-JsonFile -Path $file.FullName
+        $profile = [string]$summary.profile
+        if (-not $expected.Contains($profile)) {
+            throw "Unexpected formal matrix profile before Report: $profile ($($file.FullName))"
+        }
+        $want = [int]$expected[$profile]
+        if ($summary.passed -ne $true -or [int]$summary.runCount -ne $want) {
+            throw "Formal matrix is incomplete before Report. Profile=$profile Expected=$want Observed=$($summary.runCount) Passed=$($summary.passed)"
+        }
+        $rows = @($summary.results)
+        if ($rows.Count -ne $want -or @($rows | Where-Object { $_.ok -ne $true }).Count -ne 0) {
+            throw "Formal matrix result rows are incomplete before Report. Profile=$profile"
+        }
+        if (@($summary.scenarioInputParityIssues).Count -ne 0 -or
+            @($summary.seedVariationIssues).Count -ne 0 -or
+            @($summary.determinismIssues).Count -ne 0) {
+            throw "Formal matrix contains parity/determinism issues before Report. Profile=$profile"
+        }
+        $b0Total += @($rows | Where-Object { [string]$_.variant -eq "B0" }).Count
+        $pTotal += @($rows | Where-Object { [string]$_.variant -eq "P" }).Count
+        $total += $rows.Count
+    }
+    if ($total -ne 100 -or $b0Total -ne 50 -or $pTotal -ne 50) {
+        throw "Pre-Report formal count mismatch. Total=$total B0=$b0Total P=$pTotal Expected=100/50/50"
+    }
+    Write-Host "Pre-Report evidence gate: PASS (100 total / 50 B0 / 50 P)" -ForegroundColor Green
+}
+
 function Invoke-Matrix {
     param(
         [Parameter(Mandatory = $true)]$Session,
@@ -1220,7 +1398,9 @@ function Invoke-Matrix {
         [Parameter(Mandatory = $true)][string]$Scenarios,
         [Parameter(Mandatory = $true)][string]$SeedList,
         [Parameter(Mandatory = $true)][int]$RepeatCount,
-        [Parameter(Mandatory = $true)][string]$Output
+        [Parameter(Mandatory = $true)][string]$Output,
+        [int]$ExpectedRunCount = 0,
+        [switch]$DiagnosticCheckpoints
     )
 
     Assert-SessionInvariant -Session $Session | Out-Null
@@ -1256,6 +1436,20 @@ function Invoke-Matrix {
     Write-Host "The HairSystem window title identifies the case currently running."
     Write-Host "============================================================"
 
+    $diagnosticRoot = Join-Path $OutputRoot "diagnostics\$([string]$Session.Value.sessionId)"
+    $dumpFolder = Join-Path $diagnosticRoot "crash_dumps"
+    $dumpSnapshot = Enable-HairSystemCrashDumpCapture -DumpFolder $dumpFolder
+    $oldCheckpoint = $env:HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE
+    if ($DiagnosticCheckpoints) {
+        New-Item -ItemType Directory -Path $diagnosticRoot -Force | Out-Null
+        $env:HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE = (
+            Join-Path $diagnosticRoot "viewer_checkpoints.log"
+        )
+    }
+    else {
+        Remove-Item Env:HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE -ErrorAction SilentlyContinue
+    }
+
     try {
         Invoke-NativeChecked `
             -FilePath $python.FilePath `
@@ -1275,13 +1469,109 @@ function Invoke-Matrix {
                 "--require-fxc"
             )) `
             -Label "B0/P $Profile matrix"
+
+        if ($ExpectedRunCount -gt 0) {
+            Assert-MatrixSummaryContract `
+                -Output $Output `
+                -Profile $Profile `
+                -ExpectedRuns $ExpectedRunCount
+        }
     }
     finally {
+        if ([string]::IsNullOrEmpty($oldCheckpoint)) {
+            Remove-Item Env:HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE = $oldCheckpoint
+        }
+        Restore-HairSystemCrashDumpCapture -Snapshot $dumpSnapshot
         Remove-Item Env:HAIRGPU_FROZEN_ASSET_MANIFEST -ErrorAction SilentlyContinue
         Remove-Item Env:HAIRGPU_FORMAL_SESSION_ID -ErrorAction SilentlyContinue
         Remove-Item Env:HAIRGPU_FORMAL_COMMIT -ErrorAction SilentlyContinue
         Exit-FormalHostGuard
     }
+}
+
+
+function Invoke-PreFormalQualificationSuite {
+    param([Parameter(Mandatory = $true)]$Session)
+
+    Assert-HardwareProfileReady -Session $Session
+    Assert-FreeDiskSpace -Path $OutputRoot -MinimumFreeGiB 20.0
+
+    $root = Join-Path (Join-Path $OutputRoot "qualification") ([string]$Session.Value.sessionId)
+    Assert-NewOutputDirectory -Path $root
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "PRE-FORMAL QUALIFICATION (NOT THESIS EVIDENCE)"
+    Write-Host "============================================================"
+    Write-Host "1) P/B0 Performance S01 repeated 3x: reproduce the former 0xC0000005 path"
+    Write-Host "2) Representative Performance S01/S07/S13/S16/S17/S18"
+    Write-Host "3) Determinism S01 repeated 2x"
+    Write-Host "4) Ground-truth stress S13 with formal profile"
+    Write-Host "Outputs stay outside sessions\\ and cannot be counted by FinalGate."
+    Write-Host "============================================================"
+
+    Invoke-Matrix `
+        -Session $Session `
+        -Profile "performance" `
+        -Scenarios "S01" `
+        -SeedList "1" `
+        -RepeatCount 3 `
+        -Output (Join-Path $root "performance_s01_repeat3") `
+        -ExpectedRunCount 6 `
+        -DiagnosticCheckpoints
+
+    Invoke-Matrix `
+        -Session $Session `
+        -Profile "performance" `
+        -Scenarios "S01,S07,S13,S16,S17,S18" `
+        -SeedList "1" `
+        -RepeatCount 1 `
+        -Output (Join-Path $root "performance_representative") `
+        -ExpectedRunCount 12 `
+        -DiagnosticCheckpoints
+
+    Invoke-Matrix `
+        -Session $Session `
+        -Profile "determinism" `
+        -Scenarios "S01" `
+        -SeedList "1" `
+        -RepeatCount 2 `
+        -Output (Join-Path $root "determinism_s01_repeat2") `
+        -ExpectedRunCount 4 `
+        -DiagnosticCheckpoints
+
+    Invoke-Matrix `
+        -Session $Session `
+        -Profile "formal" `
+        -Scenarios "S13" `
+        -SeedList "1" `
+        -RepeatCount 1 `
+        -Output (Join-Path $root "ground_truth_repair_stress") `
+        -ExpectedRunCount 2 `
+        -DiagnosticCheckpoints
+
+    $summary = [ordered]@{
+        schema = "hairsystem-preformal-qualification-v1"
+        status = "PASS"
+        formalEvidence = $false
+        sessionId = [string]$Session.Value.sessionId
+        formalCommit = [string]$Session.Value.formalCommit
+        completedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        checks = @(
+            "performance_s01_repeat3",
+            "performance_representative",
+            "determinism_s01_repeat2",
+            "ground_truth_repair_stress"
+        )
+        crashDumpDirectory = Join-Path (Join-Path (Join-Path $OutputRoot "diagnostics") ([string]$Session.Value.sessionId)) "crash_dumps"
+        checkpointLog = Join-Path (Join-Path (Join-Path $OutputRoot "diagnostics") ([string]$Session.Value.sessionId)) "viewer_checkpoints.log"
+    }
+    Write-JsonFile -Value $summary -Path (Join-Path $root "qualification_result.json")
+    Write-Host "Pre-formal qualification: PASS" -ForegroundColor Green
 }
 
 function Verify-LocalBranches {
@@ -1529,6 +1819,12 @@ switch ($Stage) {
             -Name "status" `
             -Value "ASSET_FROZEN"
         Save-Session -Session $session
+
+        # Fail early on the previously crashing P/Performance path and the next
+        # unvisited formal stages. Qualification output is deliberately outside
+        # the session directory and is never thesis evidence.
+        Invoke-PreFormalQualificationSuite -Session $session
+
         Add-CompletedStage -Session $session -Name "Asset"
     }
 
@@ -1541,7 +1837,8 @@ switch ($Stage) {
             -Scenarios "S01,S06,S11,S17,S18" `
             -SeedList "1" `
             -RepeatCount 1 `
-            -Output (Join-Path $session.Directory "smoke\B0_vs_P")
+            -Output (Join-Path $session.Directory "smoke\B0_vs_P") `
+            -ExpectedRunCount 10
         Add-CompletedStage -Session $session -Name "Smoke"
     }
 
@@ -1554,7 +1851,8 @@ switch ($Stage) {
             -Scenarios "S01,S07,S13,S16,S17" `
             -SeedList "1" `
             -RepeatCount 1 `
-            -Output (Join-Path $session.Directory "pilot\B0_vs_P")
+            -Output (Join-Path $session.Directory "pilot\B0_vs_P") `
+            -ExpectedRunCount 10
         Add-CompletedStage -Session $session -Name "Pilot"
     }
 
@@ -1568,7 +1866,8 @@ switch ($Stage) {
             -Scenarios "all" `
             -SeedList "1" `
             -RepeatCount 1 `
-            -Output (Join-Path $session.Directory "quality\B0_vs_P")
+            -Output (Join-Path $session.Directory "quality\B0_vs_P") `
+            -ExpectedRunCount 36
         Add-CompletedStage -Session $session -Name "Quality"
     }
 
@@ -1582,7 +1881,8 @@ switch ($Stage) {
             -Scenarios "all" `
             -SeedList "1" `
             -RepeatCount 1 `
-            -Output (Join-Path $session.Directory "performance\B0_vs_P")
+            -Output (Join-Path $session.Directory "performance\B0_vs_P") `
+            -ExpectedRunCount 36
         Add-CompletedStage -Session $session -Name "Performance"
     }
 
@@ -1596,7 +1896,8 @@ switch ($Stage) {
             -Scenarios "S01" `
             -SeedList "1" `
             -RepeatCount 2 `
-            -Output (Join-Path $session.Directory "determinism\B0_vs_P")
+            -Output (Join-Path $session.Directory "determinism\B0_vs_P") `
+            -ExpectedRunCount 4
         Add-CompletedStage -Session $session -Name "Determinism"
     }
 
@@ -1604,13 +1905,15 @@ switch ($Stage) {
         $session = Load-Session
         Assert-CompletedStages -Session $session -Required @("Determinism")
         Assert-HardwareProfileReady -Session $session
+        Assert-FreeDiskSpace -Path $OutputRoot -MinimumFreeGiB 20.0
         Invoke-Matrix `
             -Session $session `
             -Profile "soak" `
             -Scenarios "S01,S13" `
             -SeedList "1" `
             -RepeatCount 1 `
-            -Output (Join-Path $session.Directory "soak\B0_vs_P")
+            -Output (Join-Path $session.Directory "soak\B0_vs_P") `
+            -ExpectedRunCount 4
         Add-CompletedStage -Session $session -Name "Soak"
     }
 
@@ -1619,6 +1922,7 @@ switch ($Stage) {
         Assert-CompletedStages -Session $session -Required @("Soak")
         Assert-SessionInvariant -Session $session | Out-Null
         Assert-FrozenInputs -Session $session
+        Assert-FormalEvidenceReadyForReport -Session $session
 
         $reportPath = Join-Path $session.Directory "report\thesis_statistical_report.json"
         if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
@@ -1683,6 +1987,7 @@ switch ($Stage) {
     "Archive" {
         $session = Load-Session
         Assert-CompletedStages -Session $session -Required @("FinalGate")
+        Assert-FreeDiskSpace -Path $OutputRoot -MinimumFreeGiB 10.0
 
         $gateResult = Join-Path $session.Directory "integrity\final_gate.json"
         if (-not (Test-Path -LiteralPath $gateResult -PathType Leaf)) {

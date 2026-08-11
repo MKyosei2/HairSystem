@@ -191,6 +191,173 @@ namespace
     {
         HairGpuN01PerformanceCounterReadbacks().erase(viewer);
     }
+
+    // HAIRGPU_N01_PERFORMANCE_POST_MEASUREMENT_DRAIN_V3
+    // A later EVENT query completing proves every earlier CopyResource/End pair
+    // has completed too.  Release the P-only staging/query ring immediately after
+    // that global barrier, before the legacy drain and shutdown paths touch other
+    // D3D11 query/resource state.  This is intentionally outside the measured
+    // interval and therefore cannot improve or contaminate Performance timings.
+    bool HairGpuDrainAndReleaseN01PerformanceCounterReadbacksAfterGpuIdle(
+        hairgpu::viewer::GpuHairViewer* viewer,
+        ID3D11DeviceContext* context)
+    {
+        auto& states = HairGpuN01PerformanceCounterReadbacks();
+        const auto found = states.find(viewer);
+        if (found == states.end())
+        {
+            return true;
+        }
+
+        if (!context)
+        {
+            states.erase(found);
+            return false;
+        }
+
+        bool valid = true;
+        for (HairGpuN01PerformanceCounterReadbackSlot& slot : found->second.slots)
+        {
+            if (!slot.issued)
+            {
+                continue;
+            }
+            if (!slot.completionQuery || !slot.counters)
+            {
+                valid = false;
+                continue;
+            }
+
+            BOOL completed = FALSE;
+            const HRESULT result = context->GetData(
+                slot.completionQuery.Get(),
+                &completed,
+                static_cast<UINT>(sizeof(completed)),
+                D3D11_ASYNC_GETDATA_DONOTFLUSH);
+            if (result != S_OK || !completed)
+            {
+                valid = false;
+            }
+
+            // No Map is required here. The measurement has ended and the latest
+            // feedback already used by the controller is sufficient for export.
+            slot.issued = false;
+            slot.ageFrames = 0u;
+            slot.completionQuery.Reset();
+            slot.counters.Reset();
+        }
+        states.erase(found);
+        return valid;
+    }
+
+    // HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_V1
+    // Enabled only by qualification/debug runs. Formal 100-run evidence leaves
+    // HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE unset, so measured frames perform
+    // no file I/O. The durable last checkpoint helps distinguish a simulation,
+    // final-capture, GPU-drain, or shutdown crash when Windows terminates the
+    // Viewer with 0xC0000005 before C++ can report an ordinary fatal code.
+    void HairGpuAppendFormalDiagnosticCheckpoint(
+        const wchar_t* stage,
+        uint32_t frameIndex)
+    {
+        if (!stage)
+        {
+            return;
+        }
+        wchar_t pathBuffer[32768] = {};
+        const DWORD length = GetEnvironmentVariableW(
+            L"HAIRGPU_FORMAL_DIAGNOSTIC_CHECKPOINT_FILE",
+            pathBuffer,
+            static_cast<DWORD>(std::size(pathBuffer)));
+        if (length == 0u || length >= std::size(pathBuffer))
+        {
+            return;
+        }
+
+        std::ofstream stream(
+            std::filesystem::path(pathBuffer),
+            std::ios::binary | std::ios::app);
+        if (!stream)
+        {
+            return;
+        }
+        stream
+            << "tick=" << static_cast<unsigned long long>(GetTickCount64())
+            << ",pid=" << static_cast<unsigned long>(GetCurrentProcessId())
+            << ",frame=" << frameIndex
+            << ",stage=";
+        for (const wchar_t* cursor = stage; *cursor; ++cursor)
+        {
+            const wchar_t value = *cursor;
+            stream << static_cast<char>(
+                value >= 0 && value <= 0x7f ? value : L'?');
+        }
+        stream << "\n";
+        stream.flush();
+    }
+
+    // HAIRGPU_FORMAL_SOAK_SAMPLE_RETENTION_V1
+    // The legacy Run() include trims m_performanceSamples at 12,000 rows for
+    // interactive UI history. Formal Soak requires all 108,000 measured rows.
+    // This proxy changes only the trim predicate's size() observation while all
+    // actual container operations still target the original vector. Export and
+    // validation therefore receive the complete formal sample set.
+    template <typename TContainer>
+    class HairGpuPerformanceSampleHistoryView
+    {
+    public:
+        using value_type = typename TContainer::value_type;
+        using iterator = typename TContainer::iterator;
+        using const_iterator = typename TContainer::const_iterator;
+
+        HairGpuPerformanceSampleHistoryView(
+            TContainer& container,
+            bool formalExperiment)
+            : m_container(container),
+              m_formalExperiment(formalExperiment)
+        {
+        }
+
+        void clear() { m_container.clear(); }
+        void reserve(size_t count) { m_container.reserve(count); }
+        void push_back(const value_type& value) { m_container.push_back(value); }
+        void push_back(value_type&& value) { m_container.push_back(std::move(value)); }
+        bool empty() const { return m_container.empty(); }
+        value_type& back() { return m_container.back(); }
+        const value_type& back() const { return m_container.back(); }
+        iterator begin() { return m_container.begin(); }
+        iterator end() { return m_container.end(); }
+        const_iterator begin() const { return m_container.begin(); }
+        const_iterator end() const { return m_container.end(); }
+        iterator erase(iterator first, iterator last)
+        {
+            return m_container.erase(first, last);
+        }
+
+        size_t size() const
+        {
+            // Run() compares size() with 12000 solely for the interactive trim.
+            // Keep that predicate false for formal runs without dropping data.
+            return m_formalExperiment
+                ? std::min<size_t>(m_container.size(), 12000u)
+                : m_container.size();
+        }
+
+    private:
+        TContainer& m_container;
+        bool m_formalExperiment = false;
+    };
+
+    template <typename TContainer>
+    HairGpuPerformanceSampleHistoryView<TContainer>
+    HairGpuFormalPerformanceSampleHistory(
+        TContainer& container,
+        bool formalExperiment)
+    {
+        return HairGpuPerformanceSampleHistoryView<TContainer>(
+            container,
+            formalExperiment);
+    }
 }
 
 #include "GpuHairViewer_parts/00_preamble_helpers_and_phase1_hooks.inl"
@@ -211,24 +378,57 @@ namespace
 #define DrainGpuTimingAndCounterReadbacks()                                      \
     do                                                                            \
     {                                                                             \
+        const bool hairGpuFormalPPerformance =                                    \
+            IsExperimentModeEnabled() &&                                          \
+            m_experimentCase.measurementMode == MeasurementMode::Performance &&    \
+            m_experimentCase.methodId ==                                           \
+                ExperimentMethodId::P_IntegratedSegmentGroup;                      \
+        HairGpuAppendFormalDiagnosticCheckpoint(                                  \
+            L"post_measurement_before_terminal_drain",                            \
+            m_globalFrameIndex);                                                   \
         if (IsExperimentModeEnabled() &&                                          \
             m_experimentCase.measurementMode == MeasurementMode::Performance &&    \
-            m_experimentCase.methodId !=                                           \
-                ExperimentMethodId::P_IntegratedSegmentGroup)                      \
+            !hairGpuFormalPPerformance)                                            \
         {                                                                         \
             QueueCounterReadback(m_globalFrameIndex);                              \
         }                                                                         \
-        if (IsExperimentModeEnabled() &&                                          \
-            !HairGpuWaitForGpuIdleAfterMeasurement(                               \
+        const bool hairGpuBarrierPassed =                                         \
+            !IsExperimentModeEnabled() ||                                          \
+            HairGpuWaitForGpuIdleAfterMeasurement(                                \
                 m_device.Get(),                                                    \
-                m_context.Get()))                                                  \
+                m_context.Get());                                                  \
+        if (!hairGpuBarrierPassed)                                                 \
         {                                                                         \
             SetFatalExperimentFailure(                                             \
                 1501u,                                                             \
                 L"Post-measurement GPU completion barrier failed or timed out."); \
             runExitCode = 94;                                                      \
         }                                                                         \
+        HairGpuAppendFormalDiagnosticCheckpoint(                                  \
+            L"post_measurement_after_gpu_idle",                                  \
+            m_globalFrameIndex);                                                   \
+        if (hairGpuFormalPPerformance && hairGpuBarrierPassed && m_context)         \
+        {                                                                         \
+            m_context->ClearState();                                               \
+            m_context->Flush();                                                    \
+            if (!HairGpuDrainAndReleaseN01PerformanceCounterReadbacksAfterGpuIdle( \
+                    this,                                                          \
+                    m_context.Get()))                                              \
+            {                                                                     \
+                SetFatalExperimentFailure(                                         \
+                    1510u,                                                         \
+                    L"P/Performance counter readback ring was not complete "       \
+                    L"after the post-measurement GPU idle barrier.");              \
+                runExitCode = 95;                                                  \
+            }                                                                     \
+        }                                                                         \
+        HairGpuAppendFormalDiagnosticCheckpoint(                                  \
+            L"post_measurement_before_legacy_drain",                             \
+            m_globalFrameIndex);                                                   \
         DrainGpuTimingAndCounterReadbacks();                                       \
+        HairGpuAppendFormalDiagnosticCheckpoint(                                  \
+            L"post_measurement_after_legacy_drain",                              \
+            m_globalFrameIndex);                                                   \
         if (IsExperimentModeEnabled() &&                                          \
             m_experimentCase.measurementMode == MeasurementMode::Performance &&    \
             m_context)                                                             \
@@ -239,7 +439,14 @@ namespace
         }                                                                         \
     } while (false)
 #define Shutdown ShutdownNovelty01Routed
+// Formal experiments must retain every measured PerformanceSample. The included
+// Run() still keeps its 12k interactive UI history cap; route only this include's
+// member accesses through a formal-aware view so the trim remains interactive-only.
+#define m_performanceSamples \
+    HairGpuFormalPerformanceSampleHistory( \
+        m_performanceSamples, IsExperimentModeEnabled())
 #include "GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"
+#undef m_performanceSamples
 #undef Shutdown
 #undef DrainGpuTimingAndCounterReadbacks
 #undef ExecuteExperimentSimulationTick
@@ -265,6 +472,17 @@ namespace
 // edit, repair, camera, or force-state stimuli on top of the common input.
 void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 {
+    // HAIRGPU_FORMAL_SAMPLE_PREALLOC_V1
+    // Allocate the complete evidence vector during the first warm-up tick. This
+    // prevents std::vector growth/copies from entering Quality/Performance/Soak
+    // measured intervals and is applied identically to B0 and P.
+    if (IsExperimentModeEnabled() && m_simulationTickIndex == 0u)
+    {
+        m_performanceSamples.clear();
+        m_performanceSamples.reserve(
+            static_cast<size_t>(m_experimentCase.measurementFrames));
+    }
+
     // HAIRGPU_FORMAL_METHOD_LABEL_V1
     // Every matrix case is a separate Viewer process. Label the first simulation
     // tick so an unattended/interactive run makes the active thesis side explicit
@@ -320,6 +538,19 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 
     if (performanceMode)
     {
+        const uint32_t warmup = m_experimentCase.warmupFrames;
+        const uint32_t measurementEnd =
+            warmup + m_experimentCase.measurementFrames;
+        if (m_globalFrameIndex == 0u ||
+            m_globalFrameIndex + 1u == warmup ||
+            m_globalFrameIndex == warmup ||
+            m_globalFrameIndex == warmup + 1u ||
+            m_globalFrameIndex + 1u == measurementEnd)
+        {
+            HairGpuAppendFormalDiagnosticCheckpoint(
+                L"p_performance_before_tick",
+                m_globalFrameIndex);
+        }
         // Performance is defined by the formal matrix with ground_truth=false.
         // kAllFeatures historically retained Feature_GroundTruth even when the
         // corresponding resources were not created. Make the execution mask
@@ -442,6 +673,23 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
     runtime->designScenarioIndex = std::numeric_limits<uint32_t>::max();
     ExecuteNovelty01ExperimentTickLegacy(dt);
     runtime->designScenarioIndex = savedDesignScenarioIndex;
+
+    if (performanceMode)
+    {
+        const uint32_t warmup = m_experimentCase.warmupFrames;
+        const uint32_t measurementEnd =
+            warmup + m_experimentCase.measurementFrames;
+        if (m_globalFrameIndex == 0u ||
+            m_globalFrameIndex + 1u == warmup ||
+            m_globalFrameIndex == warmup ||
+            m_globalFrameIndex == warmup + 1u ||
+            m_globalFrameIndex + 1u == measurementEnd)
+        {
+            HairGpuAppendFormalDiagnosticCheckpoint(
+                L"p_performance_after_legacy_tick",
+                m_globalFrameIndex);
+        }
+    }
 
     if (performanceMode &&
         m_experimentRunStatus != ExperimentRunStatus::Failed)
