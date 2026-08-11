@@ -150,16 +150,16 @@ namespace
     }
 
     // HAIRGPU_N01_PERFORMANCE_QUERY_GATED_READBACK_V2
-    // SG-APT's quality path intentionally reads back the full dynamic/repair
-    // index lists so it can build CPU-side validation/diagnostic views. Those
-    // multi-megabyte staging copies are not part of the production simulation
-    // algorithm and become unsafe/high-pressure when Performance submits frames
-    // much faster than Quality. Performance therefore keeps only the 64-counter
-    // asynchronous feedback required by the FullDynamicFastPath controller.
-    // V2 removes the remaining age-only Map heuristic: every staging copy is
-    // paired with an EVENT query and is mapped only after the GPU confirms that
-    // the CopyResource has completed. This avoids a P/Performance-only race with
-    // the D3D11 driver observed as 0xC0000005 on S01.
+    // HAIRGPU_N01_PERFORMANCE_SERIALIZED_RING_V3
+    //
+    // 70.24 used sixteen simultaneously outstanding staging/query slots.  The
+    // P/S01 Performance qualification reproducibly terminated with 0xC0000005
+    // while Quality, which does not use this controller, completed.  V3 keeps
+    // the same counter feedback and the same measured workload but structurally
+    // prevents staging/query reuse races: there is only one slot and each
+    // selected feedback frame waits for its EVENT query before Map/Unmap returns.
+    // The wait is intentionally inside the P Performance frame, so its cost is
+    // measured rather than hidden from the thesis comparison.
     struct HairGpuN01PerformanceCounterReadbackSlot
     {
         ComPtr<ID3D11Buffer> counters;
@@ -171,7 +171,7 @@ namespace
 
     struct HairGpuN01PerformanceCounterReadbackState
     {
-        std::array<HairGpuN01PerformanceCounterReadbackSlot, 16u> slots = {};
+        std::array<HairGpuN01PerformanceCounterReadbackSlot, 1u> slots = {};
         uint32_t writeIndex = 0u;
     };
 
@@ -193,11 +193,9 @@ namespace
     }
 
     // HAIRGPU_N01_PERFORMANCE_POST_MEASUREMENT_DRAIN_V3
-    // A later EVENT query completing proves every earlier CopyResource/End pair
-    // has completed too.  Release the P-only staging/query ring immediately after
-    // that global barrier, before the legacy drain and shutdown paths touch other
-    // D3D11 query/resource state.  This is intentionally outside the measured
-    // interval and therefore cannot improve or contaminate Performance timings.
+    // V3 has no normally outstanding slot because selected feedback frames are
+    // resolved synchronously.  Keep this fail-closed check after the global GPU
+    // barrier so teardown can still detect a future regression that leaves one.
     bool HairGpuDrainAndReleaseN01PerformanceCounterReadbacksAfterGpuIdle(
         hairgpu::viewer::GpuHairViewer* viewer,
         ID3D11DeviceContext* context)
@@ -239,8 +237,6 @@ namespace
                 valid = false;
             }
 
-            // No Map is required here. The measurement has ended and the latest
-            // feedback already used by the controller is sufficient for export.
             slot.issued = false;
             slot.ageFrames = 0u;
             slot.completionQuery.Reset();
@@ -417,8 +413,8 @@ namespace
             {                                                                     \
                 SetFatalExperimentFailure(                                         \
                     1510u,                                                         \
-                    L"P/Performance counter readback ring was not complete "       \
-                    L"after the post-measurement GPU idle barrier.");              \
+                    L"P/Performance counter readback controller was not idle "      \
+                    L"after the post-measurement GPU barrier.");                   \
                 runExitCode = 95;                                                  \
             }                                                                     \
         }                                                                         \
@@ -578,12 +574,12 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
             legacySlot.formalMetricsIssued = false;
         }
 
+        // V3 resolves each selected counter snapshot before returning from the
+        // same frame.  The old pre-tick polling loop remains only as a fail-safe
+        // for state created by an older code path; a V3 run should never leave an
+        // issued slot for this loop to consume.
         HairGpuN01PerformanceCounterReadbackState& state =
             HairGpuN01PerformanceCounterReadbacks()[this];
-
-        // Resolve only tiny counter snapshots. Age is used only to avoid polling
-        // a query immediately after submission; the EVENT query, not frame age,
-        // is the synchronization authority for CPU mapping.
         for (HairGpuN01PerformanceCounterReadbackSlot& slot : state.slots)
         {
             if (!slot.issued)
@@ -591,15 +587,11 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 continue;
             }
             ++slot.ageFrames;
-            if (slot.ageFrames < 2u)
-            {
-                continue;
-            }
             if (!slot.counters || !slot.completionQuery || !m_context)
             {
                 SetFatalExperimentFailure(
                     1508u,
-                    L"Performance SG-APT readback slot lost its staging/query resource.");
+                    L"Performance SG-APT serialized readback lost its resource.");
                 return;
             }
 
@@ -608,17 +600,20 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 slot.completionQuery.Get(),
                 &copyCompleted,
                 static_cast<UINT>(sizeof(copyCompleted)),
-                D3D11_ASYNC_GETDATA_DONOTFLUSH);
+                0u);
             if (completionResult == S_FALSE ||
                 (completionResult == S_OK && !copyCompleted))
             {
-                continue;
+                SetFatalExperimentFailure(
+                    1512u,
+                    L"Performance SG-APT serialized readback escaped its frame.");
+                return;
             }
             if (FAILED(completionResult))
             {
                 SetFatalExperimentFailure(
                     1507u,
-                    L"Performance SG-APT counter completion query failed.");
+                    L"Performance SG-APT serialized completion query failed.");
                 return;
             }
 
@@ -629,19 +624,15 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 D3D11_MAP_READ,
                 0u,
                 &mapped);
-            if (FAILED(mapResult))
+            if (FAILED(mapResult) || !mapped.pData)
             {
+                if (SUCCEEDED(mapResult) && mapped.pData)
+                {
+                    m_context->Unmap(slot.counters.Get(), 0u);
+                }
                 SetFatalExperimentFailure(
                     1506u,
-                    L"Performance SG-APT counter staging Map failed after GPU completion.");
-                return;
-            }
-            if (!mapped.pData)
-            {
-                m_context->Unmap(slot.counters.Get(), 0u);
-                SetFatalExperimentFailure(
-                    1503u,
-                    L"Performance SG-APT counter readback returned null data.");
+                    L"Performance SG-APT serialized staging Map failed.");
                 return;
             }
 
@@ -650,19 +641,14 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 mapped.pData,
                 sizeof(uint32_t) * hairgpu::novelty01::kCounterCount);
             m_context->Unmap(slot.counters.Get(), 0u);
-
             runtime->latestCountersValid = true;
             runtime->latestCounterSourceFrame = slot.sourceFrame;
-
-            // The CPU-side follower vector is telemetry-only in the integrated
-            // runtime. Keep its size meaningful without copying 508k group IDs.
             const uint32_t dirtyFollowers = std::min<uint32_t>(
                 runtime->latestCounters.Get(
                     hairgpu::novelty01::Counter_DirtyFollowers),
                 m_asset.followerStrandCount);
             runtime->activeGuides.clear();
             runtime->activeFollowers.assign(dirtyFollowers, 0u);
-
             slot.issued = false;
             slot.ageFrames = 0u;
             ++m_counterReadbackResolvedCount;
@@ -703,24 +689,46 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
             legacySlot.formalMetricsIssued = false;
         }
 
-        HairGpuN01PerformanceCounterReadbackState& state =
-            HairGpuN01PerformanceCounterReadbacks()[this];
-        HairGpuN01PerformanceCounterReadbackSlot& slot =
-            state.slots[state.writeIndex];
-        if (!slot.issued)
+        // Match the former asynchronous controller's effective feedback cadence
+        // without carrying any D3D11 staging/query work across frame boundaries.
+        const bool feedbackFrame = ((m_globalFrameIndex + 1u) % 2u) == 0u;
+        if (feedbackFrame)
         {
+            HairGpuN01PerformanceCounterReadbackState& state =
+                HairGpuN01PerformanceCounterReadbacks()[this];
+            HairGpuN01PerformanceCounterReadbackSlot& slot = state.slots[0u];
+
+            if (slot.issued)
+            {
+                SetFatalExperimentFailure(
+                    1512u,
+                    L"Performance SG-APT serialized slot was still issued.");
+                return;
+            }
+            if (!runtime->counters.buffer || !m_device || !m_context)
+            {
+                SetFatalExperimentFailure(
+                    1504u,
+                    L"Performance SG-APT counter source/device/context is missing.");
+                return;
+            }
+
+            D3D11_BUFFER_DESC sourceDesc = {};
+            runtime->counters.buffer->GetDesc(&sourceDesc);
+            const UINT requiredCounterBytes =
+                static_cast<UINT>(sizeof(uint32_t) *
+                    hairgpu::novelty01::kCounterCount);
+            if (sourceDesc.ByteWidth < requiredCounterBytes)
+            {
+                SetFatalExperimentFailure(
+                    1511u,
+                    L"Performance SG-APT counter source is smaller than kCounterCount.");
+                return;
+            }
+
             if (!slot.counters)
             {
-                if (!runtime->counters.buffer)
-                {
-                    SetFatalExperimentFailure(
-                        1504u,
-                        L"Performance SG-APT counter source is missing.");
-                    return;
-                }
-
-                D3D11_BUFFER_DESC desc = {};
-                runtime->counters.buffer->GetDesc(&desc);
+                D3D11_BUFFER_DESC desc = sourceDesc;
                 desc.Usage = D3D11_USAGE_STAGING;
                 desc.BindFlags = 0u;
                 desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -734,7 +742,7 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 {
                     SetFatalExperimentFailure(
                         1505u,
-                        L"Performance SG-APT counter staging allocation failed.");
+                        L"Performance SG-APT serialized staging allocation failed.");
                     return;
                 }
             }
@@ -744,40 +752,101 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
                 D3D11_QUERY_DESC queryDesc = {};
                 queryDesc.Query = D3D11_QUERY_EVENT;
                 queryDesc.MiscFlags = 0u;
-                if (!m_device ||
-                    FAILED(m_device->CreateQuery(
+                if (FAILED(m_device->CreateQuery(
                         &queryDesc,
                         &slot.completionQuery)) ||
                     !slot.completionQuery)
                 {
                     SetFatalExperimentFailure(
                         1509u,
-                        L"Performance SG-APT counter completion query allocation failed.");
+                        L"Performance SG-APT serialized query allocation failed.");
                     return;
                 }
             }
-            if (!m_context || !runtime->counters.buffer)
-            {
-                SetFatalExperimentFailure(
-                    1504u,
-                    L"Performance SG-APT counter source/context is missing.");
-                return;
-            }
 
-            // Explicitly remove any compute bindings before the copy. The EVENT
-            // query is ended immediately after CopyResource, so GetData later
-            // proves that this exact staging snapshot is complete before Map.
             N01UnbindCompute(m_context.Get());
+            slot.sourceFrame = m_globalFrameIndex;
             m_context->CopyResource(
                 slot.counters.Get(),
                 runtime->counters.buffer.Get());
             m_context->End(slot.completionQuery.Get());
-            slot.sourceFrame = m_globalFrameIndex;
+            m_context->Flush();
+
+            HairGpuAppendFormalDiagnosticCheckpoint(
+                L"p_performance_serial_readback_submitted",
+                m_globalFrameIndex);
+
+            const ULONGLONG waitStarted = GetTickCount64();
+            for (;;)
+            {
+                BOOL copyCompleted = FALSE;
+                const HRESULT completionResult = m_context->GetData(
+                    slot.completionQuery.Get(),
+                    &copyCompleted,
+                    static_cast<UINT>(sizeof(copyCompleted)),
+                    0u);
+                if (completionResult == S_OK && copyCompleted)
+                {
+                    break;
+                }
+                if (FAILED(completionResult))
+                {
+                    SetFatalExperimentFailure(
+                        1507u,
+                        L"Performance SG-APT serialized completion query failed.");
+                    return;
+                }
+                if (GetTickCount64() - waitStarted >= 15000u)
+                {
+                    SetFatalExperimentFailure(
+                        1513u,
+                        L"Performance SG-APT serialized counter readback timed out.");
+                    return;
+                }
+                Sleep(0u);
+            }
+
+            D3D11_MAPPED_SUBRESOURCE mapped = {};
+            const HRESULT mapResult = m_context->Map(
+                slot.counters.Get(),
+                0u,
+                D3D11_MAP_READ,
+                0u,
+                &mapped);
+            if (FAILED(mapResult) || !mapped.pData)
+            {
+                if (SUCCEEDED(mapResult) && mapped.pData)
+                {
+                    m_context->Unmap(slot.counters.Get(), 0u);
+                }
+                SetFatalExperimentFailure(
+                    1506u,
+                    L"Performance SG-APT serialized staging Map failed.");
+                return;
+            }
+
+            std::memcpy(
+                runtime->latestCounters.values.data(),
+                mapped.pData,
+                requiredCounterBytes);
+            m_context->Unmap(slot.counters.Get(), 0u);
+
+            runtime->latestCountersValid = true;
+            runtime->latestCounterSourceFrame = slot.sourceFrame;
+            const uint32_t dirtyFollowers = std::min<uint32_t>(
+                runtime->latestCounters.Get(
+                    hairgpu::novelty01::Counter_DirtyFollowers),
+                m_asset.followerStrandCount);
+            runtime->activeGuides.clear();
+            runtime->activeFollowers.assign(dirtyFollowers, 0u);
+            slot.issued = false;
             slot.ageFrames = 0u;
-            slot.issued = true;
-            state.writeIndex =
-                (state.writeIndex + 1u) %
-                static_cast<uint32_t>(state.slots.size());
+            state.writeIndex = 0u;
+            ++m_counterReadbackResolvedCount;
+
+            HairGpuAppendFormalDiagnosticCheckpoint(
+                L"p_performance_serial_readback_resolved",
+                m_globalFrameIndex);
         }
     }
 }
@@ -808,7 +877,6 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 #define ApplyScenarioTimelineFrame ApplyScenarioTimelineFrameLegacy
 #include "GpuHairViewer_parts/10_phase1_telemetry_csv_jsonl_summary.inl"
 #undef ApplyScenarioTimelineFrame
-
 
 #include "GpuHairViewer_parts/11_experiment_env_and_performance_sample.inl"
 #include "GpuHairViewer_parts/12_strand_pick_gizmo_and_brush_edit.inl"
