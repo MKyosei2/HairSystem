@@ -1,0 +1,200 @@
+name: Temporary 70.26 Source Repair
+
+on:
+  push:
+    branches:
+      - integration/novelty01-safe-70.26-partial-srv-count-fix
+    paths:
+      - .github/workflows/temporary-70-26-source-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/novelty01-safe-70.26-partial-srv-count-fix
+          fetch-depth: 0
+
+      - name: Repair D3D11 binding counts and add regression test
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          runtime = Path('apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl')
+          text = runtime.read_text(encoding='utf-8')
+
+          old_scatter = '''        const auto bindMode1Scatter = [&]()
+                  {
+                      ID3D11ShaderResourceView* srvs[3] =
+                      {
+                          runtime.flags.srv.Get(),
+                          runtime.prefix.srv.Get(),
+                          runtime.scanBlockOffsets.srv.Get()
+                      };
+                      ID3D11UnorderedAccessView* uavs[8] =
+                      {
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          runtime.dynamicList.uav.Get(),
+                          runtime.staticList.uav.Get(),
+                          runtime.repairList.uav.Get(),
+                          runtime.invalidList.uav.Get()
+                      };
+                      m_context->CSSetShaderResources(0u, 4u, srvs);
+                      m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
+                  };'''
+
+          new_scatter = '''        const auto bindMode1Scatter = [&]()
+                  {
+                      // HAIRGPU_N01_BINDING_COUNT_GUARD_V1
+                      // Binding mode 1 declares SRVs t0/t1/t2 only.  Keep the
+                      // D3D11 count equal to the actual C++ array length; passing
+                      // 4 here used to read a nonexistent fourth stack pointer on
+                      // the first SG-APT partial-simulation frame.
+                      ID3D11ShaderResourceView* srvs[3] =
+                      {
+                          runtime.flags.srv.Get(),
+                          runtime.prefix.srv.Get(),
+                          runtime.scanBlockOffsets.srv.Get()
+                      };
+                      ID3D11UnorderedAccessView* uavs[8] =
+                      {
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          runtime.dynamicList.uav.Get(),
+                          runtime.staticList.uav.Get(),
+                          runtime.repairList.uav.Get(),
+                          runtime.invalidList.uav.Get()
+                      };
+                      m_context->CSSetShaderResources(0u, 3u, srvs);
+                      m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
+                  };'''
+
+          if text.count(old_scatter) != 1:
+              raise SystemExit(f'Expected exactly one old bindMode1Scatter block, found {text.count(old_scatter)}')
+          text = text.replace(old_scatter, new_scatter, 1)
+
+          old_mode3 = '''            m_context->CSSetShaderResources(0u, 3u, srvs);
+                      m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
+                  };
+          
+                  ExecuteNovelty01DirtyRangePropagation();'''
+          new_mode3 = '''            // Binding mode 3 declares SRVs t0..t3, including SDF at t3.
+                      m_context->CSSetShaderResources(0u, 4u, srvs);
+                      m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
+                  };
+          
+                  ExecuteNovelty01DirtyRangePropagation();'''
+          if text.count(old_mode3) != 1:
+              raise SystemExit(f'Expected exactly one mode3 binding block, found {text.count(old_mode3)}')
+          text = text.replace(old_mode3, new_mode3, 1)
+
+          runtime.write_text(text, encoding='utf-8', newline='\n')
+
+          test_path = Path('tests/final_stage/test_novelty01_d3d11_binding_counts.py')
+          test_path.write_text(r'''import re
+          import unittest
+          from pathlib import Path
+          
+          
+          ROOT = Path(__file__).resolve().parents[2]
+          RUNTIME = ROOT / "apps" / "dx11_viewer" / "src" / "GpuHairViewer_parts" / "16_segment_group_adaptive_payload_complete.inl"
+          HLSL = ROOT / "apps" / "dx11_viewer" / "shaders" / "HairSegmentGroupAdaptivePayloadRuntime.hlsl"
+          
+          
+          class Novelty01D3D11BindingCountTests(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.runtime = RUNTIME.read_text(encoding="utf-8")
+                  cls.hlsl = HLSL.read_text(encoding="utf-8")
+          
+              def _lambda_block(self, name: str, next_marker: str) -> str:
+                  begin = self.runtime.index(f"const auto {name}")
+                  end = self.runtime.index(next_marker, begin)
+                  return self.runtime[begin:end]
+          
+              def test_mode1_scatter_binds_exactly_three_srvs(self):
+                  block = self._lambda_block("bindMode1Scatter", "const auto runScan")
+                  self.assertIn("ID3D11ShaderResourceView* srvs[3]", block)
+                  self.assertIn("CSSetShaderResources(0u, 3u, srvs);", block)
+                  self.assertNotIn("CSSetShaderResources(0u, 4u, srvs);", block)
+                  self.assertIn("HAIRGPU_N01_BINDING_COUNT_GUARD_V1", block)
+          
+              def test_mode3_binds_all_four_declared_srvs(self):
+                  block = self._lambda_block("bindMode3", "ExecuteNovelty01DirtyRangePropagation();")
+                  self.assertIn("ID3D11ShaderResourceView* srvs[4]", block)
+                  self.assertIn("CSSetShaderResources(0u, 4u, srvs);", block)
+          
+              def test_hlsl_mode1_declares_only_t0_t1_t2(self):
+                  begin = self.hlsl.index("#if N01_BINDING_MODE == 1")
+                  end = self.hlsl.index("#endif // mode 1", begin)
+                  block = self.hlsl[begin:end]
+                  registers = sorted(set(re.findall(r"register\(t(\d+)\)", block)))
+                  self.assertEqual(registers, ["0", "1", "2"])
+          
+              def test_hlsl_mode3_declares_t0_through_t3(self):
+                  begin = self.hlsl.index("#if N01_BINDING_MODE == 3")
+                  end = self.hlsl.index("#endif // mode 3", begin)
+                  block = self.hlsl[begin:end]
+                  registers = sorted(set(re.findall(r"register\(t(\d+)\)", block)))
+                  self.assertEqual(registers, ["0", "1", "2", "3"])
+          
+              def test_local_d3d11_binding_counts_never_exceed_array_length(self):
+                  # Guard every local C-array in the SG-APT runtime against the
+                  # exact class of stack over-read that caused the frame-8 crash.
+                  for api, typename in (
+                      ("CSSetShaderResources", "ID3D11ShaderResourceView"),
+                      ("CSSetUnorderedAccessViews", "ID3D11UnorderedAccessView"),
+                  ):
+                      pattern = re.compile(
+                          rf"{re.escape(typename)}\*\s+(\w+)\[(\d+)\]\s*=.*?;",
+                          re.DOTALL,
+                      )
+                      checked = 0
+                      for match in pattern.finditer(self.runtime):
+                          name, declared = match.group(1), int(match.group(2))
+                          tail = self.runtime[match.end(): match.end() + 2200]
+                          call = re.search(
+                              rf"{api}\(\s*0u\s*,\s*(\d+)u\s*,\s*{re.escape(name)}\b",
+                              tail,
+                          )
+                          if not call:
+                              continue
+                          requested = int(call.group(1))
+                          self.assertLessEqual(
+                              requested,
+                              declared,
+                              f"{api} requests {requested} entries from {name}[{declared}]",
+                          )
+                          checked += 1
+                      self.assertGreater(checked, 0, f"No {api} local-array bindings checked")
+          
+          
+          if __name__ == "__main__":
+              unittest.main()
+          ''', encoding='utf-8', newline='\n')
+          '@ | python -
+
+          python -m unittest tests.final_stage.test_novelty01_d3d11_binding_counts -v
+
+          git diff --check
+          git diff -- apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl tests/final_stage/test_novelty01_d3d11_binding_counts.py
+
+      - name: Commit repaired source
+        shell: pwsh
+        run: |
+          git config user.name "HairSystem 70.26 Repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/dx11_viewer/src/GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl tests/final_stage/test_novelty01_d3d11_binding_counts.py
+          git commit -m "70.26: fix SG-APT D3D11 binding counts"
+          git push origin HEAD:integration/novelty01-safe-70.26-partial-srv-count-fix
