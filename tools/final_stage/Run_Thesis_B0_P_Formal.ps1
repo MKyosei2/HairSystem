@@ -29,6 +29,31 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# ----------------------------------------------------------------------
+# Formal child-process text encoding contract.
+#
+# Windows PowerShell 5.1, Python and localized Windows utilities such as
+# powercfg.exe can otherwise disagree about the inherited console code page.
+# The thesis runner uses UTF-8 end-to-end so Python's text-mode subprocess
+# readers decode exactly the bytes emitted by native child processes.  This is
+# an execution-environment fix only: it does not change B0/P physics, workload,
+# thresholds, run counts, or evidence semantics.
+# ----------------------------------------------------------------------
+$FormalUtf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $FormalUtf8NoBom
+$OutputEncoding = $FormalUtf8NoBom
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8:replace"
+$env:HAIRGPU_FORMAL_TEXT_ENCODING = "utf-8"
+
+$ChcpPath = Join-Path $env:SystemRoot "System32\chcp.com"
+if (Test-Path -LiteralPath $ChcpPath -PathType Leaf) {
+    & $ChcpPath 65001 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not activate UTF-8 console code page 65001 for formal child-process I/O."
+    }
+}
+
 $Repo = [IO.Path]::GetFullPath($Repo)
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $SessionsRoot = Join-Path $OutputRoot "sessions"
@@ -58,6 +83,37 @@ public static class HairGpuFormalExecutionState
 "@
 }
 
+function Get-ActivePowerSchemeIdentity {
+    $raw = (& powercfg.exe /GETACTIVESCHEME | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not query the active Windows power scheme."
+    }
+
+    $match = [regex]::Match(
+        $raw,
+        '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    )
+    if (-not $match.Success) {
+        throw "Could not parse the active Windows power-scheme GUID. Raw=$raw"
+    }
+
+    return [PSCustomObject]@{
+        Guid = $match.Value.ToLowerInvariant()
+        Raw = $raw
+    }
+}
+
+function Assert-FormalHighPerformancePowerScheme {
+    $identity = Get-ActivePowerSchemeIdentity
+    $highPerformanceGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+
+    if ($identity.Guid -ne $highPerformanceGuid) {
+        throw "Formal High Performance power scheme is not active. ExpectedGuid=$highPerformanceGuid ObservedGuid=$($identity.Guid) Raw=$($identity.Raw)"
+    }
+
+    return $identity
+}
+
 function Enter-FormalHostGuard {
     [uint32]$ES_CONTINUOUS = 2147483648
     [uint32]$ES_SYSTEM_REQUIRED = 0x00000001
@@ -75,6 +131,12 @@ function Enter-FormalHostGuard {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not activate the High Performance power scheme."
     }
+
+    # Validate by GUID, not by the localized display name.  The Python runtime
+    # still records the localized name as evidence, but pass/fail of this host
+    # guard is language-independent.
+    $activeScheme = Assert-FormalHighPerformancePowerScheme
+    Write-Host "Formal power scheme GUID: $($activeScheme.Guid)"
 }
 
 function Exit-FormalHostGuard {
@@ -1370,7 +1432,7 @@ switch ($Stage) {
             -Encoding UTF8
 
         Write-Host "Prepared isolated formal session: $sessionDirectory"
-        Write-Host "Reduced thesis design: 550 total runs / 275 B0 / 275 P"
+        Write-Host "Reduced thesis design: 100 total runs / 50 B0 / 50 P"
         Write-Host "Hardware profile to complete later: $(Join-Path $sessionDirectory 'environment\hardware_profile.json')"
     }
 
