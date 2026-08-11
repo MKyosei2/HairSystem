@@ -2654,6 +2654,11 @@
 
         const auto bindMode1Scatter = [&]()
         {
+            // HAIRGPU_N01_BINDING_COUNT_GUARD_V1
+            // Binding mode 1 declares SRVs t0/t1/t2 only.  Keep the
+            // D3D11 count equal to the actual C++ array length; passing
+            // 4 here used to read a nonexistent fourth stack pointer on
+            // the first SG-APT partial-simulation frame.
             ID3D11ShaderResourceView* srvs[3] =
             {
                 runtime.flags.srv.Get(),
@@ -2671,7 +2676,7 @@
                 runtime.repairList.uav.Get(),
                 runtime.invalidList.uav.Get()
             };
-            m_context->CSSetShaderResources(0u, 4u, srvs);
+            m_context->CSSetShaderResources(0u, 3u, srvs);
             m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
         };
 
@@ -2942,7 +2947,8 @@
                 runtime.particleNext.uav.Get(),
                 runtime.counters.uav.Get()
             };
-            m_context->CSSetShaderResources(0u, 3u, srvs);
+            // Binding mode 3 declares SRVs t0..t3, including SDF at t3.
+            m_context->CSSetShaderResources(0u, 4u, srvs);
             m_context->CSSetUnorderedAccessViews(0u, 8u, uavs, nullptr);
         };
 
