@@ -1909,18 +1909,18 @@ def _validate_hardware_contract(
     if observed_samples < minimum_samples:
         problems.append(issue("E_HARDWARE_GPU_CLOCK_SAMPLES", "Too few GPU health samples.", expected=minimum_samples, observed=observed_samples))
 
-    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-v1":
+    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":
         problems.append(issue(
             "E_HARDWARE_GPU_STABILITY_WINDOW",
             "Strict hardware stability metrics were not computed from the measurement window.",
-            expected="actual-probe-sequence-warmup-fraction-v1",
+            expected="actual-probe-sequence-warmup-fraction-loaded-v2",
             observed=process_summary.get("gpuHealthWindowPolicy"),
         ))
-    if process_summary.get("gpuClockMetric") != "max-directional-drawdown-measurement-window-v1":
+    if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":
         problems.append(issue(
             "E_HARDWARE_GPU_CLOCK_METRIC",
             "Strict GPU clock stability must use directional measurement-window drawdown.",
-            expected="max-directional-drawdown-measurement-window-v1",
+            expected="max-directional-drawdown-loaded-measurement-window-v2",
             observed=process_summary.get("gpuClockMetric"),
         ))
 

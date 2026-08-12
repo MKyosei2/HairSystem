@@ -1064,5 +1064,33 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         self.assertEqual(float(contract["maximumGpuClockDropRatio"]), 0.15)
 
 
+    def test_7028_strict_gpu_policy_validator_matches_loaded_v2(self) -> None:
+        source = (ROOT / "tools/final_stage/hairgpu_final_run.py").read_text(encoding="utf-8")
+        self.assertIn(
+  'if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":',
+  source,
+        )
+        self.assertIn(
+  'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
+  source,
+        )
+        self.assertIn(
+  'if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":',
+  source,
+        )
+        self.assertIn(
+  'expected="max-directional-drawdown-loaded-measurement-window-v2"',
+  source,
+        )
+        self.assertNotIn(
+  'expected="actual-probe-sequence-warmup-fraction-v1"',
+  source,
+        )
+        self.assertNotIn(
+  'expected="max-directional-drawdown-measurement-window-v1"',
+  source,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
