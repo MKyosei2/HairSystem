@@ -23,7 +23,8 @@ param(
     [int]$Repetitions = 1,
     [string]$SigningSubjectLike = "HairSystem Internal Test Signing",
     [ValidateSet("CurrentUser","LocalMachine")]
-    [string]$SigningStoreScope = "CurrentUser"
+    [string]$SigningStoreScope = "CurrentUser",
+    [switch]$ValidateTransformOnly
 )
 
 Set-StrictMode -Version Latest
@@ -370,6 +371,12 @@ $source = $source.Replace(
 )
 
 $script = [ScriptBlock]::Create($source)
+
+if ($ValidateTransformOnly) {
+    Write-Host "70.30 full runtime source transformation: PASS" -ForegroundColor Green
+    return
+}
+
 $forward = @{
     Stage = $Stage
     Repo = $Repo
