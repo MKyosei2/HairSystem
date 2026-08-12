@@ -64,13 +64,17 @@ jobs:
         run: |
           $targets = @(
             'tools/final_stage/hairgpu_novelty01_matrix.py',
+            'tools/final_stage/hairgpu_novelty01_matrix_7030.py',
             'tools/final_stage/hairgpu_novelty01_readiness_smoke.py',
             'tools/final_stage/hairgpu_novelty01_preflight.py',
             'tools/final_stage/hairgpu_final_run.py',
+            'tools/final_stage/hairgpu_thesis_report_7030.py',
+            'tools/final_stage/hairgpu_thesis_final_gate_7030.py',
             'tests/final_stage/test_novelty01_complete_contract.py',
             'tests/final_stage/test_novelty01_runtime_contract.py',
             'tests/final_stage/test_novelty01_formal_asset_binding_contract.py',
-            'tests/final_stage/test_post_sign_execution_readiness_7029.py'
+            'tests/final_stage/test_post_sign_execution_readiness_7029.py',
+            'tests/final_stage/test_thesis_formal_experiment_contract_7030.py'
           )
           foreach ($target in $targets) {
             python -m py_compile $target
@@ -96,6 +100,21 @@ jobs:
             throw 'Sign-HairSystemBuild.ps1 parser check failed.'
           }
 
+      - name: 70.30 formal runner parser check
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/final_stage/Run_Thesis_B0_P_Formal_7030.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if (@($errors).Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Host
+            throw 'Run_Thesis_B0_P_Formal_7030.ps1 parser check failed.'
+          }
+
       - name: Novelty01 contract tests
         shell: pwsh
         run: |
@@ -104,7 +123,8 @@ jobs:
             'test_novelty01_runtime_contract.py',
             'test_novelty01_formal_asset_binding_contract.py',
             'test_prenovelty_test_environment_contract.py',
-            'test_post_sign_execution_readiness_7029.py'
+            'test_post_sign_execution_readiness_7029.py',
+            'test_thesis_formal_experiment_contract_7030.py'
           )
           foreach ($pattern in $patterns) {
             python -m unittest discover -s tests/final_stage -p $pattern -v

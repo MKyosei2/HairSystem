@@ -1,0 +1,173 @@
+{
+  "schema": "hairgpu-novelty01-formal-contract-v1",
+  "documentRevision": "main-single-binary-b0-p-formal-v4-7030-90run",
+  "samplingRevision": "paired-thesis-90-v1",
+  "branch": "main",
+  "sourceCommit": "99ddc566e6c55c98954c145e151e2cad1d727fed",
+  "sourceCommitRole": "minimumSupportedAncestor",
+  "sourceCommitPolicy": "exact-runtime-head-and-tree-recorded-in-session-manifest",
+  "comparisonDesign": {
+    "primaryMethods": ["B0", "P"],
+    "sameBinary": true,
+    "sameCommit": true,
+    "sameCanonicalAsset": true,
+    "methodIndependentScenarioInputs": true,
+    "requireScenarioInputHashParity": true,
+    "requirePhysicalInputHashParity": true,
+    "timelineOwnsExternalInputs": true,
+    "seedInputAlgorithm": "sha256-scenario-physical-input-v2",
+    "schedule": "counterbalanced",
+    "seeds": [1],
+    "repetitions": 1,
+    "samplingPolicy": "paired-thesis-90-v1",
+    "samplingRationale": "70.30 excludes Smoke from formal evidence. Pilot, Quality, Performance, Determinism and Soak remain paired B0/P conditions. Quality and Performance retain all 18 scenarios. Qualification is diagnostic-only and lives outside the formal session evidence tree.",
+    "sessionIsolation": true,
+    "refuseEvidenceOverwrite": true,
+    "exactCommitAndTreeLock": true,
+    "formalSmokeIncluded": false,
+    "qualificationRequiredForFormalEvidence": false,
+    "runBudget": {
+      "formalTotalRuns": 90,
+      "expectedRunsPerMethod": 45,
+      "profileRunCounts": {
+        "pilot": 10,
+        "formal": 36,
+        "performance": 36,
+        "determinism": 4,
+        "soak": 4
+      },
+      "profileRunsPerMethod": {
+        "pilot": 5,
+        "formal": 18,
+        "performance": 18,
+        "determinism": 2,
+        "soak": 2
+      },
+      "allCountedConditionsPaired": true
+    },
+    "methodLabels": {
+      "B0": "PRE-NOVELTY BASELINE",
+      "P": "POST-NOVELTY SG-APT"
+    }
+  },
+  "resultPolicy": {
+    "fatalIssuePolicy": "nan-inf-crash-input-mismatch-corruption-v1",
+    "performanceThresholdMissIsFatal": false,
+    "qualityThresholdMissIsFatal": false,
+    "hardwareThermalOrClockThresholdMissIsFatal": false,
+    "determinismMismatchIsFatal": false,
+    "recordNonFatalOutcomes": true,
+    "failClosedOn": [
+      "NaN or non-finite simulation state",
+      "viewer crash or abnormal process termination",
+      "scenario/physical input mismatch",
+      "frozen asset or evidence hash mismatch",
+      "missing/corrupted/inconsistent required evidence"
+    ]
+  },
+  "fixedWorkload": {
+    "displayStrandCount": 100000,
+    "guideStrandCount": 4000,
+    "followersPerGuide": 24,
+    "particlesPerStrand": 128,
+    "solverIterations": 6,
+    "groupsPerBlock": 32,
+    "renderWidth": 1920,
+    "renderHeight": 1080,
+    "fixedTimeStepSeconds": 0.016666666666666666,
+    "vsync": false,
+    "presentSyncInterval": 0
+  },
+  "baselines": {
+    "B0": {
+      "route": "legacy_full_dynamic",
+      "method": "B0",
+      "usesControlledDispatcher": false,
+      "usesSgaptRepresentation": false,
+      "description": "Current full dynamic baseline"
+    },
+    "B1": {
+      "route": "strand_sleep",
+      "method": "B1",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B1"
+    },
+    "B2": {
+      "route": "block_sleep",
+      "method": "B2",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B2"
+    },
+    "B3": {
+      "route": "segment_threshold_sleep",
+      "method": "B3",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B3"
+    },
+    "B4": {
+      "route": "segment_hysteresis_sleep",
+      "method": "B4",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B4"
+    },
+    "B5": {
+      "route": "segment_cache",
+      "method": "B5",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B5"
+    },
+    "B6": {
+      "route": "segment_gpu_compaction",
+      "method": "B6",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B6"
+    },
+    "B7": {
+      "route": "active_set_only",
+      "method": "B7",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B7"
+    },
+    "B8": {
+      "route": "external_state_array",
+      "method": "B8",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": false,
+      "description": "Controlled comparison baseline B8"
+    },
+    "P": {
+      "route": "integrated_segment_group_sgapt",
+      "method": "P",
+      "usesControlledDispatcher": true,
+      "usesSgaptRepresentation": true,
+      "description": "SG-APT proposed method"
+    }
+  },
+  "scenarios": {
+    "S01": {"titleJa": "完全静止", "runtimeScenarioName": "S01_Idle", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S01.json"},
+    "S02": {"titleJa": "Root平行移動", "runtimeScenarioName": "S02_Breathing", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S02.json"},
+    "S03": {"titleJa": "Root回転", "runtimeScenarioName": "S03_Walk", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S03.json"},
+    "S04": {"titleJa": "急停止", "runtimeScenarioName": "S04_SuddenStop", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S04.json"},
+    "S05": {"titleJa": "頭部回転", "runtimeScenarioName": "S05_HeadRotation", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S05.json"},
+    "S06": {"titleJa": "Teleport", "runtimeScenarioName": "S06_Teleport", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S06.json"},
+    "S07": {"titleJa": "Collider接近", "runtimeScenarioName": "S07_ColliderApproach", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S07.json"},
+    "S08": {"titleJa": "静動境界接触", "runtimeScenarioName": "S08_StaticDynamicBoundaryContact", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S08.json"},
+    "S09": {"titleJa": "強風", "runtimeScenarioName": "S09_StrongWind", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S09.json"},
+    "S10": {"titleJa": "風停止", "runtimeScenarioName": "S10_WindStop", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S10.json"},
+    "S11": {"titleJa": "局所編集", "runtimeScenarioName": "S11_LocalEdit", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S11.json"},
+    "S12": {"titleJa": "False Static Trap", "runtimeScenarioName": "S12_FalseStaticTrap", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S12.json"},
+    "S13": {"titleJa": "Repair Storm", "runtimeScenarioName": "S13_RepairStorm", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S13.json"},
+    "S14": {"titleJa": "全動的", "runtimeScenarioName": "S14_AllDynamic", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S14.json"},
+    "S15": {"titleJa": "全静的", "runtimeScenarioName": "S15_AllStatic", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S15.json"},
+    "S16": {"titleJa": "状態スラッシング", "runtimeScenarioName": "S16_StateThrashing", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S16.json"},
+    "S17": {"titleJa": "100k近距離カメラ", "runtimeScenarioName": "S17_CloseCamera100k", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S17.json"},
+    "S18": {"titleJa": "100k遠距離カメラ", "runtimeScenarioName": "S18_FarCamera100k", "timelinePath": "benchmarks/novelty01/sgapt_scenarios/S18.json"}
+  }
+}
