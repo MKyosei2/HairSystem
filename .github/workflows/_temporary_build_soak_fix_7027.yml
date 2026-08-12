@@ -1,0 +1,627 @@
+name: Temporary build 70.27 soak stability patch
+
+on:
+  push:
+    branches:
+      - integration/novelty01-safe-soak-7027
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/novelty01-safe-soak-7027
+          fetch-depth: 0
+
+      - name: Apply existing-file fixes
+        shell: pwsh
+        run: |
+          @'
+          from __future__ import annotations
+          import re
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one match, observed {count}")
+              return text.replace(old, new, 1)
+
+          # ------------------------------------------------------------------
+          # 1) Formal runner:
+          #    - active B0/P thermal conditioning before exact soak checks
+          #    - exact full Soak prequalification BEFORE any formal evidence
+          #    - re-condition immediately before official Soak
+          # ------------------------------------------------------------------
+          runner_path = Path("tools/final_stage/Run_Thesis_B0_P_Formal.ps1")
+          runner = runner_path.read_text(encoding="utf-8")
+
+          helper_marker = "\n\nfunction Invoke-PreFormalQualificationSuite {"
+          helper_block = r'''
+
+# ----------------------------------------------------------------------
+# 70.27 soak thermal-stability hardening.
+#
+# The formal hardware thresholds are NOT weakened here.  Instead, the GPU is
+# brought to a repeatable loaded thermal state using a balanced B0/P pilot pair,
+# and the exact four-run Soak matrix is exercised outside sessions\\ before any
+# thesis evidence is collected.  This prevents a late Soak-only failure after
+# Smoke/Pilot/Quality/Performance/Determinism have already consumed hours.
+# ----------------------------------------------------------------------
+function Get-NvidiaFormalGpuState {
+    $nvidia = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if ($null -eq $nvidia) {
+        throw "nvidia-smi.exe is required for formal GPU thermal conditioning."
+    }
+
+    $raw = @(
+        & $nvidia.Source `
+            "--query-gpu=index,temperature.gpu,clocks.current.graphics,utilization.gpu,pstate,power.draw,power.limit" `
+            "--format=csv,noheader,nounits"
+    )
+    if ($LASTEXITCODE -ne 0 -or $raw.Count -lt 1) {
+        throw "Could not query NVIDIA GPU state for formal thermal conditioning."
+    }
+
+    $fields = @(([string]$raw[0]).Split(',') | ForEach-Object { $_.Trim() })
+    if ($fields.Count -lt 7) {
+        throw "Unexpected nvidia-smi thermal-state output: $($raw[0])"
+    }
+
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    return [PSCustomObject]@{
+        index = [int]::Parse($fields[0], $culture)
+        temperatureC = [double]::Parse($fields[1], $culture)
+        graphicsClockMHz = [double]::Parse($fields[2], $culture)
+        utilizationPercent = [double]::Parse($fields[3], $culture)
+        pstate = [string]$fields[4]
+        powerDrawW = [double]::Parse($fields[5], $culture)
+        powerLimitW = [double]::Parse($fields[6], $culture)
+    }
+}
+
+function Invoke-SoakThermalConditioning {
+    param(
+        [Parameter(Mandatory = $true)]$Session,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    Assert-SessionInvariant -Session $Session | Out-Null
+    Assert-FrozenInputs -Session $Session
+    Assert-HardwareProfileReady -Session $Session
+    Assert-NewOutputDirectory -Path $Root
+    New-Item -ItemType Directory -Path $Root -Force | Out-Null
+
+    $hardwareProfiles = Read-JsonFile -Path (
+        Join-Path $Repo "benchmarks\\novelty01\\hardware_profiles.json"
+    )
+    $executionContract = $hardwareProfiles.profiles.measurement_rtx4070ti_super.executionContract
+    [double]$maximumTemperatureC = [double]$executionContract.maximumGpuTemperatureCelsius
+
+    # End-of-cycle temperature is used only to decide whether the loaded system
+    # has reached a repeatable thermal plateau.  Clock stability is evaluated
+    # inside the exact Viewer process using activity-qualified samples.
+    [int]$maximumCycles = 6
+    [int]$requiredStableCycles = 3
+    [double]$maximumEndpointSpreadC = 3.0
+    $states = @()
+    $stable = $false
+    [double]$stableSpreadC = [double]::PositiveInfinity
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "SOAK THERMAL CONDITIONING (NOT THESIS EVIDENCE)"
+    Write-Host "============================================================"
+    Write-Host "Label                     : $Label"
+    Write-Host "Load                      : counterbalanced B0/P Pilot S13"
+    Write-Host "Required stable cycles    : $requiredStableCycles"
+    Write-Host "Endpoint temperature span : <= $maximumEndpointSpreadC C"
+    Write-Host "Maximum GPU temperature   : <= $maximumTemperatureC C"
+    Write-Host "Formal thresholds         : UNCHANGED"
+    Write-Host "============================================================"
+
+    for ($cycle = 1; $cycle -le $maximumCycles; ++$cycle) {
+        $cycleOutput = Join-Path $Root ("cycle_{0:D2}" -f $cycle)
+
+        # Pilot is intentionally non-strict and outside sessions\\.  It is not
+        # thesis evidence; it simply heats both methods under the canonical
+        # workload instead of sleeping/cooling the GPU before Soak.
+        Invoke-Matrix `
+            -Session $Session `
+            -Profile "pilot" `
+            -Scenarios "S13" `
+            -SeedList "1" `
+            -RepeatCount 1 `
+            -Output $cycleOutput `
+            -ExpectedRunCount 2
+
+        Start-Sleep -Milliseconds 500
+        $gpu = Get-NvidiaFormalGpuState
+
+        $state = [PSCustomObject]@{
+            cycle = $cycle
+            capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            temperatureC = [double]$gpu.temperatureC
+            graphicsClockMHz = [double]$gpu.graphicsClockMHz
+            utilizationPercent = [double]$gpu.utilizationPercent
+            pstate = [string]$gpu.pstate
+            powerDrawW = [double]$gpu.powerDrawW
+            powerLimitW = [double]$gpu.powerLimitW
+        }
+        $states += $state
+
+        Write-Host ("Thermal cycle {0}: temp={1:N1}C clock={2:N0}MHz util={3:N0}% pstate={4} power={5:N1}/{6:N1}W" -f `
+            $cycle, $state.temperatureC, $state.graphicsClockMHz, `
+            $state.utilizationPercent, $state.pstate, $state.powerDrawW, $state.powerLimitW)
+
+        if ([double]$state.temperatureC -gt $maximumTemperatureC) {
+            $failure = [ordered]@{
+                schema = "hairsystem-soak-thermal-conditioning-v1"
+                status = "FAIL"
+                reason = "maximum_gpu_temperature_exceeded"
+                label = $Label
+                maximumTemperatureC = $maximumTemperatureC
+                states = @($states)
+            }
+            Write-JsonFile -Value $failure -Path (Join-Path $Root "thermal_conditioning.json")
+            throw "GPU exceeded the unchanged formal maximum temperature during conditioning. Observed=$($state.temperatureC)C Limit=$maximumTemperatureC C"
+        }
+
+        if ($states.Count -ge $requiredStableCycles) {
+            $window = @($states | Select-Object -Last $requiredStableCycles)
+            $temperatures = @($window | ForEach-Object { [double]$_.temperatureC })
+            [double]$windowMaximum = ($temperatures | Measure-Object -Maximum).Maximum
+            [double]$windowMinimum = ($temperatures | Measure-Object -Minimum).Minimum
+            $stableSpreadC = $windowMaximum - $windowMinimum
+
+            if ($stableSpreadC -le $maximumEndpointSpreadC) {
+                $stable = $true
+                break
+            }
+        }
+    }
+
+    $result = [ordered]@{
+        schema = "hairsystem-soak-thermal-conditioning-v1"
+        status = if ($stable) { "PASS" } else { "FAIL" }
+        formalEvidence = $false
+        label = $Label
+        methodBalance = "counterbalanced B0/P"
+        profile = "pilot"
+        scenario = "S13"
+        maximumCycles = $maximumCycles
+        requiredStableCycles = $requiredStableCycles
+        maximumEndpointSpreadC = $maximumEndpointSpreadC
+        observedStableSpreadC = if ([double]::IsPositiveInfinity($stableSpreadC)) { $null } else { $stableSpreadC }
+        maximumTemperatureC = $maximumTemperatureC
+        thresholdsChanged = $false
+        states = @($states)
+        completedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    Write-JsonFile -Value $result -Path (Join-Path $Root "thermal_conditioning.json")
+
+    if (-not $stable) {
+        throw "GPU did not reach a repeatable loaded thermal plateau before Soak. Required endpoint spread <= $maximumEndpointSpreadC C across $requiredStableCycles consecutive B0/P load cycles."
+    }
+
+    Write-Host ("Soak thermal conditioning: PASS (endpoint spread={0:N1}C)" -f $stableSpreadC) -ForegroundColor Green
+}
+'''
+          runner = replace_once(
+              runner,
+              helper_marker,
+              helper_block + helper_marker,
+              "insert thermal conditioning helpers",
+          )
+
+          runner = replace_once(
+              runner,
+              '    Write-Host "4) Ground-truth stress S13 with formal profile"\n',
+              '    Write-Host "4) Ground-truth stress S13 with formal profile"\n'
+              '    Write-Host "5) Loaded B0/P thermal conditioning until a stable endpoint plateau"\n'
+              '    Write-Host "6) Exact full Soak S01/S13 B0/P: catch thermal/clock/robustness failures before thesis evidence"\n',
+              "qualification legend",
+          )
+
+          qualification_insertion_old = '''        -ExpectedRunCount 2 `
+        -DiagnosticCheckpoints
+
+    $summary = [ordered]@{'''
+          qualification_insertion_new = '''        -ExpectedRunCount 2 `
+        -DiagnosticCheckpoints
+
+    Invoke-SoakThermalConditioning `
+        -Session $Session `
+        -Root (Join-Path $root "thermal_conditioning") `
+        -Label "preformal_exact_soak"
+
+    # Exact same profile/scenarios/run count as the official Soak, but outside
+    # sessions\\.  If this fails, the 100-run thesis evidence never starts.
+    Invoke-Matrix `
+        -Session $Session `
+        -Profile "soak" `
+        -Scenarios "S01,S13" `
+        -SeedList "1" `
+        -RepeatCount 1 `
+        -Output (Join-Path $root "soak_full_prequalification") `
+        -ExpectedRunCount 4 `
+        -DiagnosticCheckpoints
+
+    $summary = [ordered]@{'''
+          runner = replace_once(
+              runner,
+              qualification_insertion_old,
+              qualification_insertion_new,
+              "insert exact soak prequalification",
+          )
+
+          runner = replace_once(
+              runner,
+              '            "ground_truth_repair_stress"\n',
+              '            "ground_truth_repair_stress",\n'
+              '            "thermal_conditioning",\n'
+              '            "soak_full_prequalification"\n',
+              "qualification check list",
+          )
+
+          official_soak_old = '''        Assert-HardwareProfileReady -Session $session
+        Assert-FreeDiskSpace -Path $OutputRoot -MinimumFreeGiB 20.0
+        Invoke-Matrix `
+            -Session $session `
+            -Profile "soak" `
+            -Scenarios "S01,S13" `
+            -SeedList "1" `
+            -RepeatCount 1 `
+            -Output (Join-Path $session.Directory "soak\\B0_vs_P") `
+            -ExpectedRunCount 4'''
+          official_soak_new = '''        Assert-HardwareProfileReady -Session $session
+        Assert-FreeDiskSpace -Path $OutputRoot -MinimumFreeGiB 20.0
+
+        # Re-establish the same loaded thermal plateau immediately before the
+        # counted Soak.  This output is outside sessions\\ and is not evidence.
+        $preSoakRoot = Join-Path (
+            Join-Path $OutputRoot "pre_soak_conditioning"
+        ) ([string]$session.Value.sessionId)
+        Invoke-SoakThermalConditioning `
+            -Session $session `
+            -Root $preSoakRoot `
+            -Label "official_soak_entry"
+
+        Invoke-Matrix `
+            -Session $session `
+            -Profile "soak" `
+            -Scenarios "S01,S13" `
+            -SeedList "1" `
+            -RepeatCount 1 `
+            -Output (Join-Path $session.Directory "soak\\B0_vs_P") `
+            -ExpectedRunCount 4'''
+          runner = replace_once(
+              runner,
+              official_soak_old,
+              official_soak_new,
+              "official soak thermal conditioning",
+          )
+
+          runner_path.write_text(runner, encoding="utf-8", newline="\n")
+
+          # ------------------------------------------------------------------
+          # 2) Hardware sampler semantics:
+          #    SG-APT legitimately reduces GPU work, so a P-state idle clock is
+          #    not evidence of thermal throttling.  Keep lifetime peak temp for
+          #    safety, but evaluate spread/drawdown only while NVIDIA telemetry
+          #    says the GPU is active.  Thresholds themselves are unchanged.
+          # ------------------------------------------------------------------
+          final_run_path = Path("tools/final_stage/hairgpu_final_run.py")
+          final_run = final_run_path.read_text(encoding="utf-8")
+
+          final_run = replace_once(
+              final_run,
+              'VALIDATION_VERSION = "01-safe-v3.9-performance-exit-hardening"',
+              'VALIDATION_VERSION = "01-safe-v3.10-soak-loaded-gpu-stability"',
+              "validation version",
+          )
+
+          measurement_old = '''        measurement_health_rows, health_discarded = self._measurement_rows(
+            health_rows, warmup_frames, measurement_frames
+        )
+
+        private = values(lifetime_rows, "privateBytesMiB")'''
+          measurement_new = '''        measurement_health_rows, health_discarded = self._measurement_rows(
+            health_rows, warmup_frames, measurement_frames
+        )
+
+        # A graphics-clock drop caused by the workload becoming idle is normal
+        # NVIDIA P-state/power management, not thermal throttling.  SG-APT is
+        # specifically intended to reduce GPU work, so treating idle clocks as
+        # a hardware-integrity error would bias the gate against the proposal.
+        # When activity telemetry is available, stability metrics therefore use
+        # only samples where the GPU is demonstrably active.  If the driver does
+        # not expose activity/power telemetry, preserve the previous fail-closed
+        # measurement-window behavior instead of fabricating activity.
+        def activity_telemetry_available(row: Mapping[str, Any]) -> bool:
+            utilization = _to_float(row.get("gpuUtilizationPercent"))
+            power_draw = _to_float(row.get("gpuPowerDrawW"))
+            power_limit = _to_float(row.get("gpuPowerLimitW"))
+            return utilization is not None or (
+                power_draw is not None and power_limit is not None and power_limit > 0.0
+            )
+
+        def gpu_is_active(row: Mapping[str, Any]) -> bool:
+            utilization = _to_float(row.get("gpuUtilizationPercent"))
+            if utilization is not None and utilization >= 1.0:
+                return True
+            power_draw = _to_float(row.get("gpuPowerDrawW"))
+            power_limit = _to_float(row.get("gpuPowerLimitW"))
+            return (
+                power_draw is not None
+                and power_limit is not None
+                and power_limit > 0.0
+                and (power_draw / power_limit) >= 0.10
+            )
+
+        gpu_activity_filter_applied = any(
+            activity_telemetry_available(row) for row in measurement_health_rows
+        )
+        stability_health_rows = (
+            [row for row in measurement_health_rows if gpu_is_active(row)]
+            if gpu_activity_filter_applied
+            else list(measurement_health_rows)
+        )
+
+        private = values(lifetime_rows, "privateBytesMiB")'''
+          final_run = replace_once(
+              final_run,
+              measurement_old,
+              measurement_new,
+              "activity-qualified hardware window",
+          )
+
+          series_old = '''        measurement_temperatures = values(measurement_health_rows, "gpuTemperatureC")
+        measurement_clocks = values(measurement_health_rows, "gpuGraphicsClockMHz")'''
+          series_new = '''        measurement_temperatures = values(stability_health_rows, "gpuTemperatureC")
+        measurement_clocks = values(stability_health_rows, "gpuGraphicsClockMHz")
+        measurement_utilization = values(measurement_health_rows, "gpuUtilizationPercent")
+        loaded_utilization = values(stability_health_rows, "gpuUtilizationPercent")
+        loaded_power_draw = values(stability_health_rows, "gpuPowerDrawW")'''
+          final_run = replace_once(
+              final_run,
+              series_old,
+              series_new,
+              "loaded stability series",
+          )
+
+          summary_old = '''            "gpuHealthSampleCount": len(measurement_health_rows),
+            "gpuHealthLifetimeSampleCount": len(health_rows),
+            "gpuHealthWarmupDiscardedSampleCount": health_discarded,
+            "measurementSampleCount": len(measurement_rows),
+            "measurementWarmupDiscardedSampleCount": measurement_discarded,
+            "gpuHealthWindowPolicy": "actual-probe-sequence-warmup-fraction-v1",
+            "gpuClockMetric": "max-directional-drawdown-measurement-window-v1",'''
+          summary_new = '''            "gpuHealthSampleCount": len(stability_health_rows),
+            "gpuHealthMeasurementSampleCount": len(measurement_health_rows),
+            "gpuHealthLoadedSampleCount": len(stability_health_rows),
+            "gpuHealthActivityFilterApplied": gpu_activity_filter_applied,
+            "gpuHealthActivityFilter": "utilization>=1pct-or-power>=10pct-limit-v1" if gpu_activity_filter_applied else "telemetry-unavailable-fallback-v1",
+            "gpuUtilizationMeasurementMinPercent": min(measurement_utilization) if measurement_utilization else None,
+            "gpuUtilizationMeasurementMaxPercent": max(measurement_utilization) if measurement_utilization else None,
+            "gpuUtilizationLoadedMinPercent": min(loaded_utilization) if loaded_utilization else None,
+            "gpuUtilizationLoadedMaxPercent": max(loaded_utilization) if loaded_utilization else None,
+            "gpuPowerLoadedMaxW": max(loaded_power_draw) if loaded_power_draw else None,
+            "gpuHealthLifetimeSampleCount": len(health_rows),
+            "gpuHealthWarmupDiscardedSampleCount": health_discarded,
+            "measurementSampleCount": len(measurement_rows),
+            "measurementWarmupDiscardedSampleCount": measurement_discarded,
+            "gpuHealthWindowPolicy": "actual-probe-sequence-warmup-fraction-loaded-v2",
+            "gpuClockMetric": "max-directional-drawdown-loaded-measurement-window-v2",'''
+          final_run = replace_once(
+              final_run,
+              summary_old,
+              summary_new,
+              "hardware summary diagnostics",
+          )
+
+          final_run_path.write_text(final_run, encoding="utf-8", newline="\n")
+
+          # ------------------------------------------------------------------
+          # 3) Existing formal-contract test file: lock the new behavior.
+          # ------------------------------------------------------------------
+          test_path = Path("tests/final_stage/test_thesis_formal_experiment_contract.py")
+          tests = test_path.read_text(encoding="utf-8")
+          insertion_marker = '\n\nif __name__ == "__main__":'
+          test_method = r'''
+
+    def test_soak_is_prequalified_and_gpu_stability_uses_loaded_samples(self) -> None:
+        runner = (
+            ROOT / "tools/final_stage/Run_Thesis_B0_P_Formal.ps1"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            "function Invoke-SoakThermalConditioning",
+            "SOAK THERMAL CONDITIONING (NOT THESIS EVIDENCE)",
+            'Profile "pilot"',
+            '"soak_full_prequalification"',
+            'Profile "soak"',
+            '"pre_soak_conditioning"',
+            "maximumEndpointSpreadC = 3.0",
+            "thresholdsChanged = $false",
+        ):
+            self.assertIn(marker, runner)
+
+        qualification_position = runner.index('"soak_full_prequalification"')
+        asset_complete_position = runner.index(
+            'Add-CompletedStage -Session $session -Name "Asset"'
+        )
+        smoke_position = runner.index('"Smoke" {')
+        self.assertLess(qualification_position, asset_complete_position)
+        self.assertLess(asset_complete_position, smoke_position)
+
+        official_soak_position = runner.index('"Soak" {')
+        pre_soak_conditioning_position = runner.index(
+            '"pre_soak_conditioning"', official_soak_position
+        )
+        official_matrix_position = runner.index(
+            '-Output (Join-Path $session.Directory "soak\\B0_vs_P")',
+            official_soak_position,
+        )
+        self.assertLess(pre_soak_conditioning_position, official_matrix_position)
+
+        final_run_path = ROOT / "tools/final_stage/hairgpu_final_run.py"
+        source = final_run_path.read_text(encoding="utf-8")
+        for marker in (
+            'VALIDATION_VERSION = "01-safe-v3.10-soak-loaded-gpu-stability"',
+            'gpuUtilizationPercent',
+            'gpuPowerDrawW',
+            'gpuPowerLimitW',
+            'gpuHealthActivityFilterApplied',
+            'utilization>=1pct-or-power>=10pct-limit-v1',
+            'actual-probe-sequence-warmup-fraction-loaded-v2',
+            'max-directional-drawdown-loaded-measurement-window-v2',
+        ):
+            self.assertIn(marker, source)
+
+        spec = importlib.util.spec_from_file_location(
+            "hairgpu_final_run_loaded_gpu_test", final_run_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # A low-utilization P-state drop is not thermal throttling and must not
+        # poison the hardware stability metric.
+        sampler = module.ProcessSampler(interval_seconds=1.0)
+        sampler.samples = [
+            {"elapsedSeconds": 0.0, "gpuTemperatureC": 65.0, "gpuGraphicsClockMHz": 2700.0, "gpuUtilizationPercent": 2.0, "gpuPowerDrawW": 31.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 1.0, "gpuTemperatureC": 66.0, "gpuGraphicsClockMHz": 2685.0, "gpuUtilizationPercent": 2.0, "gpuPowerDrawW": 30.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 2.0, "gpuTemperatureC": 52.0, "gpuGraphicsClockMHz": 210.0, "gpuUtilizationPercent": 0.0, "gpuPowerDrawW": 18.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 3.0, "gpuTemperatureC": 67.0, "gpuGraphicsClockMHz": 2670.0, "gpuUtilizationPercent": 2.0, "gpuPowerDrawW": 30.0, "gpuPowerLimitW": 285.0},
+        ]
+        summary = sampler.summary(warmup_frames=0, measurement_frames=4)
+        self.assertTrue(summary["gpuHealthActivityFilterApplied"])
+        self.assertEqual(summary["gpuHealthMeasurementSampleCount"], 4)
+        self.assertEqual(summary["gpuHealthLoadedSampleCount"], 3)
+        self.assertEqual(summary["gpuHealthSampleCount"], 3)
+        self.assertLessEqual(summary["gpuTemperatureSpreadC"], 2.0)
+        self.assertLess(summary["gpuClockDropRatio"], 0.15)
+
+        # A clock collapse while NVIDIA telemetry says the GPU remains loaded is
+        # still a genuine stability failure and must remain visible.
+        throttled = module.ProcessSampler(interval_seconds=1.0)
+        throttled.samples = [
+            {"elapsedSeconds": 0.0, "gpuTemperatureC": 70.0, "gpuGraphicsClockMHz": 2700.0, "gpuUtilizationPercent": 3.0, "gpuPowerDrawW": 34.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 1.0, "gpuTemperatureC": 72.0, "gpuGraphicsClockMHz": 2715.0, "gpuUtilizationPercent": 3.0, "gpuPowerDrawW": 34.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 2.0, "gpuTemperatureC": 73.0, "gpuGraphicsClockMHz": 1800.0, "gpuUtilizationPercent": 3.0, "gpuPowerDrawW": 33.0, "gpuPowerLimitW": 285.0},
+        ]
+        throttled_summary = throttled.summary(
+            warmup_frames=0, measurement_frames=3
+        )
+        self.assertEqual(throttled_summary["gpuHealthLoadedSampleCount"], 3)
+        self.assertGreater(throttled_summary["gpuClockDropRatio"], 0.15)
+
+        hardware = json.loads(
+            (ROOT / "benchmarks/novelty01/hardware_profiles.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        contract = hardware["profiles"]["measurement_rtx4070ti_super"]["executionContract"]
+        self.assertEqual(float(contract["maximumGpuTemperatureCelsius"]), 88.0)
+        self.assertEqual(float(contract["maximumGpuTemperatureSpreadCelsius"]), 12.0)
+        self.assertEqual(float(contract["maximumGpuClockDropRatio"]), 0.15)
+'''
+          tests = replace_once(
+              tests,
+              insertion_marker,
+              test_method + insertion_marker,
+              "append soak stability regression test",
+          )
+          test_path.write_text(tests, encoding="utf-8", newline="\n")
+
+          print("70.27 existing-file patch applied")
+          '@ | Set-Content -LiteralPath patch_7027.py -Encoding UTF8
+
+          python patch_7027.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Python syntax
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_final_run.py
+          python -m py_compile tests/final_stage/test_thesis_formal_experiment_contract.py
+
+      - name: Formal runner parser
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/final_stage/Run_Thesis_B0_P_Formal.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if (@($errors).Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Host
+            throw 'Formal runner contains PowerShell syntax errors.'
+          }
+
+      - name: hairgpu_final_run self-test
+        shell: pwsh
+        run: |
+          python tools/final_stage/hairgpu_final_run.py --self-test
+
+      - name: Thesis formal contract regression
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests/final_stage -p "test_thesis_formal_experiment_contract.py" -v
+
+      - name: Performance/readback regression
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests/final_stage -p "test_novelty01_performance_readback_stability.py" -v
+
+      - name: Preserve only existing-file source changes and commit 70.27
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath patch_7027.py -Force -ErrorAction SilentlyContinue
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_temporary_build_soak_fix_7027.yml
+          git add tools/final_stage/Run_Thesis_B0_P_Formal.ps1
+          git add tools/final_stage/hairgpu_final_run.py
+          git add tests/final_stage/test_thesis_formal_experiment_contract.py
+          git status --short
+          git commit -m "70.27"
+          git push origin HEAD:integration/novelty01-safe-soak-7027
+
+      - name: Package complete modified existing files
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'HairSystem_70_27_SoakStability_existing_files_only'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          $files = @(
+            'tools/final_stage/Run_Thesis_B0_P_Formal.ps1',
+            'tools/final_stage/hairgpu_final_run.py',
+            'tests/final_stage/test_thesis_formal_experiment_contract.py'
+          )
+          foreach ($relative in $files) {
+            $destination = Join-Path $stage $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $relative -Destination $destination -Force
+          }
+          $zip = Join-Path $env:RUNNER_TEMP 'HairSystem_70_27_SoakStability_existing_files_only.zip'
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal -Force
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "ZIP_SHA256=$hash"
+          "ZIP_SHA256=$hash" | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'zip_sha256.txt') -Encoding ASCII
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HairSystem_70_27_SoakStability_existing_files_only
+          path: |
+            ${{ runner.temp }}/HairSystem_70_27_SoakStability_existing_files_only.zip
+            ${{ runner.temp }}/zip_sha256.txt
+          if-no-files-found: error
+          retention-days: 7
