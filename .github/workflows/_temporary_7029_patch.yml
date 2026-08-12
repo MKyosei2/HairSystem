@@ -1,0 +1,304 @@
+name: Temporary 70.29 Patch Harness
+
+on:
+  push:
+    branches:
+      - integration/novelty01-safe-7029
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.event.head_commit.message != '70.29'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: integration/novelty01-safe-7029
+          fetch-depth: 0
+
+      - name: Apply 70.29 patch
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          runner_path = Path('tools/final_stage/Run_Thesis_B0_P_Formal.ps1')
+          runner = runner_path.read_text(encoding='utf-8')
+          start = runner.index('function Invoke-ViewerExecutionPolicyProbe {')
+          end = runner.index('\nfunction Assert-ViewerSignatureInvariant {', start)
+
+          replacement = r'''function Invoke-ViewerExecutionPolicyProbe {
+              param(
+                  [Parameter(Mandatory = $true)][string]$Viewer,
+                  [Parameter(Mandatory = $true)][string[]]$Arguments,
+                  [Parameter(Mandatory = $true)][string]$Label,
+                  [Parameter(Mandatory = $true)]$Session,
+                  [ValidateRange(1, 600)]
+                  [int]$TimeoutSeconds = 180,
+                  [ValidateRange(0, 300)]
+                  [int]$RetryWindowSeconds = 90,
+                  [ValidateRange(1, 30)]
+                  [int]$RetryDelaySeconds = 5
+              )
+
+              Write-Host ""
+              Write-Host "============================================================"
+              Write-Host "[RUN] $Label"
+              Write-Host "============================================================"
+
+              $expectedHash = (
+                  Get-FileHash -LiteralPath $Viewer -Algorithm SHA256
+              ).Hash.ToLowerInvariant()
+              $initialSignature = Get-AuthenticodeSignature -LiteralPath $Viewer
+              if ($initialSignature.Status -ne "Valid") {
+                  throw "Execution-policy probe requires a valid Viewer signature. Status=$($initialSignature.Status)"
+              }
+              if ($null -eq $initialSignature.SignerCertificate) {
+                  throw "Execution-policy probe Viewer signature has no signer certificate."
+              }
+              $expectedSignerThumbprint = (
+                  [string]$initialSignature.SignerCertificate.Thumbprint
+              ).ToUpperInvariant()
+
+              $deadline = (Get-Date).AddSeconds($RetryWindowSeconds)
+              $attempt = 0
+              $attemptEvidence = @()
+
+              while ($true) {
+                  $attempt += 1
+
+                  $currentHash = (
+                      Get-FileHash -LiteralPath $Viewer -Algorithm SHA256
+                  ).Hash.ToLowerInvariant()
+                  if ($currentHash -ne $expectedHash) {
+                      throw "Viewer SHA-256 changed while waiting for execution readiness. Expected=$expectedHash Observed=$currentHash"
+                  }
+
+                  $currentSignature = Get-AuthenticodeSignature -LiteralPath $Viewer
+                  if ($currentSignature.Status -ne "Valid") {
+                      throw "Viewer signature stopped being Valid while waiting for execution readiness. Status=$($currentSignature.Status)"
+                  }
+                  if ($null -eq $currentSignature.SignerCertificate) {
+                      throw "Viewer signature lost its signer certificate while waiting for execution readiness."
+                  }
+                  $currentSignerThumbprint = (
+                      [string]$currentSignature.SignerCertificate.Thumbprint
+                  ).ToUpperInvariant()
+                  if ($currentSignerThumbprint -ne $expectedSignerThumbprint) {
+                      throw "Viewer signer changed while waiting for execution readiness. Expected=$expectedSignerThumbprint Observed=$currentSignerThumbprint"
+                  }
+
+                  try {
+                      $process = Start-Process `
+                          -FilePath $Viewer `
+                          -ArgumentList $Arguments `
+                          -WorkingDirectory (Split-Path -Parent $Viewer) `
+                          -PassThru `
+                          -ErrorAction Stop
+
+                      $exited = $process.WaitForExit($TimeoutSeconds * 1000)
+                      if (-not $exited) {
+                          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                          throw "$Label timed out after $TimeoutSeconds seconds."
+                      }
+
+                      $process.Refresh()
+                      if ($process.ExitCode -ne 0) {
+                          throw "$Label failed. ExitCode=$($process.ExitCode)"
+                      }
+
+                      $attemptEvidence += [PSCustomObject]@{
+                          attempt = $attempt
+                          status = "PASS"
+                          nativeErrorCode = $null
+                          capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+                      }
+
+                      Write-Host "[PASS] $Label (execution readiness attempt $attempt)"
+                      return
+                  }
+                  catch {
+                      $nativeCode = Get-NativeErrorCode -Exception $_.Exception
+                      $message = $_.Exception.Message
+                      $explicitPolicyBlock = (
+                          $nativeCode -eq 4551 -or
+                          $message -match "4551"
+                      )
+                      $transientAccessDenied = (
+                          -not $explicitPolicyBlock -and
+                          (
+                              $nativeCode -eq 5 -or
+                              $message -match "(?i)access is denied" -or
+                              $message -match "(?i)access.*denied"
+                          )
+                      )
+
+                      $attemptEvidence += [PSCustomObject]@{
+                          attempt = $attempt
+                          status = "FAIL"
+                          nativeErrorCode = $nativeCode
+                          message = $message
+                          transientAccessDenied = $transientAccessDenied
+                          capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+                      }
+
+                      $retryWindowExpired = (Get-Date) -ge $deadline
+                      if (
+                          $explicitPolicyBlock -or
+                          -not $transientAccessDenied -or
+                          $retryWindowExpired
+                      ) {
+                          $failure = [ordered]@{
+                              schema = "hairgpu-formal-execution-policy-failure-v2"
+                              status = "FAIL"
+                              label = $Label
+                              viewer = $Viewer
+                              viewerSha256 = $expectedHash
+                              signerThumbprint = $expectedSignerThumbprint
+                              arguments = $Arguments
+                              retryWindowSeconds = $RetryWindowSeconds
+                              retryDelaySeconds = $RetryDelaySeconds
+                              attempts = $attemptEvidence
+                              nativeErrorCode = $nativeCode
+                              exceptionType = $_.Exception.GetType().FullName
+                              message = $message
+                              capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+                          }
+                          Write-JsonFile `
+                              -Value $failure `
+                              -Path (Join-Path $Session.Directory "integrity\formal_signing_failure.json")
+
+                          if ($explicitPolicyBlock) {
+                              throw @"
+Windows App Control / Code Integrity blocked the signed HairSystem.exe (WinError 4551).
+
+The formal runner did NOT disable or bypass the policy.
+The configured signing certificate must be permitted by the machine's App Control policy.
+Evidence:
+$(Join-Path $Session.Directory "integrity\formal_signing_failure.json")
+"@
+                          }
+
+                          if ($transientAccessDenied -and $retryWindowExpired) {
+                              throw "$Label remained Access Denied for the full $RetryWindowSeconds-second post-sign readiness window. Evidence=$(Join-Path $Session.Directory 'integrity\formal_signing_failure.json')"
+                          }
+
+                          throw
+                      }
+
+                      $remainingSeconds = [math]::Max(
+                          0,
+                          [int][math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+                      )
+                      Write-Warning (
+                          "$Label could not start immediately after signing (Access Denied). " +
+                          "The signed bytes and signer are unchanged; retrying in $RetryDelaySeconds seconds. " +
+                          "Attempt=$attempt RemainingWindowSeconds=$remainingSeconds"
+                      )
+                      Start-Sleep -Seconds $RetryDelaySeconds
+                  }
+              }
+          }
+          '''
+
+          runner = runner[:start] + replacement + runner[end:]
+          runner_path.write_text(runner, encoding='utf-8', newline='\n')
+
+          test_path = Path('tests/final_stage/test_thesis_formal_experiment_contract.py')
+          test_text = test_path.read_text(encoding='utf-8')
+          marker = '    def test_7029_execution_policy_probe_retries_only_transient_access_denied(self) -> None:\n'
+          if marker not in test_text:
+              insertion = r'''
+              def test_7029_execution_policy_probe_retries_only_transient_access_denied(self) -> None:
+                  source = (ROOT / "tools/final_stage/Run_Thesis_B0_P_Formal.ps1").read_text(encoding="utf-8")
+                  self.assertIn('[int]$RetryWindowSeconds = 90', source)
+                  self.assertIn('[int]$RetryDelaySeconds = 5', source)
+                  self.assertIn('$nativeCode -eq 5', source)
+                  self.assertIn('$nativeCode -eq 4551', source)
+                  self.assertIn('hairgpu-formal-execution-policy-failure-v2', source)
+                  self.assertIn('Get-FileHash -LiteralPath $Viewer -Algorithm SHA256', source)
+                  self.assertIn('Get-AuthenticodeSignature -LiteralPath $Viewer', source)
+                  self.assertIn('Start-Sleep -Seconds $RetryDelaySeconds', source)
+                  self.assertIn('Viewer SHA-256 changed while waiting for execution readiness', source)
+                  self.assertIn('Viewer signer changed while waiting for execution readiness', source)
+                  self.assertIn('remained Access Denied for the full $RetryWindowSeconds-second post-sign readiness window', source)
+          '''
+              insertion = '\n'.join(line[14:] if line.startswith('              ') else line for line in insertion.splitlines()) + '\n'
+              anchor = '\n\nif __name__ == "__main__":\n'
+              if anchor not in test_text:
+                  raise SystemExit('test insertion anchor not found')
+              test_text = test_text.replace(anchor, '\n' + insertion + anchor, 1)
+              test_path.write_text(test_text, encoding='utf-8', newline='\n')
+          '@ | Set-Content -LiteralPath _patch_7029.py -Encoding UTF8
+
+          python _patch_7029.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item _patch_7029.py -Force
+
+      - name: Parse PowerShell
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/final_stage/Run_Thesis_B0_P_Formal.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if (@($errors).Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Host
+            throw '70.29 formal runner parser failed.'
+          }
+
+      - name: Thesis contract regression
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests/final_stage -p test_thesis_formal_experiment_contract.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Readback regression
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests/final_stage -p test_novelty01_performance_readback_stability.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Strict source preflight
+        shell: pwsh
+        run: |
+          python tools/final_stage/hairgpu_novelty01_preflight.py --repo . --json preflight_7029.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify exact 70.29 scope
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @(git diff --name-only)
+          $expected = @(
+            'tests/final_stage/test_thesis_formal_experiment_contract.py',
+            'tools/final_stage/Run_Thesis_B0_P_Formal.ps1'
+          )
+          foreach ($name in $changed) {
+            if ($expected -notcontains $name) {
+              throw "Unexpected 70.29 source change: $name"
+            }
+          }
+          foreach ($name in $expected) {
+            if ($changed -notcontains $name) {
+              throw "Expected 70.29 source change missing: $name"
+            }
+          }
+
+      - name: Remove temporary workflow and commit 70.29
+        shell: pwsh
+        run: |
+          Remove-Item '.github/workflows/_temporary_7029_patch.yml' -Force
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/final_stage/Run_Thesis_B0_P_Formal.ps1 tests/final_stage/test_thesis_formal_experiment_contract.py .github/workflows/_temporary_7029_patch.yml
+          git commit -m '70.29' -m 'Retry only transient post-sign Access Denied CreateProcess failures while freezing signed bytes and signer; preserve hard fail for WinError 4551 and all formal thresholds.'
+          git push origin HEAD:integration/novelty01-safe-7029
