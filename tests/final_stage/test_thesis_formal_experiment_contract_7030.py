@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import importlib
 import json
+import math
 import re
+import sys
 from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNNER = ROOT / "tools" / "final_stage" / "Run_Thesis_B0_P_Formal_7030.ps1"
-LEGACY_RUNNER = ROOT / "tools" / "final_stage" / "Run_Thesis_B0_P_Formal.ps1"
-MATRIX = ROOT / "tools" / "final_stage" / "hairgpu_novelty01_matrix_7030.py"
-REPORT = ROOT / "tools" / "final_stage" / "hairgpu_thesis_report_7030.py"
-FINAL_GATE = ROOT / "tools" / "final_stage" / "hairgpu_thesis_final_gate_7030.py"
+FINAL_STAGE_DIR = ROOT / "tools" / "final_stage"
+if str(FINAL_STAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(FINAL_STAGE_DIR))
+
+RUNNER = FINAL_STAGE_DIR / "Run_Thesis_B0_P_Formal_7030.ps1"
+LEGACY_RUNNER = FINAL_STAGE_DIR / "Run_Thesis_B0_P_Formal.ps1"
+MATRIX = FINAL_STAGE_DIR / "hairgpu_novelty01_matrix_7030.py"
+REPORT = FINAL_STAGE_DIR / "hairgpu_thesis_report_7030.py"
+FINAL_GATE = FINAL_STAGE_DIR / "hairgpu_thesis_final_gate_7030.py"
 CONTRACT = ROOT / "docs" / "experiments" / "NOVELTY01_FORMAL_CONTRACT_7030.json"
 
 
@@ -117,12 +124,111 @@ class ThesisFormalExperiment7030Tests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
-    def test_7030_matrix_demotes_hardware_errors_but_keeps_integrity_validator(self) -> None:
+    def test_7030_matrix_binds_policy_to_production_execute_case(self) -> None:
+        module = importlib.import_module("hairgpu_novelty01_matrix_7030")
+        bound = module.legacy.final_run.execute_case.__globals__.get("validate_outputs")
+        self.assertIs(bound, module._validate_outputs_7030)
+
+    def test_7030_matrix_demotes_only_finite_thermal_clock_outcomes(self) -> None:
+        module = importlib.import_module("hairgpu_novelty01_matrix_7030")
+        payload = {
+            "valid": False,
+            "qualityGatePassed": False,
+            "issues": [
+                {
+                    "severity": "error",
+                    "code": "E_HARDWARE_GPU_TEMPERATURE_SPREAD",
+                    "expected": 12.0,
+                    "observed": 23.0,
+                },
+                {
+                    "severity": "error",
+                    "code": "E_HARDWARE_GPU_CLOCK_DROP",
+                    "expected": 0.15,
+                    "observed": 0.9226519337016574,
+                },
+            ],
+        }
+        result = module._demote_nonfatal_outcomes(payload)
+        self.assertTrue(result["valid"])
+        self.assertFalse(result["qualityGatePassed"])
+        self.assertEqual(len(result["nonFatalOutcomeIssues"]), 2)
+        self.assertTrue(all(item["severity"] == "quality" for item in result["issues"]))
+
+        for observed in (None, math.nan, math.inf, -math.inf):
+            with self.subTest(observed=observed):
+                fatal = module._demote_nonfatal_outcomes(
+                    {
+                        "valid": False,
+                        "qualityGatePassed": False,
+                        "issues": [
+                            {
+                                "severity": "error",
+                                "code": "E_HARDWARE_GPU_CLOCK_DROP",
+                                "observed": observed,
+                            }
+                        ],
+                    }
+                )
+                self.assertFalse(fatal["valid"])
+                self.assertEqual(fatal["issues"][0]["severity"], "error")
+
+    def test_7030_production_binding_applies_demotion_not_just_helper(self) -> None:
+        module = importlib.import_module("hairgpu_novelty01_matrix_7030")
+        payload = {
+            "valid": False,
+            "qualityGatePassed": False,
+            "issues": [
+                {
+                    "severity": "error",
+                    "code": "E_HARDWARE_GPU_TEMPERATURE_SPREAD",
+                    "expected": 12.0,
+                    "observed": 23.0,
+                }
+            ],
+        }
+        original = module._original_validate_outputs
+        try:
+            module._original_validate_outputs = lambda *args, **kwargs: payload
+            bound = module.legacy.final_run.execute_case.__globals__["validate_outputs"]
+            result = bound(object(), object(), object(), object())
+        finally:
+            module._original_validate_outputs = original
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["issues"][0]["severity"], "quality")
+
+    def test_7030_hardware_identity_and_integrity_failures_stay_fatal(self) -> None:
+        module = importlib.import_module("hairgpu_novelty01_matrix_7030")
+        for code, observed in (
+            ("E_HARDWARE_GPU_NAME", "Wrong GPU"),
+            ("E_HARDWARE_AC_POWER", False),
+            ("E_HARDWARE_POWER_SCHEME", "balanced"),
+            ("E_HARDWARE_GPU_CLOCK_SAMPLES", 0),
+            ("E_HARDWARE_GPU_STABILITY_WINDOW", "wrong-policy"),
+            ("E_NAN_STATE", 1),
+        ):
+            with self.subTest(code=code):
+                result = module._demote_nonfatal_outcomes(
+                    {
+                        "valid": False,
+                        "qualityGatePassed": False,
+                        "issues": [
+                            {"severity": "error", "code": code, "observed": observed}
+                        ],
+                    }
+                )
+                self.assertFalse(result["valid"])
+                self.assertEqual(result["issues"][0]["severity"], "error")
+
+    def test_7030_matrix_source_keeps_integrity_validator_and_binding_guard(self) -> None:
         source = MATRIX.read_text(encoding="utf-8")
-        self.assertIn('NON_FATAL_ERROR_PREFIXES = ("E_HARDWARE_",)', source)
+        self.assertIn("NON_FATAL_HARDWARE_OUTCOME_CODES", source)
+        self.assertIn('"E_HARDWARE_GPU_TEMPERATURE_SPREAD"', source)
+        self.assertIn('"E_HARDWARE_GPU_CLOCK_DROP"', source)
         self.assertIn('item["severity"] = "quality"', source)
         self.assertIn('result["valid"] = not any(', source)
-        self.assertIn('final_run.validate_outputs = _validate_outputs_7030', source)
+        self.assertIn('legacy.final_run.execute_case.__globals__', source)
+        self.assertIn('_RUNTIME_GLOBALS["validate_outputs"] = _validate_outputs_7030', source)
         self.assertIn('determinismOutcomeIssues', source)
         self.assertIn('payload["determinismIssues"] = []', source)
         self.assertIn('scenarioInputParityIssues', source)
