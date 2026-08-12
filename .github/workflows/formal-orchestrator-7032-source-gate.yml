@@ -1,0 +1,95 @@
+name: 70.32 Formal Orchestrator Source Gate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-orchestrator-7032-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-gate:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+      PYTHONHASHSEED: "0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 70.32 Python contract syntax
+        shell: pwsh
+        run: |
+          python -m py_compile tests/final_stage/test_thesis_formal_orchestrator_7032.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 70.32 orchestrator contract tests
+        shell: pwsh
+        run: |
+          python -m unittest discover `
+            -s tests/final_stage `
+            -p test_thesis_formal_orchestrator_7032.py `
+            -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 70.32 Windows PowerShell 5.1 parser check
+        shell: powershell
+        run: |
+          $targets = @(
+            'tools/final_stage/Run_Thesis_B0_P_Formal_7032_All.ps1',
+            'tools/final_stage/Run_Thesis_B0_P_Formal_7031.ps1'
+          )
+          foreach ($target in $targets) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $target),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if (@($errors).Count -ne 0) {
+              $errors | Format-List | Out-String | Write-Host
+              throw "PowerShell 5.1 parser check failed: $target"
+            }
+          }
+          Write-Host '70.32 PowerShell 5.1 parser check: PASS'
+
+      - name: 70.32 validate-only runtime path
+        shell: powershell
+        run: |
+          & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File tools\final_stage\Run_Thesis_B0_P_Formal_7032_All.ps1 `
+            -Repo $PWD.Path `
+            -OutputRoot (Join-Path $env:RUNNER_TEMP 'HairSystem7032Validation') `
+            -ValidateOnly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify gate did not modify tracked source
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tracked = @(git status --porcelain --untracked-files=no)
+          if ($tracked.Count -gt 0) {
+            $tracked | ForEach-Object { Write-Host $_ }
+            throw 'Tracked source changed during 70.32 source gate.'
+          }
