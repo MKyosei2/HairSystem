@@ -1493,6 +1493,167 @@ function Invoke-Matrix {
 }
 
 
+# ----------------------------------------------------------------------
+# 70.27 soak thermal-stability hardening.
+#
+# Formal thresholds are not weakened. The GPU is brought to a repeatable
+# loaded thermal state using a balanced B0/P Pilot pair, and the exact four-run
+# Soak matrix is exercised outside sessions\ before thesis evidence starts.
+# ----------------------------------------------------------------------
+function Get-NvidiaFormalGpuState {
+    $nvidia = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if ($null -eq $nvidia) {
+        throw "nvidia-smi.exe is required for formal GPU thermal conditioning."
+    }
+
+    $raw = @(
+        & $nvidia.Source `
+            "--query-gpu=index,temperature.gpu,clocks.current.graphics,utilization.gpu,pstate,power.draw,power.limit" `
+            "--format=csv,noheader,nounits"
+    )
+    if ($LASTEXITCODE -ne 0 -or $raw.Count -lt 1) {
+        throw "Could not query NVIDIA GPU state for formal thermal conditioning."
+    }
+
+    $fields = @(([string]$raw[0]).Split(',') | ForEach-Object { $_.Trim() })
+    if ($fields.Count -lt 7) {
+        throw "Unexpected nvidia-smi thermal-state output: $($raw[0])"
+    }
+
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    return [PSCustomObject]@{
+        index = [int]::Parse($fields[0], $culture)
+        temperatureC = [double]::Parse($fields[1], $culture)
+        graphicsClockMHz = [double]::Parse($fields[2], $culture)
+        utilizationPercent = [double]::Parse($fields[3], $culture)
+        pstate = [string]$fields[4]
+        powerDrawW = [double]::Parse($fields[5], $culture)
+        powerLimitW = [double]::Parse($fields[6], $culture)
+    }
+}
+
+function Invoke-SoakThermalConditioning {
+    param(
+        [Parameter(Mandatory = $true)]$Session,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    Assert-SessionInvariant -Session $Session | Out-Null
+    Assert-FrozenInputs -Session $Session
+    Assert-HardwareProfileReady -Session $Session
+    Assert-NewOutputDirectory -Path $Root
+    New-Item -ItemType Directory -Path $Root -Force | Out-Null
+
+    $hardwareProfiles = Read-JsonFile -Path (
+        Join-Path $Repo "benchmarks\novelty01\hardware_profiles.json"
+    )
+    $executionContract = $hardwareProfiles.profiles.measurement_rtx4070ti_super.executionContract
+    [double]$maximumTemperatureC = [double]$executionContract.maximumGpuTemperatureCelsius
+
+    [int]$maximumCycles = 6
+    [int]$requiredStableCycles = 3
+    [double]$maximumEndpointSpreadC = 3.0
+    $states = @()
+    $stable = $false
+    [double]$stableSpreadC = [double]::PositiveInfinity
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "SOAK THERMAL CONDITIONING (NOT THESIS EVIDENCE)"
+    Write-Host "============================================================"
+    Write-Host "Label                     : $Label"
+    Write-Host "Load                      : counterbalanced B0/P Pilot S13"
+    Write-Host "Required stable cycles    : $requiredStableCycles"
+    Write-Host "Endpoint temperature span : <= $maximumEndpointSpreadC C"
+    Write-Host "Maximum GPU temperature   : <= $maximumTemperatureC C"
+    Write-Host "Formal thresholds         : UNCHANGED"
+    Write-Host "============================================================"
+
+    for ($cycle = 1; $cycle -le $maximumCycles; ++$cycle) {
+        $cycleOutput = Join-Path $Root ("cycle_{0:D2}" -f $cycle)
+
+        # Non-strict, non-evidence load. Both methods are used so conditioning
+        # does not favor B0 or P.
+        Invoke-Matrix `
+            -Session $Session `
+            -Profile "pilot" `
+            -Scenarios "S13" `
+            -SeedList "1" `
+            -RepeatCount 1 `
+            -Output $cycleOutput `
+            -ExpectedRunCount 2
+
+        Start-Sleep -Milliseconds 500
+        $gpu = Get-NvidiaFormalGpuState
+        $state = [PSCustomObject]@{
+            cycle = $cycle
+            capturedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            temperatureC = [double]$gpu.temperatureC
+            graphicsClockMHz = [double]$gpu.graphicsClockMHz
+            utilizationPercent = [double]$gpu.utilizationPercent
+            pstate = [string]$gpu.pstate
+            powerDrawW = [double]$gpu.powerDrawW
+            powerLimitW = [double]$gpu.powerLimitW
+        }
+        $states += $state
+
+        Write-Host ("Thermal cycle {0}: temp={1:N1}C clock={2:N0}MHz util={3:N0}% pstate={4} power={5:N1}/{6:N1}W" -f `
+            $cycle, $state.temperatureC, $state.graphicsClockMHz, `
+            $state.utilizationPercent, $state.pstate, $state.powerDrawW, $state.powerLimitW)
+
+        if ([double]$state.temperatureC -gt $maximumTemperatureC) {
+            $failure = [ordered]@{
+                schema = "hairsystem-soak-thermal-conditioning-v1"
+                status = "FAIL"
+                reason = "maximum_gpu_temperature_exceeded"
+                label = $Label
+                maximumTemperatureC = $maximumTemperatureC
+                states = @($states)
+            }
+            Write-JsonFile -Value $failure -Path (Join-Path $Root "thermal_conditioning.json")
+            throw "GPU exceeded the unchanged formal maximum temperature during conditioning. Observed=$($state.temperatureC)C Limit=$maximumTemperatureC C"
+        }
+
+        if ($states.Count -ge $requiredStableCycles) {
+            $window = @($states | Select-Object -Last $requiredStableCycles)
+            $temperatures = @($window | ForEach-Object { [double]$_.temperatureC })
+            [double]$windowMaximum = ($temperatures | Measure-Object -Maximum).Maximum
+            [double]$windowMinimum = ($temperatures | Measure-Object -Minimum).Minimum
+            $stableSpreadC = $windowMaximum - $windowMinimum
+            if ($stableSpreadC -le $maximumEndpointSpreadC) {
+                $stable = $true
+                break
+            }
+        }
+    }
+
+    $result = [ordered]@{
+        schema = "hairsystem-soak-thermal-conditioning-v1"
+        status = if ($stable) { "PASS" } else { "FAIL" }
+        formalEvidence = $false
+        label = $Label
+        methodBalance = "counterbalanced B0/P"
+        profile = "pilot"
+        scenario = "S13"
+        maximumCycles = $maximumCycles
+        requiredStableCycles = $requiredStableCycles
+        maximumEndpointSpreadC = $maximumEndpointSpreadC
+        observedStableSpreadC = if ([double]::IsPositiveInfinity($stableSpreadC)) { $null } else { $stableSpreadC }
+        maximumTemperatureC = $maximumTemperatureC
+        thresholdsChanged = $false
+        states = @($states)
+        completedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    Write-JsonFile -Value $result -Path (Join-Path $Root "thermal_conditioning.json")
+
+    if (-not $stable) {
+        throw "GPU did not reach a repeatable loaded thermal plateau before Soak. Required endpoint spread <= $maximumEndpointSpreadC C across $requiredStableCycles consecutive B0/P load cycles."
+    }
+    Write-Host ("Soak thermal conditioning: PASS (endpoint spread={0:N1}C)" -f $stableSpreadC) -ForegroundColor Green
+}
+
+
 function Invoke-PreFormalQualificationSuite {
     param([Parameter(Mandatory = $true)]$Session)
 
@@ -1511,6 +1672,8 @@ function Invoke-PreFormalQualificationSuite {
     Write-Host "2) Representative Performance S01/S07/S13/S16/S17/S18"
     Write-Host "3) Determinism S01 repeated 2x"
     Write-Host "4) Ground-truth stress S13 with formal profile"
+    Write-Host "5) Loaded B0/P thermal conditioning until a stable endpoint plateau"
+    Write-Host "6) Exact full Soak S01/S13 B0/P before thesis evidence"
     Write-Host "Outputs stay outside sessions\\ and cannot be counted by FinalGate."
     Write-Host "============================================================"
 
@@ -1554,6 +1717,21 @@ function Invoke-PreFormalQualificationSuite {
         -ExpectedRunCount 2 `
         -DiagnosticCheckpoints
 
+    Invoke-SoakThermalConditioning `
+        -Session $Session `
+        -Root (Join-Path $root "thermal_conditioning") `
+        -Label "preformal_exact_soak"
+
+    Invoke-Matrix `
+        -Session $Session `
+        -Profile "soak" `
+        -Scenarios "S01,S13" `
+        -SeedList "1" `
+        -RepeatCount 1 `
+        -Output (Join-Path $root "soak_full_prequalification") `
+        -ExpectedRunCount 4 `
+        -DiagnosticCheckpoints
+
     $summary = [ordered]@{
         schema = "hairsystem-preformal-qualification-v1"
         status = "PASS"
@@ -1565,7 +1743,9 @@ function Invoke-PreFormalQualificationSuite {
             "performance_s01_repeat3",
             "performance_representative",
             "determinism_s01_repeat2",
-            "ground_truth_repair_stress"
+            "ground_truth_repair_stress",
+            "thermal_conditioning",
+            "soak_full_prequalification"
         )
         crashDumpDirectory = Join-Path (Join-Path (Join-Path $OutputRoot "diagnostics") ([string]$Session.Value.sessionId)) "crash_dumps"
         checkpointLog = Join-Path (Join-Path (Join-Path $OutputRoot "diagnostics") ([string]$Session.Value.sessionId)) "viewer_checkpoints.log"
@@ -1906,6 +2086,15 @@ switch ($Stage) {
         Assert-CompletedStages -Session $session -Required @("Determinism")
         Assert-HardwareProfileReady -Session $session
         Assert-FreeDiskSpace -Path $OutputRoot -MinimumFreeGiB 20.0
+
+        $preSoakRoot = Join-Path (
+            Join-Path $OutputRoot "pre_soak_conditioning"
+        ) ([string]$session.Value.sessionId)
+        Invoke-SoakThermalConditioning `
+            -Session $session `
+            -Root $preSoakRoot `
+            -Label "official_soak_entry"
+
         Invoke-Matrix `
             -Session $session `
             -Profile "soak" `
