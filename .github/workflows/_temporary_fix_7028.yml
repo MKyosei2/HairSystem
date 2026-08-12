@@ -30,41 +30,30 @@ jobs:
           final_path = Path("tools/final_stage/hairgpu_final_run.py")
           source = final_path.read_text(encoding="utf-8")
 
-          old_block = '''    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-v1":
-              problems.append(issue(
-                  "E_HARDWARE_GPU_STABILITY_WINDOW",
-                  "Strict hardware stability metrics were not computed from the measurement window.",
-                  expected="actual-probe-sequence-warmup-fraction-v1",
-                  observed=process_summary.get("gpuHealthWindowPolicy"),
-              ))
-          if process_summary.get("gpuClockMetric") != "max-directional-drawdown-measurement-window-v1":
-              problems.append(issue(
-                  "E_HARDWARE_GPU_CLOCK_METRIC",
-                  "Strict GPU clock stability must use directional measurement-window drawdown.",
-                  expected="max-directional-drawdown-measurement-window-v1",
-                  observed=process_summary.get("gpuClockMetric"),
-              ))
-          '''
+          replacements = [
+              (
+                  'process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-v1"',
+                  'process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2"',
+              ),
+              (
+                  'expected="actual-probe-sequence-warmup-fraction-v1"',
+                  'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
+              ),
+              (
+                  'process_summary.get("gpuClockMetric") != "max-directional-drawdown-measurement-window-v1"',
+                  'process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2"',
+              ),
+              (
+                  'expected="max-directional-drawdown-measurement-window-v1"',
+                  'expected="max-directional-drawdown-loaded-measurement-window-v2"',
+              ),
+          ]
 
-          new_block = '''    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":
-              problems.append(issue(
-                  "E_HARDWARE_GPU_STABILITY_WINDOW",
-                  "Strict hardware stability metrics were not computed from the loaded measurement window.",
-                  expected="actual-probe-sequence-warmup-fraction-loaded-v2",
-                  observed=process_summary.get("gpuHealthWindowPolicy"),
-              ))
-          if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":
-              problems.append(issue(
-                  "E_HARDWARE_GPU_CLOCK_METRIC",
-                  "Strict GPU clock stability must use directional loaded-measurement-window drawdown.",
-                  expected="max-directional-drawdown-loaded-measurement-window-v2",
-                  observed=process_summary.get("gpuClockMetric"),
-              ))
-          '''
-
-          if source.count(old_block) != 1:
-              raise SystemExit(f"Expected exactly one legacy validator block, found {source.count(old_block)}")
-          source = source.replace(old_block, new_block, 1)
+          for old, new in replacements:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one validator token {old!r}, found {count}")
+              source = source.replace(old, new, 1)
 
           if 'expected="actual-probe-sequence-warmup-fraction-v1"' in source:
               raise SystemExit("Legacy gpuHealthWindowPolicy validator expectation still remains")
@@ -75,44 +64,44 @@ jobs:
 
           test_path = Path("tests/final_stage/test_thesis_formal_experiment_contract.py")
           tests = test_path.read_text(encoding="utf-8")
-          anchor = '''            self.assertIn(required, source)
+          sentinel = '    def test_7028_strict_gpu_policy_validator_matches_loaded_v2(self) -> None:'
+          if sentinel in tests:
+              raise SystemExit("70.28 regression test already exists unexpectedly")
 
-          spec = importlib.util.spec_from_file_location("hairgpu_final_run_loaded_gpu_test", final_path)
+          insertion = r'''
+
+              def test_7028_strict_gpu_policy_validator_matches_loaded_v2(self) -> None:
+                  source = (ROOT / "tools/final_stage/hairgpu_final_run.py").read_text(encoding="utf-8")
+                  self.assertIn(
+                      'if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":',
+                      source,
+                  )
+                  self.assertIn(
+                      'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
+                      source,
+                  )
+                  self.assertIn(
+                      'if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":',
+                      source,
+                  )
+                  self.assertIn(
+                      'expected="max-directional-drawdown-loaded-measurement-window-v2"',
+                      source,
+                  )
+                  self.assertNotIn(
+                      'expected="actual-probe-sequence-warmup-fraction-v1"',
+                      source,
+                  )
+                  self.assertNotIn(
+                      'expected="max-directional-drawdown-measurement-window-v1"',
+                      source,
+                  )
           '''
-          insert = '''            self.assertIn(required, source)
-
-          # 70.28 regression: the strict output validator must consume exactly
-          # the loaded-v2 policy names emitted by ProcessSampler.summary().
-          self.assertIn(
-              'if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":',
-              source,
-          )
-          self.assertIn(
-              'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
-              source,
-          )
-          self.assertIn(
-              'if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":',
-              source,
-          )
-          self.assertIn(
-              'expected="max-directional-drawdown-loaded-measurement-window-v2"',
-              source,
-          )
-          self.assertNotIn(
-              'expected="actual-probe-sequence-warmup-fraction-v1"',
-              source,
-          )
-          self.assertNotIn(
-              'expected="max-directional-drawdown-measurement-window-v1"',
-              source,
-          )
-
-          spec = importlib.util.spec_from_file_location("hairgpu_final_run_loaded_gpu_test", final_path)
-          '''
-          if tests.count(anchor) != 1:
-              raise SystemExit(f"Expected exactly one regression-test insertion point, found {tests.count(anchor)}")
-          tests = tests.replace(anchor, insert, 1)
+          insertion = insertion.replace("\n              ", "\n    ").replace("\n          ", "\n")
+          marker = '\n\nif __name__ == "__main__":\n'
+          if tests.count(marker) != 1:
+              raise SystemExit(f"Expected one unittest footer marker, found {tests.count(marker)}")
+          tests = tests.replace(marker, insertion + marker, 1)
           test_path.write_text(tests, encoding="utf-8", newline="\n")
           '@ | python -
 
@@ -134,14 +123,14 @@ jobs:
           from pathlib import Path
           source = Path("tools/final_stage/hairgpu_final_run.py").read_text(encoding="utf-8")
           required = [
-              'if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":',
+              'process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2"',
               'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
-              'if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":',
+              'process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2"',
               'expected="max-directional-drawdown-loaded-measurement-window-v2"',
           ]
           for item in required:
-              if item not in source:
-                  raise SystemExit(f"Missing 70.28 validator contract: {item}")
+              if source.count(item) != 1:
+                  raise SystemExit(f"70.28 validator contract count mismatch for {item!r}: {source.count(item)}")
           forbidden = [
               'expected="actual-probe-sequence-warmup-fraction-v1"',
               'expected="max-directional-drawdown-measurement-window-v1"',
