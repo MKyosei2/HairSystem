@@ -12,9 +12,18 @@ execution. 70.30 changes only evidence policy:
 * determinism mismatches are preserved as outcomes;
 * NaN/Inf, crash/runtime failure, input mismatch and corrupted/incomplete
   evidence remain fail-closed through the unchanged 70.29 integrity validator.
+
+Important import detail:
+``hairgpu_final_run`` is a compatibility package which re-exports functions from
+its sibling ``hairgpu_final_run.py`` implementation module. ``execute_case``
+therefore resolves globals from that hidden implementation module, not from the
+facade module. Any validation-policy override must patch the exact module globals
+owned by ``execute_case``. Merely assigning ``hairgpu_final_run.validate_outputs``
+on the facade does not affect the production execution path.
 """
 
 import copy
+import math
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -31,11 +40,26 @@ SAMPLING_POLICY = "paired-thesis-90-v1"
 FATAL_POLICY = "nan-inf-crash-input-mismatch-corruption-v1"
 CONTRACT_RELATIVE = Path("docs/experiments/NOVELTY01_FORMAL_CONTRACT_7030.json")
 
-# The strict 70.29 validator reports environment stability as E_HARDWARE_*.
-# Those observations remain in each result, but 70.30 does not treat them as
-# evidence corruption. A machine can miss a temperature/clock/performance
-# target and still produce scientifically useful comparison data.
-NON_FATAL_ERROR_PREFIXES = ("E_HARDWARE_",)
+# Only measured thermal/clock *outcomes* are non-fatal. Hardware identity,
+# power-plan/AC requirements, missing telemetry, malformed stability windows and
+# other environment/integrity failures remain fatal. An unavailable observation
+# (None/NaN/Inf) is never demoted.
+NON_FATAL_HARDWARE_OUTCOME_CODES = frozenset(
+    {
+        "E_HARDWARE_GPU_TEMPERATURE",
+        "E_HARDWARE_GPU_TEMPERATURE_SPREAD",
+        "E_HARDWARE_GPU_CLOCK_DROP",
+        "E_HARDWARE_GPU_TEMPERATURE_ENDPOINT",
+    }
+)
+
+
+def _has_finite_observation(item: Mapping[str, Any]) -> bool:
+    observed = item.get("observed")
+    try:
+        return observed is not None and math.isfinite(float(observed))
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def _demote_nonfatal_outcomes(validation: Mapping[str, Any]) -> dict[str, Any]:
@@ -47,7 +71,11 @@ def _demote_nonfatal_outcomes(validation: Mapping[str, Any]) -> dict[str, Any]:
     for item in issues:
         code = str(item.get("code", ""))
         severity = str(item.get("severity", ""))
-        if severity == "error" and code.startswith(NON_FATAL_ERROR_PREFIXES):
+        if (
+            severity == "error"
+            and code in NON_FATAL_HARDWARE_OUTCOME_CODES
+            and _has_finite_observation(item)
+        ):
             item["severity"] = "quality"
             item["formalOutcomeOnly"] = True
             item["originalSeverity"] = "error"
@@ -66,12 +94,34 @@ def _demote_nonfatal_outcomes(validation: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-_original_validate_outputs = final_run.validate_outputs
+# ``final_run`` can be the compatibility facade. The production ``execute_case``
+# function was defined in a hidden implementation module, so patch the module
+# dictionary that actually owns execute_case.__globals__. This removes the
+# facade/implementation split which previously let Soak re-enter the strict
+# 70.29 hardware validator and abort on a non-fatal thermal observation.
+_RUNTIME_GLOBALS = legacy.final_run.execute_case.__globals__
+_original_validate_outputs = _RUNTIME_GLOBALS.get("validate_outputs")
+if not callable(_original_validate_outputs):
+    raise RuntimeError(
+        "70.30 could not resolve the production validate_outputs binding used by execute_case"
+    )
 
 
 def _validate_outputs_7030(*args: Any, **kwargs: Any) -> dict[str, Any]:
     validation = _original_validate_outputs(*args, **kwargs)
     return _demote_nonfatal_outcomes(validation)
+
+
+# Patch every public alias for consistency, but the execute_case globals binding
+# below is the authoritative fix and is verified fail-closed immediately.
+_RUNTIME_GLOBALS["validate_outputs"] = _validate_outputs_7030
+legacy.final_run.validate_outputs = _validate_outputs_7030
+final_run.validate_outputs = _validate_outputs_7030
+
+if legacy.final_run.execute_case.__globals__.get("validate_outputs") is not _validate_outputs_7030:
+    raise RuntimeError(
+        "70.30 validation policy is not bound to the production execute_case path"
+    )
 
 
 _original_build_matrix_summary = legacy.build_matrix_summary
@@ -100,10 +150,6 @@ def _build_matrix_summary_7030(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return payload
 
 
-# Patch the already-imported module objects. legacy.execute_matrix resolves these
-# globals at call time, so no copy of the large stable 70.29 implementation is
-# needed.
-final_run.validate_outputs = _validate_outputs_7030
 legacy.FORMAL_CONTRACT_RELATIVE = CONTRACT_RELATIVE
 legacy.build_matrix_summary = _build_matrix_summary_7030
 
