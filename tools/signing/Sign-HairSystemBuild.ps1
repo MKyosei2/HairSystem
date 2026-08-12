@@ -56,11 +56,6 @@ function Get-CertificateEkuOidValues {
             continue
         }
 
-        # Windows PowerShell 5.1 normally exposes EnhancedKeyUsageList items
-        # as System.Security.Cryptography.Oid objects with a direct Value
-        # property.  Other PowerShell/.NET combinations can expose a wrapper
-        # whose ObjectId property contains the Oid.  Resolve both shapes
-        # without touching a missing property under Set-StrictMode.
         $directValueProperty = $eku.PSObject.Properties["Value"]
         if (
             $null -ne $directValueProperty -and
@@ -74,8 +69,6 @@ function Get-CertificateEkuOidValues {
         if ($null -ne $objectIdProperty -and $null -ne $objectIdProperty.Value) {
             $objectId = $objectIdProperty.Value
 
-            # Windows PowerShell 5.1 can expose
-            # EnhancedKeyUsageRepresentation.ObjectId as the OID string itself.
             if (
                 $objectId -is [string] -and
                 -not [string]::IsNullOrWhiteSpace([string]$objectId)
@@ -181,6 +174,118 @@ function Assert-SignatureValid {
     return $signature
 }
 
+function Get-NativeErrorCode {
+    param([Parameter(Mandatory = $true)]$Exception)
+
+    $cursor = $Exception
+    while ($null -ne $cursor) {
+        if ($cursor.PSObject.Properties.Name -contains 'NativeErrorCode') {
+            try {
+                return [int]$cursor.NativeErrorCode
+            }
+            catch {
+            }
+        }
+        $cursor = $cursor.InnerException
+    }
+    return $null
+}
+
+function Wait-HairSystemPostSignExecutionReadiness {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string]$ExpectedThumbprint,
+        [ValidateRange(1, 300)][int]$RetryWindowSeconds = 90,
+        [ValidateRange(1, 30)][int]$RetryDelaySeconds = 5,
+        [ValidateRange(1, 120)][int]$AttemptTimeoutSeconds = 30
+    )
+
+    # 70.29: Windows can transiently reject CreateProcess immediately after a
+    # newly built image is Authenticode-signed even though that exact image is
+    # executable moments later.  Retry ONLY WinError 5 / Access Denied.  The
+    # signed bytes and signer are frozen and revalidated before every attempt.
+    # WinError 4551 and all non-Access-Denied failures remain hard failures.
+    $expectedHash = (
+        Get-FileHash -LiteralPath $Executable -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+
+    [void](Assert-SignatureValid `
+        -Path $Executable `
+        -ExpectedThumbprint $ExpectedThumbprint)
+
+    $deadline = (Get-Date).AddSeconds($RetryWindowSeconds)
+    $attempt = 0
+
+    while ($true) {
+        $attempt += 1
+
+        $currentHash = (
+            Get-FileHash -LiteralPath $Executable -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        if ($currentHash -ne $expectedHash) {
+            throw "HairSystem.exe changed during post-sign execution readiness. ExpectedSha256=$expectedHash ObservedSha256=$currentHash"
+        }
+
+        [void](Assert-SignatureValid `
+            -Path $Executable `
+            -ExpectedThumbprint $ExpectedThumbprint)
+
+        try {
+            $process = Start-Process `
+                -FilePath $Executable `
+                -ArgumentList @('--native-self-test') `
+                -WorkingDirectory (Split-Path -Parent $Executable) `
+                -PassThru `
+                -ErrorAction Stop
+
+            $exited = $process.WaitForExit($AttemptTimeoutSeconds * 1000)
+            if (-not $exited) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                throw "Post-sign native self-test timed out after $AttemptTimeoutSeconds seconds."
+            }
+
+            $process.Refresh()
+            if ($process.ExitCode -ne 0) {
+                throw "Post-sign native self-test failed. ExitCode=$($process.ExitCode)"
+            }
+
+            Write-Host "Post-sign execution readiness PASS on attempt $attempt." -ForegroundColor Green
+            return
+        }
+        catch {
+            $nativeCode = Get-NativeErrorCode -Exception $_.Exception
+            $message = $_.Exception.Message
+
+            if ($nativeCode -eq 4551 -or $message -match '4551') {
+                throw "Windows App Control / Code Integrity explicitly blocked the signed HairSystem.exe (WinError 4551). No retry/bypass is permitted. Original=$message"
+            }
+
+            $transientAccessDenied = (
+                $nativeCode -eq 5 -or
+                $message -match '(?i)access.*denied'
+            )
+            if (-not $transientAccessDenied) {
+                throw
+            }
+
+            if ((Get-Date) -ge $deadline) {
+                throw "Signed HairSystem.exe remained Access Denied for the full $RetryWindowSeconds-second readiness window. Sha256=$expectedHash Attempts=$attempt LastNativeErrorCode=$nativeCode LastMessage=$message"
+            }
+
+            $remainingSeconds = [math]::Max(
+                0,
+                [int][math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+            )
+            Write-Warning (
+                "Post-sign CreateProcess was transiently Access Denied. " +
+                "The exact SHA-256 and signer remain frozen; retrying in $RetryDelaySeconds seconds. " +
+                "Attempt=$attempt RemainingWindowSeconds=$remainingSeconds NativeErrorCode=$nativeCode"
+            )
+            Start-Sleep -Seconds $RetryDelaySeconds
+        }
+    }
+}
+
 $signtool = Find-SignTool
 $cert = Resolve-Certificate `
     -Thumbprint $Thumbprint `
@@ -211,7 +316,6 @@ Write-Host "Certificate valid until: $($cert.NotAfter.ToString('o'))"
 foreach ($file in $files) {
     $existing = Get-AuthenticodeSignature -LiteralPath $file.FullName
 
-    # Preserve a valid third-party/Microsoft signature instead of replacing it.
     if (
         $existing.Status -eq 'Valid' -and
         $null -ne $existing.SignerCertificate -and
@@ -279,13 +383,24 @@ if ($IncludePowershellScripts) {
 }
 
 if (-not $WhatIf) {
-    # Final pass: every executable image must be validly signed. Existing valid
-    # third-party signatures are accepted; locally unsigned output is not.
     foreach ($file in $files) {
         $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
         if ($signature.Status -ne 'Valid') {
             throw "Final signature validation failed: $($file.FullName) Status=$($signature.Status)"
         }
+    }
+
+    $hairSystemViewer = @(
+        $files | Where-Object { $_.Name -ieq 'HairSystem.exe' }
+    ) | Select-Object -First 1
+
+    if ($null -ne $hairSystemViewer) {
+        Wait-HairSystemPostSignExecutionReadiness `
+            -Executable $hairSystemViewer.FullName `
+            -ExpectedThumbprint $cert.Thumbprint `
+            -RetryWindowSeconds 90 `
+            -RetryDelaySeconds 5 `
+            -AttemptTimeoutSeconds 30
     }
 }
 
