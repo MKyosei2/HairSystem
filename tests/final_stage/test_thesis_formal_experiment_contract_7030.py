@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "tools" / "final_stage" / "Run_Thesis_B0_P_Formal_7030.ps1"
+LEGACY_RUNNER = ROOT / "tools" / "final_stage" / "Run_Thesis_B0_P_Formal.ps1"
 MATRIX = ROOT / "tools" / "final_stage" / "hairgpu_novelty01_matrix_7030.py"
 REPORT = ROOT / "tools" / "final_stage" / "hairgpu_thesis_report_7030.py"
 FINAL_GATE = ROOT / "tools" / "final_stage" / "hairgpu_thesis_final_gate_7030.py"
@@ -57,6 +59,35 @@ class ThesisFormalExperiment7030Tests(unittest.TestCase):
         self.assertIn('expectedFormalRunCount = 90', source)
         self.assertIn('expectedMethodRunCount = 45', source)
         self.assertIn('90 total / 45 B0 / 45 P', source)
+
+    def test_7030_runtime_transform_patterns_match_7029_exactly_once(self) -> None:
+        source = LEGACY_RUNNER.read_text(encoding="utf-8")
+        patterns = {
+            "stage-set": r'"Asset",\s*"Smoke",\s*"Pilot",',
+            "sampling-policy": r'\$ReducedSamplingPolicy\s*=\s*"paired-thesis-100-v1"',
+            "matrix-runtime-path": r'\$matrix\s*=\s*Join-Path \$Repo "tools\\final_stage\\hairgpu_novelty01_matrix\.py"',
+            "report-runtime-path": r'\$reporter\s*=\s*Join-Path \$Repo "tools\\final_stage\\hairgpu_thesis_report\.py"',
+            "final-gate-runtime-path": r'\$gate\s*=\s*Join-Path \$Repo "tools\\final_stage\\hairgpu_thesis_final_gate\.py"',
+            "detach-qualification-from-asset": r'(?m)^[ \t]*Invoke-PreFormalQualificationSuite -Session \$session[ \t]*\r?$',
+            "smoke-to-qualification": r'(?ms)^[ \t]*"Smoke"\s*\{.*?^[ \t]*"Pilot"\s*\{',
+            "pilot-dependency": r'Assert-CompletedStages -Session \$session -Required @\("Smoke"\)',
+            "remove-smoke-directory": r'"environment", "integrity", "logs", "smoke", "pilot",',
+            "session-90-run-metadata": r'samplingPolicy = \$ReducedSamplingPolicy\s*expectedFormalRunCount = 100\s*expectedMethodRunCount = 50',
+            "report-remove-smoke-profile": r'(?m)^[ \t]*smoke = 10[ \t]*\r?$',
+            "report-summary-count-condition": r'\$summaries\.Count -ne 6',
+            "report-summary-count-message": r'requires exactly 6 formal matrix summaries',
+            "report-total-count-condition": r'\$total -ne 100 -or \$b0Total -ne 50 -or \$pTotal -ne 50',
+            "report-total-count-message": r'Expected=100/50/50',
+            "report-pass-message": r'Pre-Report evidence gate: PASS \(100 total / 50 B0 / 50 P\)',
+            "thermal-conditioning-7030": r'(?ms)function Invoke-SoakThermalConditioning \{.*?^function Invoke-PreFormalQualificationSuite \{',
+        }
+        for label, pattern in patterns.items():
+            with self.subTest(label=label):
+                self.assertEqual(
+                    len(re.findall(pattern, source, flags=re.DOTALL)),
+                    1,
+                    f"70.30 runtime transform {label!r} no longer has exactly one 70.29 target",
+                )
 
     def test_7030_runner_uses_7030_matrix_report_and_final_gate(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
