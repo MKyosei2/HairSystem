@@ -747,7 +747,7 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         self.assertGreater(summary["gpuClockLifetimeRangeRatio"], 0.80)
         self.assertEqual(
             summary["gpuHealthWindowPolicy"],
-            "actual-probe-sequence-warmup-fraction-v1",
+            "actual-probe-sequence-warmup-fraction-loaded-v2",
         )
 
         sampler.samples[-1] = dict(sampler.samples[-1])
@@ -992,6 +992,76 @@ class ThesisFormalExperimentContractV3Tests(unittest.TestCase):
         source_of_truth = contract["sourceOfTruth"]
         self.assertFalse(source_of_truth["oldApplyScriptsReferencedByBuild"])
         self.assertTrue(source_of_truth["unappliedPatchArtifactsAreNonAuthoritative"])
+
+
+    def test_soak_is_prequalified_and_gpu_stability_uses_loaded_samples(self) -> None:
+        runner = (ROOT / "tools/final_stage/Run_Thesis_B0_P_Formal.ps1").read_text(encoding="utf-8")
+        for required in (
+            "function Invoke-SoakThermalConditioning",
+            "SOAK THERMAL CONDITIONING (NOT THESIS EVIDENCE)",
+            '"soak_full_prequalification"',
+            '"pre_soak_conditioning"',
+            "maximumEndpointSpreadC = 3.0",
+            "thresholdsChanged = $false",
+        ):
+            self.assertIn(required, runner)
+        self.assertLess(
+            runner.index('"soak_full_prequalification"'),
+            runner.index('Add-CompletedStage -Session $session -Name "Asset"'),
+        )
+        official_soak = runner.index('"Soak" {')
+        self.assertLess(
+            runner.index('"pre_soak_conditioning"', official_soak),
+            runner.index('-Output (Join-Path $session.Directory "soak\\B0_vs_P")', official_soak),
+        )
+
+        final_path = ROOT / "tools/final_stage/hairgpu_final_run.py"
+        source = final_path.read_text(encoding="utf-8")
+        for required in (
+            'VALIDATION_VERSION = "01-safe-v3.10-soak-loaded-gpu-stability"',
+            'gpuHealthActivityFilterApplied',
+            'utilization>=1pct-or-power>=10pct-limit-v1',
+            'actual-probe-sequence-warmup-fraction-loaded-v2',
+            'max-directional-drawdown-loaded-measurement-window-v2',
+        ):
+            self.assertIn(required, source)
+
+        spec = importlib.util.spec_from_file_location("hairgpu_final_run_loaded_gpu_test", final_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        sampler = module.ProcessSampler(interval_seconds=1.0)
+        sampler.samples = [
+            {"elapsedSeconds": 0.0, "gpuTemperatureC": 65.0, "gpuGraphicsClockMHz": 2700.0, "gpuUtilizationPercent": 2.0, "gpuPowerDrawW": 31.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 1.0, "gpuTemperatureC": 66.0, "gpuGraphicsClockMHz": 2685.0, "gpuUtilizationPercent": 2.0, "gpuPowerDrawW": 30.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 2.0, "gpuTemperatureC": 52.0, "gpuGraphicsClockMHz": 210.0, "gpuUtilizationPercent": 0.0, "gpuPowerDrawW": 18.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 3.0, "gpuTemperatureC": 67.0, "gpuGraphicsClockMHz": 2670.0, "gpuUtilizationPercent": 2.0, "gpuPowerDrawW": 30.0, "gpuPowerLimitW": 285.0},
+        ]
+        summary = sampler.summary(warmup_frames=0, measurement_frames=4)
+        self.assertTrue(summary["gpuHealthActivityFilterApplied"])
+        self.assertEqual(summary["gpuHealthMeasurementSampleCount"], 4)
+        self.assertEqual(summary["gpuHealthLoadedSampleCount"], 3)
+        self.assertEqual(summary["gpuHealthSampleCount"], 3)
+        self.assertLessEqual(summary["gpuTemperatureSpreadC"], 2.0)
+        self.assertLess(summary["gpuClockDropRatio"], 0.15)
+
+        throttled = module.ProcessSampler(interval_seconds=1.0)
+        throttled.samples = [
+            {"elapsedSeconds": 0.0, "gpuTemperatureC": 70.0, "gpuGraphicsClockMHz": 2700.0, "gpuUtilizationPercent": 3.0, "gpuPowerDrawW": 34.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 1.0, "gpuTemperatureC": 72.0, "gpuGraphicsClockMHz": 2715.0, "gpuUtilizationPercent": 3.0, "gpuPowerDrawW": 34.0, "gpuPowerLimitW": 285.0},
+            {"elapsedSeconds": 2.0, "gpuTemperatureC": 73.0, "gpuGraphicsClockMHz": 1800.0, "gpuUtilizationPercent": 3.0, "gpuPowerDrawW": 33.0, "gpuPowerLimitW": 285.0},
+        ]
+        throttled_summary = throttled.summary(warmup_frames=0, measurement_frames=3)
+        self.assertEqual(throttled_summary["gpuHealthLoadedSampleCount"], 3)
+        self.assertGreater(throttled_summary["gpuClockDropRatio"], 0.15)
+
+        hardware = json.loads((ROOT / "benchmarks/novelty01/hardware_profiles.json").read_text(encoding="utf-8"))
+        contract = hardware["profiles"]["measurement_rtx4070ti_super"]["executionContract"]
+        self.assertEqual(float(contract["maximumGpuTemperatureCelsius"]), 88.0)
+        self.assertEqual(float(contract["maximumGpuTemperatureSpreadCelsius"]), 12.0)
+        self.assertEqual(float(contract["maximumGpuClockDropRatio"]), 0.15)
 
 
 if __name__ == "__main__":

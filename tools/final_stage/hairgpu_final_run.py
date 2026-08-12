@@ -35,7 +35,7 @@ EXIT_RUNTIME_FAILURE = 3
 EXIT_OUTPUT_INTEGRITY_FAILURE = 4
 EXIT_CONFIGURATION_FAILURE = 5
 
-VALIDATION_VERSION = "01-safe-v3.9-performance-exit-hardening"
+VALIDATION_VERSION = "01-safe-v3.10-soak-loaded-gpu-stability"
 FROZEN_ASSET_RUNTIME_VERSION = 5
 
 _FROZEN_ASSET_VIEWER_VALIDATION_CACHE: set[tuple[str, str]] = set()
@@ -1169,14 +1169,52 @@ class ProcessSampler:
             health_rows, warmup_frames, measurement_frames
         )
 
+        # SG-APT legitimately reduces GPU work. A graphics-clock drop while the
+        # GPU is idle is therefore normal P-state management, not thermal
+        # throttling. Stability metrics use activity-qualified samples whenever
+        # NVIDIA utilization/power telemetry is available. Thresholds are not
+        # changed, and drivers without activity telemetry keep the old behavior.
+        def activity_telemetry_available(row: Mapping[str, Any]) -> bool:
+            utilization = _to_float(row.get("gpuUtilizationPercent"))
+            power_draw = _to_float(row.get("gpuPowerDrawW"))
+            power_limit = _to_float(row.get("gpuPowerLimitW"))
+            return utilization is not None or (
+                power_draw is not None and power_limit is not None and power_limit > 0.0
+            )
+
+        def gpu_is_active(row: Mapping[str, Any]) -> bool:
+            utilization = _to_float(row.get("gpuUtilizationPercent"))
+            if utilization is not None and utilization >= 1.0:
+                return True
+            power_draw = _to_float(row.get("gpuPowerDrawW"))
+            power_limit = _to_float(row.get("gpuPowerLimitW"))
+            return (
+                power_draw is not None
+                and power_limit is not None
+                and power_limit > 0.0
+                and (power_draw / power_limit) >= 0.10
+            )
+
+        gpu_activity_filter_applied = any(
+            activity_telemetry_available(row) for row in measurement_health_rows
+        )
+        stability_health_rows = (
+            [row for row in measurement_health_rows if gpu_is_active(row)]
+            if gpu_activity_filter_applied
+            else list(measurement_health_rows)
+        )
+
         private = values(lifetime_rows, "privateBytesMiB")
         working = values(lifetime_rows, "workingSetMiB")
         local = values(lifetime_rows, "dxgiLocalUsageMiB")
         nonlocal_values = values(lifetime_rows, "dxgiNonLocalUsageMiB")
         temperatures = values(lifetime_rows, "gpuTemperatureC")
         clocks = values(lifetime_rows, "gpuGraphicsClockMHz")
-        measurement_temperatures = values(measurement_health_rows, "gpuTemperatureC")
-        measurement_clocks = values(measurement_health_rows, "gpuGraphicsClockMHz")
+        measurement_temperatures = values(stability_health_rows, "gpuTemperatureC")
+        measurement_clocks = values(stability_health_rows, "gpuGraphicsClockMHz")
+        measurement_utilization = values(measurement_health_rows, "gpuUtilizationPercent")
+        loaded_utilization = values(stability_health_rows, "gpuUtilizationPercent")
+        loaded_power_draw = values(stability_health_rows, "gpuPowerDrawW")
         handles = values(lifetime_rows, "handleCount")
         gdi_objects = values(lifetime_rows, "gdiObjectCount")
         user_objects = values(lifetime_rows, "userObjectCount")
@@ -1229,13 +1267,22 @@ class ProcessSampler:
             "gpuTemperatureLifetimeSpreadC": (max(temperatures) - min(temperatures)) if temperatures else None,
             "gpuClockDropRatio": self._directional_clock_drawdown(measurement_clocks),
             "gpuClockLifetimeRangeRatio": lifetime_clock_range,
-            "gpuHealthSampleCount": len(measurement_health_rows),
+            "gpuHealthSampleCount": len(stability_health_rows),
+            "gpuHealthMeasurementSampleCount": len(measurement_health_rows),
+            "gpuHealthLoadedSampleCount": len(stability_health_rows),
+            "gpuHealthActivityFilterApplied": gpu_activity_filter_applied,
+            "gpuHealthActivityFilter": "utilization>=1pct-or-power>=10pct-limit-v1" if gpu_activity_filter_applied else "telemetry-unavailable-fallback-v1",
+            "gpuUtilizationMeasurementMinPercent": min(measurement_utilization) if measurement_utilization else None,
+            "gpuUtilizationMeasurementMaxPercent": max(measurement_utilization) if measurement_utilization else None,
+            "gpuUtilizationLoadedMinPercent": min(loaded_utilization) if loaded_utilization else None,
+            "gpuUtilizationLoadedMaxPercent": max(loaded_utilization) if loaded_utilization else None,
+            "gpuPowerLoadedMaxW": max(loaded_power_draw) if loaded_power_draw else None,
             "gpuHealthLifetimeSampleCount": len(health_rows),
             "gpuHealthWarmupDiscardedSampleCount": health_discarded,
             "measurementSampleCount": len(measurement_rows),
             "measurementWarmupDiscardedSampleCount": measurement_discarded,
-            "gpuHealthWindowPolicy": "actual-probe-sequence-warmup-fraction-v1",
-            "gpuClockMetric": "max-directional-drawdown-measurement-window-v1",
+            "gpuHealthWindowPolicy": "actual-probe-sequence-warmup-fraction-loaded-v2",
+            "gpuClockMetric": "max-directional-drawdown-loaded-measurement-window-v2",
             "resourceSampleCoverage": min(1.0, len(resource_series) / max(1, attempted_samples)),
             "peakHandleCount": max(handles) if handles else None,
             "handleCountSlopePerMin": linear_slope_per_minute(measurement_handle_series),
