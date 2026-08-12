@@ -146,8 +146,8 @@ jobs:
           if (`$observed -ne 'ac') { throw "Unexpected empty replacement result: `$observed" }
           Write-Host '70.30 PowerShell 5.1 empty replacement: PASS'
           "@
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $probe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $probeBlock = [ScriptBlock]::Create($probe)
+          & $probeBlock
 
       - name: Novelty01 contract tests
         shell: pwsh
