@@ -20,7 +20,11 @@ jobs:
 
       - name: Apply existing-file patch
         shell: pwsh
-        run: python tools/final_stage/_temporary_patch_7027.py
+        run: |
+          python tools/final_stage/_temporary_patch_7027.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/final_stage/_temporary_test_expectation_7027.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Python syntax
         shell: pwsh
@@ -58,6 +62,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/_temporary_build_soak_fix_7027.yml
           git rm tools/final_stage/_temporary_patch_7027.py
+          git rm tools/final_stage/_temporary_test_expectation_7027.py
           git add tools/final_stage/Run_Thesis_B0_P_Formal.ps1
           git add tools/final_stage/hairgpu_final_run.py
           git add tests/final_stage/test_thesis_formal_experiment_contract.py
