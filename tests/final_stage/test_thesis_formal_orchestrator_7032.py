@@ -28,7 +28,10 @@ class ThesisFormalOrchestrator7032Tests(unittest.TestCase):
         self.assertGreaterEqual(self.source.count(guid), 1)
         self.assertIn("Get-ActivePowerSchemeGuid", self.source)
         self.assertIn("powerPlanGuid", self.source)
-        self.assertIn("Localized power-plan name intentionally ignored", self.source)
+        self.assertIn(
+            "localized power-plan name intentionally ignored",
+            self.source.lower(),
+        )
         self.assertNotIn("高パフォーマンス", self.source)
         self.assertNotRegex(
             self.source,
