@@ -115,6 +115,40 @@ jobs:
             throw 'Run_Thesis_B0_P_Formal_7030.ps1 parser check failed.'
           }
 
+      - name: 70.30 PowerShell 5.1 empty replacement runtime check
+        shell: powershell
+        run: |
+          $path = Resolve-Path 'tools/final_stage/Run_Thesis_B0_P_Formal_7030.ps1'
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $path,
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if (@($errors).Count -ne 0) {
+            throw '70.30 runner could not be parsed for runtime binding check.'
+          }
+          $functionAst = $ast.Find(
+            {
+              param($node)
+              $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Replace-RegexOnce'
+            },
+            $true
+          )
+          if ($null -eq $functionAst) {
+            throw 'Replace-RegexOnce was not found in 70.30 runner.'
+          }
+          $probe = @"
+          $($functionAst.Extent.Text)
+          `$observed = Replace-RegexOnce -Text 'abc' -Pattern 'b' -Replacement '' -Label 'ci-empty-replacement'
+          if (`$observed -ne 'ac') { throw "Unexpected empty replacement result: `$observed" }
+          Write-Host '70.30 PowerShell 5.1 empty replacement: PASS'
+          "@
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $probe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Novelty01 contract tests
         shell: pwsh
         run: |
