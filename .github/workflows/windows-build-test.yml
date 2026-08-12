@@ -149,6 +149,19 @@ jobs:
           $probeBlock = [ScriptBlock]::Create($probe)
           & $probeBlock
 
+      - name: 70.30 full runtime source transformation check
+        shell: powershell
+        run: |
+          & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File tools\final_stage\Run_Thesis_B0_P_Formal_7030.ps1 `
+            -Stage Prepare `
+            -Repo $PWD.Path `
+            -OutputRoot (Join-Path $env:RUNNER_TEMP 'HairSystem7030TransformValidation') `
+            -ValidateTransformOnly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Novelty01 contract tests
         shell: pwsh
         run: |
