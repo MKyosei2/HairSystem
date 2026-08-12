@@ -60,6 +60,14 @@ class ThesisFormalExperiment7030Tests(unittest.TestCase):
         self.assertIn('expectedMethodRunCount = 45', source)
         self.assertIn('90 total / 45 B0 / 45 P', source)
 
+    def test_7030_replace_regex_once_accepts_empty_replacement(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(
+            '[Parameter(Mandatory = $true)][AllowEmptyString()][string]$Replacement,',
+            source,
+        )
+        self.assertGreaterEqual(source.count("-Replacement ''"), 2)
+
     def test_7030_runtime_transform_patterns_match_7029_exactly_once(self) -> None:
         source = LEGACY_RUNNER.read_text(encoding="utf-8")
         patterns = {

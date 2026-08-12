@@ -72,7 +72,7 @@ function Replace-RegexOnce {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [Parameter(Mandatory = $true)][string]$Pattern,
-        [Parameter(Mandatory = $true)][string]$Replacement,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Replacement,
         [Parameter(Mandatory = $true)][string]$Label
     )
 
