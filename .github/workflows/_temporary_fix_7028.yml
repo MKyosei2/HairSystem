@@ -1,0 +1,164 @@
+name: temporary-70-28-validator-sync
+
+on:
+  push:
+    branches:
+      - integration/novelty01-safe-7028
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.event.head_commit.message != '70.28'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Patch 70.28 producer-validator policy contract
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          final_path = Path("tools/final_stage/hairgpu_final_run.py")
+          source = final_path.read_text(encoding="utf-8")
+
+          old_block = '''    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-v1":
+              problems.append(issue(
+                  "E_HARDWARE_GPU_STABILITY_WINDOW",
+                  "Strict hardware stability metrics were not computed from the measurement window.",
+                  expected="actual-probe-sequence-warmup-fraction-v1",
+                  observed=process_summary.get("gpuHealthWindowPolicy"),
+              ))
+          if process_summary.get("gpuClockMetric") != "max-directional-drawdown-measurement-window-v1":
+              problems.append(issue(
+                  "E_HARDWARE_GPU_CLOCK_METRIC",
+                  "Strict GPU clock stability must use directional measurement-window drawdown.",
+                  expected="max-directional-drawdown-measurement-window-v1",
+                  observed=process_summary.get("gpuClockMetric"),
+              ))
+          '''
+
+          new_block = '''    if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":
+              problems.append(issue(
+                  "E_HARDWARE_GPU_STABILITY_WINDOW",
+                  "Strict hardware stability metrics were not computed from the loaded measurement window.",
+                  expected="actual-probe-sequence-warmup-fraction-loaded-v2",
+                  observed=process_summary.get("gpuHealthWindowPolicy"),
+              ))
+          if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":
+              problems.append(issue(
+                  "E_HARDWARE_GPU_CLOCK_METRIC",
+                  "Strict GPU clock stability must use directional loaded-measurement-window drawdown.",
+                  expected="max-directional-drawdown-loaded-measurement-window-v2",
+                  observed=process_summary.get("gpuClockMetric"),
+              ))
+          '''
+
+          if source.count(old_block) != 1:
+              raise SystemExit(f"Expected exactly one legacy validator block, found {source.count(old_block)}")
+          source = source.replace(old_block, new_block, 1)
+
+          if 'expected="actual-probe-sequence-warmup-fraction-v1"' in source:
+              raise SystemExit("Legacy gpuHealthWindowPolicy validator expectation still remains")
+          if 'expected="max-directional-drawdown-measurement-window-v1"' in source:
+              raise SystemExit("Legacy gpuClockMetric validator expectation still remains")
+
+          final_path.write_text(source, encoding="utf-8", newline="\n")
+
+          test_path = Path("tests/final_stage/test_thesis_formal_experiment_contract.py")
+          tests = test_path.read_text(encoding="utf-8")
+          anchor = '''            self.assertIn(required, source)
+
+          spec = importlib.util.spec_from_file_location("hairgpu_final_run_loaded_gpu_test", final_path)
+          '''
+          insert = '''            self.assertIn(required, source)
+
+          # 70.28 regression: the strict output validator must consume exactly
+          # the loaded-v2 policy names emitted by ProcessSampler.summary().
+          self.assertIn(
+              'if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":',
+              source,
+          )
+          self.assertIn(
+              'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
+              source,
+          )
+          self.assertIn(
+              'if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":',
+              source,
+          )
+          self.assertIn(
+              'expected="max-directional-drawdown-loaded-measurement-window-v2"',
+              source,
+          )
+          self.assertNotIn(
+              'expected="actual-probe-sequence-warmup-fraction-v1"',
+              source,
+          )
+          self.assertNotIn(
+              'expected="max-directional-drawdown-measurement-window-v1"',
+              source,
+          )
+
+          spec = importlib.util.spec_from_file_location("hairgpu_final_run_loaded_gpu_test", final_path)
+          '''
+          if tests.count(anchor) != 1:
+              raise SystemExit(f"Expected exactly one regression-test insertion point, found {tests.count(anchor)}")
+          tests = tests.replace(anchor, insert, 1)
+          test_path.write_text(tests, encoding="utf-8", newline="\n")
+          '@ | python -
+
+      - name: Verify Python syntax
+        shell: pwsh
+        run: |
+          python -m py_compile tools/final_stage/hairgpu_final_run.py
+          python -m py_compile tests/final_stage/test_thesis_formal_experiment_contract.py
+
+      - name: Run thesis formal contract regression
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests/final_stage -p test_thesis_formal_experiment_contract.py -v
+
+      - name: Verify validator contract directly
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          source = Path("tools/final_stage/hairgpu_final_run.py").read_text(encoding="utf-8")
+          required = [
+              'if process_summary.get("gpuHealthWindowPolicy") != "actual-probe-sequence-warmup-fraction-loaded-v2":',
+              'expected="actual-probe-sequence-warmup-fraction-loaded-v2"',
+              'if process_summary.get("gpuClockMetric") != "max-directional-drawdown-loaded-measurement-window-v2":',
+              'expected="max-directional-drawdown-loaded-measurement-window-v2"',
+          ]
+          for item in required:
+              if item not in source:
+                  raise SystemExit(f"Missing 70.28 validator contract: {item}")
+          forbidden = [
+              'expected="actual-probe-sequence-warmup-fraction-v1"',
+              'expected="max-directional-drawdown-measurement-window-v1"',
+          ]
+          for item in forbidden:
+              if item in source:
+                  raise SystemExit(f"Legacy validator contract remains: {item}")
+          print("70.28 producer/validator policy contract: PASS")
+          '@ | python -
+
+      - name: Commit 70.28
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath .github/workflows/_temporary_fix_7028.yml -Force
+          git config user.name "MKyosei2"
+          git config user.email "matsukyo958@gmail.com"
+          git add tools/final_stage/hairgpu_final_run.py tests/final_stage/test_thesis_formal_experiment_contract.py .github/workflows/_temporary_fix_7028.yml
+          git diff --cached --check
+          git commit -m "70.28"
+          git push origin HEAD:integration/novelty01-safe-7028
