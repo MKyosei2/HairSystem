@@ -76,7 +76,7 @@ function Replace-RegexOnce {
         [Parameter(Mandatory = $true)][string]$Label
     )
 
-    $regex = New-Object System.Text.RegularExpressions.Regex(
+    $regex = [System.Text.RegularExpressions.Regex]::new(
         $Pattern,
         [System.Text.RegularExpressions.RegexOptions]::Singleline
     )
@@ -143,21 +143,21 @@ $source = Replace-RegexOnce -Text $source `
     -Replacement '$ReducedSamplingPolicy = "paired-thesis-90-v1"' `
     -Label "sampling-policy"
 $source = Replace-RegexOnce -Text $source `
-    -Pattern 'tools\\final_stage\\hairgpu_novelty01_matrix\.py' `
-    -Replacement 'tools\final_stage\hairgpu_novelty01_matrix_7030.py' `
-    -Label "matrix-path"
+    -Pattern '\$matrix\s*=\s*Join-Path \$Repo "tools\\final_stage\\hairgpu_novelty01_matrix\.py"' `
+    -Replacement '$matrix = Join-Path $Repo "tools\final_stage\hairgpu_novelty01_matrix_7030.py"' `
+    -Label "matrix-runtime-path"
 $source = Replace-RegexOnce -Text $source `
-    -Pattern 'tools\\final_stage\\hairgpu_thesis_report\.py' `
-    -Replacement 'tools\final_stage\hairgpu_thesis_report_7030.py' `
-    -Label "report-path"
+    -Pattern '\$reporter\s*=\s*Join-Path \$Repo "tools\\final_stage\\hairgpu_thesis_report\.py"' `
+    -Replacement '$reporter = Join-Path $Repo "tools\final_stage\hairgpu_thesis_report_7030.py"' `
+    -Label "report-runtime-path"
 $source = Replace-RegexOnce -Text $source `
-    -Pattern 'tools\\final_stage\\hairgpu_thesis_final_gate\.py' `
-    -Replacement 'tools\final_stage\hairgpu_thesis_final_gate_7030.py' `
-    -Label "final-gate-path"
+    -Pattern '\$gate\s*=\s*Join-Path \$Repo "tools\\final_stage\\hairgpu_thesis_final_gate\.py"' `
+    -Replacement '$gate = Join-Path $Repo "tools\final_stage\hairgpu_thesis_final_gate_7030.py"' `
+    -Label "final-gate-runtime-path"
 
 # Asset now ends after build/sign/freeze. Qualification is detached.
 $source = Replace-RegexOnce -Text $source `
-    -Pattern '(?m)^\s*Invoke-PreFormalQualificationSuite -Session \$session\s*$' `
+    -Pattern '(?m)^[ \t]*Invoke-PreFormalQualificationSuite -Session \$session[ \t]*\r?$' `
     -Replacement '' `
     -Label "detach-qualification-from-asset"
 
@@ -173,7 +173,7 @@ $qualificationCase = @'
     "Pilot" {
 '@
 $source = Replace-RegexOnce -Text $source `
-    -Pattern '(?ms)^\s*"Smoke"\s*\{.*?^\s*"Pilot"\s*\{' `
+    -Pattern '(?ms)^[ \t]*"Smoke"\s*\{.*?^[ \t]*"Pilot"\s*\{' `
     -Replacement $qualificationCase `
     -Label "smoke-to-qualification"
 
@@ -208,7 +208,7 @@ $source = Replace-RegexOnce -Text $source `
 
 # Pre-Report gate is five formal matrices and 90/45/45 runs.
 $source = Replace-RegexOnce -Text $source `
-    -Pattern '(?m)^\s*smoke = 10\s*$' `
+    -Pattern '(?m)^[ \t]*smoke = 10[ \t]*\r?$' `
     -Replacement '' `
     -Label "report-remove-smoke-profile"
 $source = Replace-RegexOnce -Text $source `
