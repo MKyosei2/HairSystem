@@ -91,7 +91,7 @@ jobs:
             -ValidateOnly
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Guard source invariants
+      - name: Guard and contract invariants
         shell: pwsh
         run: |
           $source = Get-Content tools/final_stage/hairgpu_novelty01_matrix_7032.py -Raw
@@ -100,12 +100,37 @@ jobs:
             'window-lost-before-process-exit',
             'client-area-changed',
             'primary-display-changed',
-            'viewerExit92RemainsFatal',
             'fixed-client-window-guard-v2'
           )) {
             if (-not $source.Contains($required)) {
               throw "70.32 guard invariant missing: $required"
             }
+          }
+
+          $contract = Get-Content docs/experiments/NOVELTY01_FORMAL_CONTRACT_7032.json -Raw | ConvertFrom-Json
+          if ([int]$contract.comparisonDesign.runBudget.formalTotalRuns -ne 90) {
+            throw '70.32 formal run budget is not exactly 90.'
+          }
+          if ([int]$contract.comparisonDesign.runBudget.expectedRunsPerMethod -ne 45) {
+            throw '70.32 per-method run budget is not exactly 45.'
+          }
+          if ([string]$contract.formalWindowGuard.revision -ne 'fixed-client-window-guard-v2') {
+            throw '70.32 guard revision mismatch.'
+          }
+          if ([double]$contract.formalWindowGuard.normalShutdownWindowGraceSeconds -ne 2.0) {
+            throw '70.32 shutdown grace mismatch.'
+          }
+          if ($contract.formalWindowGuard.autoRecoverAfterActualResize -ne $false) {
+            throw '70.32 must not auto-recover an actual resize.'
+          }
+          if ($contract.formalWindowGuard.viewerExit92RemainsFatal -ne $true) {
+            throw '70.32 must preserve native Viewer ExitCode 92 as fatal.'
+          }
+          if ($contract.formalWindowGuard.guardFailureAfterNativeSuccessIsFatal -ne $true) {
+            throw '70.32 guard failure after native success must remain fatal.'
+          }
+          if ([int]$contract.formalWindowGuard.guardFailureExitCode -ne 96) {
+            throw '70.32 guard failure exit code must remain 96.'
           }
 
       - name: Verify no tracked source mutation
