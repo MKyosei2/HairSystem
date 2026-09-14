@@ -1,0 +1,91 @@
+﻿第6章　評価実験
+
+6.1 評価目的
+
+本章では，本研究で実装した Novelty01 の提案構成（P: POST-NOVELTY SG-APT）が，導入前の基準構成（B0: PRE-NOVELTY BASELINE）に対して，描画・シミュレーション結果の妥当性，実行性能，再現性，および長時間動作時の安定性をどの程度維持または改善できるかを評価する。評価には，プロジェクト内の正式実験セッション thesis_7032_20260813_094327_238 に保存された実測結果のみを用いる。
+
+正式セッションは main ブランチの commit 6d7ca21dc3bae9c9db0333742aef2c38cf84d16f を対象とし，同一バイナリ・同一コミットの条件で B0 と P を比較している。実行順は counterbalanced とされ，seed=1 を用いた paired-thesis-90-v1 の90実行（B0 45実行，P 45実行）で構成される。Final Gate は PASS であり，fatal integrity issue は0件である。ただし，本実験系の Final Gate PASS は「証拠の完全性と実行手順の妥当性」を示すものであり，P がすべての品質・性能目標を達成したことを意味しない。そのため，本章では integrity の合否と，各評価指標の達成可否を分離して論じる。
+
+6.2 実験環境
+
+実験は Windows 11 Home 環境で実施した。CPU は Intel Core i7-14700，GPU は NVIDIA GeForce RTX 4070 Ti SUPER（VRAM 16,376 MiB），主記憶は 65,303 MiB である。表示解像度は 1920×1080 とし，高パフォーマンス電源プランを使用した。ビルドは Release / x64 とし，Visual Studio 18.5.2，MSVC 14.50.35717，Windows SDK 10.0.26100.0 を使用した。正式セッションでは viewer の署名状態および実行ポリシーも検証されており，formal session の状態は FORMAL_COMPLETE_VALID である。
+
+表6-1に実験環境を示す。
+［表6-1：tables/environment.csv を挿入］
+
+6.3 評価条件
+
+共通条件として，Guide strand 数を4,000，1 Guide あたりの Follower 数を24，Follower strand 数を96,000，表示 strand 数を100,000とした。1 Guide あたりの particle 数は128，solver iteration は6である。タイムステップは 1/60 秒の fixed timestep とし，VSync は無効，present sync interval は0とした。
+
+Quality，Performance，Determinism では warm-up 600 frame の後に6,000 frameを測定した。Soak Test では warm-up 600 frame の後に108,000 frameを測定した。108,000 frameは fixed timestep 上では1実行あたり1,800秒，すなわち30分のシミュレーション時間に相当する。なお VSync を無効化しているため，Soak の実測 wall-clock 時間はこの30分と一致しない。
+
+Quality と Performance は S01～S18 の18シナリオで評価した。Determinism は S01_Idle を同一seedで2回反復し，Soak Test は S01_Idle と S13_RepairStorm を使用した。シナリオ一覧は表6-2に示す。
+［表6-2：tables/scenario_conditions.csv を挿入］
+
+論文上の主な性能判定では，60 FPS の frame budget である16.6667 msを基準とし，p95 frame time，p99 frame time，60 FPS ratio，frame-budget overrun rateを確認した。統計レポートでは p95≦16.6667 ms，p99≦20.0 ms，60 FPS ratio≧0.95，frame-budget overrun rate≦0.05 が主な判定条件として記録されている。また，NaN，Inf，abnormal termination，入力不一致，証拠破損等は fatal issue として fail-closed で扱われる。
+
+6.4 比較対象
+
+比較対象は B0 と P の2構成である。B0 は PRE-NOVELTY BASELINE と定義され，Novelty01 に関係する機能を無効化し，forceAllDynamic=true とした基準構成である。P は POST-NOVELTY SG-APT と定義され，GPU resident，Segment Group Sleep，Segment Group Integrated State，Shared Point Ownership，Directional Responsibility，Static Certificate，Predictive Wake，Velocity Recovery，Repair，GPU Compaction，Active Set，Sleep Hysteresis，Static Cache などを有効化した構成である。両者は同一バイナリ・同一コミットから切り替えられており，物理入力ハッシュの一致も paired report で確認されている。
+
+したがって，本比較は「Novelty01 全体を導入する前後」の比較であり，個々の機能の寄与を分離する比較ではない。設定差の全項目は表6-3に示す。
+［表6-3：tables/method_settings_B0_vs_P.csv を挿入］
+
+6.5 品質評価
+
+Quality profile（統計レポート上の profile 名は formal）では，B0とPについて18シナリオずつ，合計36実行を行った。すべての実行は COMPLETE かつ valid=true として記録されている。一方，qualityGatePassed は B0 が18/18，P が0/18であった。Pの18実行では，平均FPS，60 FPS ratio，frame-budget overrun rate，p95 frame time，p99 frame timeに関する outcome issue が各18件記録されている。このため，Pは実行自体には成功しているものの，Quality profile に設定されたリアルタイム性能基準を満たしていない。
+
+視覚的な妥当性については，36実行すべてに1920×1080の visual capture と visual metrics が保存されている。non-background ratio は 0.004485～0.047663，foreground bounding-box ratio は 0.006698～0.079884 の範囲であり，strict visual validation を通過した有効実行として保存されている。また，統計レポートで available=true とされている maxPenetrationMm，nanStateCount，infiniteStateCount，fatalFailure の最大値は，Quality profile 全36実行でそれぞれ 0.0，0.0，0.0，0.0 であった。
+
+さらに，本章では保存済みの B0/P final-frame BMP を同一シナリオ同士で直接比較し，補助指標としてRGB画素の平均絶対差（0～255）を算出した。この値は18シナリオ平均で 0.044026，最大でも 0.111418（S17）であった。図6-1にシナリオ別の画素差，図6-2に S13_RepairStorm の B0/P 最終フレームを示す。なお，この画素差は本章で一次データから再計算した補助指標であり，元の正式ゲートに含まれる指標ではない。また，最終フレームのみの比較であるため，時間方向の軌跡一致や完全な物理的同等性まで証明するものではない。
+
+［図6-1：figures/fig6_quality_visual_mae.png を挿入］
+［図6-2：figures/fig6_quality_S13_visual_comparison.png を挿入］
+
+6.6 Performance評価
+
+Performance profile では18シナリオ×2構成の36実行を行った。B0のシナリオ別 p95 frame time の中央値は 13.974 msで，範囲は 11.830～14.026 msであった。これに対してPの p95 frame time の中央値は 25.506 msで，範囲は 20.852～28.744 msであった。したがって，Pは全体として16.6667 msの60 FPS frame budgetを超える長いtail latencyを示した。
+
+frame-budget overrun rate の18シナリオ平均は，B0が 0.222%であるのに対し，Pは 24.761%であった。また GPU hair time のシナリオ別 p95 中央値は，B0が 12.523 ms，Pが 21.364 msであった。paired report の median frame time を用いると，P−B0 の差の中央値は +3.182 msであり，18シナリオ中17シナリオでPのmedian frame timeがB0より長かった。
+
+Performance profile の qualityGatePassed は B0が18/18，Pが0/18である。したがって，今回の実装と条件では，PがB0より高性能であるという結果は得られなかった。むしろ，Novelty01 の複数機構を有効化したことでGPU hair timeおよびframe timeのtailが増加し，60 FPS目標を満たせなくなっている。図6-3にp95 frame time，図6-4にframe-budget overrun rateを示す。
+
+［図6-3：figures/fig6_performance_p95_frame_ms.png を挿入］
+［図6-4：figures/fig6_performance_overbudget_rate.png を挿入］
+
+6.7 Determinism評価
+
+Determinism profile では S01_Idle，seed=1 を用い，B0とPをそれぞれ2回ずつ，合計4実行した。各実行は6,000測定frameであるため，合計24,000 frameのdeterminism evidenceが保存されている。統計レポートでは determinismIssues は空配列であり，determinismOutcomeIssueCount は0である。また，formal evidence の determinismMismatchCount の総和も 0 であった。
+
+frame time のmedianは，B0が1回目 6.95130 ms，2回目 6.98865 msであり，差は 0.03735 msであった。Pは1回目 13.88890 ms，2回目 13.89075 msであり，差は 0.00185 msであった。図6-5に反復実行のmedian frame timeを示す。
+
+一方で，保存された formal evidence を確認すると，stateSequenceHash，compactionSequenceHash，finalPositionHash は全determinism runで0として記録されている。そのため，本データから「最終位置のbitwise hashが一致した」とまでは主張できない。本章で支持できるのは，「実験レポート上のdeterminism checkで問題が検出されず，determinismMismatchCountが24,000 frame中0であった」という範囲である。
+
+［図6-5：figures/fig6_determinism_repeat_median_frame_ms.png を挿入］
+
+6.8 Soak Test
+
+Soak Test は S01_Idle と S13_RepairStorm について，B0とPを各1回ずつ，合計4実行した。各実行は600 warm-up frameに続いて108,000 frameを測定しており，fixed timestep換算では1実行あたり30分，4実行合計で120分のシミュレーション時間に相当する。実際のwall-clock測定時間は約14.6～18.2分であり，これはVSyncを無効化してfixed timestepを非実時間で進めているためである。
+
+Soakにおけるp95 frame timeの中央値は，B0が 13.981 ms，Pが 14.202 msであり，いずれも16.6667 ms未満であった。frame-budget overrun rate の平均はB0が 0.116% ，Pが 1.194%であった。process memory logでは，private bytes の最大値は 9704.7 MiB，DXGI local usage の最大値は 5647.2 MiBであった。時系列を見る限り，測定区間内でprivate bytesが単調に増大し続ける挙動は確認されていない。
+
+ただし，4実行すべてで qualityGatePassed=false が記録されている。Soak profile の outcome issue は合計14件で，GPU温度spread，GPU clock drop，maximum frame time，100 ms超frameに関するものである。一方，fatal integrity issue は0であり，NaN/Inf/Fatalの継続的発生も記録されていない。このため，本Soak Testからは「長時間相当の反復でアプリケーションが破綻した」とは言えないが，「すべての長時間品質ゲートを満たした」とも言えない。図6-6にprocess private memoryの推移，図6-7にSoakのp95 frame timeを示す。
+
+［図6-6：figures/fig6_soak_private_memory.png を挿入］
+［図6-7：figures/fig6_soak_p95_frame_ms.png を挿入］
+
+6.9 Ablation Study
+
+本プロジェクト内の正式測定結果には，Novelty01 を構成する各要素を1つずつ無効化または有効化した独立のAblation runは含まれていない。B0はNovelty01機能群をまとめて無効化した基準構成，Pは複数のNovelty01機能群をまとめて有効化した提案構成である。このため，B0とPの差から「Static Certificateだけの寄与」や「Predictive Wakeだけの寄与」のような機能単位の因果的寄与を分離することはできない。
+
+したがって，本論文ではAblation Studyを実施済みの結果として記述しない。現時点で記述可能なのは，「bundle-level comparisonではPの性能悪化が観測されたが，その原因を個別機能へ帰属する証拠は本データにはない」という点である。Ablationを正式に主張する場合は，今後，同一commit・同一入力・同一seed・同一測定条件のまま，各機能を1つずつ切り替えた追加測定が必要である。
+
+6.10 実験結果
+
+正式セッションは全90実行を完了し，Final GateはPASS，fatal integrity issueは0件であった。よって，本評価に使用したログ・入力・実行条件の整合性は，プロジェクトの正式実験系によって確認されている。一方，quality/performance/hardware/determinismの目標未達はFinal Gateとは分離されたoutcomeとして記録されている。outcome issueは合計 206 件であり，そのうちPが 198 件，B0が 8 件であった。
+
+品質面では，全正式runがvalidで，視覚キャプチャも保存され，Quality profileでNaN/Inf/Fatalおよび記録上の最大penetrationは0であった。B0/P最終フレームの画素差も小さく，少なくとも最終表示が大きく崩壊している証拠は見られない。Determinismではレポート上のissueが0で，determinismMismatchCountも0であった。Soakでは長時間相当の測定中にfatal failureは発生せず，private memoryも測定区間内で無制限に増加する傾向は確認されなかった。
+
+しかしPerformance profileでは，Pのp95 frame time中央値が 25.506 msとなり，B0の 13.974 msより悪化した。Performanceのquality gateはB0が18/18 PASS，Pが0/18 PASSであった。この結果から，現在のNovelty01実装は，実行の完全性・表示の成立・determinism/robustnessの一部については有効な証拠を持つ一方，60 FPSを目標とした性能改善については支持されない。特にPでは，機能群の追加に伴う処理コストが現状の実装で十分に回収できていないことが示唆される。
+
+以上より，本実験が支持する結論は，「提案構成Pは正式実験を破綻なく完遂し，視覚的・数値的な重大破綻を起こさず動作したが，現実装ではB0に対する性能優位性を達成していない」である。したがって，性能改善を本研究の主要貢献として主張する場合には，追加最適化と再測定が必要である。一方，本研究の主眼をデータ構造・更新機構・再現可能な評価基盤の成立に置く場合には，本章の結果を「成立した点」と「未達の点」を分けて提示することが妥当である。

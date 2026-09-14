@@ -1,0 +1,9 @@
+{
+  "schema": "hairgpu-thesis-practical-case-v1",
+  "id": "T02",
+  "scenario": "S11",
+  "guideCount": 4,
+  "tipOffsetMm": 3.0,
+  "forceFallback": false,
+  "purpose": "Very small local edit"
+}
