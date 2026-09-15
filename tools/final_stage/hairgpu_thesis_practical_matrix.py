@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""Run practical thesis edit workloads through the existing Novelty01 matrix.
+"""Run thesis-practical cases through the existing Novelty01 matrix.
 
-This wrapper deliberately reuses the repository's frozen asset, B0/P runner,
-counterbalanced ordering, and measurement profiles. It adds only edit scale and
-fallback-control environment variables consumed by the thesis overlay.
+Case definitions live only in benchmarks/thesis_practical/*.json.
+The runner intentionally reuses the repository's frozen asset, B0/P runner,
+counterbalanced scheduling, and formal measurement profiles.
 """
 
 import argparse
@@ -13,38 +13,55 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-
-CASES = {
-    "T00": {"scenario": "S01", "guide_count": 0, "tip_mm": 0.0, "fallback": False},
-    "T01": {"scenario": "S11", "guide_count": 1, "tip_mm": 3.0, "fallback": False},
-    "T02": {"scenario": "S11", "guide_count": 4, "tip_mm": 3.0, "fallback": False},
-    "T03": {"scenario": "S11", "guide_count": 16, "tip_mm": 3.0, "fallback": False},
-    "T04": {"scenario": "S11", "guide_count": 64, "tip_mm": 3.0, "fallback": False},
-    "T05": {"scenario": "S11", "guide_count": 256, "tip_mm": 3.0, "fallback": False},
-    "T06": {"scenario": "S11", "guide_count": 1000, "tip_mm": 3.0, "fallback": False},
-    "T07": {"scenario": "S11", "guide_count": 64, "tip_mm": 3.0, "fallback": True},
-}
+from typing import Any
 
 
-def parse_case_list(text: str) -> list[str]:
+CASE_SCHEMA = "hairgpu-thesis-practical-case-v1"
+
+
+def load_cases(repo: Path) -> dict[str, dict[str, Any]]:
+    root = repo / "benchmarks" / "thesis_practical"
+    if not root.is_dir():
+        raise FileNotFoundError(root)
+
+    cases: dict[str, dict[str, Any]] = {}
+    for path in sorted(root.glob("T*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema") != CASE_SCHEMA:
+            raise ValueError(f"{path}: unsupported schema")
+        case_id = str(payload.get("id", "")).upper()
+        if not case_id or case_id in cases:
+            raise ValueError(f"{path}: invalid or duplicate case id")
+        cases[case_id] = payload
+
+    if not cases:
+        raise RuntimeError("no thesis practical cases found")
+    return cases
+
+
+def parse_case_list(text: str, cases: dict[str, dict[str, Any]]) -> list[str]:
     if text.strip().lower() == "all":
-        return list(CASES)
-    result: list[str] = []
+        return list(cases)
+
+    selected: list[str] = []
     for raw in text.split(","):
-        item = raw.strip().upper()
-        if not item:
+        case_id = raw.strip().upper()
+        if not case_id:
             continue
-        if item not in CASES:
-            raise ValueError(f"unknown thesis practical case: {item}")
-        if item not in result:
-            result.append(item)
-    if not result:
+        if case_id not in cases:
+            raise ValueError(f"unknown thesis practical case: {case_id}")
+        if case_id not in selected:
+            selected.append(case_id)
+    if not selected:
         raise ValueError("at least one thesis practical case is required")
-    return result
+    return selected
 
 
-def run_case(args: argparse.Namespace, case_id: str) -> dict:
-    case = CASES[case_id]
+def run_case(
+    args: argparse.Namespace,
+    case_id: str,
+    case: dict[str, Any],
+) -> dict[str, Any]:
     output = args.output.resolve() / case_id
     output.mkdir(parents=True, exist_ok=True)
 
@@ -58,33 +75,34 @@ def run_case(args: argparse.Namespace, case_id: str) -> dict:
         raise FileNotFoundError(matrix_script)
 
     env = os.environ.copy()
-    env["HAIRGPU_THESIS_EDIT_EVAL"] = "1"
-    env["HAIRGPU_THESIS_CASE"] = case_id
-    env["HAIRGPU_THESIS_EDIT_GUIDE_COUNT"] = str(max(int(case["guide_count"]), 1))
-    env["HAIRGPU_THESIS_EDIT_TIP_MM"] = str(float(case["tip_mm"] or 3.0))
-    env["HAIRGPU_THESIS_FORCE_FULL_FALLBACK"] = "1" if case["fallback"] else "0"
+    env.update(
+        {
+            "HAIRGPU_THESIS_EDIT_EVAL": "1",
+            "HAIRGPU_THESIS_CASE": case_id,
+            "HAIRGPU_THESIS_EDIT_GUIDE_COUNT": str(
+                max(int(case.get("guideCount", 1)), 1)
+            ),
+            "HAIRGPU_THESIS_EDIT_TIP_MM": str(
+                float(case.get("tipOffsetMm", 3.0) or 3.0)
+            ),
+            "HAIRGPU_THESIS_FORCE_FULL_FALLBACK": (
+                "1" if bool(case.get("forceFallback", False)) else "0"
+            ),
+        }
+    )
 
     command = [
         sys.executable,
         str(matrix_script),
-        "--repo",
-        str(args.repo.resolve()),
-        "--viewer",
-        str(args.viewer.resolve()),
-        "--template",
-        str(args.template.resolve()),
-        "--output",
-        str(output),
-        "--profile",
-        args.profile,
-        "--variants",
-        args.variants,
-        "--scenarios",
-        str(case["scenario"]),
-        "--seeds",
-        args.seeds,
-        "--schedule",
-        args.schedule,
+        "--repo", str(args.repo.resolve()),
+        "--viewer", str(args.viewer.resolve()),
+        "--template", str(args.template.resolve()),
+        "--output", str(output),
+        "--profile", args.profile,
+        "--variants", args.variants,
+        "--scenarios", str(case["scenario"]),
+        "--seeds", args.seeds,
+        "--schedule", args.schedule,
     ]
     if args.repetitions is not None:
         command += ["--repetitions", str(args.repetitions)]
@@ -103,19 +121,19 @@ def run_case(args: argparse.Namespace, case_id: str) -> dict:
         capture_output=True,
         check=False,
     )
-
     (output / "thesis_wrapper_stdout.txt").write_text(
         completed.stdout, encoding="utf-8"
     )
     (output / "thesis_wrapper_stderr.txt").write_text(
         completed.stderr, encoding="utf-8"
     )
+
     return {
         "case": case_id,
         "scenario": case["scenario"],
-        "guideCount": case["guide_count"],
-        "tipMm": case["tip_mm"],
-        "forceFallback": bool(case["fallback"]),
+        "guideCount": int(case.get("guideCount", 0)),
+        "tipMm": float(case.get("tipOffsetMm", 0.0)),
+        "forceFallback": bool(case.get("forceFallback", False)),
         "returnCode": completed.returncode,
         "ok": completed.returncode == 0,
         "output": str(output),
@@ -139,19 +157,21 @@ def main() -> int:
     parser.add_argument("--require-fxc", action="store_true")
     args = parser.parse_args()
 
-    selected = parse_case_list(args.cases)
+    repo = args.repo.resolve()
+    cases = load_cases(repo)
+    selected = parse_case_list(args.cases, cases)
     args.output.mkdir(parents=True, exist_ok=True)
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     for case_id in selected:
-        row = run_case(args, case_id)
+        row = run_case(args, case_id, cases[case_id])
         rows.append(row)
         if not row["ok"] and not args.continue_on_error:
             break
 
     summary = {
-        "schema": "hairgpu-thesis-practical-matrix-v1",
-        "baseCases": CASES,
+        "schema": "hairgpu-thesis-practical-matrix-v2",
+        "caseSchema": CASE_SCHEMA,
         "selectedCases": selected,
         "passed": bool(rows) and all(row["ok"] for row in rows),
         "results": rows,
