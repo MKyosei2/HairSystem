@@ -122,6 +122,19 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         self.assertNotIn("clip(", self.strand_shader)
         self.assertNotIn("discard;", self.strand_shader)
 
+    def test_guide_follower_palette_is_high_contrast_and_formal_is_neutral(self) -> None:
+        self.assertIn("float3(1.00f, 0.48f, 0.10f)", self.strand_shader)
+        self.assertIn("float3(0.10f, 0.82f, 0.88f)", self.strand_shader)
+        self.assertIn(
+            "m_debugColorMode = DebugColorMode::GuideFollower;",
+            self.startup,
+        )
+        experiment = self.startup[self.startup.index("if (m_experimentCase.enabled)") :]
+        self.assertIn(
+            "m_debugColorMode = DebugColorMode::Natural;",
+            experiment,
+        )
+
     def test_normal_preview_keeps_all_followers_visible(self) -> None:
         self.assertIn(
             "constants.renderFollowerStride = (fastEditPreview && heavyInteraction) ? 2u : 1u;",
