@@ -53,6 +53,7 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
             "m_workspaceMode = WorkspaceMode::Sim",
             "m_interactionMode = InteractionMode::View",
             "m_selectedStrandIndex = -1",
+            "m_debugColorMode = DebugColorMode::GuideFollower",
             "m_cpuReadbackMode = CpuReadbackMode::Off",
             "m_enableSelfCollision = false",
             "m_enableGridSelfCollision = false",
@@ -62,12 +63,12 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         self.assertNotIn("m_renderMode = RenderMode::ParticleBillboard;", self.startup)
 
     def test_asset_cache_is_current_and_semantically_validated(self) -> None:
-        self.assertIn("sample_hybrid_cache_v5_root_oit_g", self.startup)
+        self.assertIn("sample_hybrid_cache_v6_layout_g", self.startup)
         self.assertIn("ValidateHairAsset(cachedAsset)", self.startup)
         self.assertIn("cachedTopologyReport.valid", self.startup)
         self.assertIn("invalidGuidePrefixCount == 0u", self.startup)
         self.assertIn("invalidFollowerSuffixCount == 0u", self.startup)
-        for legacy in ("sample_hybrid_cache_v1", "sample_hybrid_cache_v2", "sample_hybrid_cache_v3"):
+        for legacy in ("sample_hybrid_cache_v1", "sample_hybrid_cache_v2", "sample_hybrid_cache_v3", "sample_hybrid_cache_v4", "sample_hybrid_cache_v5"):
             self.assertIn(legacy, self.startup)
         self.assertIn("std::filesystem::remove(entry.path()", self.startup)
 
