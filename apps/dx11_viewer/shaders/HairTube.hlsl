@@ -37,7 +37,7 @@ struct VSOutput
 
 float3 TierColor(uint tier)
 {
-    if (tier == 0u) return float3(0.18f, 0.95f, 0.85f);
+    if (tier == 0u) return float3(1.00f, 0.48f, 0.10f);
     if (tier == 1u) return float3(0.98f, 0.75f, 0.20f);
     if (tier == 2u) return float3(0.86f, 0.36f, 1.00f);
     return float3(0.58f, 0.62f, 0.70f);
@@ -53,7 +53,7 @@ float3 ComputeHairColor(uint strandIndex, float widthN, uint strandTier)
     if (DebugColorMode == 1)
     {
         const bool isGuide = strandIndex < GuideStrandCount;
-        return isGuide ? float3(0.18f, 0.95f, 0.85f) : float3(0.98f, 0.52f, 0.18f);
+        return isGuide ? float3(1.00f, 0.48f, 0.10f) : float3(0.10f, 0.82f, 0.88f);
     }
     if (DebugColorMode == 2)
     {
