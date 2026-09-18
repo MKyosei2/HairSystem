@@ -1384,19 +1384,20 @@ namespace hairgpu
 
             const Vec3 rootSurface = EvaluateRootBindingPosition(asset.scalpMesh, asset.rootBindings[strandIndex]);
             const Vec3 rootNormal = EvaluateTriangleNormal(asset.scalpMesh, asset.rootBindings[strandIndex]);
-            constexpr float kVisualRootLiftMeters = 0.0090f;
+            constexpr float kVisualRootLiftMeters = 0.0045f;
             const Vec3 reboundRoot = ProjectPointOutsideHeadVolume(
                 rootSurface + rootNormal * kVisualRootLiftMeters,
                 Vec3(0.0f, 1.60f, 0.0f),
-                0.0100f);
-            Vec3 originalRoot = asset.restPoints[strand.pointOffset];
-            Vec3 delta = reboundRoot - originalRoot;
+                0.0060f);
+            const Vec3 originalRoot = asset.restPoints[strand.pointOffset];
+            const Vec3 delta = reboundRoot - originalRoot;
             for (uint32_t i = 0; i < strand.pointCount; ++i)
             {
                 const uint32_t pointIndex = strand.pointOffset + i;
                 const float t = static_cast<float>(i) / static_cast<float>(std::max(strand.pointCount - 1u, 1u));
-                asset.restPoints[pointIndex] += delta;
-                const float shell = Lerp(0.0100f, 0.0025f, t);
+                const float rootInfluence = (1.0f - t) * (1.0f - t);
+                asset.restPoints[pointIndex] += delta * rootInfluence;
+                const float shell = Lerp(0.0060f, 0.0015f, t);
                 asset.restPoints[pointIndex] = ProjectPointOutsideHeadVolume(
                     asset.restPoints[pointIndex],
                     Vec3(0.0f, 1.60f, 0.0f),
@@ -1442,29 +1443,11 @@ namespace hairgpu
         const Vec3 scalpCenter(0.0f, 1.60f, 0.0f);
         const std::vector<float> scalpAreaCdf = BuildScalpAreaDistributionCdf(asset.scalpMesh);
 
-        // Keep guide roots continuous from the crown through the front hairline.
-        // The previous 50% crown allocation stopped at v=0.10 while the explicit
-        // front allocation started at v=0.19. With only 25% of guides left for the
-        // whole scalp, that 0.09 UV interval became the wide horizontal bald band
-        // visible in the Viewer. Use overlapping crown/transition/front strata and
-        // leave half of the guides for area-distributed coverage.
-        // Keep the quotas proportional for both the canonical 4,000-guide asset
-        // and the smaller native self-test assets. Fixed minimums previously
-        // consumed every guide when guideCount was small, leaving the transition
-        // and front strata empty and making the validator disagree with the
-        // actual generator contract.
-        const uint32_t crownGuideQuota = std::min<uint32_t>(
-            guideCount,
-            std::max<uint32_t>(guideCount * 3u / 10u, guideCount > 0u ? 1u : 0u));
-        const uint32_t remainingAfterCrown = guideCount - crownGuideQuota;
-        const uint32_t transitionGuideQuota = std::min<uint32_t>(
-            remainingAfterCrown,
-            std::max<uint32_t>(guideCount / 5u, remainingAfterCrown > 0u ? 1u : 0u));
-        const uint32_t remainingAfterTransition = remainingAfterCrown - transitionGuideQuota;
-        const uint32_t frontHairlineGuideQuota = std::min<uint32_t>(
-            remainingAfterTransition,
-            std::max<uint32_t>(guideCount / 5u, remainingAfterTransition > 0u ? 1u : 0u));
-
+        // Generate every guide from the same continuous, area-weighted scalp
+        // distribution. Crown, part, temple, nape, and front-hairline masks
+        // contribute only as smooth density weights through
+        // EvaluateRootCoverageWeight(); no guide subset is assigned to a
+        // separate geometric layer.
         std::vector<RootBinding> guideBindings;
         guideBindings.reserve(guideCount);
 
@@ -1476,58 +1459,10 @@ namespace hairgpu
         // LOD classification, rendering, and benchmark validation.
         for (uint32_t guideIndex = 0; guideIndex < guideCount; ++guideIndex)
         {
-            RootBinding binding;
-            if (guideIndex < crownGuideQuota)
-            {
-                constexpr uint32_t crownColumns = 32u;
-                constexpr uint32_t crownRows = 8u;
-                constexpr uint32_t crownCellCount = crownColumns * crownRows;
-                const uint32_t cellIndex = guideIndex % crownCellCount;
-                const uint32_t layerIndex = guideIndex / crownCellCount;
-                const uint32_t column = cellIndex % crownColumns;
-                const uint32_t row = cellIndex / crownColumns;
-                const uint32_t seed = guideIndex * 747796405u + 2891336453u;
-                const float jitterU = (Hash01(seed + 11u) - 0.5f) * 0.60f;
-                const float jitterV = (Hash01(seed + 17u) - 0.5f) * 0.50f;
-                const float u = ::hairgpu::WrapUnit(
-                    (static_cast<float>(column) + 0.5f + jitterU +
-                     0.21f * static_cast<float>(layerIndex)) /
-                    static_cast<float>(crownColumns));
-                const float row01 =
-                    (static_cast<float>(row) + 0.5f + jitterV) /
-                    static_cast<float>(crownRows);
-                const float v = 0.014f + 0.166f * Clamp(row01, 0.0f, 1.0f);
-                binding = FindClosestBindingForUv(asset.scalpMesh, u, v);
-            }
-            else if (guideIndex < crownGuideQuota + transitionGuideQuota)
-            {
-                const uint32_t localIndex = guideIndex - crownGuideQuota;
-                const float transitionIndex = static_cast<float>(localIndex) + 0.5f;
-                const float transitionCount = static_cast<float>(std::max<uint32_t>(transitionGuideQuota, 1u));
-                const float u = ::hairgpu::Fract(transitionIndex * 0.754877666f + 0.137f);
-                const float radial01 = transitionIndex / transitionCount;
-                const float v = 0.105f + 0.145f * radial01;
-                binding = FindClosestBindingForUv(asset.scalpMesh, u, v);
-            }
-            else if (guideIndex < crownGuideQuota + transitionGuideQuota + frontHairlineGuideQuota)
-            {
-                const uint32_t localIndex = guideIndex - crownGuideQuota - transitionGuideQuota;
-                const float frontIndex = static_cast<float>(localIndex) + 0.5f;
-                const float frontCount = static_cast<float>(std::max<uint32_t>(frontHairlineGuideQuota, 1u));
-                const float u = ::hairgpu::WrapUnit(
-                    0.25f +
-                    (frontIndex / frontCount - 0.5f) * 0.30f);
-                // Start inside the transition band so no latitude is left empty.
-                const float v = 0.135f + 0.205f * ::hairgpu::Fract(frontIndex * 0.569840291f);
-                binding = FindClosestBindingForUv(asset.scalpMesh, u, v);
-            }
-            else
-            {
-                binding = SampleAreaDistributedRootBinding(
-                    asset.scalpMesh,
-                    scalpAreaCdf,
-                    guideIndex);
-            }
+            const RootBinding binding = SampleAreaDistributedRootBinding(
+                asset.scalpMesh,
+                scalpAreaCdf,
+                guideIndex);
 
             guideBindings.push_back(binding);
 
@@ -1614,7 +1549,7 @@ namespace hairgpu
                 const uint32_t seed = guideIndex * 97u + followerIndex * 17u + 13u;
                 const float ring01 = std::sqrt((static_cast<float>(followerIndex) + 0.5f) / static_cast<float>(std::max(followersPerGuide, 1u)));
                 const bool isSupportHair = false;
-                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.10f, 0.38f, ring01);
+                const float ring = parameters.followerSpread * followerSpreadScale * Lerp(0.08f, 0.22f, ring01);
                 const float angle = guideRotation + goldenAngle * static_cast<float>(followerIndex) + (Hash01(seed + 9u) - 0.5f) * 0.12f;
 
                 // The previous asset stored the same RootBinding for the guide and
@@ -1624,7 +1559,7 @@ namespace hairgpu
                 // across neighboring scalp triangles so all 100,000 strands
                 // contribute to root coverage without changing strand count.
                 const float rootDistributionRadiusUv =
-                    Lerp(0.0035f, 0.0140f, ring01) *
+                    Lerp(0.0020f, 0.0065f, ring01) *
                     Clamp(
                         1.0f +
                         0.18f * crownMaskLocal +
@@ -1666,7 +1601,7 @@ namespace hairgpu
                 }
                 const float maxOffset =
                     parameters.followerSpread *
-                    Lerp(0.54f, 0.88f, 1.0f - edgeRisk) *
+                    Lerp(0.40f, 0.68f, 1.0f - edgeRisk) *
                     Clamp(
                         1.0f -
                         0.18f * crownMaskLocal -
