@@ -339,7 +339,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
            << L"  Prims=" << m_lastDebugPipelineStats.IAPrimitives
            << L"  PS=" << m_lastDebugPipelineStats.PSInvocations << L"\n"
            << L"Mode: " << (m_interactionMode == InteractionMode::Edit ? L"Edit" : L"View")
-           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : (m_debugColorMode == DebugColorMode::Editability ? L"Editable/Locked" : L"Natural")))
+           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower [Guide=Orange, Follower=Cyan]" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : (m_debugColorMode == DebugColorMode::Editability ? L"Editable/Locked" : L"Natural")))
            << L"  Scalp: " << GetMaskOverlayModeDisplayName() << L"\n";
         ss << L"Active Set: " << (m_enableActiveSetRuntime ? L"On" : L"Off")
            << L"  Plan: " << m_activeSetPlan.summary.selectedClusterCount << L"/" << m_activeSetPlan.summary.clusterCount << L" clusters"
