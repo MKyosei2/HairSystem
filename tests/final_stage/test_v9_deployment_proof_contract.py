@@ -31,11 +31,13 @@ class CurrentDeploymentProofContractTests(unittest.TestCase):
             ROOT
             / "apps/dx11_viewer/src/GpuHairViewer_parts/02_resource_creation_and_shader_loading.inl"
         ).read_text(encoding="utf-8")
-        self.assertIn("sample_hybrid_cache_v5_root_oit_g", startup)
+        self.assertIn("sample_hybrid_cache_v6_layout_g", startup)
         for legacy in (
             'name.rfind(L"sample_hybrid_cache_v1"',
             'name.rfind(L"sample_hybrid_cache_v2"',
             'name.rfind(L"sample_hybrid_cache_v3"',
+            'name.rfind(L"sample_hybrid_cache_v4"',
+            'name.rfind(L"sample_hybrid_cache_v5"',
         ):
             self.assertIn(legacy, startup)
         self.assertIn("cachedTopologyReport.valid", startup)
