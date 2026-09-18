@@ -926,6 +926,10 @@
 
         if (m_experimentCase.enabled)
         {
+            // Formal measurements use the natural shading path so the
+            // high-contrast interactive inspection palette does not alter the
+            // experiment rendering workload or captured quality evidence.
+            m_debugColorMode = DebugColorMode::Natural;
             m_vsyncEnabled = m_experimentCase.vsyncEnabled;
             m_presentSyncInterval = m_vsyncEnabled
                 ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u)
