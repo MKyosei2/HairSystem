@@ -329,7 +329,7 @@
         {
             if (m_debugColorMode == DebugColorMode::GuideFollower)
             {
-                return (strandIndex < m_asset.guideStrandCount) ? Vec3(0.18f, 0.95f, 0.85f) : Vec3(0.98f, 0.52f, 0.18f);
+                return (strandIndex < m_asset.guideStrandCount) ? Vec3(1.00f, 0.48f, 0.10f) : Vec3(0.10f, 0.82f, 0.88f);
             }
             if (m_debugColorMode == DebugColorMode::WidthHeatmap)
             {

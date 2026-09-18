@@ -65,7 +65,7 @@ class InteractiveViewTruthContractTests(unittest.TestCase):
         stable_slice = self.startup[stable_marker : stable_marker + 1000]
         self.assertIn("m_workspaceMode = WorkspaceMode::Sim;", stable_slice)
         self.assertIn("m_interactionMode = InteractionMode::View;", stable_slice)
-        self.assertIn("m_debugColorMode = DebugColorMode::Natural;", stable_slice)
+        self.assertIn("m_debugColorMode = DebugColorMode::GuideFollower;", stable_slice)
         self.assertIn("m_selectedStrandIndex = -1;", stable_slice)
         self.assertIn("m_cpuReadbackMode = CpuReadbackMode::Off;", stable_slice)
         self.assertIn("m_showScalpMesh = true;", stable_slice)

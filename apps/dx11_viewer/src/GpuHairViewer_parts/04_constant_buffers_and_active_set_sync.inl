@@ -94,9 +94,10 @@ void GpuHairViewer::FillRenderConstants(RenderConstants& constants, const Mat4& 
     constants.lightDirection[2] = 0.2f;
     constants.lightDirection[3] = 0.0f;
     constants.widthScale = m_widthScale;
-    // Normal Groom/Edit operation must remain a natural hair preview.
-    // Editability colors are shown only when the user explicitly selects that
-    // debug mode; forcing them here made the normal viewport dark/green.
+    // The viewport follows the selected debug-color mode. Interactive startup
+    // now defaults to GuideFollower for high-contrast inspection, while
+    // Editability remains explicit and formal experiment runs keep fixed
+    // rendering conditions.
     const bool editVisualization = !IsExperimentModeEnabled() &&
         (m_debugColorMode == DebugColorMode::Editability);
     constants.debugColorMode = static_cast<uint32_t>(m_debugColorMode);

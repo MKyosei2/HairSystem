@@ -125,7 +125,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             m_workspaceMode = WorkspaceMode::Sim;
             m_interactionMode = InteractionMode::View;
             m_groomTool = GroomTool::Select;
-            m_debugColorMode = DebugColorMode::Natural;
+            m_debugColorMode = DebugColorMode::GuideFollower;
             m_maskOverlayMode = MaskOverlayMode::None;
             m_selectedStrandIndex = -1;
             m_gizmoDragging = false;
@@ -339,7 +339,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
            << L"  Prims=" << m_lastDebugPipelineStats.IAPrimitives
            << L"  PS=" << m_lastDebugPipelineStats.PSInvocations << L"\n"
            << L"Mode: " << (m_interactionMode == InteractionMode::Edit ? L"Edit" : L"View")
-           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : (m_debugColorMode == DebugColorMode::Editability ? L"Editable/Locked" : L"Natural")))
+           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower [Guide=Orange, Follower=Cyan]" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : (m_debugColorMode == DebugColorMode::Editability ? L"Editable/Locked" : L"Natural")))
            << L"  Scalp: " << GetMaskOverlayModeDisplayName() << L"\n";
         ss << L"Active Set: " << (m_enableActiveSetRuntime ? L"On" : L"Off")
            << L"  Plan: " << m_activeSetPlan.summary.selectedClusterCount << L"/" << m_activeSetPlan.summary.clusterCount << L" clusters"
@@ -559,11 +559,12 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
             getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)),
             3u);
         // Version 1 could silently force Editability when entering Groom mode.
-        // Migrate that stale automatic value back to Natural while preserving an
-        // explicit selection written by the corrected version 2 format.
+        // Migrate that stale automatic value to the current high-contrast
+        // Guide/Follower default while preserving an explicit selection written
+        // by the corrected version 2 format.
         m_debugColorMode =
             (settingsFormatVersion < 2u && persistedDebugColorMode == static_cast<uint32_t>(DebugColorMode::Editability))
-            ? DebugColorMode::Natural
+            ? DebugColorMode::GuideFollower
             : static_cast<DebugColorMode>(persistedDebugColorMode);
         if (auto it = values.find("editStackPath"); it != values.end()) m_editStackPath = Utf8ToWide(it->second);
         if (auto it = values.find("partingMaskPath"); it != values.end()) m_partingMaskPath = Utf8ToWide(it->second);

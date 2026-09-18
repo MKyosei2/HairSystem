@@ -55,6 +55,22 @@ class RuntimeTruthAndAssetLayoutTests(unittest.TestCase):
         self.assertIn("guideBindings[guideIndex]", follower_region)
         self.assertIn("followerFollow.parentGuide = static_cast<int32_t>(guideIndex);", follower_region)
 
+    def test_continuous_root_distribution_keeps_followers_near_parent_guides(self) -> None:
+        self.assertNotIn("crownGuideQuota", self.sample)
+        self.assertNotIn("transitionGuideQuota", self.sample)
+        self.assertNotIn("frontHairlineGuideQuota", self.sample)
+        self.assertIn(
+            "const RootBinding binding = SampleAreaDistributedRootBinding(",
+            self.sample,
+        )
+        self.assertIn("Lerp(0.0020f, 0.0065f, ring01)", self.sample)
+        self.assertIn("Lerp(0.08f, 0.22f, ring01)", self.sample)
+        self.assertIn("kVisualRootLiftMeters = 0.0045f", self.sample)
+        self.assertIn(
+            "const float rootInfluence = (1.0f - t) * (1.0f - t);",
+            self.sample,
+        )
+
     def test_hlsl_follower_contract_matches_suffix_layout(self) -> None:
         self.assertIn(
             "uint strandIndex = GuideStrandCount + followerIndex;",
@@ -70,10 +86,12 @@ class RuntimeTruthAndAssetLayoutTests(unittest.TestCase):
         self.assertIn("invalidFollowerSuffixCount", self.validation)
 
     def test_old_broken_asset_cache_cannot_be_reused(self) -> None:
-        self.assertIn("sample_hybrid_cache_v5_root_oit_g", self.startup)
+        self.assertIn("sample_hybrid_cache_v6_layout_g", self.startup)
         self.assertIn('name.rfind(L"sample_hybrid_cache_v1"', self.startup)
         self.assertIn('name.rfind(L"sample_hybrid_cache_v2"', self.startup)
         self.assertIn('name.rfind(L"sample_hybrid_cache_v3"', self.startup)
+        self.assertIn('name.rfind(L"sample_hybrid_cache_v4"', self.startup)
+        self.assertIn('name.rfind(L"sample_hybrid_cache_v5"', self.startup)
         self.assertIn("cachedTopologyReport", self.startup)
         self.assertIn("formalTopologyReport", self.startup)
         self.assertIn("generatedTopologyReport", self.startup)

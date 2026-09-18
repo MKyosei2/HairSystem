@@ -1929,7 +1929,7 @@ namespace hairgpu::viewer
         WorkspaceMode m_workspaceMode = WorkspaceMode::Groom;
         GroomTool m_groomTool = GroomTool::Comb;
         BottomTrayTab m_bottomTrayTab = BottomTrayTab::Layers;
-        DebugColorMode m_debugColorMode = DebugColorMode::Natural;
+        DebugColorMode m_debugColorMode = DebugColorMode::GuideFollower;
         bool m_showInspectorPane = true;
         bool m_showBottomTray = false;
         bool m_showAdvancedInspector = false;

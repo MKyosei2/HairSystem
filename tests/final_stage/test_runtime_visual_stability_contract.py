@@ -53,6 +53,7 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
             "m_workspaceMode = WorkspaceMode::Sim",
             "m_interactionMode = InteractionMode::View",
             "m_selectedStrandIndex = -1",
+            "m_debugColorMode = DebugColorMode::GuideFollower",
             "m_cpuReadbackMode = CpuReadbackMode::Off",
             "m_enableSelfCollision = false",
             "m_enableGridSelfCollision = false",
@@ -62,12 +63,12 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
         self.assertNotIn("m_renderMode = RenderMode::ParticleBillboard;", self.startup)
 
     def test_asset_cache_is_current_and_semantically_validated(self) -> None:
-        self.assertIn("sample_hybrid_cache_v5_root_oit_g", self.startup)
+        self.assertIn("sample_hybrid_cache_v6_layout_g", self.startup)
         self.assertIn("ValidateHairAsset(cachedAsset)", self.startup)
         self.assertIn("cachedTopologyReport.valid", self.startup)
         self.assertIn("invalidGuidePrefixCount == 0u", self.startup)
         self.assertIn("invalidFollowerSuffixCount == 0u", self.startup)
-        for legacy in ("sample_hybrid_cache_v1", "sample_hybrid_cache_v2", "sample_hybrid_cache_v3"):
+        for legacy in ("sample_hybrid_cache_v1", "sample_hybrid_cache_v2", "sample_hybrid_cache_v3", "sample_hybrid_cache_v4", "sample_hybrid_cache_v5"):
             self.assertIn(legacy, self.startup)
         self.assertIn("std::filesystem::remove(entry.path()", self.startup)
 
@@ -120,6 +121,19 @@ class RuntimeVisualStabilityContractTests(unittest.TestCase):
             self.assertIn(token, self.strand_shader)
         self.assertNotIn("clip(", self.strand_shader)
         self.assertNotIn("discard;", self.strand_shader)
+
+    def test_guide_follower_palette_is_high_contrast_and_formal_is_neutral(self) -> None:
+        self.assertIn("float3(1.00f, 0.48f, 0.10f)", self.strand_shader)
+        self.assertIn("float3(0.10f, 0.82f, 0.88f)", self.strand_shader)
+        self.assertIn(
+            "m_debugColorMode = DebugColorMode::GuideFollower;",
+            self.startup,
+        )
+        experiment = self.startup[self.startup.index("if (m_experimentCase.enabled)") :]
+        self.assertIn(
+            "m_debugColorMode = DebugColorMode::Natural;",
+            experiment,
+        )
 
     def test_normal_preview_keeps_all_followers_visible(self) -> None:
         self.assertIn(

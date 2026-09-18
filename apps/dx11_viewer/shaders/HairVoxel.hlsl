@@ -44,7 +44,7 @@ float3 ComputeHairColor(uint strandIndex, float widthN)
     if (DebugColorMode == 1)
     {
         const bool isGuide = strandIndex < GuideStrandCount;
-        return isGuide ? float3(0.18f, 0.95f, 0.85f) : float3(0.98f, 0.52f, 0.18f);
+        return isGuide ? float3(1.00f, 0.48f, 0.10f) : float3(0.10f, 0.82f, 0.88f);
     }
     if (DebugColorMode == 2)
     {

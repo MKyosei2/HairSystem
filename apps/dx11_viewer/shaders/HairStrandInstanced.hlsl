@@ -77,8 +77,8 @@ float3 ComputeHairColor(uint strandIndex, float widthN, uint editCategory)
     if (DebugColorMode == 1u)
     {
         return (strandIndex < GuideStrandCount)
-            ? float3(0.18f, 0.95f, 0.85f)
-            : float3(0.98f, 0.52f, 0.18f);
+            ? float3(1.00f, 0.48f, 0.10f)
+            : float3(0.10f, 0.82f, 0.88f);
     }
     if (DebugColorMode == 2u)
     {

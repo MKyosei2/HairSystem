@@ -763,7 +763,9 @@
                     const std::wstring name = entry.path().filename().wstring();
                     if (name.rfind(L"sample_hybrid_cache_v1", 0u) == 0u ||
                         name.rfind(L"sample_hybrid_cache_v2", 0u) == 0u ||
-                        name.rfind(L"sample_hybrid_cache_v3", 0u) == 0u)
+                        name.rfind(L"sample_hybrid_cache_v3", 0u) == 0u ||
+                        name.rfind(L"sample_hybrid_cache_v4", 0u) == 0u ||
+                        name.rfind(L"sample_hybrid_cache_v5", 0u) == 0u)
                     {
                         std::error_code removeError;
                         std::filesystem::remove(entry.path(), removeError);
@@ -771,7 +773,7 @@
                 }
             }
             const std::wstring assetCacheFileName =
-                L"sample_hybrid_cache_v5_root_oit_g" + std::to_wstring(m_builderGuideCount) +
+                L"sample_hybrid_cache_v6_layout_g" + std::to_wstring(m_builderGuideCount) +
                 L"_f" + std::to_wstring(m_builderFollowersPerGuide) +
                 L"_p" + std::to_wstring(m_builderParticlesPerStrand) + L".hairbin";
             const std::filesystem::path assetCachePath = assetCacheDirectory / assetCacheFileName;
@@ -900,7 +902,7 @@
         m_showAdvancedInspector = false;
         m_fastGroomViewport = false;
         m_groomTool = GroomTool::Select;
-        m_debugColorMode = DebugColorMode::Natural;
+        m_debugColorMode = DebugColorMode::GuideFollower;
         m_maskOverlayMode = MaskOverlayMode::None;
         m_selectedStrandIndex = -1;
         m_cpuReadbackMode = CpuReadbackMode::Off;
@@ -924,6 +926,10 @@
 
         if (m_experimentCase.enabled)
         {
+            // Formal measurements use the natural shading path so the
+            // high-contrast interactive inspection palette does not alter the
+            // experiment rendering workload or captured quality evidence.
+            m_debugColorMode = DebugColorMode::Natural;
             m_vsyncEnabled = m_experimentCase.vsyncEnabled;
             m_presentSyncInterval = m_vsyncEnabled
                 ? std::clamp<UINT>(m_experimentCase.presentSyncInterval, 1u, 4u)
