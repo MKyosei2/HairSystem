@@ -92,6 +92,17 @@ namespace hairgpu::viewer
         void ShutdownNovelty01Routed();
         void ShutdownNovelty01RoutedCore();
 
+        // Thesis practical edit evaluation. These hooks are deliberately kept
+        // separate from the formal performance path so visualization and QPC
+        // bookkeeping never alter the measured GPU workload.
+        void PrepareThesisPracticalEditEvaluation();
+        void RecordThesisPracticalEditEpisode(const std::vector<uint32_t>& pointIndices);
+        bool InjectThesisPracticalLocalEdit();
+        void ApplyThesisPracticalPendingEditInvalidation();
+        void MarkThesisPracticalFirstPresent(HRESULT presentResult);
+        void FlushThesisPracticalEditEpisodes();
+        void ReleaseThesisPracticalEditEvaluation();
+
 
         struct GpuParticle
         {
@@ -1106,6 +1117,7 @@ namespace hairgpu::viewer
             GuideFollower = 1,
             WidthHeatmap = 2,
             Editability = 3,
+            ThesisUpdateState = 4,
         };
 
         enum class MaskOverlayMode : uint32_t
