@@ -255,6 +255,11 @@ namespace hairgpu::viewer
         record.methodLabel = ThesisMethodLabel(m_experimentCase.methodId);
         record.caseName = WideToUtf8(GetEnvironmentVariableString(L"HAIRGPU_THESIS_CASE"));
         if (record.caseName.empty()) record.caseName = "unspecified";
+
+        LARGE_INTEGER editCommit = {};
+        QueryPerformanceCounter(&editCommit);
+        s.editCommitQpc = static_cast<uint64_t>(editCommit.QuadPart);
+
         state.bufferedEpisodes.push_back(std::move(record));
     }
 
@@ -371,6 +376,45 @@ namespace hairgpu::viewer
         state.pendingGroups.clear();
     }
 
+    void GpuHairViewer::MarkThesisPracticalFirstPresent(HRESULT presentResult)
+    {
+        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL") || FAILED(presentResult))
+            return;
+
+        ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
+        if (state.bufferedEpisodes.empty() || m_qpcFrequency.QuadPart <= 0)
+            return;
+
+        LARGE_INTEGER firstPresent = {};
+        QueryPerformanceCounter(&firstPresent);
+        const uint64_t presentQpc = static_cast<uint64_t>(firstPresent.QuadPart);
+
+        for (ThesisPracticalEpisodeRecord& record : state.bufferedEpisodes)
+        {
+            auto& s = record.summary;
+            if (s.firstPresentObserved != 0u ||
+                s.editCommitQpc == 0ull ||
+                s.frameIndex > m_globalFrameIndex)
+            {
+                continue;
+            }
+
+            s.firstPresentObserved = 1u;
+            s.firstPresentedFrameIndex = m_globalFrameIndex;
+            s.firstPresentQpc = presentQpc;
+            s.editToFirstPresentMilliseconds =
+                static_cast<double>(presentQpc - s.editCommitQpc) *
+                1000.0 /
+                static_cast<double>(m_qpcFrequency.QuadPart);
+
+            // This value is diagnostic/practical-evaluation evidence. Formal
+            // performance evidence remains sourced from delayed GPU timestamp
+            // queries and is not redefined by this wall-clock latency metric.
+            m_noveltyTelemetry.editLatencyMs =
+                static_cast<float>(s.editToFirstPresentMilliseconds);
+        }
+    }
+
     void GpuHairViewer::FlushThesisPracticalEditEpisodes()
     {
         if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
@@ -396,6 +440,8 @@ namespace hairgpu::viewer
                    "requested_guide_count,requested_tip_mm,changed_point_count,"
                    "touched_guide_count,touched_follower_count,direct_group_count,"
                    "direct_block_count,total_group_count,total_block_count,"
+                   "edit_commit_qpc,first_present_qpc,first_present_frame,"
+                   "first_present_observed,edit_to_first_present_ms,"
                    "direct_group_ratio,direct_block_ratio,local_invalidation_queued,"
                    "forced_fallback_requested\n";
         for (const ThesisPracticalEpisodeRecord& record : state.bufferedEpisodes)
@@ -408,10 +454,30 @@ namespace hairgpu::viewer
                 << s.changedPointCount << ',' << s.touchedGuideCount << ','
                 << s.touchedFollowerCount << ',' << s.directGroupCount << ','
                 << s.directBlockCount << ',' << s.totalGroupCount << ','
-                << s.totalBlockCount << ',' << s.directGroupRatio << ','
-                << s.directBlockRatio << ',' << s.localInvalidationQueued << ','
-                << s.forcedFallbackRequested << '\n';
+                << s.totalBlockCount << ',' << s.editCommitQpc << ','
+                << s.firstPresentQpc << ',' << s.firstPresentedFrameIndex << ','
+                << s.firstPresentObserved << ',' << s.editToFirstPresentMilliseconds << ','
+                << s.directGroupRatio << ',' << s.directBlockRatio << ','
+                << s.localInvalidationQueued << ',' << s.forcedFallbackRequested << '\n';
         }
         if (out) state.bufferedEpisodes.clear();
+    }
+
+    void GpuHairViewer::ReleaseThesisPracticalEditEvaluation()
+    {
+        auto& states = ThesisPracticalStates();
+        auto it = states.find(this);
+        if (it == states.end()) return;
+
+        ThesisPracticalGpuState& state = it->second;
+        state.pending = false;
+        state.localInvalidationQueued = false;
+        state.forceFallback = false;
+        state.pendingGroups.clear();
+        state.pendingBlocks.clear();
+        state.blockIndexSrv.Reset();
+        state.blockIndexBuffer.Reset();
+        state.invalidateBlocksCS.Reset();
+        states.erase(it);
     }
 }
