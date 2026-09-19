@@ -956,6 +956,7 @@ bool GpuHairViewer::ApplySelectedStrandOffset(const Vec3& rootOffset, const Vec3
         if (m_bendLambdaBuffer.buffer && !m_zeroBendLambdas.empty())
             m_context->UpdateSubresource(m_bendLambdaBuffer.buffer.Get(), 0u, nullptr, m_zeroBendLambdas.data(), 0u, 0u);
         m_gpuDebugLinesDirty = true;
+        RecordThesisPracticalEditEpisode(sorted);
         UpdateWindowTitle();
     }
 
