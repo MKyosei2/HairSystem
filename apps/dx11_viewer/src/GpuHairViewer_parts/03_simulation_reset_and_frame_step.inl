@@ -753,10 +753,12 @@ return true;
         const uint32_t followerPointDispatchCount =
             followerDispatchCount * particlesPerStrand;
         constexpr uint32_t kFollowerPointThreadsPerGroup = 256u;
+        BeginGpuPassTiming(GpuPassId::FollowerReconstruction);
         dispatchTiled(
             m_followCS.Get(),
             followerPointDispatchCount,
             kFollowerPointThreadsPerGroup);
+        EndGpuPassTiming(GpuPassId::FollowerReconstruction);
 
         unbindComputeState();
 
@@ -1522,8 +1524,25 @@ return true;
         case ExperimentScenarioId::S11_LocalEdit:
             if (tickIndex == eventStart)
             {
-                ++m_editVersion;
-                m_forceAllSegmentGroupsDirty = true;
+                const bool thesisEditEvaluation = EnvironmentValueIsTrue(
+                    GetEnvironmentVariableString(L"HAIRGPU_THESIS_EDIT_EVAL"));
+                if (thesisEditEvaluation)
+                {
+                    const bool localInvalidationQueued =
+                        InjectThesisPracticalLocalEdit();
+                    if (m_experimentCase.methodId !=
+                            ExperimentMethodId::P_IntegratedSegmentGroup ||
+                        !localInvalidationQueued)
+                    {
+                        ++m_editVersion;
+                        m_forceAllSegmentGroupsDirty = true;
+                    }
+                }
+                else
+                {
+                    ++m_editVersion;
+                    m_forceAllSegmentGroupsDirty = true;
+                }
                 ++m_scenarioEditInvalidationCount;
                 applied = true;
             }

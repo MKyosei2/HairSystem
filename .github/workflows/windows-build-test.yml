@@ -201,6 +201,7 @@ jobs:
             'test_novelty01_complete_contract.py',
             'test_novelty01_runtime_contract.py',
             'test_novelty01_formal_asset_binding_contract.py',
+            'test_thesis_edit_evaluation_contract.py',
             'test_prenovelty_test_environment_contract.py',
             'test_post_sign_execution_readiness_7029.py',
             'test_thesis_formal_experiment_contract_7030.py',

@@ -82,6 +82,7 @@
 #include "hairgpu/Math.h"
 #include "hairgpu/Metrics.h"
 #include "hairgpu/SegmentGroupAdaptivePayload.h"
+#include "hairgpu/ThesisEditEvaluation.h"
 #include "hairgpu/Wig.h"
 #include "hairgpu/Validation.h"
 
@@ -856,6 +857,8 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 #undef ShutdownNovelty01Routed
 
 #include "GpuHairViewer_parts/18_novelty01_render_dirty_range_consumer.inl"
+
+#include "GpuHairViewer_parts/19_thesis_practical_edit_evaluation.inl"
 
 // All later call sites use the routed single-frame method.
 #define StepSingleFrame StepNovelty01SingleFrame

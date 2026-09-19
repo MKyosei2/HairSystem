@@ -217,6 +217,7 @@
             }
         }
 
+        AppendThesisUpdateStateDebugLines();
         m_debugLineStats.totalLineCount = m_debugLineStats.worldLineCount + m_debugLineStats.hairLineCount + m_debugLineStats.scalpLineCount + m_debugLineStats.rootMarkerCount;
         m_gpuDebugLinesDirty = false;
     }
