@@ -1662,6 +1662,8 @@
                     sample.boundaryRepairGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::BoundaryRepair)];
                     sample.cacheUpdateGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::CacheUpdate)];
                     sample.watchdogGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::Watchdog)];
+                    sample.followerReconstructionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::FollowerReconstruction)];
+                    sample.renderPreparationGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::RenderPreparation)];
                     sample.telemetryReductionGpuMilliseconds = passMilliseconds[static_cast<size_t>(GpuPassId::TelemetryReduction)];
                     sample.availabilityMask |= hairgpu::HairTelemetryAvailability_GpuTiming;
                     sample.metricAvailabilityMask |= hairgpu::HairTelemetryAvailability_GpuTiming;
