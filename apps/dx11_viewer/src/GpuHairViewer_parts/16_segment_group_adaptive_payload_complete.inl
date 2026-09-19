@@ -2719,6 +2719,8 @@
             N01UnbindCompute(m_context.Get());
         }
 
+        PrepareThesisPracticalEditEvaluation();
+        ApplyThesisPracticalPendingEditInvalidation();
         ExecuteNovelty01PreClassificationValidation();
 
         BeginGpuPassTiming(GpuPassId::BlockClassification);
