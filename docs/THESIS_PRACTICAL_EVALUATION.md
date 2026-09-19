@@ -52,6 +52,20 @@ Runner 内に T00-T07 の数値を重複して持たせない。
 
 ## 出力
 
+### 追加した正式指標
+
+- `Edit Commit-to-First-Present Latency`: Sparse editをGPU状態へCommitした時刻から、同じ編集を含む最初の成功 `Present()` が返るまでのQPC実測値。物理ディスプレイのinput-to-photon値とは呼ばない。
+- `followerReconstructionGpuMilliseconds`: D3D11 timestamp queryでFollower再構築passを測定し、`sourceFrameIndex` が一致する `PerformanceSample` に遅延書き戻しする。
+- `renderPreparationGpuMilliseconds`: 同様にRender Preparation passをtimestamp queryで測定し、元フレームへ遅延書き戻しする。
+
+### Thesis Update State 可視化
+
+Interactive debug時だけSegment Groupを次の優先順位で色分けする。
+
+`Fallback (Red) > Edited (Magenta) > Updated (Yellow) > Reused (Cyan)`
+
+Formal Performanceでは既存どおり `DebugColorMode::Natural` に固定し、このOverlayを測定workloadへ混入させない。
+
 `HAIRGPU_THESIS_EDIT_EVAL=1` のとき、
 
 `<run_name>_thesis_edits.csv`
