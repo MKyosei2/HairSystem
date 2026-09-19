@@ -5,7 +5,7 @@
 namespace hairgpu
 {
     inline constexpr const char* kThesisEditEvaluationSchema =
-        "hairgpu-thesis-edit-eval-v2";
+        "hairgpu-thesis-edit-eval-v3";
 
     struct ThesisEditEpisodeSummary
     {
@@ -25,6 +25,14 @@ namespace hairgpu
         uint32_t forcedFallbackRequested = 0u;
         double directGroupRatio = 0.0;
         double directBlockRatio = 0.0;
+
+        // Application-observable end-to-end latency. This is intentionally
+        // Commit-to-First-Present, not physical display input-to-photon latency.
+        uint64_t editCommitQpc = 0ull;
+        uint64_t firstPresentQpc = 0ull;
+        uint32_t firstPresentedFrameIndex = 0u;
+        uint32_t firstPresentObserved = 0u;
+        double editToFirstPresentMilliseconds = 0.0;
     };
 
     inline double ThesisSafeRatio(uint64_t numerator, uint64_t denominator)
