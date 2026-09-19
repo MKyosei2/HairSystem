@@ -1522,10 +1522,29 @@ return true;
                 ++m_scenarioCollisionCandidateCount;
                 break;
             case ScenarioEventType::InjectLocalEdit:
-                ++m_editVersion;
+            {
+                const bool thesisEditEvaluation = EnvironmentValueIsTrue(
+                    GetEnvironmentVariableString(L"HAIRGPU_THESIS_EDIT_EVAL"));
+                if (thesisEditEvaluation)
+                {
+                    const bool localInvalidationQueued =
+                        InjectThesisPracticalLocalEdit();
+                    if (m_experimentCase.methodId !=
+                            ExperimentMethodId::P_IntegratedSegmentGroup ||
+                        !localInvalidationQueued)
+                    {
+                        ++m_editVersion;
+                        m_forceAllSegmentGroupsDirty = true;
+                    }
+                }
+                else
+                {
+                    ++m_editVersion;
+                    m_forceAllSegmentGroupsDirty = true;
+                }
                 ++m_scenarioEditInvalidationCount;
-                m_forceAllSegmentGroupsDirty = true;
                 break;
+            }
             case ScenarioEventType::InjectRepairStorm:
                 ++m_scenarioRepairAttemptCount;
                 m_forceAllSegmentGroupsDirty = true;
