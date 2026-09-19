@@ -509,6 +509,11 @@
         std::vector<uint32_t> followerEntries;
         std::vector<uint32_t> activeGuides;
         std::vector<uint32_t> activeFollowers;
+        // Interactive thesis visualization only. Formal runs force Natural
+        // rendering and never consume this CPU-side diagnostic classification.
+        std::vector<uint8_t> latestThesisUpdateCategories;
+        uint32_t latestThesisUpdateSourceFrame = 0u;
+        bool latestThesisUpdateCategoriesValid = false;
         std::vector<GpuParticle> previousScalpCpu;
         std::vector<GpuParticle> proposalRestCpu;
         std::vector<N01PayloadOwner> zeroPayloadOwners;
@@ -1757,6 +1762,8 @@
             return;
         }
         Novelty01RuntimeState& runtime = *runtimePointer;
+        PrepareThesisPracticalEditEvaluation();
+        ApplyThesisPracticalPendingEditInvalidation();
         ApplyNovelty01DesignScenarioForTick(dt);
 
         for (Novelty01RuntimeState::ReadbackSlot& slot : runtime.readbacks)
@@ -1883,6 +1890,42 @@
                 static_cast<const uint32_t*>(dynamicMap.pData);
             const uint32_t* repairIndices =
                 static_cast<const uint32_t*>(repairMap.pData);
+
+            if (!IsExperimentModeEnabled() &&
+                m_debugColorMode == DebugColorMode::ThesisUpdateState)
+            {
+                runtime.latestThesisUpdateCategories.assign(
+                    runtime.groupCount, 0u); // 0 = reused/static path
+                const bool fullFallback =
+                    runtime.latestCounters.Get(
+                        hairgpu::novelty01::Counter_FullDynamic) > 0u;
+                if (fullFallback)
+                {
+                    std::fill(
+                        runtime.latestThesisUpdateCategories.begin(),
+                        runtime.latestThesisUpdateCategories.end(),
+                        static_cast<uint8_t>(3u));
+                }
+                else
+                {
+                    const auto markUpdated = [&](const uint32_t* groups, uint32_t count)
+                    {
+                        for (uint32_t index = 0u; index < count; ++index)
+                        {
+                            const uint32_t groupIndex = groups[index];
+                            if (groupIndex < runtime.latestThesisUpdateCategories.size())
+                            {
+                                runtime.latestThesisUpdateCategories[groupIndex] = 1u;
+                            }
+                        }
+                    };
+                    markUpdated(dynamicIndices, dynamicCount);
+                    markUpdated(repairIndices, repairCount);
+                }
+                runtime.latestThesisUpdateSourceFrame = slot.sourceFrame;
+                runtime.latestThesisUpdateCategoriesValid = true;
+                m_gpuDebugLinesDirty = true;
+            }
 
             const auto addGroups = [&](const uint32_t* groups, uint32_t count)
             {
