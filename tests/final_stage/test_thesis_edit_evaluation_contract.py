@@ -70,9 +70,12 @@ class ThesisEditEvaluationContractTests(unittest.TestCase):
 
     def test_dedicated_gpu_pass_timings_are_resolved_to_samples(self):
         timing = (PARTS / "02_resource_creation_and_shader_loading.inl").read_text(encoding="utf-8")
+        baseline = (PARTS / "03_simulation_reset_and_frame_step.inl").read_text(encoding="utf-8")
         proposal = (PARTS / "16_segment_group_adaptive_payload_complete.inl").read_text(encoding="utf-8")
         render_prep = (PARTS / "18_novelty01_render_dirty_range_consumer.inl").read_text(encoding="utf-8")
 
+        self.assertIn("BeginGpuPassTiming(GpuPassId::FollowerReconstruction)", baseline)
+        self.assertIn("EndGpuPassTiming(GpuPassId::FollowerReconstruction)", baseline)
         self.assertIn("BeginGpuPassTiming(GpuPassId::FollowerReconstruction)", proposal)
         self.assertIn("EndGpuPassTiming(GpuPassId::FollowerReconstruction)", proposal)
         self.assertIn("BeginGpuPassTiming(GpuPassId::RenderPreparation)", render_prep)
