@@ -5,7 +5,7 @@
 namespace hairgpu
 {
     inline constexpr const char* kThesisEditEvaluationSchema =
-        "hairgpu-thesis-edit-eval-v2";
+        "hairgpu-thesis-edit-eval-v3";
 
     struct ThesisEditEpisodeSummary
     {
