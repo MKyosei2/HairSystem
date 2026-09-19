@@ -753,10 +753,12 @@ return true;
         const uint32_t followerPointDispatchCount =
             followerDispatchCount * particlesPerStrand;
         constexpr uint32_t kFollowerPointThreadsPerGroup = 256u;
+        BeginGpuPassTiming(GpuPassId::FollowerReconstruction);
         dispatchTiled(
             m_followCS.Get(),
             followerPointDispatchCount,
             kFollowerPointThreadsPerGroup);
+        EndGpuPassTiming(GpuPassId::FollowerReconstruction);
 
         unbindComputeState();
 
