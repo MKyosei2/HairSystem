@@ -100,6 +100,7 @@ namespace hairgpu::viewer
         bool InjectThesisPracticalLocalEdit();
         void ApplyThesisPracticalPendingEditInvalidation();
         void MarkThesisPracticalFirstPresent(HRESULT presentResult);
+        bool BuildThesisUpdateVisualizationCategories(std::vector<uint32_t>& outCategories);
         void FlushThesisPracticalEditEpisodes();
         void ReleaseThesisPracticalEditEvaluation();
 
