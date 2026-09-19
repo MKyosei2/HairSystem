@@ -165,7 +165,7 @@
                 }
                 return 0;
             case 'C':
-                m_debugColorMode = static_cast<DebugColorMode>((static_cast<uint32_t>(m_debugColorMode) + 1u) % 4u);
+                m_debugColorMode = static_cast<DebugColorMode>((static_cast<uint32_t>(m_debugColorMode) + 1u) % 5u);
                 SyncControlsFromState();
                 return 0;
             case 'F':

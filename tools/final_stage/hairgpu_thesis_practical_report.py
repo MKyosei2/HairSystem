@@ -109,9 +109,16 @@ def main():
             elif dyn is not None or rep is not None: updated=min(float(total) if total>0 else math.inf,float(dyn or 0)+float(rep or 0)); source="counter_dynamic_plus_repair"
             else: updated=None; source="missing_group_execution_evidence"
             ms=[v for r in fw for v in [fnum(r,"frameIntervalMilliseconds","renderFrameMilliseconds","frameMilliseconds")] if v is not None]
+            follower_gpu=[v for r in fw for v in [fnum(r,"followerReconstructionGpuMilliseconds","follower_reconstruction_gpu_ms")] if v is not None]
+            render_prep_gpu=[v for r in fw for v in [fnum(r,"renderPreparationGpuMilliseconds","render_preparation_gpu_ms")] if v is not None]
+            edit_to_present=fnum(e,"edit_to_first_present_ms","editToFirstPresentMilliseconds")
+            first_present_observed=inum(e,"first_present_observed","firstPresentObserved")
             row=dict(e); row.update({"edit_file":str(ef),"frame_csv":str(ff) if ff else "","novelty_csv":str(nf) if nf else "","updated_group_count":updated,"updated_group_source":source,
                 "update_ratio":updated/total if updated is not None and total else None,"reuse_ratio":1-updated/total if updated is not None and total else None,"update_amplification":updated/direct if updated is not None and direct else None,
+                "edit_to_first_present_ms":edit_to_present,"first_present_observed":first_present_observed,
                 "post_edit_frame_median_ms":med(ms),"post_edit_frame_p95_ms":pct(ms,.95),"post_edit_frame_p99_ms":pct(ms,.99),"post_edit_frame_max_ms":max(ms) if ms else None,"post_edit_over_16_6667_ratio":sum(v>16.6667 for v in ms)/len(ms) if ms else None,
+                "follower_reconstruction_gpu_median_ms":med(follower_gpu),"follower_reconstruction_gpu_p95_ms":pct(follower_gpu,.95),
+                "render_preparation_gpu_median_ms":med(render_prep_gpu),"render_preparation_gpu_p95_ms":pct(render_prep_gpu,.95),
                 "position_rmse_mm":vlast(nw,"position_rmse_mm"),"position_max_mm":vlast(nw,"position_max_mm"),"follower_error_mm":vlast(nw,"follower_error_mm"),"render_error_mm":vlast(nw,"render_error_mm"),"ground_truth_samples":vlast(nw,"ground_truth_samples"),
                 "state_sequence_hash":vlast(fw,"stateSequenceHash"),"compaction_sequence_hash":vlast(fw,"compactionSequenceHash"),"final_position_hash":vlast(fw,"finalPositionHash")})
             for label,col in COUNTERS.items(): row[label+"_max"]=vmax(nw,col)
@@ -130,12 +137,12 @@ def main():
     ag=[]
     for (case,method),rs in sorted(groups.items()):
         def vals(k): return [r[k] for r in rs if isinstance(r.get(k),(int,float)) and math.isfinite(float(r[k]))]
-        ag.append({"case":case,"method":method,"episode_count":len(rs),"median_update_ratio":med(vals("update_ratio")),"median_reuse_ratio":med(vals("reuse_ratio")),"median_update_amplification":med(vals("update_amplification")),"median_post_edit_frame_ms":med(vals("post_edit_frame_median_ms")),"p95_post_edit_frame_ms":pct(vals("post_edit_frame_p95_ms"),.95),"median_follower_rebuilt_points":med(vals("follower_rebuilt_points_max")),"median_render_regenerated_vertices":med(vals("render_regenerated_vertices_max")),"median_position_rmse_mm":med(vals("position_rmse_mm"))})
+        ag.append({"case":case,"method":method,"episode_count":len(rs),"median_update_ratio":med(vals("update_ratio")),"median_reuse_ratio":med(vals("reuse_ratio")),"median_update_amplification":med(vals("update_amplification")),"median_edit_to_first_present_ms":med(vals("edit_to_first_present_ms")),"p95_edit_to_first_present_ms":pct(vals("edit_to_first_present_ms"),.95),"median_post_edit_frame_ms":med(vals("post_edit_frame_median_ms")),"p95_post_edit_frame_ms":pct(vals("post_edit_frame_p95_ms"),.95),"median_follower_reconstruction_gpu_ms":med(vals("follower_reconstruction_gpu_median_ms")),"p95_follower_reconstruction_gpu_ms":pct(vals("follower_reconstruction_gpu_p95_ms"),.95),"median_render_preparation_gpu_ms":med(vals("render_preparation_gpu_median_ms")),"p95_render_preparation_gpu_ms":pct(vals("render_preparation_gpu_p95_ms"),.95),"median_follower_rebuilt_points":med(vals("follower_rebuilt_points_max")),"median_render_regenerated_vertices":med(vals("render_regenerated_vertices_max")),"median_position_rmse_mm":med(vals("position_rmse_mm"))})
     epcsv=a.output/"thesis_practical_episode_summary.csv"; cols=sorted({k for r in episodes for k in r})
     with epcsv.open("w",encoding="utf-8",newline="") as f: w=csv.DictWriter(f,fieldnames=cols); w.writeheader(); w.writerows(episodes)
     agcsv=a.output/"thesis_practical_case_method_summary.csv"; cols2=sorted({k for r in ag for k in r})
     with agcsv.open("w",encoding="utf-8",newline="") as f: w=csv.DictWriter(f,fieldnames=cols2); w.writeheader(); w.writerows(ag)
     vis=visual_pairs(a.input); visp=a.output/"thesis_practical_visual_pairs.json"; visp.write_text(json.dumps(vis,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
-    summary={"schema":"hairgpu-thesis-practical-report-v2","episodeCount":len(episodes),"caseMethodRowCount":len(ag),"physicalEditParityIssueCount":len(parity),"evidenceGapCount":len(gaps),"visualPairCount":len(vis),"passedInputParity":not parity,"passedEvidenceCompleteness":bool(episodes) and not gaps,"physicalEditParityIssues":parity,"evidenceGaps":gaps,"episodeCsv":str(epcsv),"caseMethodCsv":str(agcsv),"visualPairsJson":str(visp)}
+    summary={"schema":"hairgpu-thesis-practical-report-v3","episodeCount":len(episodes),"caseMethodRowCount":len(ag),"physicalEditParityIssueCount":len(parity),"evidenceGapCount":len(gaps),"visualPairCount":len(vis),"passedInputParity":not parity,"passedEvidenceCompleteness":bool(episodes) and not gaps,"physicalEditParityIssues":parity,"evidenceGaps":gaps,"episodeCsv":str(epcsv),"caseMethodCsv":str(agcsv),"visualPairsJson":str(visp)}
     (a.output/"thesis_practical_report.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); print(json.dumps(summary,ensure_ascii=False,indent=2)); return 0 if not parity else 2
 if __name__=="__main__": raise SystemExit(main())

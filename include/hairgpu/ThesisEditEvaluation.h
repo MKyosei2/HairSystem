@@ -5,7 +5,7 @@
 namespace hairgpu
 {
     inline constexpr const char* kThesisEditEvaluationSchema =
-        "hairgpu-thesis-edit-eval-v2";
+        "hairgpu-thesis-edit-eval-v3";
 
     struct ThesisEditEpisodeSummary
     {
@@ -23,6 +23,11 @@ namespace hairgpu
         uint32_t totalBlockCount = 0u;
         uint32_t localInvalidationQueued = 0u;
         uint32_t forcedFallbackRequested = 0u;
+        uint64_t editCommitQpc = 0ull;
+        uint64_t firstPresentQpc = 0ull;
+        uint32_t firstPresentedFrameIndex = 0u;
+        uint32_t firstPresentObserved = 0u;
+        double editToFirstPresentMilliseconds = 0.0;
         double directGroupRatio = 0.0;
         double directBlockRatio = 0.0;
     };

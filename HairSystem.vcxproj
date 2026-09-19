@@ -76,7 +76,7 @@ if not exist "$(ProjectDir)apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl
 
 )
 
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSegmentGroupRuntime.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSegmentGroupRuntime.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairThesisLocalEditInvalidate.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
 
   if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F" || exit /b 1
 
@@ -122,7 +122,7 @@ if not exist "$(ProjectDir)apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl
 
 )
 
-for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSegmentGroupRuntime.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
+for %%F in (DebugLine.hlsl HairBrickInstanced.hlsl HairCpuMesh.hlsl HairActiveSet.hlsl HairIndirectArgs.hlsl HairLine.hlsl HairParticle.hlsl HairRibbon.hlsl HairSegmentGroupRuntime.hlsl HairSim.hlsl HairStrandInstanced.hlsl HairThesisLocalEditInvalidate.hlsl HairTube.hlsl HairVoxel.hlsl ScalpMesh.hlsl ScalpSim.hlsl) do (
 
   if exist "$(ProjectDir)apps\dx11_viewer\shaders\%%F" copy /Y "$(ProjectDir)apps\dx11_viewer\shaders\%%F" "$(OutDir)%%F" || exit /b 1
 
@@ -208,6 +208,7 @@ exit /b 0</Command>
     <None Include="apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairSim.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairStrandInstanced.hlsl" />
+    <None Include="apps\dx11_viewer\shaders\HairThesisLocalEditInvalidate.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairTube.hlsl" />
     <None Include="apps\dx11_viewer\shaders\HairVoxel.hlsl" />
     <None Include="apps\dx11_viewer\shaders\ScalpMesh.hlsl" />

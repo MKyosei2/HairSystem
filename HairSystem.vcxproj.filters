@@ -78,6 +78,7 @@
     <None Include="apps\dx11_viewer\shaders\HairSegmentGroupRuntime.hlsl"><Filter>Shaders</Filter></None>
     <None Include="apps\dx11_viewer\shaders\HairSim.hlsl"><Filter>Shaders</Filter></None>
     <None Include="apps\dx11_viewer\shaders\HairStrandInstanced.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="apps\dx11_viewer\shaders\HairThesisLocalEditInvalidate.hlsl"><Filter>Shaders</Filter></None>
     <None Include="apps\dx11_viewer\shaders\HairTube.hlsl"><Filter>Shaders</Filter></None>
     <None Include="apps\dx11_viewer\shaders\HairVoxel.hlsl"><Filter>Shaders</Filter></None>
     <None Include="apps\dx11_viewer\shaders\ScalpMesh.hlsl"><Filter>Shaders</Filter></None>

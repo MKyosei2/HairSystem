@@ -160,7 +160,14 @@ void GpuHairViewer::SyncActiveSetGpuBuffers()
     // The previous code overwrote renderTiers with category values 0..4; the
     // instanced shader then interpreted categories 3/4 as hidden LOD tiers.
     std::vector<uint32_t> editCategories(totalStrands, 1u);
-    if (!m_asset.strands.empty() && m_interactionMode == InteractionMode::Edit)
+    if (!m_asset.strands.empty() &&
+        m_debugColorMode == DebugColorMode::ThesisUpdateState)
+    {
+        BuildThesisUpdateVisualizationCategories(editCategories);
+        m_editVisualizationCategories = editCategories;
+    }
+    else if (!m_asset.strands.empty() &&
+             m_interactionMode == InteractionMode::Edit)
     {
         BuildEditVisualizationCategories(editCategories);
         m_editVisualizationCategories = editCategories;

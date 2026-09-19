@@ -10,6 +10,7 @@ set(HAIRGPU_DX11_VIEWER_SHADERS
     HairSegmentGroupRuntime.hlsl
     HairSim.hlsl
     HairStrandInstanced.hlsl
+    HairThesisLocalEditInvalidate.hlsl
     HairTube.hlsl
     HairVoxel.hlsl
     ScalpCoverage.hlsl

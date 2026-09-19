@@ -34,6 +34,7 @@
 #include "hairgpu/GlobalHairBudget.h"
 #include "hairgpu/HairNoveltyFlags.h"
 #include "hairgpu/HairNoveltyTelemetry.h"
+#include "hairgpu/ThesisEditEvaluation.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/BoneAnimation.h"
 #include "hairgpu/HybridRuntime.h"
@@ -882,6 +883,7 @@ void GpuHairViewer::ExecuteNovelty01ExperimentTick(float dt)
 #include "GpuHairViewer_parts/12_strand_pick_gizmo_and_brush_edit.inl"
 #include "GpuHairViewer_parts/13_edit_stack_inline_layers_and_masks.inl"
 #include "GpuHairViewer_parts/14_scalp_overlay_and_window_messages.inl"
+#include "GpuHairViewer_parts/19_thesis_practical_edit_evaluation.inl"
 #include "GpuHairViewer_parts/15_shutdown_and_tail.inl"
 #undef StepSingleFrame
 
