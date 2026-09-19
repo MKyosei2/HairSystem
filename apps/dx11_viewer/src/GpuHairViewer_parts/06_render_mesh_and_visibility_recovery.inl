@@ -199,6 +199,7 @@ const UINT presentSyncInterval = m_vsyncEnabled
     : 0u;
 m_lastObservedPresentSyncInterval = presentSyncInterval;
 m_lastPresentResult = m_swapChain->Present(presentSyncInterval, 0u);
+MarkThesisPracticalFirstPresent(m_lastPresentResult);
 if (FAILED(m_lastPresentResult))
 {
     m_noveltyTelemetry.fatalFailure = 1u;
@@ -531,6 +532,7 @@ if (FAILED(m_lastPresentResult))
 
     void GpuHairViewer::Shutdown()
     {
+        FlushThesisPracticalEditEpisodes();
         if (m_context)
         {
             m_context->ClearState();
