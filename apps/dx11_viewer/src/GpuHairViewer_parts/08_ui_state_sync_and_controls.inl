@@ -339,7 +339,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
            << L"  Prims=" << m_lastDebugPipelineStats.IAPrimitives
            << L"  PS=" << m_lastDebugPipelineStats.PSInvocations << L"\n"
            << L"Mode: " << (m_interactionMode == InteractionMode::Edit ? L"Edit" : L"View")
-           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower [Guide=Orange, Follower=Cyan]" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : (m_debugColorMode == DebugColorMode::Editability ? L"Editable/Locked" : L"Natural")))
+           << L"  Colors: " << (m_debugColorMode == DebugColorMode::GuideFollower ? L"Guide/Follower [Guide=Orange, Follower=Cyan]" : (m_debugColorMode == DebugColorMode::WidthHeatmap ? L"Width" : (m_debugColorMode == DebugColorMode::Editability ? L"Editable/Locked" : (m_debugColorMode == DebugColorMode::ThesisUpdateState ? L"Thesis Update [Edited=Magenta, Updated=Yellow, Reused=Cyan, Fallback=Red]" : L"Natural"))))
            << L"  Scalp: " << GetMaskOverlayModeDisplayName() << L"\n";
         ss << L"Active Set: " << (m_enableActiveSetRuntime ? L"On" : L"Off")
            << L"  Plan: " << m_activeSetPlan.summary.selectedClusterCount << L"/" << m_activeSetPlan.summary.clusterCount << L" clusters"
@@ -557,7 +557,7 @@ void GpuHairViewer::ApplyPreset(int presetIndex)
         const uint32_t settingsFormatVersion = getUInt("settingsFormatVersion", 1u);
         const uint32_t persistedDebugColorMode = std::min<uint32_t>(
             getUInt("debugColorMode", static_cast<uint32_t>(m_debugColorMode)),
-            3u);
+            4u);
         // Version 1 could silently force Editability when entering Groom mode.
         // Migrate that stale automatic value to the current high-contrast
         // Guide/Follower default while preserving an explicit selection written

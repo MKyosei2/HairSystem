@@ -34,6 +34,7 @@
 #include "hairgpu/GlobalHairBudget.h"
 #include "hairgpu/HairNoveltyFlags.h"
 #include "hairgpu/HairNoveltyTelemetry.h"
+#include "hairgpu/ThesisEditEvaluation.h"
 #include "hairgpu/Authoring.h"
 #include "hairgpu/BoneAnimation.h"
 #include "hairgpu/HybridRuntime.h"
@@ -461,6 +462,8 @@ namespace
 #include "GpuHairViewer_parts/16_segment_group_adaptive_payload_complete.inl"
 #undef ExecuteNovelty01ExperimentTick
 #undef StepNovelty01SingleFrame
+
+#include "GpuHairViewer_parts/19_thesis_practical_edit_evaluation.inl"
 
 // Publication-grade P runs first consume the exact same seeded timeline as B0.
 // The original SG-APT tick is retained intact, but its design-scenario selector

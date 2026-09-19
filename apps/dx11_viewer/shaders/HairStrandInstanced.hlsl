@@ -92,6 +92,13 @@ float3 ComputeHairColor(uint strandIndex, float widthN, uint editCategory)
         if (editCategory == 4u) return float3(1.00f, 0.92f, 0.18f);
         return float3(0.38f, 0.42f, 0.48f);
     }
+    if (DebugColorMode == 4u)
+    {
+        if (editCategory == 3u) return float3(1.00f, 0.08f, 0.08f); // fallback
+        if (editCategory == 2u) return float3(1.00f, 0.18f, 0.86f); // edited
+        if (editCategory == 1u) return float3(1.00f, 0.82f, 0.16f); // updated
+        return float3(0.10f, 0.82f, 0.88f);                         // reused
+    }
     return naturalColor;
 }
 

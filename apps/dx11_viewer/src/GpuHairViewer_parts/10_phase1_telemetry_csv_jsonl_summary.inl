@@ -1522,10 +1522,17 @@ return true;
                 ++m_scenarioCollisionCandidateCount;
                 break;
             case ScenarioEventType::InjectLocalEdit:
-                ++m_editVersion;
+            {
+                const bool localInvalidationQueued =
+                    InjectThesisPracticalLocalEdit();
+                if (!localInvalidationQueued)
+                {
+                    ++m_editVersion;
+                    m_forceAllSegmentGroupsDirty = true;
+                }
                 ++m_scenarioEditInvalidationCount;
-                m_forceAllSegmentGroupsDirty = true;
                 break;
+            }
             case ScenarioEventType::InjectRepairStorm:
                 ++m_scenarioRepairAttemptCount;
                 m_forceAllSegmentGroupsDirty = true;

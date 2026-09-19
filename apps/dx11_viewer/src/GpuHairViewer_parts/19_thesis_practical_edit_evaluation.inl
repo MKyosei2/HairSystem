@@ -24,6 +24,8 @@ namespace hairgpu::viewer
             bool prepareFailed = false;
             std::vector<uint32_t> pendingGroups;
             std::vector<uint32_t> pendingBlocks;
+            std::vector<uint32_t> lastEditedGuides;
+            bool lastVisualizationFallback = false;
             std::vector<ThesisPracticalEpisodeRecord> bufferedEpisodes;
             Microsoft::WRL::ComPtr<ID3D11Buffer> blockIndexBuffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> blockIndexSrv;
@@ -41,6 +43,17 @@ namespace hairgpu::viewer
         {
             const std::wstring value = GetEnvironmentVariableString(name);
             return value.empty() ? fallback : EnvironmentValueIsTrue(value);
+        }
+
+        bool ThesisEvaluationEnabled()
+        {
+            // The process environment is frozen for one experiment run. Cache
+            // this flag so disabled formal runs do not perform a Win32
+            // environment lookup on every P frame.
+            static const bool enabled =
+                EnvironmentValueIsTrue(
+                    GetEnvironmentVariableString(L"HAIRGPU_THESIS_EDIT_EVAL"));
+            return enabled;
         }
 
         uint32_t ThesisUInt(const wchar_t* name, uint32_t fallback,
@@ -106,7 +119,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::PrepareThesisPracticalEditEvaluation()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
+        if (!ThesisEvaluationEnabled()) return;
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         if (state.prepared || state.prepareFailed) return;
         const N01RuntimePointer runtime = N01FindRuntime(this);
@@ -144,7 +157,7 @@ namespace hairgpu::viewer
     void GpuHairViewer::RecordThesisPracticalEditEpisode(
         const std::vector<uint32_t>& pointIndices)
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL") || pointIndices.empty()) return;
+        if (!ThesisEvaluationEnabled() || pointIndices.empty()) return;
 
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         state.pendingGroups.clear();
@@ -251,6 +264,17 @@ namespace hairgpu::viewer
         s.forcedFallbackRequested = state.forceFallback ? 1u : 0u;
         s.directGroupRatio = hairgpu::ThesisSafeRatio(s.directGroupCount, totalGroups);
         s.directBlockRatio = hairgpu::ThesisSafeRatio(s.directBlockCount, totalBlocks);
+
+        LARGE_INTEGER editCommit = {};
+        QueryPerformanceCounter(&editCommit);
+        s.editCommitQpc = static_cast<uint64_t>(editCommit.QuadPart);
+
+        state.lastEditedGuides.assign(touchedGuides.begin(), touchedGuides.end());
+        std::sort(state.lastEditedGuides.begin(), state.lastEditedGuides.end());
+        state.lastVisualizationFallback =
+            state.forceFallback &&
+            m_experimentCase.methodId == ExperimentMethodId::P_IntegratedSegmentGroup;
+
         record.methodId = static_cast<uint32_t>(m_experimentCase.methodId);
         record.methodLabel = ThesisMethodLabel(m_experimentCase.methodId);
         record.caseName = WideToUtf8(GetEnvironmentVariableString(L"HAIRGPU_THESIS_CASE"));
@@ -260,7 +284,7 @@ namespace hairgpu::viewer
 
     bool GpuHairViewer::InjectThesisPracticalLocalEdit()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return false;
+        if (!ThesisEvaluationEnabled()) return false;
         PrepareThesisPracticalEditEvaluation();
         const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount,
             static_cast<uint32_t>(m_asset.strands.size()));
@@ -318,7 +342,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyThesisPracticalPendingEditInvalidation()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
+        if (!ThesisEvaluationEnabled()) return;
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         if (!state.pending)
         {
@@ -371,9 +395,126 @@ namespace hairgpu::viewer
         state.pendingGroups.clear();
     }
 
+    void GpuHairViewer::MarkThesisPracticalFirstPresent(HRESULT presentResult)
+    {
+        if (!ThesisEvaluationEnabled() || FAILED(presentResult)) return;
+        auto found = ThesisPracticalStates().find(this);
+        if (found == ThesisPracticalStates().end()) return;
+
+        LARGE_INTEGER now = {};
+        QueryPerformanceCounter(&now);
+        ThesisPracticalGpuState& state = found->second;
+        for (ThesisPracticalEpisodeRecord& record : state.bufferedEpisodes)
+        {
+            auto& s = record.summary;
+            if (s.firstPresentObserved != 0u || s.editCommitQpc == 0ull ||
+                s.frameIndex > m_globalFrameIndex)
+            {
+                continue;
+            }
+            s.firstPresentObserved = 1u;
+            s.firstPresentedFrameIndex = m_globalFrameIndex;
+            s.firstPresentQpc = static_cast<uint64_t>(now.QuadPart);
+            if (m_qpcFrequency.QuadPart > 0 &&
+                s.firstPresentQpc >= s.editCommitQpc)
+            {
+                s.editToFirstPresentMilliseconds =
+                    static_cast<double>(s.firstPresentQpc - s.editCommitQpc) *
+                    1000.0 /
+                    static_cast<double>(m_qpcFrequency.QuadPart);
+                m_noveltyTelemetry.editLatencyMs =
+                    static_cast<float>(s.editToFirstPresentMilliseconds);
+            }
+        }
+    }
+
+    bool GpuHairViewer::BuildThesisUpdateVisualizationCategories(
+        std::vector<uint32_t>& outCategories) const
+    {
+        constexpr uint32_t kReused = 0u;
+        constexpr uint32_t kUpdated = 1u;
+        constexpr uint32_t kEdited = 2u;
+        constexpr uint32_t kFallback = 3u;
+
+        outCategories.assign(m_asset.strands.size(), kReused);
+        auto found = ThesisPracticalStates().find(
+            const_cast<GpuHairViewer*>(this));
+        if (found == ThesisPracticalStates().end())
+        {
+            return false;
+        }
+
+        const ThesisPracticalGpuState& state = found->second;
+        const uint32_t guideCount = std::min<uint32_t>(
+            m_asset.guideStrandCount,
+            static_cast<uint32_t>(m_asset.strands.size()));
+        std::vector<uint32_t> guideCategories(guideCount, kReused);
+
+        const N01RuntimePointer runtime =
+            N01FindRuntime(const_cast<GpuHairViewer*>(this));
+        const bool runtimeFallback =
+            runtime && runtime->lastFrameUsedFullDynamic;
+        if (m_experimentCase.methodId ==
+                ExperimentMethodId::P_IntegratedSegmentGroup &&
+            (state.lastVisualizationFallback || runtimeFallback))
+        {
+            std::fill(guideCategories.begin(), guideCategories.end(), kFallback);
+        }
+        else
+        {
+            if (m_experimentCase.methodId ==
+                ExperimentMethodId::B0_FullDynamic)
+            {
+                std::fill(guideCategories.begin(), guideCategories.end(), kUpdated);
+            }
+            else if (runtime)
+            {
+                for (uint32_t guideIndex : runtime->activeGuides)
+                {
+                    if (guideIndex < guideCategories.size())
+                    {
+                        guideCategories[guideIndex] =
+                            std::max(guideCategories[guideIndex], kUpdated);
+                    }
+                }
+            }
+
+            for (uint32_t guideIndex : state.lastEditedGuides)
+            {
+                if (guideIndex < guideCategories.size())
+                {
+                    guideCategories[guideIndex] =
+                        std::max(guideCategories[guideIndex], kEdited);
+                }
+            }
+        }
+
+        for (uint32_t guideIndex = 0u;
+             guideIndex < guideCategories.size();
+             ++guideIndex)
+        {
+            outCategories[guideIndex] = guideCategories[guideIndex];
+        }
+        for (uint32_t strandIndex = guideCount;
+             strandIndex < outCategories.size() &&
+             strandIndex < m_asset.followData.size();
+             ++strandIndex)
+        {
+            const int32_t parentGuide =
+                m_asset.followData[strandIndex].parentGuide;
+            if (parentGuide >= 0 &&
+                static_cast<uint32_t>(parentGuide) < guideCategories.size())
+            {
+                outCategories[strandIndex] =
+                    guideCategories[static_cast<uint32_t>(parentGuide)];
+            }
+        }
+        return true;
+    }
+
     void GpuHairViewer::FlushThesisPracticalEditEpisodes()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
+        if (!ThesisEvaluationEnabled()) return;
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         if (state.bufferedEpisodes.empty()) return;
         std::wstring telemetryDirText = GetEnvironmentVariableString(L"HAIRGPU_TELEMETRY_DIR");
@@ -397,7 +538,8 @@ namespace hairgpu::viewer
                    "touched_guide_count,touched_follower_count,direct_group_count,"
                    "direct_block_count,total_group_count,total_block_count,"
                    "direct_group_ratio,direct_block_ratio,local_invalidation_queued,"
-                   "forced_fallback_requested\n";
+                   "forced_fallback_requested,edit_commit_qpc,first_present_qpc,"
+                   "first_present_frame,first_present_observed,edit_to_first_present_ms\n";
         for (const ThesisPracticalEpisodeRecord& record : state.bufferedEpisodes)
         {
             const auto& s = record.summary;
@@ -410,7 +552,10 @@ namespace hairgpu::viewer
                 << s.directBlockCount << ',' << s.totalGroupCount << ','
                 << s.totalBlockCount << ',' << s.directGroupRatio << ','
                 << s.directBlockRatio << ',' << s.localInvalidationQueued << ','
-                << s.forcedFallbackRequested << '\n';
+                << s.forcedFallbackRequested << ',' << s.editCommitQpc << ','
+                << s.firstPresentQpc << ',' << s.firstPresentedFrameIndex << ','
+                << s.firstPresentObserved << ','
+                << s.editToFirstPresentMilliseconds << '\n';
         }
         if (out) state.bufferedEpisodes.clear();
     }

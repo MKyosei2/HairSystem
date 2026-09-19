@@ -686,7 +686,7 @@ namespace
             ((SendMessageW(m_comboInteractionMode, CB_GETCURSEL, 0, 0) == 1) ? InteractionMode::Edit : InteractionMode::View);
         const LRESULT debugColorSelection =
             SendMessageW(m_comboDebugColor, CB_GETCURSEL, 0, 0);
-        if (debugColorSelection >= 0 && debugColorSelection <= 3)
+        if (debugColorSelection >= 0 && debugColorSelection <= 4)
         {
             m_debugColorMode = static_cast<DebugColorMode>(debugColorSelection);
         }

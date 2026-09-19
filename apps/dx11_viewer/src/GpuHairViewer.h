@@ -1106,6 +1106,7 @@ namespace hairgpu::viewer
             GuideFollower = 1,
             WidthHeatmap = 2,
             Editability = 3,
+            ThesisUpdateState = 4,
         };
 
         enum class MaskOverlayMode : uint32_t
@@ -1390,6 +1391,13 @@ namespace hairgpu::viewer
         void EnforceFixedWorkload();
         void CommitEditedRestState();
         void CommitEditedPointIndices(const std::vector<uint32_t>& pointIndices);
+        void PrepareThesisPracticalEditEvaluation();
+        void RecordThesisPracticalEditEpisode(const std::vector<uint32_t>& pointIndices);
+        bool InjectThesisPracticalLocalEdit();
+        void ApplyThesisPracticalPendingEditInvalidation();
+        void MarkThesisPracticalFirstPresent(HRESULT presentResult);
+        void FlushThesisPracticalEditEpisodes();
+        bool BuildThesisUpdateVisualizationCategories(std::vector<uint32_t>& outCategories) const;
         std::vector<uint32_t> ExpandGuideFamilies(const std::vector<uint32_t>& guideIndices) const;
         void PushStrandEditUndoSnapshot();
         void PushStrandEditUndoSnapshot(const std::vector<uint32_t>& guideIndices);
