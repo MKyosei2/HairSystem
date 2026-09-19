@@ -559,6 +559,8 @@
 
     void GpuHairViewer::ShutdownNovelty01Routed()
     {
+        FlushThesisPracticalEditEpisodes();
+        ReleaseThesisPracticalEditEvaluation();
         ReleaseNovelty01RenderCache();
         ShutdownNovelty01RoutedCore();
     }
