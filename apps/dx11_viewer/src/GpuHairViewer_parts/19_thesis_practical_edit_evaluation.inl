@@ -24,6 +24,9 @@ namespace hairgpu::viewer
             bool prepareFailed = false;
             std::vector<uint32_t> pendingGroups;
             std::vector<uint32_t> pendingBlocks;
+            std::vector<uint32_t> lastEditedGroups;
+            uint32_t lastEditedFrame = 0u;
+            bool lastFallbackRequested = false;
             std::vector<ThesisPracticalEpisodeRecord> bufferedEpisodes;
             Microsoft::WRL::ComPtr<ID3D11Buffer> blockIndexBuffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> blockIndexSrv;
@@ -197,6 +200,9 @@ namespace hairgpu::viewer
 
         state.pendingGroups.assign(directGroups.begin(), directGroups.end());
         std::sort(state.pendingGroups.begin(), state.pendingGroups.end());
+        state.lastEditedGroups = state.pendingGroups;
+        state.lastEditedFrame = m_globalFrameIndex;
+        state.lastFallbackRequested = state.forceFallback;
         const N01RuntimePointer runtime = N01FindRuntime(this);
         if (runtime && m_experimentCase.methodId == ExperimentMethodId::P_IntegratedSegmentGroup)
         {
@@ -236,6 +242,9 @@ namespace hairgpu::viewer
         auto& s = record.summary;
         s.episodeId = state.nextEpisodeId++;
         s.frameIndex = m_globalFrameIndex;
+        LARGE_INTEGER editCommit = {};
+        QueryPerformanceCounter(&editCommit);
+        s.editCommitQpc = static_cast<uint64_t>(editCommit.QuadPart);
         s.physicalEditHash = physicalEditHash;
         s.requestedGuideCount = ThesisUInt(L"HAIRGPU_THESIS_EDIT_GUIDE_COUNT", 1u, 1u,
             std::max<uint32_t>(guideCount, 1u));
@@ -371,6 +380,165 @@ namespace hairgpu::viewer
         state.pendingGroups.clear();
     }
 
+    void GpuHairViewer::MarkThesisPracticalFirstPresent(HRESULT presentResult)
+    {
+        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL") ||
+            FAILED(presentResult) ||
+            m_qpcFrequency.QuadPart <= 0)
+        {
+            return;
+        }
+
+        auto stateIt = ThesisPracticalStates().find(this);
+        if (stateIt == ThesisPracticalStates().end())
+        {
+            return;
+        }
+
+        LARGE_INTEGER now = {};
+        QueryPerformanceCounter(&now);
+        const uint64_t presentQpc = static_cast<uint64_t>(now.QuadPart);
+        double latestLatencyMs = -1.0;
+
+        for (ThesisPracticalEpisodeRecord& record :
+             stateIt->second.bufferedEpisodes)
+        {
+            auto& s = record.summary;
+            if (s.firstPresentObserved != 0u ||
+                s.editCommitQpc == 0ull ||
+                s.frameIndex > m_globalFrameIndex ||
+                presentQpc < s.editCommitQpc)
+            {
+                continue;
+            }
+
+            s.firstPresentObserved = 1u;
+            s.firstPresentedFrameIndex = m_globalFrameIndex;
+            s.firstPresentQpc = presentQpc;
+            s.editToFirstPresentMilliseconds =
+                static_cast<double>(presentQpc - s.editCommitQpc) *
+                1000.0 /
+                static_cast<double>(m_qpcFrequency.QuadPart);
+            latestLatencyMs = s.editToFirstPresentMilliseconds;
+        }
+
+        if (latestLatencyMs >= 0.0)
+        {
+            m_noveltyTelemetry.editLatencyMs =
+                static_cast<float>(latestLatencyMs);
+        }
+    }
+
+    void GpuHairViewer::AppendThesisUpdateStateDebugLines()
+    {
+        if (IsExperimentModeEnabled() ||
+            m_debugColorMode != DebugColorMode::ThesisUpdateState)
+        {
+            return;
+        }
+
+        const auto stateIt = ThesisPracticalStates().find(this);
+        const ThesisPracticalGpuState* thesisState =
+            stateIt != ThesisPracticalStates().end()
+            ? &stateIt->second
+            : nullptr;
+        const N01RuntimePointer runtime = N01FindRuntime(this);
+
+        const bool hasRuntimeCategories =
+            runtime &&
+            runtime->latestThesisUpdateCategoriesValid &&
+            runtime->latestThesisUpdateCategories.size() ==
+                runtime->groupCount;
+        const bool hasEditedGroups =
+            thesisState && !thesisState->lastEditedGroups.empty();
+        const bool forceFallback =
+            thesisState && thesisState->lastFallbackRequested;
+
+        if (!hasRuntimeCategories && !hasEditedGroups && !forceFallback)
+        {
+            return;
+        }
+
+        std::unordered_set<uint32_t> editedGroups;
+        if (thesisState)
+        {
+            editedGroups.insert(
+                thesisState->lastEditedGroups.begin(),
+                thesisState->lastEditedGroups.end());
+        }
+
+        const uint32_t guideCount = std::min<uint32_t>(
+            m_asset.guideStrandCount,
+            static_cast<uint32_t>(m_asset.strands.size()));
+        for (uint32_t guideIndex = 0u;
+             guideIndex < guideCount &&
+             guideIndex <
+                 m_asset.segmentGroupTopology.strandGroupRanges.size();
+             ++guideIndex)
+        {
+            const StrandRange& strand = m_asset.strands[guideIndex];
+            const SegmentGroupRange& range =
+                m_asset.segmentGroupTopology.strandGroupRanges[guideIndex];
+            for (uint32_t localGroup = 0u;
+                 localGroup < range.groupCount &&
+                 localGroup + 1u < strand.pointCount;
+                 ++localGroup)
+            {
+                const uint32_t groupIndex =
+                    range.firstGroup + localGroup;
+                uint8_t category = 0u;
+                if (hasRuntimeCategories &&
+                    groupIndex <
+                        runtime->latestThesisUpdateCategories.size())
+                {
+                    category =
+                        runtime->latestThesisUpdateCategories[groupIndex];
+                }
+                else if (!runtime)
+                {
+                    // B0 has no SG-APT reuse state: the broad baseline path
+                    // updates all non-edited groups as well.
+                    category = 1u;
+                }
+
+                // Priority: Fallback > Edited > Updated > Reused.
+                if (forceFallback)
+                {
+                    category = 3u;
+                }
+                else if (editedGroups.find(groupIndex) != editedGroups.end())
+                {
+                    category = 2u;
+                }
+
+                float r = 0.10f, g = 0.82f, b = 0.88f, a = 0.42f;
+                if (category == 1u)
+                {
+                    r = 1.00f; g = 0.78f; b = 0.12f; a = 0.90f;
+                }
+                else if (category == 2u)
+                {
+                    r = 1.00f; g = 0.15f; b = 0.85f; a = 1.00f;
+                }
+                else if (category == 3u)
+                {
+                    r = 1.00f; g = 0.12f; b = 0.10f; a = 1.00f;
+                }
+
+                GpuDebugLineEntry entry = {};
+                entry.type = 1u;
+                entry.indexA = strand.pointOffset + localGroup;
+                entry.indexB = entry.indexA + 1u;
+                entry.color[0] = r;
+                entry.color[1] = g;
+                entry.color[2] = b;
+                entry.color[3] = a;
+                m_gpuDebugLineEntries.push_back(entry);
+                ++m_debugLineStats.hairLineCount;
+            }
+        }
+    }
+
     void GpuHairViewer::FlushThesisPracticalEditEpisodes()
     {
         if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
@@ -397,7 +565,9 @@ namespace hairgpu::viewer
                    "touched_guide_count,touched_follower_count,direct_group_count,"
                    "direct_block_count,total_group_count,total_block_count,"
                    "direct_group_ratio,direct_block_ratio,local_invalidation_queued,"
-                   "forced_fallback_requested\n";
+                   "forced_fallback_requested,edit_commit_qpc,first_present_qpc,"
+                   "first_present_frame,first_present_observed,"
+                   "edit_to_first_present_ms\n";
         for (const ThesisPracticalEpisodeRecord& record : state.bufferedEpisodes)
         {
             const auto& s = record.summary;
@@ -410,7 +580,10 @@ namespace hairgpu::viewer
                 << s.directBlockCount << ',' << s.totalGroupCount << ','
                 << s.totalBlockCount << ',' << s.directGroupRatio << ','
                 << s.directBlockRatio << ',' << s.localInvalidationQueued << ','
-                << s.forcedFallbackRequested << '\n';
+                << s.forcedFallbackRequested << ',' << s.editCommitQpc << ','
+                << s.firstPresentQpc << ',' << s.firstPresentedFrameIndex << ','
+                << s.firstPresentObserved << ','
+                << s.editToFirstPresentMilliseconds << '\n';
         }
         if (out) state.bufferedEpisodes.clear();
     }
