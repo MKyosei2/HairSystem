@@ -1897,8 +1897,9 @@
                 runtime.latestThesisUpdateCategories.assign(
                     runtime.groupCount, 0u); // 0 = reused/static path
                 const bool fullFallback =
+                    runtime.lastFrameUsedFullDynamic ||
                     runtime.latestCounters.Get(
-                        hairgpu::novelty01::Counter_FullDynamic) > 0u;
+                        hairgpu::novelty01::Counter_FullDynamicRequested) > 0u;
                 if (fullFallback)
                 {
                     std::fill(
