@@ -45,6 +45,17 @@ namespace hairgpu::viewer
             return value.empty() ? fallback : EnvironmentValueIsTrue(value);
         }
 
+        bool ThesisEvaluationEnabled()
+        {
+            // The process environment is frozen for one experiment run. Cache
+            // this flag so disabled formal runs do not perform a Win32
+            // environment lookup on every P frame.
+            static const bool enabled =
+                EnvironmentValueIsTrue(
+                    GetEnvironmentVariableString(L"HAIRGPU_THESIS_EDIT_EVAL"));
+            return enabled;
+        }
+
         uint32_t ThesisUInt(const wchar_t* name, uint32_t fallback,
                             uint32_t minimumValue, uint32_t maximumValue)
         {
@@ -108,7 +119,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::PrepareThesisPracticalEditEvaluation()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
+        if (!ThesisEvaluationEnabled()) return;
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         if (state.prepared || state.prepareFailed) return;
         const N01RuntimePointer runtime = N01FindRuntime(this);
@@ -146,7 +157,7 @@ namespace hairgpu::viewer
     void GpuHairViewer::RecordThesisPracticalEditEpisode(
         const std::vector<uint32_t>& pointIndices)
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL") || pointIndices.empty()) return;
+        if (!ThesisEvaluationEnabled() || pointIndices.empty()) return;
 
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         state.pendingGroups.clear();
@@ -273,7 +284,7 @@ namespace hairgpu::viewer
 
     bool GpuHairViewer::InjectThesisPracticalLocalEdit()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return false;
+        if (!ThesisEvaluationEnabled()) return false;
         PrepareThesisPracticalEditEvaluation();
         const uint32_t guideCount = std::min<uint32_t>(m_asset.guideStrandCount,
             static_cast<uint32_t>(m_asset.strands.size()));
@@ -331,7 +342,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::ApplyThesisPracticalPendingEditInvalidation()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
+        if (!ThesisEvaluationEnabled()) return;
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         if (!state.pending)
         {
@@ -386,7 +397,7 @@ namespace hairgpu::viewer
 
     void GpuHairViewer::MarkThesisPracticalFirstPresent(HRESULT presentResult)
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL") || FAILED(presentResult)) return;
+        if (!ThesisEvaluationEnabled() || FAILED(presentResult)) return;
         auto found = ThesisPracticalStates().find(this);
         if (found == ThesisPracticalStates().end()) return;
 
@@ -437,25 +448,7 @@ namespace hairgpu::viewer
         const uint32_t guideCount = std::min<uint32_t>(
             m_asset.guideStrandCount,
             static_cast<uint32_t>(m_asset.strands.size()));
-
-        auto markGuideFamily = [&](uint32_t guideIndex, uint32_t category)
-        {
-            if (guideIndex >= guideCount) return;
-            outCategories[guideIndex] =
-                std::max(outCategories[guideIndex], category);
-            for (uint32_t strandIndex = guideCount;
-                 strandIndex < m_asset.strands.size() &&
-                 strandIndex < m_asset.followData.size();
-                 ++strandIndex)
-            {
-                if (m_asset.followData[strandIndex].parentGuide ==
-                    static_cast<int32_t>(guideIndex))
-                {
-                    outCategories[strandIndex] =
-                        std::max(outCategories[strandIndex], category);
-                }
-            }
-        };
+        std::vector<uint32_t> guideCategories(guideCount, kReused);
 
         const N01RuntimePointer runtime =
             N01FindRuntime(const_cast<GpuHairViewer*>(this));
@@ -465,38 +458,63 @@ namespace hairgpu::viewer
                 ExperimentMethodId::P_IntegratedSegmentGroup &&
             (state.lastVisualizationFallback || runtimeFallback))
         {
-            std::fill(outCategories.begin(), outCategories.end(), kFallback);
-            return true;
+            std::fill(guideCategories.begin(), guideCategories.end(), kFallback);
         }
-
-        if (m_experimentCase.methodId ==
-            ExperimentMethodId::B0_FullDynamic)
+        else
         {
-            for (uint32_t guideIndex = 0u;
-                 guideIndex < guideCount;
-                 ++guideIndex)
+            if (m_experimentCase.methodId ==
+                ExperimentMethodId::B0_FullDynamic)
             {
-                markGuideFamily(guideIndex, kUpdated);
+                std::fill(guideCategories.begin(), guideCategories.end(), kUpdated);
+            }
+            else if (runtime)
+            {
+                for (uint32_t guideIndex : runtime->activeGuides)
+                {
+                    if (guideIndex < guideCategories.size())
+                    {
+                        guideCategories[guideIndex] =
+                            std::max(guideCategories[guideIndex], kUpdated);
+                    }
+                }
+            }
+
+            for (uint32_t guideIndex : state.lastEditedGuides)
+            {
+                if (guideIndex < guideCategories.size())
+                {
+                    guideCategories[guideIndex] =
+                        std::max(guideCategories[guideIndex], kEdited);
+                }
             }
         }
-        else if (runtime)
-        {
-            for (uint32_t guideIndex : runtime->activeGuides)
-            {
-                markGuideFamily(guideIndex, kUpdated);
-            }
-        }
 
-        for (uint32_t guideIndex : state.lastEditedGuides)
+        for (uint32_t guideIndex = 0u;
+             guideIndex < guideCategories.size();
+             ++guideIndex)
         {
-            markGuideFamily(guideIndex, kEdited);
+            outCategories[guideIndex] = guideCategories[guideIndex];
+        }
+        for (uint32_t strandIndex = guideCount;
+             strandIndex < outCategories.size() &&
+             strandIndex < m_asset.followData.size();
+             ++strandIndex)
+        {
+            const int32_t parentGuide =
+                m_asset.followData[strandIndex].parentGuide;
+            if (parentGuide >= 0 &&
+                static_cast<uint32_t>(parentGuide) < guideCategories.size())
+            {
+                outCategories[strandIndex] =
+                    guideCategories[static_cast<uint32_t>(parentGuide)];
+            }
         }
         return true;
     }
 
     void GpuHairViewer::FlushThesisPracticalEditEpisodes()
     {
-        if (!ThesisEnabled(L"HAIRGPU_THESIS_EDIT_EVAL")) return;
+        if (!ThesisEvaluationEnabled()) return;
         ThesisPracticalGpuState& state = ThesisPracticalStates()[this];
         if (state.bufferedEpisodes.empty()) return;
         std::wstring telemetryDirText = GetEnvironmentVariableString(L"HAIRGPU_TELEMETRY_DIR");
