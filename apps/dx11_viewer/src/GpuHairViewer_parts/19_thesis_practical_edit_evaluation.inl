@@ -2,10 +2,8 @@
 // B0 and P receive the same sparse physical edit. P invalidates only directly
 // touched SG-APT blocks. CSV output is buffered until post-measurement flush.
 
-namespace hairgpu::viewer
+namespace
 {
-    namespace
-    {
         struct ThesisPracticalEpisodeRecord
         {
             hairgpu::ThesisEditEpisodeSummary summary = {};
@@ -61,13 +59,6 @@ namespace hairgpu::viewer
             if (value.empty()) return fallback;
             try { return std::clamp(std::stof(value), minimumValue, maximumValue); }
             catch (...) { return fallback; }
-        }
-
-        const char* ThesisMethodLabel(GpuHairViewer::ExperimentMethodId method)
-        {
-            if (method == GpuHairViewer::ExperimentMethodId::B0_FullDynamic) return "B0";
-            if (method == GpuHairViewer::ExperimentMethodId::P_IntegratedSegmentGroup) return "P";
-            return "OTHER";
         }
 
         bool ThesisCreateStructuredUintSrv(
@@ -261,7 +252,10 @@ namespace hairgpu::viewer
         s.directGroupRatio = hairgpu::ThesisSafeRatio(s.directGroupCount, totalGroups);
         s.directBlockRatio = hairgpu::ThesisSafeRatio(s.directBlockCount, totalBlocks);
         record.methodId = static_cast<uint32_t>(m_experimentCase.methodId);
-        record.methodLabel = ThesisMethodLabel(m_experimentCase.methodId);
+        record.methodLabel =
+            m_experimentCase.methodId == ExperimentMethodId::B0_FullDynamic ? "B0" :
+            m_experimentCase.methodId == ExperimentMethodId::P_IntegratedSegmentGroup ? "P" :
+            "OTHER";
         record.caseName = WideToUtf8(GetEnvironmentVariableString(L"HAIRGPU_THESIS_CASE"));
         if (record.caseName.empty()) record.caseName = "unspecified";
         state.bufferedEpisodes.push_back(std::move(record));
@@ -587,4 +581,3 @@ namespace hairgpu::viewer
         }
         if (out) state.bufferedEpisodes.clear();
     }
-}
