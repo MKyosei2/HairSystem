@@ -1,0 +1,7 @@
+﻿requirement,value,relation
+Average FPS,60.0,>=
+60 FPS frame ratio,95.0,>= %
+Frame budget overrun,5.0,<= %
+p95 frame time,16.6667,<= ms
+p99 frame time,20.0,<= ms
+Single frame,50.0,<= ms

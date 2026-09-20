@@ -1,0 +1,99 @@
+# 第8章　考察
+
+## 8.1 結果の全体的な傾向
+
+本実験で最も明確な傾向は、統合P条件がB0より高速にならなかったことである。Performance ProfileではMedian Frame Timeの18シナリオ平均が6.9432 msから10.0587 msへ増加し、p95も7.3659 msから26.0901 msへ増加した。全45ペアの比較でもPがB0より高速となったペアは0であった。
+
+メモリも同じ傾向を示し、Performance ProfileではPeak Process Private Memoryが約30.0%、Peak Working Setが約69.1%、DXGI Local Usageが約8.7%増加した。そのため、今回のP実装では高速化とシステム全体の省メモリ化の双方を実証できなかった。
+
+ただし、NaN、Inf、Fatal Failureが0であり、Quality ProfileのFalse Static Countも0であった。したがって、単純にシステムが破綻したのではなく、保守的な処理状態を維持しながら追加管理コストが発生したと解釈する方が実測結果に整合する。
+![図8-1 局所的削減とシステム全体の変化](figures/fig8_01_system_change_summary.png)
+
+**図8-1　局所的削減とシステム全体の変化。** Microtype局所保存量と、Pの時間・メモリ指標のB0比変化を対比する。
+
+## 8.2 Microtypeによる効果
+
+MicrotypeではDirection Cache 7.751465 MBに対してFull Position 15.502930 MBであり、局所保存量を50%にできている。この点は、保存形式を小さくするという設計上の目的に対応した結果である。
+
+一方、microtypeDecodedCountは正式Performance測定で0であり、Microtype Block Hierarchyも無効であった。さらに全16,000 Blockおよび全508,000 Groupが毎フレームDirtyで、Static Reuse Attemptも0であった。この状態では、保存形式が小さくなっても、毎フレーム処理する対象数自体を減らせない。
+
+したがって、今回の結果はMicrotypeの局所データ表現が無意味であることを示すのではなく、その局所削減を実行時間削減へ変換する経路が正式測定で作動しなかったことを示している。
+
+## 8.3 Mode Allocationによる効果
+
+Mode Allocationでは、Performance Profileでmode系カウンタがすべて0であり、used_full_dynamicは100.0%であった。dynamicGroupCountも全508,000 Groupの約99.983%を占め、staticCachedGroupCountは0である。
+
+この結果から、Pは状態分類やCertificateなどの管理機構を追加しながら、最終的にはほぼ全GroupをDynamicとして処理していたと考えられる。特にS15 AllStaticでもB0よりPのFrame Timeが長く、Static化に伴う処理省略が性能へ反映されていない。
+
+Performance低下の原因を1要素へ帰属することはできないが、少なくとも「管理コストを追加したのにFull Dynamic処理量が減っていない」という状態は、PがB0より遅い結果と整合する。
+![図8-2 正式測定で観測された性能低下につながる実行状態](figures/fig8_02_degradation_chain.png)
+
+**図8-2　正式測定で観測された実行状態。** 全Block Dirty、Static Reuse 0、Full Dynamic 100%という観測結果と、追加管理コストが併存した。
+
+## 8.4 Physics Islandsによる効果
+
+Physics Islandsは正式P条件で無効であり、Island Candidate、Island Count、Commit、Rejectはいずれも0であった。このため、Physics Islandsについて「効果がなかった」と結論することはできない。評価に必要な実行条件そのものが成立していないためである。
+
+5要素の1つとしてPhysics Islandsの有効性を論じる場合は、enablePhysicsIslands=trueとし、Island CandidateおよびIsland Commitが実際に発生するシナリオを用いた追加測定が必要である。したがって、本論文の正式結果で示せるのはPhysics Islandsの有効性ではなく、正式評価未成立という限界である。
+
+## 8.5 Rod Repairによる効果
+
+Rod Repairも正式P条件では無効であったため、Rod Repair固有の性能・品質効果は評価できない。Repair Stormシナリオで動作したのはGeneric Repair側の処理であり、Typed Repair RequestやRod Repair Commitは0であった。
+
+Generic RepairではAttemptとSuccessが記録され、Failureは0であった一方、Verified Countも0である。このため、実行パスが処理を完了したことと、物理的な修復品質が独立に検証されたことは分けて扱う必要がある。
+
+## 8.6 GPU-Resident Runtimeによる効果
+
+GPU-Resident Runtimeは設定上ONであったが、gpuResidentTaskCount、dispatchIndirectCount、drawIndirectCountが0であった。このため、GPU-Resident専用経路が正式測定で実際に利用されたことを確認できない。
+
+GPU Hair TimeはMedian平均でB0 6.8720 msからP 11.2670 msへ増加し、p95もB0 7.3836 msからP 22.2815 msへ増加した。DXGI Local UsageもPで増加した。
+
+したがって、少なくとも今回の正式測定では、GPU側へ処理を常駐させることによるCPU-GPU転送削減やGPU処理時間削減を実証できなかった。設定の有効化と専用経路の実稼働を区別する必要がある。
+
+## 8.7 5つの構成要素の相互補完
+
+本研究で想定した構成では、Mode Allocationが処理対象を分離し、Physics Islandsが局所的な物理計算単位を形成し、Rod Repairが異常部分を限定して修復し、その状態をMicrotypeとGPU-Resident Runtimeが効率的に保持・実行することで相互補完することを期待した。
+
+しかし正式測定では、Physics IslandsとRod RepairがOFFであり、Mode系カウンタは0、Microtype Decodeも0、GPU-Resident Taskも0であった。その一方でFull Dynamic経路がほぼ常時使用された。
+
+したがって、今回測定されたPは「5要素がすべて連携した完成状態」の性能を表しているとは言えない。追加管理機構を含む統合経路の一部は存在するが、想定した相互補完関係を実測で確認するには至らなかった。
+![図8-3 5構成要素の想定と正式測定時の観測状態](figures/fig8_03_five_element_status.png)
+
+**図8-3　5構成要素の想定と正式測定時の観測状態。** 設定ON/OFFと実行カウンタを区別して整理した。
+
+## 8.8 制作現場への影響
+
+リアルタイムコンテンツ制作では、平均FPSだけでなくフレーム時間の安定性が重要になる。PのPerformance Profileでは60 FPS以内に収まるフレーム割合が平均65.17%であり、p95 Frame Timeは平均26.09 msであった。B0では60 FPS以内の割合が99.96%、p95が7.37 msであった。
+
+このため、現在のP実装を「100,000本の髪をB0より安定して高速に処理する最適化」としてそのまま制作現場へ導入することは難しい。またProcess Private MemoryおよびWorking Setも増加しており、メモリ制約のある実行環境では追加負担になる。
+
+一方、致命的な数値破綻が0でFalse Staticも0であった点から、安全側に倒した状態管理の実装としては一定の安定性が確認された。現段階では、高速化済みの完成方式ではなく、安全性を優先した管理方式のオーバーヘッドが処理削減量を上回っている実装段階と位置付けるのが妥当である。
+
+## 8.9 既存研究との差分
+
+今回指定した情報源は正式実験ZIPのみであり、このZIPには外部の既存研究を同一ハードウェア、同一ストランド数、同一18シナリオで再測定した結果は含まれていない。そのため、本章の実測値だけから既存研究に対する速度やメモリの定量的優位性を主張することはできない。
+
+本章で実証できる比較範囲は、本研究内で定義したB0とPの差である。設計上の差分と性能上の優位性は区別する必要がある。Microtypeや状態管理、Certificate、Repair、GPU Compactionなどの機構を導入したこと自体は実装上の差分であるが、その差分がB0より高性能であることは今回の実測では支持されなかった。
+
+したがって、既存研究との概念的・方式的な比較は先行研究を扱う章で行い、本章では正式ZIP内で再現可能なB0/P比較に限定して結論を述べる。
+
+## 8.10 新規性の妥当性
+
+本研究の新規性を評価する際には、「新しい構成を設計・実装したこと」と「その構成によって目的とした性能向上を実証したこと」を分けなければならない。
+
+正式データからは、P条件にMicrotype、Segment Group State、Static Certificate、Predictive Wake、Generic Repair、GPU Compaction、Static Cacheなどの設定が存在することを確認できる。またMicrotypeの局所保存量50%、False Static 0、NaN・Inf・Fatal Failure 0など、一部の設計上の特性は確認された。
+
+一方、Physics IslandsとRod RepairはOFFであり、Microtype Decode、Mode AllocationのModeカウンタ、GPU-Resident TaskとIndirect Dispatchには実稼働を示すカウントがなかった。さらに、正式Performance測定ではFull Dynamicが100%使用され、全Block・全GroupがDirty、Static Reuse Attemptは0であった。アブレーション条件も存在しない。
+
+したがって、本正式実験から「5要素を統合した提案方式によってリアルタイム髪シミュレーションを高速化できた」と結論することはできない。実測上はB0よりFrame Timeとメモリ使用量が増加しており、性能上の有効性は実証できなかった。
+
+本研究の成果は、提案構成と測定基盤を実装し、同一入力・同一バイナリで正式比較した結果、期待した性能改善が成立しないことと、その原因候補となる実行状態を測定によって明らかにした点にある。したがって第9章では、失敗した性能改善を隠すのではなく、Full Dynamicへの偏り、未実行機構、アブレーション不足、GPU-Resident経路未使用、メモリ増加などを限界として整理し、改善後に再評価すべき条件を示す。
+![図8-4 実験結果から主張できる範囲](figures/fig8_04_evidence_boundary.png)
+
+**図8-4　実験結果から主張できる範囲。** 確認できた事実と、本正式セッションだけでは確認できなかった事項を分離する。
+
+---
+
+### 本章のデータ出典
+
+本章の考察は第7章の正式実測結果だけを根拠とし、外部研究の性能値やインターネット上の値を図表へ追加していない。詳細は同フォルダの `README.md` を参照する。

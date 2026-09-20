@@ -1,0 +1,7 @@
+﻿indicator,value,unit
+Microtype decode path,0.0,non-zero frame rate [%]
+Full Dynamic path,100.0,usage rate [%]
+Physics Island candidate,0.0,non-zero frame rate [%]
+Physics fallback,100.0,non-zero frame rate [%]
+GPU-resident task,0.0,non-zero frame rate [%]
+Static reuse attempt,0.0,non-zero frame rate [%]

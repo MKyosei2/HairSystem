@@ -1,0 +1,6 @@
+﻿profile,runs,warmup,measurement,totalMeasuredFrames
+Pilot,10,300,1800,18000
+Quality,36,600,6000,216000
+Performance,36,600,6000,216000
+Determinism,4,600,6000,24000
+Soak,4,600,108000,432000

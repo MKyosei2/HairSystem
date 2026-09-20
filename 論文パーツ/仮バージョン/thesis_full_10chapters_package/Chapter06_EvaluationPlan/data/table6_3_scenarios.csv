@@ -1,0 +1,19 @@
+﻿id,scenario,titleJa,description,events,eventCount,payloadCapacityPercent
+S01,S01_Idle,完全静止,idle,全GroupをStatic化,1,50
+S02,S02_Breathing,Root平行移動,root_translation,Root平行移動 → Root平行移動,2,50
+S03,S03_Walk,Root回転,root_rotation,Root回転 → Root回転,2,50
+S04,S04_SuddenStop,弱い風,weak_wind,Root平行移動 → Root平行移動,2,50
+S05,S05_HeadRotation,通常頭部運動,normal_head_motion,Root回転 → Root回転,2,50
+S06,S06_Teleport,局所衝突,local_collision,Root瞬間移動,1,50
+S07,S07_ColliderApproach,複数Collider,multiple_colliders,Collider変換 → Collider変換,2,50
+S08,S08_StaticDynamicBoundaryContact,一本単位編集,single_strand_edit,Collider変換 → 局所編集注入,2,50
+S09,S09_StrongWind,連続Brush編集,continuous_brush_edit,Wind変更,1,50
+S10,S10_WindStop,強風,strong_wind,Wind変更 → Wind変更,2,50
+S11,S11_LocalEdit,全Group Dynamic,all_dynamic,局所編集注入 → 局所編集注入,2,50
+S12,S12_FalseStaticTrap,Static／Dynamic境界Stress,static_dynamic_boundary_stress,Collider変換 → Wind変更 → Wind変更,3,50
+S13,S13_RepairStorm,State Thrashing Stress,state_thrashing_stress,Repair Storm注入 → Repair Storm注入 → Repair Storm注入,3,50
+S14,S14_AllDynamic,複数Guide依存Follower,multi_guide_follower_dependency,全GroupをDynamic化,1,50
+S15,S15_AllStatic,30分長時間試験,thirty_minute_soak,全GroupをStatic化,1,50
+S16,S16_StateThrashing,決定性試験,determinism,全GroupをDynamic化 → 全GroupをStatic化 → 全GroupをDynamic化 → 全GroupをStatic化,4,50
+S17,S17_CloseCamera100k,Payload Pool Stress,payload_pool_stress,Camera距離変更 → 全GroupをDynamic化,2,5
+S18,S18_FarCamera100k,Version／Descriptor異常注入,version_descriptor_fault_injection,Camera距離変更,1,50

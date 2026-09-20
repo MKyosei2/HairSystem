@@ -1,0 +1,23 @@
+{
+  "formal_session": "thesis_7032_20260919_195059_703\\formal_session.json",
+  "final_gate": "thesis_7032_20260919_195059_703\\integrity\\final_gate.json",
+  "asset_manifest": "thesis_7032_20260919_195059_703\\asset\\frozen_asset_manifest.json",
+  "hardware_profile": "thesis_7032_20260919_195059_703\\environment\\hardware_profile.json",
+  "observed_hardware": "thesis_7032_20260919_195059_703\\environment\\observed_hardware.json",
+  "preflight": "thesis_7032_20260919_195059_703\\integrity\\novelty01_preflight.json",
+  "statistical_report": "thesis_7032_20260919_195059_703\\report\\thesis_statistical_report.json",
+  "paired_csv": "thesis_7032_20260919_195059_703\\report\\thesis_paired_b0_p.csv",
+  "performance_matrix": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\novelty01_matrix_summary.json",
+  "quality_matrix": "thesis_7032_20260919_195059_703\\quality\\B0_vs_P\\novelty01_matrix_summary.json",
+  "soak_matrix": "thesis_7032_20260919_195059_703\\soak\\B0_vs_P\\novelty01_matrix_summary.json",
+  "determinism_matrix": "thesis_7032_20260919_195059_703\\determinism\\B0_vs_P\\novelty01_matrix_summary.json",
+  "pilot_matrix": "thesis_7032_20260919_195059_703\\pilot\\B0_vs_P\\novelty01_matrix_summary.json",
+  "p_case": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_P_S01_seed001_r01\\N01_performance_P_S01_seed001_r01_case.json",
+  "b0_case": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_B0_S01_seed001_r01\\N01_performance_B0_S01_seed001_r01_case.json",
+  "p_settings": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_P_S01_seed001_r01\\N01_performance_P_S01_seed001_r01_settings.json",
+  "b0_settings": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_B0_S01_seed001_r01\\N01_performance_B0_S01_seed001_r01_settings.json",
+  "representative_p_frames": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_P_S01_seed001_r01\\N01_performance_P_S01_seed001_r01_frames.csv",
+  "representative_p_novelty": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_P_S01_seed001_r01\\N01_performance_P_S01_seed001_r01_novelty01.csv",
+  "representative_p_telemetry": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_P_S01_seed001_r01\\N01_performance_P_S01_seed001_r01_telemetry.jsonl",
+  "representative_visual": "thesis_7032_20260919_195059_703\\performance\\B0_vs_P\\N01_performance_P_S01_seed001_r01\\N01_performance_P_S01_seed001_r01_visual.bmp"
+}

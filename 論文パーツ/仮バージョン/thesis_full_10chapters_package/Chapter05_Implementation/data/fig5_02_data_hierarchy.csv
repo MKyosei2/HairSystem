@@ -1,0 +1,8 @@
+﻿level,count
+Display strands,100000
+Guides,4000
+Followers,96000
+Particles per Guide,128
+Segment Groups,508000
+Segment Group Blocks,16000
+Groups per Block (asset setting),32

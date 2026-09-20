@@ -1,0 +1,6 @@
+﻿component,role,evidence
+Microtype,compact representation / direction cache,"microtypeDecodedCount, directionCacheMemoryMb"
+Mode Allocation,state-dependent execution mode,"mode*Count, used_full_dynamic"
+Physics Islands,local connected simulation domains,"islandCandidateCount, islandCommitCount"
+Rod Repair,localized recovery path,"typedRepairRequestCount, repair*Count"
+GPU-Resident Runtime,GPU-side task/dispatch persistence,"gpuResidentTaskCount, dispatchIndirectCount"

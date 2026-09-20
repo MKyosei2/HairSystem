@@ -1,0 +1,17 @@
+﻿機構,B0,P
+enableMicrotype,OFF,ON
+enableGpuResident,OFF,ON
+enablePhysicsIslands,OFF,OFF
+enableRodRepair,OFF,OFF
+enableSegmentGroupSleep,OFF,ON
+enableSegmentGroupIntegratedState,OFF,ON
+enableSharedPointOwnership,OFF,ON
+enableDirectionalResponsibility,OFF,ON
+enableStaticCertificate,OFF,ON
+enablePredictiveWake,OFF,ON
+enableVelocityRecovery,OFF,ON
+enableRepair,OFF,ON
+enableGpuCompaction,OFF,ON
+enableActiveSet,OFF,ON
+enableSleepHysteresis,OFF,ON
+enableStaticCache,OFF,ON

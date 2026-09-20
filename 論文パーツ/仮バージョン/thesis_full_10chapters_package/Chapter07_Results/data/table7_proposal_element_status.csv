@@ -1,0 +1,6 @@
+﻿要素,P設定,実行証拠,評価
+Microtype,ON,microtypeDecodedCount max=0,局所メモリ表現は50%だがDecode実行は確認できず
+Mode Allocation,関連状態管理ON,mode系カウンタ max=0、Full Dynamic=100.0%,処理削減経路を確認できず
+Physics Islands,OFF,islandCandidateCount max=0,正式評価未成立
+Rod Repair,OFF,typedRepairRequestCount max=0,Rod Repair単体評価未成立
+GPU-Resident Runtime,ON,"gpuResidentTaskCount max=0, dispatchIndirectCount max=0",専用実行経路を確認できず

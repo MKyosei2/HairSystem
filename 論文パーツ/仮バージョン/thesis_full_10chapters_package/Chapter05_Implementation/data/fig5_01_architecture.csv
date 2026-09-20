@@ -1,0 +1,8 @@
+﻿stage,recorded_path
+Input,Scenario timeline / root / collider / wind / edit
+Classification,Segment Group state / certificate / dirty propagation
+Scheduling,Mode / active set / compaction
+Physics,Dynamic solve / island / repair / wake
+Reconstruction,Follower reconstruction / static transform
+Rendering,Render preparation / hair draw
+Measurement,GPU timestamps / process memory / quality telemetry

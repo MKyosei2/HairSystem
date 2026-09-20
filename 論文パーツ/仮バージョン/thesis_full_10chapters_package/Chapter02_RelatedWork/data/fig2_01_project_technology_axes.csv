@@ -1,0 +1,7 @@
+﻿axis,project_mechanism,recorded_evidence
+Representation,Guide/Follower,guideCount / followerCount
+Compression,Microtype / Direction Cache,directionCacheMemoryMb / fullPositionMemoryMb
+Scheduling,Mode / Active Set / Sleep,mode*Count / activeSet*
+Local Physics,Physics Islands,island*Count / physicsFallbackCount
+Recovery,Repair,repair*Count
+Runtime,GPU-Resident / Indirect,gpuResidentTaskCount / dispatchIndirectCount

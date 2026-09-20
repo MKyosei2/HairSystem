@@ -1,0 +1,21 @@
+﻿項目,値
+CPU,Intel(R) Core(TM) i7-14700
+CPUコア/論理プロセッサ,20 / 28
+GPU,NVIDIA GeForce RTX 4070 Ti SUPER
+GPU VRAM,16376 MiB
+RAM,65303 MiB
+OS,Microsoft Windows 11 Home 10.0.26200
+GPU Driver,32.0.15.6603
+Visual Studio,18.5.2
+MSVC,14.50.35717
+Windows SDK,10.0.26100.0
+解像度,1920x1080
+電源プラン,High Performance
+表示ストランド,100000
+Guide,4000
+Followers / Guide,24
+Follower,96000
+Particles / Guide,128
+Solver Iterations,6
+Fixed Timestep,0.016666667 s
+VSync,OFF
