@@ -1,0 +1,13 @@
+{
+  "id": "race-condition",
+  "defectClass": "concurrency-race",
+  "changedFiles": [
+    "native/job_system.cpp"
+  ],
+  "hypothesis": "data race under worker contention",
+  "requiredExperiments": [
+    "RaceDetection",
+    "Stress",
+    "RegressionTest"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "gameplay-replay",
+  "defectClass": "behavior-regression",
+  "changedFiles": [
+    "Gameplay/Combat.cs"
+  ],
+  "hypothesis": "deterministic gameplay replay diverges",
+  "requiredExperiments": [
+    "RuntimeReplay",
+    "RegressionTest"
+  ]
+}

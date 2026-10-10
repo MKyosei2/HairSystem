@@ -1,0 +1,15 @@
+{
+  "id": "clean-control",
+  "defectClass": "control",
+  "changedFiles": [
+    "src/Utility/Formatting.cs"
+  ],
+  "hypothesis": "no defect should be mechanically reproduced",
+  "requiredExperiments": [
+    "Compile",
+    "StaticAnalysis",
+    "UnitTest",
+    "RegressionTest"
+  ],
+  "expectPatch": false
+}

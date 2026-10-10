@@ -1,0 +1,12 @@
+{
+  "id": "compile-error",
+  "defectClass": "build-contract",
+  "changedFiles": [
+    "src/Game/Player.cs"
+  ],
+  "hypothesis": "C# compile error after source change",
+  "requiredExperiments": [
+    "Compile",
+    "RegressionTest"
+  ]
+}

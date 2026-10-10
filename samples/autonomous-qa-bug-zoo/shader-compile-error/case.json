@@ -1,0 +1,13 @@
+{
+  "id": "shader-compile-error",
+  "defectClass": "rendering-regression",
+  "changedFiles": [
+    "Assets/Shaders/Post.glsl"
+  ],
+  "hypothesis": "shader validation fails",
+  "requiredExperiments": [
+    "ShaderValidation",
+    "VisualRegression",
+    "RegressionTest"
+  ]
+}

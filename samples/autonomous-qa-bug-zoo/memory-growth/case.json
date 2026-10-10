@@ -1,0 +1,13 @@
+{
+  "id": "memory-growth",
+  "defectClass": "memory-growth",
+  "changedFiles": [
+    "src/Runtime/Cache.cs"
+  ],
+  "hypothesis": "working set grows during long session",
+  "requiredExperiments": [
+    "Soak",
+    "MemorySafety",
+    "RegressionTest"
+  ]
+}

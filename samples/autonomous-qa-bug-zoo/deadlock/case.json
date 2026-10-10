@@ -1,0 +1,13 @@
+{
+  "id": "deadlock",
+  "defectClass": "concurrency-deadlock",
+  "changedFiles": [
+    "src/Runtime/Locks.cs"
+  ],
+  "hypothesis": "deadlock under sustained load",
+  "requiredExperiments": [
+    "DeadlockDetection",
+    "Stress",
+    "RegressionTest"
+  ]
+}

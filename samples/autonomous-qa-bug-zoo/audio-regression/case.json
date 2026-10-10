@@ -1,0 +1,12 @@
+{
+  "id": "audio-regression",
+  "defectClass": "media-regression",
+  "changedFiles": [
+    "Assets/Audio/bgm.wav"
+  ],
+  "hypothesis": "audio output differs from baseline",
+  "requiredExperiments": [
+    "AudioRegression",
+    "RegressionTest"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "network-protocol",
+  "defectClass": "network-correctness",
+  "changedFiles": [
+    "Server/Protocol.cs"
+  ],
+  "hypothesis": "malformed packet crashes deserializer",
+  "requiredExperiments": [
+    "Fuzz",
+    "LoadTest",
+    "RegressionTest"
+  ]
+}

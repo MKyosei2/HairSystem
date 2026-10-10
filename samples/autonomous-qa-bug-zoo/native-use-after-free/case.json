@@ -1,0 +1,12 @@
+{
+  "id": "native-use-after-free",
+  "defectClass": "memory-safety",
+  "changedFiles": [
+    "native/runtime.cpp"
+  ],
+  "hypothesis": "use-after-free during runtime",
+  "requiredExperiments": [
+    "MemorySafety",
+    "RegressionTest"
+  ]
+}

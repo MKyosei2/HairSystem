@@ -1,0 +1,12 @@
+{
+  "id": "api-load-regression",
+  "defectClass": "service-runtime",
+  "changedFiles": [
+    "src/Api/Controller.cs"
+  ],
+  "hypothesis": "service latency degrades under load",
+  "requiredExperiments": [
+    "LoadTest",
+    "RegressionTest"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema": "dip.autonomous-qa-bug-zoo.v1",
+  "description": "Deterministic selection/evidence benchmark cases for the autonomous QA planner and verifier.",
+  "cases": [
+    {"id":"compile-error","defectClass":"build-contract","changedFiles":["src/Game/Player.cs"],"hypothesis":"C# compile error after source change","requiredExperiments":["Compile","RegressionTest"]},
+    {"id":"native-buffer-overflow","defectClass":"memory-safety","changedFiles":["native/mesh.cpp"],"hypothesis":"native buffer overflow detected by sanitizer","requiredExperiments":["Compile","MemorySafety","RegressionTest"]},
+    {"id":"native-use-after-free","defectClass":"memory-safety","changedFiles":["native/runtime.cpp"],"hypothesis":"use-after-free during runtime","requiredExperiments":["MemorySafety","RegressionTest"]},
+    {"id":"memory-growth","defectClass":"memory-growth","changedFiles":["src/Runtime/Cache.cs"],"hypothesis":"working set grows during long session","requiredExperiments":["Soak","MemorySafety","RegressionTest"]},
+    {"id":"race-condition","defectClass":"concurrency-race","changedFiles":["native/job_system.cpp"],"hypothesis":"data race under worker contention","requiredExperiments":["RaceDetection","Stress","RegressionTest"]},
+    {"id":"deadlock","defectClass":"concurrency-deadlock","changedFiles":["src/Runtime/Locks.cs"],"hypothesis":"deadlock under sustained load","requiredExperiments":["DeadlockDetection","Stress","RegressionTest"]},
+    {"id":"visual-regression","defectClass":"rendering-regression","changedFiles":["Assets/Shaders/Hair.hlsl"],"hypothesis":"rendered output differs from golden reference","requiredExperiments":["ShaderValidation","RuntimeReplay","VisualRegression","Benchmark","RegressionTest"]},
+    {"id":"shader-compile-error","defectClass":"rendering-regression","changedFiles":["Assets/Shaders/Post.glsl"],"hypothesis":"shader validation fails","requiredExperiments":["ShaderValidation","VisualRegression","RegressionTest"]},
+    {"id":"frame-time-regression","defectClass":"performance-regression","changedFiles":["Rendering/Renderer.cs"],"hypothesis":"GPU/frame time regressed","requiredExperiments":["Benchmark","RuntimeReplay","RegressionTest"]},
+    {"id":"network-protocol","defectClass":"network-correctness","changedFiles":["Server/Protocol.cs"],"hypothesis":"malformed packet crashes deserializer","requiredExperiments":["Fuzz","LoadTest","RegressionTest"]},
+    {"id":"api-load-regression","defectClass":"service-runtime","changedFiles":["src/Api/Controller.cs"],"hypothesis":"service latency degrades under load","requiredExperiments":["LoadTest","RegressionTest"]},
+    {"id":"missing-texture","defectClass":"content-pipeline-integrity","changedFiles":["Assets/Characters/Hero.prefab"],"hypothesis":"asset contains missing texture/reference","requiredExperiments":["AssetValidation","VisualRegression","RegressionTest"]},
+    {"id":"audio-regression","defectClass":"media-regression","changedFiles":["Assets/Audio/bgm.wav"],"hypothesis":"audio output differs from baseline","requiredExperiments":["AudioRegression","RegressionTest"]},
+    {"id":"gameplay-replay","defectClass":"behavior-regression","changedFiles":["Gameplay/Combat.cs"],"hypothesis":"deterministic gameplay replay diverges","requiredExperiments":["RuntimeReplay","RegressionTest"]},
+    {"id":"clean-control","defectClass":"control","changedFiles":["src/Utility/Formatting.cs"],"hypothesis":"no defect should be mechanically reproduced","requiredExperiments":["Compile","StaticAnalysis","UnitTest","RegressionTest"],"expectPatch":false}
+  ]
+}

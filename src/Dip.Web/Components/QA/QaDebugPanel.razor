@@ -1,0 +1,493 @@
+@* Purpose: Owns asynchronous autonomous-QA configuration, executable experiment plans, baseline/post-patch evidence, and durable session history. *@
+@using Dip.Application.Features.GitHubIntegration
+@using Dip.Application.Features.QualityAutomation
+@using Dip.Application.Features.Jobs
+@inject ApiClient Api
+
+<section class="card" data-testid="qa-autonomous-debug-panel">
+    <div class="card-header">
+        <div>
+            <div class="eyebrow">Evidence grounded</div>
+            <strong>Autonomous QA / Debug</strong>
+            <div class="small text-muted">Hardening <code data-testid="qa-hardening-revision">@AutonomousQaHardeningRevision.Current</code></div>
+        </div>
+        <span>Human review required</span>
+    </div>
+
+    <div class="card-body">
+        <div class="alert alert-light border small">
+            AI proposes hypotheses and a bounded experiment plan only. DIP executes
+            the selected QA runners, records baseline evidence, applies a candidate
+            only in a disposable worktree, and reruns the same required experiments.
+            AI output alone can never declare PASS.
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-danger">@_error</div>
+        }
+
+        @if (_queued is not null)
+        {
+            <div class="alert alert-info d-flex justify-content-between align-items-center gap-3"
+                 data-testid="qa-autonomous-debug-queued">
+                <div>
+                    <strong>Queued</strong>
+                    <div class="small">
+                        Job <code>@ShortGuid(_queued.JobId)</code> ·
+                        Session <code>@ShortGuid(_queued.SessionId)</code> ·
+                        @(_job?.Status ?? _queued.Status)
+                    </div>
+                    @if (_job is not null)
+                    {
+                        <div class="small mt-1">
+                            @_job.ProgressPercent.ToString("0.#")% · @(_job.CurrentStage ?? "Running")
+                        </div>
+                        <div class="progress mt-1" style="height: 6px; min-width: 220px">
+                            <div class="progress-bar" role="progressbar" style="@($"width:{Math.Clamp(_job.ProgressPercent, 0m, 100m):0.#}%")"></div>
+                        </div>
+                    }
+                </div>
+                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="RefreshQueuedAsync">
+                    Refresh
+                </button>
+            </div>
+        }
+
+        <div class="row g-3">
+            <div class="col-12 col-xl-7">
+                <div class="form-grid">
+                    <label class="form-label mb-0">Subject key</label>
+                    <input class="form-control"
+                           data-testid="qa-debug-subject"
+                           @bind="_subject" />
+
+                    <label class="form-label mb-0">Question</label>
+                    <textarea class="form-control"
+                              data-testid="qa-debug-question"
+                              rows="4"
+                              @bind="_question"></textarea>
+
+                    <label class="form-label mb-0">Evidence JSON</label>
+                    <textarea class="form-control font-monospace"
+                              data-testid="qa-debug-evidence"
+                              rows="7"
+                              @bind="_evidenceJson"></textarea>
+
+                    <label class="form-label mb-0">
+                        Repository context
+                        <span class="text-muted">(optional)</span>
+                    </label>
+                    <textarea class="form-control font-monospace"
+                              rows="4"
+                              @bind="_repositoryContext"></textarea>
+
+                    <label class="form-label mb-0">
+                        Experiment configuration JSON
+                        <span class="text-muted">(optional; otherwise .dip/autonomous-qa.json)</span>
+                    </label>
+                    <textarea class="form-control font-monospace"
+                              rows="5"
+                              @bind="_experimentConfigurationJson"></textarea>
+                </div>
+            </div>
+
+            <div class="col-12 col-xl-5">
+                <div class="form-grid">
+                    <label class="form-label mb-0">Domain</label>
+                    <select class="form-select" @bind="_domain">
+                        <option value="software">software</option>
+                        <option value="game">game</option>
+                        <option value="media.production">media.production</option>
+                        <option value="generic.project">generic.project</option>
+                    </select>
+
+                    <div class="d-flex gap-2">
+                        <div class="flex-fill">
+                            <label class="form-label small">Hypotheses</label>
+                            <input class="form-control"
+                                   type="number"
+                                   min="1"
+                                   max="10"
+                                   @bind="_maxHypotheses" />
+                        </div>
+                        <div class="flex-fill">
+                            <label class="form-label small">Hypothesis attempts</label>
+                            <input class="form-control"
+                                   type="number"
+                                   min="1"
+                                   max="10"
+                                   @bind="_maxExperiments" />
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <div class="flex-fill">
+                            <label class="form-label small">AI calls</label>
+                            <input class="form-control"
+                                   type="number"
+                                   min="2"
+                                   max="20"
+                                   @bind="_maxAiCalls" />
+                        </div>
+                        <div class="flex-fill">
+                            <label class="form-label small">Step timeout sec</label>
+                            <input class="form-control"
+                                   type="number"
+                                   min="30"
+                                   max="1800"
+                                   @bind="_timeoutSeconds" />
+                        </div>
+                    </div>
+
+                    <label class="form-label mb-0">Wall-clock budget (minutes)</label>
+                    <input class="form-control"
+                           type="number"
+                           min="1"
+                           max="120"
+                           @bind="_wallClockMinutes" />
+
+                    <button class="btn btn-primary"
+                            data-testid="qa-run-autonomous-debug"
+                            type="button"
+                            disabled="@(!CanRun || _running)"
+                            @onclick="RunAsync">
+                        @(_running ? "Queueing autonomous QA…" : "Queue autonomous QA")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_session is not null)
+    {
+        <div class="card-body border-top"
+             data-testid="qa-autonomous-debug-result">
+            <div class="d-flex justify-content-between gap-3 align-items-start mb-3">
+                <div>
+                    <div class="eyebrow">
+                        Session <code>@ShortGuid(_session.SessionId)</code>
+                    </div>
+                    <h2 class="h5 mb-1">@_session.Status</h2>
+                    <p class="mb-0">@_session.Summary</p>
+                </div>
+                <StatusBadge Value="@_session.Status" />
+            </div>
+
+            <h3 class="h6">Hypotheses</h3>
+            @if (_session.Hypotheses.Count == 0)
+            {
+                <p class="small text-muted">No grounded hypothesis was returned.</p>
+            }
+            else
+            {
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Confidence</th>
+                                <th>Hypothesis</th>
+                                <th>Evidence</th>
+                                <th>Suggested experiments</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var hypothesis in _session.Hypotheses)
+                            {
+                                <tr>
+                                    <td>@hypothesis.Confidence.ToString("P0")</td>
+                                    <td>
+                                        <strong>@hypothesis.Title</strong>
+                                        <div class="small text-muted">@hypothesis.Explanation</div>
+                                    </td>
+                                    <td>@hypothesis.EvidenceIds.Count</td>
+                                    <td>@string.Join(", ", hypothesis.SuggestedExperiments)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            <h3 class="h6">Verification attempts</h3>
+            @if (_session.Attempts.Count == 0)
+            {
+                <p class="small text-muted">No candidate experiment was executed.</p>
+            }
+            else
+            {
+                @foreach (var attempt in _session.Attempts)
+                {
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex justify-content-between gap-3 mb-2">
+                            <div>
+                                <StatusBadge Value="@attempt.Status" />
+                                <strong class="ms-2">@attempt.HypothesisTitle</strong>
+                            </div>
+                            <span>@(attempt.Verified ? "Verified candidate" : "Not verified")</span>
+                        </div>
+                        <p class="small mb-2">@attempt.Summary</p>
+                        @if (!string.IsNullOrWhiteSpace(attempt.ArtifactRoot))
+                        {
+                            <div class="small mb-3">Artifact: <code>@attempt.ArtifactRoot</code></div>
+                        }
+
+                        @if (attempt.ExperimentPlan is not null)
+                        {
+                            <div class="eyebrow mb-1">Executable experiment plan</div>
+                            <div class="table-responsive">
+                                <table class="table table-sm mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Required</th>
+                                            <th>Experiment</th>
+                                            <th>Baseline</th>
+                                            <th>Post-patch</th>
+                                            <th>Evidence boundary</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var step in attempt.ExperimentPlan.Steps)
+                                        {
+                                            var before = ResultFor(attempt.BaselineExperiments, step.Id);
+                                            var after = ResultFor(attempt.PostPatchExperiments, step.Id);
+                                            <tr>
+                                                <td>@(step.Required ? "Yes" : "No")</td>
+                                                <td>
+                                                    <strong>@step.Kind</strong>
+                                                    <div class="small text-muted"><code>@step.Id</code></div>
+                                                    <div class="small">@step.Reason</div>
+                                                </td>
+                                                <td>
+                                                    <strong>@Status(before)</strong>
+                                                    <div class="small text-muted">@(before?.Summary ?? "Not executed")</div>
+                                                </td>
+                                                <td>
+                                                    <strong>@Status(after)</strong>
+                                                    <div class="small text-muted">@(after?.Summary ?? "Not executed")</div>
+                                                </td>
+                                                <td class="small">
+                                                    <div><strong>PASS:</strong> @step.SuccessCondition</div>
+                                                    <div><strong>Falsify:</strong> @step.FalsificationCondition</div>
+                                                    <div><strong>Evidence:</strong> @string.Join(", ", step.RequiredEvidence.Select(x => x.Kind))</div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    }
+
+    <div class="card-body border-top" data-testid="qa-debug-history">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+                <div class="eyebrow">Durable history</div>
+                <strong>Recent autonomous QA sessions</strong>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="LoadHistoryAsync">
+                Refresh history
+            </button>
+        </div>
+
+        @if (_sessions.Count == 0)
+        {
+            <p class="small text-muted mb-0">No autonomous QA session has been persisted for this project.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Subject</th>
+                            <th>Domain</th>
+                            <th>Started</th>
+                            <th>Attempts</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var session in _sessions)
+                        {
+                            <tr class="@(_session?.SessionId == session.SessionId ? "table-active" : string.Empty)"
+                                style="cursor:pointer"
+                                @onclick="() => _session = session">
+                                <td><StatusBadge Value="@session.Status" /></td>
+                                <td>
+                                    <strong>@session.SubjectKey</strong>
+                                    <div class="small text-muted"><code>@ShortGuid(session.SessionId)</code></div>
+                                </td>
+                                <td><code>@session.DomainId</code></td>
+                                <td>@FormatDate(session.StartedAtUtc)</td>
+                                <td>@session.Attempts.Count</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public GitHubProjectRepositoryDto? Repository { get; set; }
+    [Parameter] public QualityIssueClientDto? SeedIssue { get; set; }
+
+    private Guid? _seedIssueId;
+    private string _subject = "qa-failure";
+    private string _question =
+        "Explain the most likely root cause using only the supplied evidence, "
+        + "select executable experiments, and verify the smallest safe candidate in isolation.";
+    private string _evidenceJson = "{}";
+    private string? _repositoryContext;
+    private string? _experimentConfigurationJson;
+    private string _domain = "software";
+    private int _maxHypotheses = 4;
+    private int _maxExperiments = 3;
+    private int _maxAiCalls = 5;
+    private int _timeoutSeconds = 900;
+    private int _wallClockMinutes = 30;
+    private bool _running;
+    private string? _error;
+    private AutonomousDebugEnqueuedDto? _queued;
+    private DurableJobDto? _job;
+    private AutonomousDebugSessionDto? _session;
+    private IReadOnlyList<AutonomousDebugSessionDto> _sessions = Array.Empty<AutonomousDebugSessionDto>();
+
+    private bool CanRun =>
+        Repository?.Workspace is not null
+        && !string.IsNullOrWhiteSpace(_subject)
+        && !string.IsNullOrWhiteSpace(_question)
+        && !string.IsNullOrWhiteSpace(_evidenceJson);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_seedIssueId != SeedIssue?.Id && SeedIssue is not null)
+        {
+            _seedIssueId = SeedIssue.Id;
+            _subject = string.IsNullOrWhiteSpace(SeedIssue.Fingerprint)
+                ? SeedIssue.Id.ToString("N")
+                : SeedIssue.Fingerprint;
+            _question =
+                $"Explain the root cause of '{SeedIssue.Title}', select the required experiments, "
+                + "and verify the smallest safe candidate without modifying the source workspace.";
+            _evidenceJson = string.IsNullOrWhiteSpace(SeedIssue.EvidenceJson)
+                ? "{}"
+                : SeedIssue.EvidenceJson!;
+        }
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        try
+        {
+            var selected = _session?.SessionId;
+            _sessions = await Api.GetAutonomousDebugSessionsAsync(ProjectId, 20);
+            _session = selected is { } id
+                ? _sessions.FirstOrDefault(x => x.SessionId == id) ?? _sessions.FirstOrDefault()
+                : _sessions.FirstOrDefault();
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        _error = null;
+        var workspace = Repository?.Workspace;
+        if (workspace is null)
+        {
+            _error = "Synchronize the repository before autonomous QA.";
+            return;
+        }
+
+        _running = true;
+        try
+        {
+            var budget = new AutonomousDebugBudget(
+                Math.Clamp(_maxHypotheses, 1, 10),
+                Math.Clamp(_maxExperiments, 1, 10),
+                Math.Clamp(_maxAiCalls, 2, 20),
+                Math.Clamp(_timeoutSeconds, 30, 1800),
+                Math.Clamp(_wallClockMinutes, 1, 120));
+
+            _queued = await Api.EnqueueAutonomousDebugAsync(
+                ProjectId,
+                _subject.Trim(),
+                _question.Trim(),
+                _evidenceJson,
+                workspace.WorkspaceRelativePath,
+                string.IsNullOrWhiteSpace(_repositoryContext) ? null : _repositoryContext,
+                workspace.CommitSha,
+                "auto",
+                _domain,
+                budget,
+                string.IsNullOrWhiteSpace(_experimentConfigurationJson) ? null : _experimentConfigurationJson);
+
+            await PollQueuedSessionAsync(_queued.SessionId);
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private async Task RefreshQueuedAsync()
+    {
+        if (_queued is null)
+            return;
+        _job = await Api.GetDurableJobAsync(_queued.JobId);
+        var session = await Api.GetAutonomousDebugSessionAsync(ProjectId, _queued.SessionId);
+        if (session is not null)
+        {
+            _session = session;
+            await LoadHistoryAsync();
+        }
+    }
+
+    private async Task PollQueuedSessionAsync(Guid sessionId)
+    {
+        // Short client-side polling only improves UX. The durable worker continues
+        // independently even when this component stops polling or the user navigates away.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            if (_queued is not null)
+                _job = await Api.GetDurableJobAsync(_queued.JobId);
+            var session = await Api.GetAutonomousDebugSessionAsync(ProjectId, sessionId);
+            if (session is not null)
+            {
+                _session = session;
+                if (session.CompletedAtUtc is not null || session.Status is not "Running")
+                    break;
+            }
+            if (_job?.Status is "Succeeded" or "Failed" or "Cancelled" or "TimedOut")
+                break;
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+        await LoadHistoryAsync();
+    }
+
+    private static AutonomousQaExperimentResult? ResultFor(
+        IReadOnlyList<AutonomousQaExperimentResult>? results,
+        string stepId) =>
+        results?.FirstOrDefault(x => x.StepId.Equals(stepId, StringComparison.OrdinalIgnoreCase));
+
+    private static string Status(AutonomousQaExperimentResult? result) =>
+        result?.Status.ToString() ?? "Not executed";
+
+    private static string ShortGuid(Guid value) => value.ToString("N")[..8];
+    private static string FormatDate(DateTimeOffset value) => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+}

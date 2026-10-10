@@ -1,0 +1,13 @@
+{
+  "id": "native-buffer-overflow",
+  "defectClass": "memory-safety",
+  "changedFiles": [
+    "native/mesh.cpp"
+  ],
+  "hypothesis": "native buffer overflow detected by sanitizer",
+  "requiredExperiments": [
+    "Compile",
+    "MemorySafety",
+    "RegressionTest"
+  ]
+}

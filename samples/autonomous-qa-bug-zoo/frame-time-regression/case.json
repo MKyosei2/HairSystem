@@ -1,0 +1,13 @@
+{
+  "id": "frame-time-regression",
+  "defectClass": "performance-regression",
+  "changedFiles": [
+    "Rendering/Renderer.cs"
+  ],
+  "hypothesis": "GPU/frame time regressed",
+  "requiredExperiments": [
+    "Benchmark",
+    "RuntimeReplay",
+    "RegressionTest"
+  ]
+}

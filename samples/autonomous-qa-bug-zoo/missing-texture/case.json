@@ -1,0 +1,13 @@
+{
+  "id": "missing-texture",
+  "defectClass": "content-pipeline-integrity",
+  "changedFiles": [
+    "Assets/Characters/Hero.prefab"
+  ],
+  "hypothesis": "asset contains missing texture/reference",
+  "requiredExperiments": [
+    "AssetValidation",
+    "VisualRegression",
+    "RegressionTest"
+  ]
+}

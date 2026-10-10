@@ -1,0 +1,15 @@
+{
+  "id": "visual-regression",
+  "defectClass": "rendering-regression",
+  "changedFiles": [
+    "Assets/Shaders/Hair.hlsl"
+  ],
+  "hypothesis": "rendered output differs from golden reference",
+  "requiredExperiments": [
+    "ShaderValidation",
+    "RuntimeReplay",
+    "VisualRegression",
+    "Benchmark",
+    "RegressionTest"
+  ]
+}
